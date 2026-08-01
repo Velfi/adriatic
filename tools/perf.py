@@ -79,7 +79,11 @@ def run_once(executable: Path, name: str, scenario: dict[str, Any]) -> dict[str,
     raise RuntimeError(f"{name} produced no benchmark result\n{output[-4000:]}")
 
 
-def summarize(runs: list[dict[str, Any]], budgets: dict[str, float]) -> dict[str, Any]:
+def summarize(
+    runs: list[dict[str, Any]],
+    budgets: dict[str, float],
+    require_zero_static_after_warmup: bool = False,
+) -> dict[str, Any]:
     summary = {
         "median_ms": statistics.median(run["median_ms"] for run in runs),
         "p95_ms": max(run["p95_ms"] for run in runs),
@@ -151,6 +155,28 @@ def summarize(runs: list[dict[str, Any]], budgets: dict[str, float]) -> dict[str
                 key: max(int(cache.get(key, 0)) for cache in cache_runs)
                 for key in cache_runs[0]
             }
+        renderer_runs = [
+            geometry["renderer"]
+            for geometry in geometry_runs
+            if isinstance(geometry.get("renderer"), dict)
+        ]
+        if renderer_runs:
+            summary["renderer"] = {
+                key: max(float(renderer.get(key, 0)) for renderer in renderer_runs)
+                for key in renderer_runs[0]
+            }
+            static_invariant = all(
+                int(renderer.get("rebuilt_objects", 0)) == 0
+                and int(renderer.get("rebuilt_pages", 0)) == 0
+                and int(renderer.get("static_bytes_uploaded", 0)) == 0
+                for renderer in renderer_runs
+            )
+            summary["static_traversal_invariant"] = static_invariant
+            if require_zero_static_after_warmup:
+                summary["pass"] &= static_invariant
+        elif require_zero_static_after_warmup:
+            summary["static_traversal_invariant"] = False
+            summary["pass"] = False
     return summary
 
 
@@ -186,7 +212,11 @@ def command_run(args: argparse.Namespace) -> int:
     for name in names:
         scenario = deep_merge(config["defaults"], configured[name])
         runs = [run_once(executable, name, scenario) for _ in range(repetitions)]
-        summary = summarize(runs, scenario["budgets_ms"])
+        summary = summarize(
+            runs,
+            scenario["budgets_ms"],
+            bool(scenario.get("require_zero_static_after_warmup", False)),
+        )
         failed |= not summary["pass"]
         results["scenarios"][name] = {
             "description": scenario.get("description", ""),

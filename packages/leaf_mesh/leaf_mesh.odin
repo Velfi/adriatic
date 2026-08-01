@@ -28,6 +28,7 @@ Config :: struct {
     curl:      f32,
     cup:       f32,
     stem:      f32,
+    thickness: f32,
 }
 
 Vertex :: struct {
@@ -37,8 +38,9 @@ Vertex :: struct {
 }
 
 MAX_SEGMENTS :: 48
-MAX_VERTICES :: (MAX_SEGMENTS + 1) * 3
-MAX_INDICES :: MAX_SEGMENTS * 12
+FLESHY_SIDES :: 8
+MAX_VERTICES :: (MAX_SEGMENTS + 1) * FLESHY_SIDES
+MAX_INDICES :: MAX_SEGMENTS * FLESHY_SIDES * 6 + (FLESHY_SIDES - 2) * 6
 
 Mesh :: struct {
     vertices:     [MAX_VERTICES]Vertex,
@@ -104,24 +106,27 @@ defaults :: proc(shape: Shape) -> Config {
         result.length = 2.2
         result.segments = 36
         result.serration = .035
-        result.cup = .10
+        result.curl = .18
+        result.cup = .14
     case .Grapevine:
         result.width = 1.85
         result.length = 2.1
         result.segments = 32
         result.serration = .075
-        result.cup = .08
+        result.curl = .16
+        result.cup = .11
     case .Ivy:
         result.width = 1.75
         result.length = 2.15
         result.segments = 30
-        result.cup = .04
+        result.curl = .14
+        result.cup = .075
     case .Cypress_Spray:
         // A flattened, overlapping fan of scale leaves. The repeated edge
         // lobes remain legible when the card represents an entire distant
         // spray rather than one microscopic leaf.
-        result.width = .78
-        result.length = 1.8
+        result.width = 1.05
+        result.length = 2.2
         result.segments = 20
         result.curl = .08
         result.cup = .12
@@ -286,6 +291,154 @@ mesh_finish_normals :: proc(mesh: ^Mesh) {
     }
 }
 
+mesh_finish_volume_normals :: proc(mesh: ^Mesh) {
+    if mesh == nil do return
+    for first := 0; first + 2 < mesh.index_count; first += 3 {
+        ia, ib, ic := mesh.indices[first + 0], mesh.indices[first + 1], mesh.indices[first + 2]
+        a, b, c := mesh.vertices[ia].position, mesh.vertices[ib].position, mesh.vertices[ic].position
+        face := linalg.cross(b - a, c - a)
+        mesh.vertices[ia].normal += face
+        mesh.vertices[ib].normal += face
+        mesh.vertices[ic].normal += face
+    }
+    for &vertex in mesh.vertices[:mesh.vertex_count] {
+        vertex.normal = linalg.normalize0(vertex.normal)
+        if linalg.dot(vertex.normal, vertex.normal) < .001 do vertex.normal = {0, 0, 1}
+    }
+}
+
+generate_fleshy :: proc(config: Config) -> Mesh {
+    mesh: Mesh
+    segments := clamp(config.segments, 3, MAX_SEGMENTS)
+    length := max(config.length, f32(.01))
+    width := max(config.width, f32(.01))
+    thickness := max(config.thickness, f32(.002))
+
+    for row in 0 ..= segments {
+        t := f32(row) / f32(segments)
+        y := t * length
+        profile := half_width(config.shape, t)
+        if config.serration > 0 && row > 0 && row < segments {
+            tooth := row % 2 == 0 ? f32(1) : f32(-1)
+            profile *= 1 + tooth * clamp(config.serration, f32(0), f32(.35))
+        }
+        // Avoid degenerate end rings while retaining the selected botanical
+        // taper. End caps close these tiny rings into a watertight node.
+        radial_profile := max(profile, f32(.025))
+        radius_x := width * .5 * radial_profile
+        radius_z := thickness * .5 * math.pow(radial_profile, f32(.72))
+        spine_z := config.curl * math.sin(math.PI * t)
+        for side in 0 ..< FLESHY_SIDES {
+            angle := f32(side) * math.PI * 2 / FLESHY_SIDES
+            index := row * FLESHY_SIDES + side
+            mesh.vertices[index] = {
+                {math.cos(angle) * radius_x, y, spine_z + math.sin(angle) * radius_z},
+                {},
+                {f32(side) / FLESHY_SIDES, t},
+            }
+            mesh.vertex_count += 1
+        }
+    }
+    for row in 0 ..< segments {
+        for side in 0 ..< FLESHY_SIDES {
+            next_side := (side + 1) % FLESHY_SIDES
+            a := u16(row * FLESHY_SIDES + side)
+            b := u16((row + 1) * FLESHY_SIDES + side)
+            c := u16((row + 1) * FLESHY_SIDES + next_side)
+            d := u16(row * FLESHY_SIDES + next_side)
+            triangles := [6]u16{a, b, c, a, c, d}
+            for index in triangles {
+                mesh.indices[mesh.index_count] = index
+                mesh.index_count += 1
+            }
+        }
+    }
+    // Fan each cap around its first ring vertex without adding center points.
+    for side in 1 ..< FLESHY_SIDES - 1 {
+        base_triangles := [3]u16{0, u16(side + 1), u16(side)}
+        tip := u16(segments * FLESHY_SIDES)
+        tip_triangles := [3]u16{tip, tip + u16(side), tip + u16(side + 1)}
+        for index in base_triangles {
+            mesh.indices[mesh.index_count] = index
+            mesh.index_count += 1
+        }
+        for index in tip_triangles {
+            mesh.indices[mesh.index_count] = index
+            mesh.index_count += 1
+        }
+    }
+    mesh_finish_volume_normals(&mesh)
+    return mesh
+}
+
+// Cypress foliage is made from minute, overlapping scale leaves carried on a
+// flattened branchlet. A single scalloped card reads as a broad leaf at close
+// range, so build a small open spray from paired pointed scales instead. The
+// gaps and raised tips fake many more needles than the geometry actually has.
+generate_cypress_spray :: proc(config: Config) -> Mesh {
+    mesh: Mesh
+    length := max(config.length, f32(.01))
+    width := max(config.width, f32(.01))
+    // Dense, appressed scales should merge into a flattened branchlet at
+    // ordinary viewing distance. Using each authored segment as one pair
+    // avoids the sparse fir-needle herringbone produced by half density.
+    pairs := clamp(config.segments * 4 / 5, 8, 16)
+
+    append_quad := proc(mesh: ^Mesh, a, b, c, d: [3]f32, uv_min, uv_max: [2]f32) {
+        if mesh.vertex_count + 4 > MAX_VERTICES || mesh.index_count + 6 > MAX_INDICES do return
+        base := u16(mesh.vertex_count)
+        mesh.vertices[mesh.vertex_count + 0] = {a, {}, {uv_min[0], uv_min[1]}}
+        mesh.vertices[mesh.vertex_count + 1] = {b, {}, {uv_max[0], uv_min[1]}}
+        mesh.vertices[mesh.vertex_count + 2] = {c, {}, {uv_max[0], uv_max[1]}}
+        mesh.vertices[mesh.vertex_count + 3] = {d, {}, {uv_min[0], uv_max[1]}}
+        mesh.vertex_count += 4
+        indices := [6]u16{base, base + 2, base + 1, base, base + 3, base + 2}
+        for index in indices {
+            mesh.indices[mesh.index_count] = index
+            mesh.index_count += 1
+        }
+    }
+
+    // A narrow shoot binds the separated scales into one readable branchlet.
+    shoot_half := width * .055
+    append_quad(
+        &mesh,
+        {-shoot_half, 0, 0},
+        {shoot_half, 0, 0},
+        {shoot_half * .28, length, config.curl * .18},
+        {-shoot_half * .28, length, config.curl * .18},
+        {.46, 0},
+        {.54, 1},
+    )
+
+    for pair in 0 ..< pairs {
+        t := (f32(pair) + .20) / (f32(pairs) + .25)
+        envelope := math.pow(math.sin(math.PI * t), f32(.48))
+        base_y := length * t
+        // Basal scales lean sideways; terminal scales close around the shoot.
+        outward := width * (.33 - .11 * t) * envelope
+        blade_length := length / f32(pairs) * (2.05 - .35 * t)
+        blade_half := max(width * .070 * envelope, width * .022)
+        overlap := blade_length * .46
+        for side in -1 ..= 1 {
+            if side == 0 do continue
+            s := f32(side)
+            root := [3]f32{s * shoot_half * .35, base_y - overlap, config.cup * .10 * envelope}
+            shoulder := [3]f32{s * (outward * .68), base_y + blade_length * .16, config.cup * .34 * envelope}
+            tip := [3]f32{
+                s * outward,
+                min(base_y + blade_length, length * 1.015),
+                config.cup * envelope + config.curl * t * .20,
+            }
+            inner := [3]f32{s * blade_half, base_y + blade_length * .52, config.cup * .20 * envelope}
+            append_quad(&mesh, root, inner, tip, shoulder, {0, t}, {1, min(t + 1 / f32(pairs), f32(1))})
+        }
+    }
+
+    mesh_finish_normals(&mesh)
+    return mesh
+}
+
 cross_2d :: #force_inline proc(a, b, c: [3]f32) -> f32 {
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
@@ -424,6 +577,8 @@ generate_palmate :: proc(config: Config) -> Mesh {
 generate :: proc(config: Config) -> Mesh {
     mesh: Mesh
     if int(config.shape) < 0 || int(config.shape) >= SHAPE_COUNT do return mesh
+    if config.shape == .Cypress_Spray do return generate_cypress_spray(config)
+    if config.thickness > 0 do return generate_fleshy(config)
     if is_palmate(config.shape) do return generate_palmate(config)
     segments := clamp(config.segments, 3, MAX_SEGMENTS)
     length := max(config.length, f32(.01))

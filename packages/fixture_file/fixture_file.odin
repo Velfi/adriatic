@@ -152,6 +152,48 @@ fixture_container_decode :: proc(
     if config_error := fixture_container_validate_config(config); config_error.kind != .None {
         return {}, config_error, false
     }
+    sectioned_magic := Sectioned_Container_Magic
+    sectioned := len(data) >= len(sectioned_magic)
+    if sectioned {
+        for value, index in sectioned_magic {
+            if data[index] != value {
+                sectioned = false
+                break
+            }
+        }
+    }
+    if sectioned {
+        if len(data) < Sectioned_Container_Header_Size {
+            return {}, fixture_container_error(.Truncated, len(data), "sectioned fixture header is truncated"), false
+        }
+        section_count, count_error, count_ok := sectioned_container_directory_count(data)
+        if !count_ok {
+            return {}, fixture_container_error(.Limit_Exceeded, count_error.offset, count_error.message), false
+        }
+        entries := make([]Section_Entry, section_count, context.temp_allocator)
+        sectioned_view, sectioned_error, sectioned_ok := sectioned_container_decode(data, entries)
+        if !sectioned_ok {
+            kind := Fixture_Container_Error_Kind.Invalid_Argument
+            #partial switch sectioned_error.kind {
+            case .Truncated: kind = .Truncated
+            case .Invalid_Magic: kind = .Invalid_Magic
+            case .Unsupported_Version: kind = .Unsupported_Version
+            case .Unsupported_Flags: kind = .Unsupported_Flags
+            case .Limit_Exceeded: kind = .Limit_Exceeded
+            case .Overflow: kind = .Overflow
+            case .Trailing_Bytes: kind = .Trailing_Bytes
+            case .Checksum_Mismatch: kind = .Checksum_Mismatch
+            case: kind = .Invalid_Argument
+            }
+            return {}, fixture_container_error(kind, sectioned_error.offset, sectioned_error.message), false
+        }
+        if sectioned_view.artifact_kind != .Fixture {
+            return {}, fixture_container_error(.Invalid_Magic, 10, "sectioned container is not a fixture"), false
+        }
+        payload, found := sectioned_container_section(&sectioned_view, {kind = .Core})
+        if !found do return {}, fixture_container_error(.Truncated, 24, "sectioned fixture has no core section"), false
+        return {schema_version = sectioned_view.schema_version, payload = payload}, {}, true
+    }
     if len(data) < Fixture_Container_Header_Size {
         return {}, fixture_container_error(.Truncated, len(data), "fixture container header is truncated"), false
     }

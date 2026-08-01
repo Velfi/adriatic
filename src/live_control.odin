@@ -200,7 +200,7 @@ live_control_terrain_brush_name :: proc(editor: ^Editor) -> string {
     case .Formations:
         return "formations"
     case .Foliage:
-        return "foliage"
+        return "plant_stamp"
     case .Ridge:
         return "ridge"
     case .Cliff:
@@ -214,7 +214,7 @@ live_control_terrain_brush_name :: proc(editor: ^Editor) -> string {
     case .Wreck:
         return "wreck"
     case .ClimbingLeaves:
-        return "climbing_leaves"
+        return "plant_stamp"
     case .Roads:
         return "roads"
     case .GreekAssets:
@@ -233,9 +233,15 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
         radius, strength, hardness =
             editor.formation_brush_radius, editor.formation_brush_strength, editor.formation_brush_hardness
     case .Foliage:
-        radius, strength, hardness =
-            editor.formation_brush_radius, editor.formation_brush_strength, editor.formation_brush_hardness
-        mode = editor.foliage_hedgerow_mode ? "hedge" : "mass"
+        if editor.plant_stamp_mode == .Climbing {
+            radius, strength, hardness =
+                editor.climbing_leaf_brush_radius, editor.climbing_leaf_brush_strength, editor.climbing_leaf_brush_hardness
+            mode = "climbing"
+        } else {
+            radius, strength, hardness =
+                editor.formation_brush_radius, editor.formation_brush_strength, editor.formation_brush_hardness
+            mode = editor.foliage_hedgerow_mode ? "hedge" : "ground"
+        }
     case .Ridge, .Cliff:
         width, height = editor.curve_width, editor.curve_height
     case .Building:
@@ -563,6 +569,7 @@ live_control_poll :: proc(editor: ^Editor) {
                 fields[0] == "smooth" ||
                 fields[0] == "paint" ||
                 fields[0] == "formations" ||
+                fields[0] == "plant_stamp" ||
                 fields[0] == "foliage" ||
                 fields[0] == "ridge" ||
                 fields[0] == "cliff" ||
@@ -573,7 +580,12 @@ live_control_poll :: proc(editor: ^Editor) {
                 fields[0] == "climbing_leaves" ||
                 fields[0] == "roads" ||
                 fields[0] == "ruins"
-            mode_ok := fields[7] == "-" || fields[7] == "mass" || fields[7] == "hedge"
+            mode_ok :=
+                fields[7] == "-" ||
+                fields[7] == "ground" ||
+                fields[7] == "mass" ||
+                fields[7] == "hedge" ||
+                fields[7] == "climbing"
             if !tool_ok ||
                !radius_ok ||
                !strength_ok ||
@@ -593,7 +605,7 @@ live_control_poll :: proc(editor: ^Editor) {
                     authoring_select_tool(editor, .Paint)
                 case "formations":
                     authoring_select_tool(editor, .Formations)
-                case "foliage":
+                case "plant_stamp", "foliage":
                     authoring_select_tool(editor, .Foliage)
                 case "ridge":
                     authoring_select_tool(editor, .Ridge)
@@ -621,13 +633,22 @@ live_control_poll :: proc(editor: ^Editor) {
                     if fields[2] != "-" do editor.strength = clamp(strength, 0, 1)
                     if fields[3] != "-" do editor.hardness = clamp(hardness, 0, 1)
                 case .Formations, .Foliage:
-                    if fields[1] != "-" {
-                        editor.formation_brush_radius = clamp(radius, terrain.BASE_CELL_SIZE, 240)
-                    }
-                    if fields[2] != "-" do editor.formation_brush_strength = clamp(strength, .02, 1)
-                    if fields[3] != "-" do editor.formation_brush_hardness = clamp(hardness, 0, 1)
-                    if fields[7] != "-" {
+                    if editor.authoring_tool == .Foliage && fields[7] == "climbing" {
+                        editor.plant_stamp_mode = .Climbing
+                        editor.climbing_leaf_paint_mode = true
+                    } else if editor.authoring_tool == .Foliage && fields[7] != "-" {
+                        editor.plant_stamp_mode = .Ground
+                        editor.climbing_leaf_paint_mode = false
                         editor.foliage_hedgerow_mode = fields[7] == "hedge"
+                    }
+                    if editor.authoring_tool == .Foliage && editor.plant_stamp_mode == .Climbing {
+                        if fields[1] != "-" do editor.climbing_leaf_brush_radius = clamp(radius, terrain.BASE_CELL_SIZE, 240)
+                        if fields[2] != "-" do editor.climbing_leaf_brush_strength = clamp(strength, .02, 1)
+                        if fields[3] != "-" do editor.climbing_leaf_brush_hardness = clamp(hardness, 0, 1)
+                    } else {
+                        if fields[1] != "-" do editor.formation_brush_radius = clamp(radius, terrain.BASE_CELL_SIZE, 240)
+                        if fields[2] != "-" do editor.formation_brush_strength = clamp(strength, .02, 1)
+                        if fields[3] != "-" do editor.formation_brush_hardness = clamp(hardness, 0, 1)
                     }
                 case .Ridge, .Cliff:
                     if fields[4] != "-" {

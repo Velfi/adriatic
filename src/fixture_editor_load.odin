@@ -87,6 +87,18 @@ fixture_editor_basis_finite :: #force_inline proc(basis: flight.Basis) -> bool {
 fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
     if fixture == nil do return "fixture"
     if fixture.active_lab_scene != "" do return "active_lab_scene"
+    if !fixture_editor_count_valid(fixture.note_count, len(fixture.notes)) do return "note_count"
+    for &note in fixture.notes[:fixture.note_count] {
+        if !fixture_editor_vec3_finite(note.fallback_position) do return "notes.fallback_position"
+        terminated := false
+        for byte in note.text {
+            if byte == 0 {
+                terminated = true
+                break
+            }
+        }
+        if !terminated do return "notes.text"
+    }
     if !fixture_editor_count_valid(fixture.project.structure_count, len(fixture.project.structures)) {
         return "project.structure_count"
     }
@@ -387,6 +399,9 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     editor.curve_drawing = false
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
+    editor.road_hover_edge = -1
+    editor.road_hover_handle = -1
+    editor.road_drag_handle_moved = false
     editor.crash_recovery_phase = .Inactive
     editor.crash_recovery_seconds = 0
     editor.cinematic_playback = {}
@@ -502,6 +517,7 @@ fixture_editor_load :: proc(
     if stage.car_physics_world == nil || stage.car_physics_vehicle == nil {
         return {kind = .Runtime_Stage, path = "car_physics"}, false
     }
+    fixture_notes_before_fixture_replace(editor)
     old_owner := editor.fixture_owner
     if editor.active_lab_scene != "" {
         definition := lab_scene_find(editor.active_lab_scene)
@@ -521,6 +537,7 @@ fixture_editor_load :: proc(
     candidate = {}
     candidate_owned = false
     fixture_lifecycle_apply(&editor.fixture, &bind_plan)
+    fixture_notes_after_fixture_replace()
 
     editor.gameplay_physics = stage.gameplay_physics
     editor.car_physics_world = stage.car_physics_world

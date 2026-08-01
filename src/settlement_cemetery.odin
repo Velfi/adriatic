@@ -6,6 +6,7 @@ import plants "../packages/plants"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
@@ -44,6 +45,23 @@ settlement_cemetery_outer_radius :: proc(plan: ^Settlement_Plan) -> f32 {
         radius = max(radius, f32(math.sqrt(f64(dx * dx + dz * dz))) + cell.radius)
     }
     if radius <= 0 do radius = plan.request.radius * .42
+    return radius
+}
+
+settlement_cemetery_built_radius :: proc(plan: ^Settlement_Plan) -> f32 {
+    if plan == nil do return 0
+    radius := f32(0)
+    for site in plan.sites[:plan.site_count] {
+        if !site.accepted ||
+           (site.kind != .Ordinary && site.kind != .Landmark && site.kind != .Ruin) {
+            continue
+        }
+        center := [2]f32{site.structure.center_x, site.structure.center_z}
+        extent :=
+            f32(math.sqrt(f64(site.structure.width * site.structure.width + site.structure.depth * site.structure.depth))) *
+            .5
+        radius = max(radius, linalg.length(center - plan.request.center) + extent)
+    }
     return radius
 }
 
@@ -123,12 +141,20 @@ settlement_cemetery_derive :: proc(editor: ^Editor) -> Settlement_Cemetery {
         return result
     }
     outer_radius := settlement_cemetery_outer_radius(settlement)
+    if settlement.request.scale == .Town {
+        built_radius := settlement_cemetery_built_radius(settlement)
+        if built_radius > 0 do outer_radius = min(outer_radius, built_radius)
+    }
     seed := settlement.request.seed ~ u32(0xCE4E7E12)
     angle_offset := f32(cemeteries.mix(seed) & 0xffff) / f32(0xffff) * math.PI * 2
+    best_approach_distance := f32(1e9)
+    best_x, best_z, best_rotation, best_ground_y := f32(0), f32(0), f32(0), f32(0)
+    best_found := false
     for candidate in 0 ..< 20 {
         angle := angle_offset + f32(candidate) * math.PI * 2 / 20
         outward_x, outward_z := math.sin(angle), math.cos(angle)
-        distance := outer_radius + depth * .5 + 9 + f32(candidate / 10) * 8
+        edge_gap := settlement.request.scale == .Town ? f32(5) : f32(9)
+        distance := outer_radius + depth * .5 + edge_gap + f32(candidate / 10) * 8
         x := settlement.request.center[0] + outward_x * distance
         z := settlement.request.center[1] + outward_z * distance
         rotation := angle
@@ -137,12 +163,31 @@ settlement_cemetery_derive :: proc(editor: ^Editor) -> Settlement_Cemetery {
         if !settlement_cemetery_access_clear(editor, x, z, width, depth, rotation) do continue
         ground_y, relief := settlement_cemetery_site_relief(&editor.project, x, z, width, depth, rotation)
         if ground_y <= editor.project.sea_level + .5 || relief > 1.05 do continue
+        if settlement.request.scale == .Town {
+            approach_x, approach_z := world_rotate_xz(x, z, 0, -depth * .5 - 5, rotation)
+            approach_distance := settlement_nearest_committed_road_distance(
+                &editor.project,
+                {approach_x, approach_z},
+            )
+            if approach_distance > 32 || approach_distance >= best_approach_distance do continue
+            best_approach_distance = approach_distance
+            best_x, best_z, best_rotation, best_ground_y = x, z, rotation, ground_y
+            best_found = true
+            continue
+        }
         result.plan = cemeteries.generate(seed, {width = width, depth = depth, density = density, style = style})
         result.origin = {x, z}
         result.rotation = rotation
         result.ground_y = ground_y
         result.valid = result.plan.valid
         return result
+    }
+    if best_found {
+        result.plan = cemeteries.generate(seed, {width = width, depth = depth, density = density, style = style})
+        result.origin = {best_x, best_z}
+        result.rotation = best_rotation
+        result.ground_y = best_ground_y
+        result.valid = result.plan.valid
     }
     return result
 }

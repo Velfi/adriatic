@@ -342,6 +342,7 @@ fixture_editor_save :: proc(editor: ^Editor) {
     defer fixture_editor_store_error_dispose(&error)
     if ok {
         editor.terrain_saved_revision = editor.project.revision
+        fixture_notes_mark_saved()
         terrain_file_feedback(editor, "FIXTURE SAVED")
     } else {
         terrain_file_feedback(editor, "FIXTURE SAVE FAILED")

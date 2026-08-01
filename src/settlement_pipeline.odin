@@ -491,7 +491,7 @@ settlement_plan_add_route :: proc(
     rng: ^Settlement_Rng,
 ) {
     if plan == nil || geometry.count < 2 || plan.route_count >= len(plan.routes) do return
-    width := settlement_route_width_sample(rng, class)
+    width := settlement_route_width_sample_for_scale(rng, class, plan.request.scale)
     if drivable && plan.route_count > 0 {
         coverage_by_route: [SETTLEMENT_PLANNED_ROUTE_CAPACITY]f32
         badness := settlement_route_overlap_badness(plan, geometry, width, &coverage_by_route)
@@ -543,6 +543,10 @@ settlement_plan_commit_routes :: proc(plan: ^Settlement_Plan, project: ^terrain.
         required := required_pass == 0
         for route in plan.routes[:plan.route_count] {
             if route.required != required || !route.drivable do continue
+            // Leave room for the generated island's airport, lighthouse, post
+            // office, and clinic connectors. Optional alleys must not starve
+            // campaign-critical POIs from the shared road graph.
+            if !required && project.road_graph.node_count + route.geometry.count > roads.MAX_NODES - 24 do continue
             settlement_route_commit(
                 project,
                 route.geometry,
@@ -1018,6 +1022,7 @@ settlement_plan_build_macro_routes :: proc(plan: ^Settlement_Plan, project: ^ter
     }
     if core < 0 do return
     core_point := plan.macro_cells[core].center
+    cross_route_junction := core_point
 
     if plan.request.region == .Adriatic {
         settlement_plan_add_segmented_spine(
@@ -1029,6 +1034,23 @@ settlement_plan_build_macro_routes :: proc(plan: ^Settlement_Plan, project: ^ter
             .Civic_Spine,
             rng,
         )
+        // Compact hillside towns read more naturally as a sequence of small
+        // junctions than as every important road radiating from one plaza.
+        // Keep the civic space at the historic core, but let the cross-town
+        // route and its sparse connector tree meet the spine a short distance
+        // along it. Cities retain the stronger central convergence.
+        if plan.request.scale == .Town {
+            spine_direction := linalg.normalize0(plan.macro_cells[east].center - plan.macro_cells[west].center)
+            offset_sign := plan.request.seed & 1 == 0 ? f32(-1) : f32(1)
+            offset := min(max(radius * .06, f32(10)), f32(18))
+            cross_route_junction = core_point + spine_direction * offset * offset_sign
+            cross_route_junction[0], cross_route_junction[1] = settlement_fit_landscape_point(
+                project,
+                cross_route_junction[0],
+                cross_route_junction[1],
+                4,
+            )
+        }
     } else {
         // Aegean civic space follows an elevation band instead of bisecting
         // the settlement. Snap the desired offset to retained fabric so a
@@ -1068,21 +1090,22 @@ settlement_plan_build_macro_routes :: proc(plan: ^Settlement_Plan, project: ^ter
     }
 
     // The old route deliberately cuts across the younger tissue. Splitting it
-    // at the historic core guarantees graph connectivity without turning it
-    // into a geometrically perfect avenue.
+    // at its junction guarantees graph connectivity without turning it into
+    // a geometrically perfect avenue. Town junctions are slightly staggered
+    // along their civic spine to avoid an oversized radial junction.
     confounding_ends := plan.request.region == .Adriatic ? [2]int{north, south} : [2]int{south, east}
     old_first := settlement_route_find(
         project,
         plan.macro_cells[confounding_ends[0]].center[0],
         plan.macro_cells[confounding_ends[0]].center[1],
-        core_point[0],
-        core_point[1],
+        cross_route_junction[0],
+        cross_route_junction[1],
         .Street,
     )
     old_second := settlement_route_find(
         project,
-        core_point[0],
-        core_point[1],
+        cross_route_junction[0],
+        cross_route_junction[1],
         plan.macro_cells[confounding_ends[1]].center[0],
         plan.macro_cells[confounding_ends[1]].center[1],
         .Street,
@@ -1094,7 +1117,11 @@ settlement_plan_build_macro_routes :: proc(plan: ^Settlement_Plan, project: ^ter
     // Farthest-first sampling spreads those anchors across the settlement;
     // the network builder then chooses a sparse terrain-cost tree between
     // them instead of forcing every district onto a radial core spoke.
-    connector_count := plan.request.scale == .City ? 4 : 3
+    // Towns need a legible hierarchy, not a miniature ring road. One outer
+    // anchor plus the civic and old cross-town spines covers the compact
+    // fabric without wrapping it in the large triangular loop that dominated
+    // hillside views. Cities retain the broader four-anchor network.
+    connector_count := plan.request.scale == .City ? 4 : 1
     network_pois: [8]Settlement_Road_Network_PoI
     network_pois[0] = {
         position = core_point,
@@ -1184,11 +1211,15 @@ settlement_plan_reserve_junction_plaza :: proc(plan: ^Settlement_Plan, project: 
     case .City:
         half_x, half_z = 12, 9
     case .Town:
-        half_x, half_z = 10, 8
+        // Riviera civic space is a room in the street wall, not a broad
+        // cleared apron. Keep enough area for gathering and circulation while
+        // allowing narrow-fronted houses to enclose it closely.
+        half_x, half_z = 8, 6
     case .Village:
         half_x, half_z = 8, 6
     }
-    settlement_plan_record_terrain_edit(plan, project, .Plaza, center[0], center[1], half_x, half_z, 3)
+    feather := plan.request.scale == .Town ? f32(1.8) : f32(3)
+    settlement_plan_record_terrain_edit(plan, project, .Plaza, center[0], center[1], half_x, half_z, feather)
     plan.program.plazas.placed += 1
     return true
 }
@@ -1280,11 +1311,35 @@ settlement_nearest_route_frame :: proc(
     return
 }
 
+settlement_nearest_committed_road_distance :: proc(project: ^terrain.Project, point: [2]f32) -> f32 {
+    if project == nil do return 1e30
+    best := f32(1e30)
+    graph := &project.road_graph
+    for edge in graph.edges[:graph.edge_count] {
+        if settlement_route_edge_is_runway(edge) do continue
+        previous := roads.edge_point(graph, edge, 0)
+        for segment in 1 ..= 12 {
+            current := roads.edge_point(graph, edge, f32(segment) / 12)
+            start := [2]f32{previous.x, previous.z}
+            finish := [2]f32{current.x, current.z}
+            delta := finish - start
+            length_squared := linalg.dot(delta, delta)
+            if length_squared > .0001 {
+                along := clamp(linalg.dot(point - start, delta) / length_squared, f32(0), f32(1))
+                best = min(best, linalg.length(point - (start + delta * along)))
+            }
+            previous = current
+        }
+    }
+    return best
+}
+
 settlement_structure_clear :: proc(
     project: ^terrain.Project,
     city_plan: ^architecture.City_Plan,
     x, z, width, depth, rotation, separation: f32,
 ) -> bool {
+    if !settlement_airport_terminals_clear(project, x, z, width, depth, rotation, separation) do return false
     tangent := [2]f32{f32(math.cos(f64(rotation))), f32(math.sin(f64(rotation)))}
     building_normal := [2]f32{-tangent.y, tangent.x}
     graph := &project.road_graph
@@ -1349,9 +1404,55 @@ settlement_structure_clear :: proc(
     return true
 }
 
-// A viable center point is not enough near an irregular shoreline: a rotated
-// parcel can still cantilever one or more corners over the sea. Sample a 3x3
-// footprint grid so both the perimeter and the interior must be buildable.
+// The procedural terminal is presentation geometry rather than a full-sized
+// terrain.Structure, so ordinary structure collision cannot see it. Reserve
+// the union of its 42 x 30 m terminal forecourt and the inward 15 x 20 m
+// asphalt approach explicitly. The resulting 42 m square also covers airport
+// stamps, whose persistent structure is intentionally only a tiny marker.
+settlement_airport_terminals_clear :: proc(
+    project: ^terrain.Project,
+    x, z, width, depth, rotation, separation: f32,
+) -> bool {
+    if project == nil do return true
+    airport_clearance := max(separation, f32(2))
+    for sign in terrain.DEFAULT_ISLAND_SIGNS {
+        runway_found := false
+        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+            if !settlement_route_edge_is_runway(edge) do continue
+            from := project.road_graph.nodes[edge.from].position
+            to := project.road_graph.nodes[edge.to].position
+            if (from.x + to.x) * .5 * sign > 0 {
+                runway_found = true
+                break
+            }
+        }
+        if !runway_found do continue
+        airport_x, airport_z := terrain.default_airport_center_for_project(project, sign)
+        if !settlement_oriented_rectangles_clear(
+            x, z, width, depth, rotation,
+            airport_x, airport_z, 42, 42, 0,
+            airport_clearance,
+        ) {
+            return false
+        }
+    }
+    for structure in project.structures[:project.structure_count] {
+        if !airport_structure_is_stamp(structure) do continue
+        if !settlement_oriented_rectangles_clear(
+            x, z, width, depth, rotation,
+            structure.center_x, structure.center_z, 42, 42, structure.rotation,
+            airport_clearance,
+        ) {
+            return false
+        }
+    }
+    return true
+}
+
+// A viable center point is not enough near an irregular shoreline or river: a
+// rotated parcel can still cantilever over water. Keep samples no farther than
+// two metres apart so a narrow or diagonal generated channel cannot pass
+// between the old corner/center probes.
 settlement_structure_footprint_on_land :: proc(
     project: ^terrain.Project,
     x, z, width, depth, rotation: f32,
@@ -1360,11 +1461,15 @@ settlement_structure_footprint_on_land :: proc(
     if project == nil do return false
     tangent := [2]f32{f32(math.cos(f64(rotation))), f32(math.sin(f64(rotation)))}
     normal := [2]f32{-tangent.y, tangent.x}
-    half_width, half_depth := width * .5, depth * .5
-    for depth_step in -1 ..= 1 {
-        for width_step in -1 ..= 1 {
-            point := [2]f32{x, z} + tangent * (f32(width_step) * half_width) + normal * (f32(depth_step) * half_depth)
-            if terrain.sample_height(project, 0, point[0], point[1]) <= project.sea_level + clearance {
+    width_steps := max(int(math.ceil(f64(width / 2))), 1)
+    depth_steps := max(int(math.ceil(f64(depth / 2))), 1)
+    for depth_step in 0 ..= depth_steps {
+        depth_offset := (f32(depth_step) / f32(depth_steps) - .5) * depth
+        for width_step in 0 ..= width_steps {
+            width_offset := (f32(width_step) / f32(width_steps) - .5) * width
+            point := [2]f32{x, z} + tangent * width_offset + normal * depth_offset
+            if terrain.sample_height(project, 0, point[0], point[1]) <= project.sea_level + clearance ||
+               terrain.active_waterway_at(project, 0, point[0], point[1]) {
                 return false
             }
         }
@@ -1440,8 +1545,12 @@ settlement_fabric_cell_kept :: proc(scale: Settlement_Scale, age: f32, hash: u32
         return true
     case .Town:
         if age <= .58 do return true
-        if age >= .85 do return false
-        edge_probability := clamp((.85 - age) / (.85 - .58), 0, 1)
+        // A compact hillside town can feather into a few villas, but a long
+        // tail of old one-house cells turns every contour road into ribbon
+        // suburbia. End the urban fabric sooner and leave remote compounds to
+        // the village system.
+        if age >= .80 do return false
+        edge_probability := clamp((.80 - age) / (.80 - .58), 0, 1)
         return f32(hash % 1000) / 1000 < edge_probability
     case .Village:
         if age <= .48 do return true
@@ -1461,7 +1570,11 @@ settlement_fabric_route_reachable :: proc(scale: Settlement_Scale, distance: f32
         // cities form a detached carpet uphill from their road network.
         return distance <= 55
     case .Town:
-        return distance <= 42
+        // Beyond this distance a town parcel needs a long isolated access
+        // spoke and reads as scattered countryside. Keep urban fabric within
+        // a walkable frontage/court band; genuinely remote compounds belong
+        // to the village generator.
+        return distance <= 32
     case .Village:
         return distance <= 30
     }
@@ -1574,6 +1687,48 @@ settlement_structure_routes_clear :: proc(
             ) {
                 return false
             }
+        }
+    }
+    return true
+}
+
+// Placement plans against authored route geometry, but committed roads may
+// curve between those waypoints and widen at graph junctions. Reject against
+// the exact road graph that will render so no building footprint can occupy a
+// paved lane even when the planned chord itself was clear.
+settlement_structure_committed_roads_clear :: proc(
+    project: ^terrain.Project,
+    structure: terrain.Structure,
+    clearance: f32 = .75,
+) -> bool {
+    if project == nil do return false
+    graph := &project.road_graph
+    for edge in graph.edges[:graph.edge_count] {
+        previous := roads.edge_point(graph, edge, 0)
+        corridor_clearance := edge.half_width + edge.shoulder_width + max(clearance, f32(0))
+        for sample in 1 ..= 24 {
+            current := roads.edge_point(graph, edge, f32(sample) / 24)
+            if settlement_segment_intersects_structure_clearance(
+                {previous.x, previous.z},
+                {current.x, current.z},
+                structure,
+                corridor_clearance,
+            ) {
+                return false
+            }
+            previous = current
+        }
+    }
+    tangent := [2]f32{f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))}
+    normal := [2]f32{-tangent[1], tangent[0]}
+    center := [2]f32{structure.center_x, structure.center_z}
+    for node in graph.nodes[:graph.node_count] {
+        delta := [2]f32{node.position.x, node.position.z} - center
+        local_x := math.abs(linalg.dot(delta, tangent))
+        local_z := math.abs(linalg.dot(delta, normal))
+        radius := node.junction_radius + max(clearance, f32(0))
+        if local_x <= structure.width * .5 + radius && local_z <= structure.depth * .5 + radius {
+            return false
         }
     }
     return true
@@ -2022,27 +2177,145 @@ settlement_rotation_face_point :: proc(rotation: f32, center, target: [2]f32) ->
     return result
 }
 
-settlement_structure_front_door_point :: proc(structure: terrain.Structure, clearance: f32 = .22) -> [2]f32 {
+settlement_stoop_road_clearance :: proc(
+    project: ^terrain.Project,
+    start, finish: [2]f32,
+    half_width: f32,
+) -> f32 {
+    if project == nil || project.road_graph.edge_count <= 0 do return f32(1e30)
+    result := f32(1e30)
+    for sample in 0 ..= 8 {
+        amount := f32(sample) / 8
+        point := start + (finish - start) * amount
+        hit := architecture.city_nearest_road_frontage(&project.road_graph, point[0], point[1])
+        if hit.found do result = min(result, hit.distance - hit.clearance - half_width)
+    }
+    return result
+}
+
+settlement_stoop_layout_choice :: proc(
+    project: ^terrain.Project,
+    structure: terrain.Structure,
+    wall, outward, tangent: [2]f32,
+    door_width, threshold_y: f32,
+    base_choice: int,
+) -> int {
+    if project == nil || base_choice != 0 do return base_choice
+
+    straight_probe := wall + outward * .72
+    straight_ground := terrain.sample_height(project, 0, straight_probe[0], straight_probe[1])
+    straight_rise := threshold_y - straight_ground
+    if straight_rise <= .30 do return base_choice
+    step_count := clamp(int(math.ceil(f64(straight_rise / .20))), 2, 14)
+    straight_foot := wall + outward * (.20 + f32(step_count - 1) * .42)
+    straight_clearance := settlement_stoop_road_clearance(
+        project,
+        wall,
+        straight_foot,
+        door_width * .5 + .20,
+    )
+    if straight_clearance >= 0 do return base_choice
+
+    side_extent := door_width * .5 + (.5 + f32(step_count - 1)) * .42
+    landing_center := wall + outward * .90
+    left_foot := landing_center - tangent * side_extent
+    right_foot := landing_center + tangent * side_extent
+    landing_half_width := door_width * .5 + .41
+    left_clearance := min(
+        settlement_stoop_road_clearance(project, wall, landing_center, landing_half_width),
+        settlement_stoop_road_clearance(project, landing_center, left_foot, .81),
+    )
+    right_clearance := min(
+        settlement_stoop_road_clearance(project, wall, landing_center, landing_half_width),
+        settlement_stoop_road_clearance(project, landing_center, right_foot, .81),
+    )
+    if math.abs(left_clearance - right_clearance) <= .01 {
+        return structure.seed & 1 == 0 ? 1 : 2
+    }
+    return left_clearance > right_clearance ? 1 : 2
+}
+
+settlement_structure_front_door_point :: proc(
+    structure: terrain.Structure,
+    clearance: f32 = .22,
+    project: ^terrain.Project = nil,
+) -> [2]f32 {
     sine, cosine := f32(math.sin(f64(structure.rotation))), f32(math.cos(f64(structure.rotation)))
     local_x := [2]f32{cosine, sine}
     local_z := [2]f32{-sine, cosine}
     center := [2]f32{structure.center_x, structure.center_z}
+    threshold: [2]f32
+    outward, tangent := local_z, local_x
     switch structure.entrance_side {
     case .Front:
-        return center + local_z * (structure.depth * .5 + clearance)
+        threshold = center + local_z * (structure.depth * .5 + clearance)
     case .Right:
-        return center + local_x * (structure.width * .5 + clearance)
+        threshold = center + local_x * (structure.width * .5 + clearance)
+        outward, tangent = local_x, -local_z
     case .Rear:
-        return center - local_z * (structure.depth * .5 + clearance)
+        threshold = center - local_z * (structure.depth * .5 + clearance)
+        outward, tangent = -local_z, -local_x
     case .Left:
-        return center - local_x * (structure.width * .5 + clearance)
+        threshold = center - local_x * (structure.width * .5 + clearance)
+        outward, tangent = -local_x, local_z
     }
-    return center + local_z * (structure.depth * .5 + clearance)
+    if project == nil do return threshold
+
+    door_width := clamp(
+        (structure.entrance_side == .Front || structure.entrance_side == .Rear ? structure.width : structure.depth) * .13,
+        f32(1.8),
+        f32(2.8),
+    )
+    layout_choice := settlement_stoop_layout_choice(
+        project,
+        structure,
+        threshold - outward * clearance,
+        outward,
+        tangent,
+        door_width,
+        structure.base_y + .20,
+        int(structure.seed % 3),
+    )
+    turned := layout_choice != 0
+    turn_sign := layout_choice == 1 ? f32(-1) : f32(1)
+    probe := threshold + outward * (turned ? f32(.68) : f32(.50))
+    if turned do probe += tangent * turn_sign * (door_width * .5 + 2.4)
+    ground_y := terrain.sample_height(project, 0, probe[0], probe[1])
+    rise := structure.base_y + .20 - ground_y
+    if rise <= .30 do return threshold
+
+    step_count := clamp(int(math.ceil(f64(rise / .20))), 2, 14)
+    // Meet the ground-level handoff slab beyond the final tread.  Routing to
+    // the final tread's center makes the path climb onto the stoop and read as
+    // though it terminates at the doorstep.  These offsets mirror
+    // world_architecture_door_stoop's foot placement.
+    if !turned {
+        return threshold + outward * (.38 - clearance + f32(step_count) * .42)
+    }
+    return threshold + outward * (.90 - clearance) +
+           tangent * turn_sign * (door_width * .5 + f32(step_count) * .42 + .20)
 }
 
 settlement_structure_entrance_outward :: proc(structure: terrain.Structure) -> [2]f32 {
     edge := settlement_access_structure_edge(structure, int(structure.entrance_side))
     return edge.outward
+}
+
+settlement_structure_entrance_approach_outward :: proc(
+    structure: terrain.Structure,
+    project: ^terrain.Project,
+) -> [2]f32 {
+    outward := settlement_structure_entrance_outward(structure)
+    if project == nil do return outward
+    threshold := settlement_structure_front_door_point(structure)
+    handoff := settlement_structure_front_door_point(structure, .22, project)
+    tangent := [2]f32{outward[1], -outward[0]}
+    tangent_offset := linalg.dot(handoff - threshold, tangent)
+    if math.abs(tangent_offset) <= .1 do return outward
+    // A turned flight descends parallel to the facade. Continue that walking
+    // line from its foot instead of forcing the path to meet the bottom tread
+    // broadside along the facade normal.
+    return tangent * (tangent_offset < 0 ? f32(-1) : f32(1))
 }
 
 Settlement_Access_Frontage_Edge :: struct {
@@ -2137,7 +2410,11 @@ settlement_access_structure_edge_facing_lane :: proc(
 // threshold broader than a private dwelling path. These are preferred widths;
 // finished routes widen only when their complete footprint and grade allow it.
 settlement_access_preferred_half_width :: proc(scale: Settlement_Scale, purpose: Settlement_Building_Purpose) -> f32 {
-    scale_widths := [3]f32{.7, .6, .5}
+    // Town thresholds double as the smallest public passages between attached
+    // houses. At 1.6 m they read as a paved Riviera vicolo and allow two
+    // pedestrians to pass; constrained gaps may still fall back to the
+    // narrower pathfinder clearances below.
+    scale_widths := [3]f32{.7, .8, .5}
     base := scale_widths[int(scale)]
     switch purpose {
     case .Barn_Granary, .Mill, .Fishery, .Storehouse:
@@ -2182,7 +2459,11 @@ settlement_access_direct_grade_limit :: proc(purpose: Settlement_Building_Purpos
     return SETTLEMENT_ACCESS_SEVERE_GRADE
 }
 
-settlement_access_candidate_score :: proc(length, maximum_grade, grade_limit: f32, joins_network: bool) -> f32 {
+settlement_access_candidate_score :: proc(
+    length, maximum_grade, grade_limit: f32,
+    joins_network: bool,
+    connection_shape_penalty: f32 = 0,
+) -> f32 {
     // Among similarly direct choices, prefer the gentler construction.
     // Crossing the building-use grade target carries a strong penalty so a
     // modest contour detour beats a short stair-like service approach.
@@ -2191,7 +2472,65 @@ settlement_access_candidate_score :: proc(length, maximum_grade, grade_limit: f3
     // Reusing a verified road-rooted trunk is slightly preferable to cutting
     // an independent verge spur when both journeys are otherwise comparable.
     if joins_network do score *= .72
+    // Keep the network-reuse incentive, but let clean doorway throats and
+    // legible junction geometry distinguish otherwise similar candidates.
+    score += connection_shape_penalty
     return score
+}
+
+settlement_access_connection_shape_penalty :: proc(
+    city_plan: ^architecture.City_Plan,
+    path: Settlement_Route,
+    door_outward: [2]f32,
+    joins_network: bool,
+) -> f32 {
+    if path.count < 2 do return 1e30
+    first := path.points[1] - path.points[0]
+    first_length := linalg.length(first)
+    outward_length := linalg.length(door_outward)
+    if first_length <= .001 || outward_length <= .001 do return 1e30
+
+    // The first visible run should leave the threshold square-on. A shallow
+    // diagonal is substantially more expensive than a modest orthogonal
+    // detour, while a route pointing back through the facade is effectively
+    // disqualified by the larger negative-alignment penalty.
+    doorway_alignment := linalg.dot(first, door_outward) / (first_length * outward_length)
+    penalty := (1 - clamp(doorway_alignment, f32(-1), f32(1))) * 10
+    if !joins_network || city_plan == nil do return penalty
+
+    junction := path.points[path.count - 1]
+    incoming := path.points[path.count - 2] - junction
+    incoming_length := linalg.length(incoming)
+    if incoming_length <= .001 do return 1e30
+
+    degree := settlement_access_network_degree(city_plan, junction)
+    // Reuse is good, but repeatedly adding arms to the same node creates a
+    // starburst. Prefer a new T over a fourth arm, with sharply increasing
+    // pressure as the existing junction becomes more complex.
+    excess_degree := max(degree - 2, 0)
+    penalty += f32(excess_degree * excess_degree) * 4
+
+    best_axis_error := f32(1)
+    for alley in city_plan.alleys[:city_plan.alley_count] {
+        start, finish := [2]f32{alley.start_x, alley.start_z}, [2]f32{alley.end_x, alley.end_z}
+        outgoing: [2]f32
+        found := false
+        if settlement_alley_point_near(junction, start) {
+            outgoing, found = finish - junction, true
+        } else if settlement_alley_point_near(junction, finish) {
+            outgoing, found = start - junction, true
+        }
+        if !found do continue
+        outgoing_length := linalg.length(outgoing)
+        if outgoing_length <= .001 do continue
+        absolute_alignment := math.abs(linalg.dot(incoming, outgoing) / (incoming_length * outgoing_length))
+        // Zero is a square T/crossing and one is a straight continuation.
+        // Values between them are skewed joins; score against the nearest
+        // simple axis rather than prescribing which of the two is required.
+        best_axis_error = min(best_axis_error, min(absolute_alignment, 1 - absolute_alignment))
+    }
+    if degree > 0 do penalty += best_axis_error * 12
+    return penalty
 }
 
 settlement_access_surface :: proc(alley: architecture.City_Alley) -> Settlement_Access_Surface {
@@ -2334,6 +2673,7 @@ settlement_access_node_paving_radius :: proc(city_plan: ^architecture.City_Plan,
     radius: f32
     door_terminal := false
     public_terminal := false
+    maximum_demand := 0
     for alley in city_plan.alleys[:city_plan.alley_count] {
         start, finish := [2]f32{alley.start_x, alley.start_z}, [2]f32{alley.end_x, alley.end_z}
         direction: [2]f32
@@ -2353,11 +2693,20 @@ settlement_access_node_paving_radius :: proc(city_plan: ^architecture.City_Plan,
         directions[incident_count] = direction / length
         incident_count += 1
         radius = max(radius, alley.half_width)
+        maximum_demand = max(maximum_demand, int(alley.household_demand))
     }
     if door_terminal do return 0
     if public_terminal && incident_count == 1 do return max(radius, f32(.9))
     if incident_count < 2 do return 0
     if incident_count == 2 && linalg.dot(directions[0], directions[1]) <= -.985 do return 0
+    // A heavily reused turn or junction is the neighborhood's shared court,
+    // not merely a circular cap between path rectangles. Keep low-demand
+    // branches tight while giving proven communal nodes room to read as a
+    // small paved place between houses.
+    if maximum_demand >= 4 {
+        if incident_count >= 3 do return max(radius, f32(1.8))
+        return max(radius, f32(1.35))
+    }
     return radius
 }
 
@@ -2757,6 +3106,149 @@ settlement_access_consolidate_parallel_twigs :: proc(city_plan: ^architecture.Ci
     }
 }
 
+// When two branches leave the same anonymous T on almost the same bearing,
+// give them a short shared stem before they divide. This is the built form a
+// mason would choose, and avoids the doubled-paving wedge produced by two
+// near-parallel spline caps at one node.
+settlement_access_stem_shallow_forks :: proc(
+    plan: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+) -> int {
+    if plan == nil || project == nil || city_plan == nil do return 0
+    stemmed := 0
+    for _ in 0 ..< 8 {
+        changed := false
+        seen := make([dynamic][2]f32, context.temp_allocator)
+        for alley in city_plan.alleys[:city_plan.alley_count] {
+            points := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
+            for point in points {
+                duplicate := false
+                for existing in seen {
+                    if settlement_alley_point_near(existing, point) {
+                        duplicate = true
+                        break
+                    }
+                }
+                if duplicate do continue
+                append(&seen, point)
+                if settlement_access_network_degree(city_plan, point) != 3 ||
+                   !settlement_access_junction_location_valid(plan, city_plan, point) {
+                    continue
+                }
+                incident_indices: [3]int
+                others: [3][2]f32
+                directions: [3][2]f32
+                lengths: [3]f32
+                incident_count := 0
+                protected := false
+                for candidate, candidate_index in city_plan.alleys[:city_plan.alley_count] {
+                    start, finish := [2]f32{candidate.start_x, candidate.start_z}, [2]f32{candidate.end_x, candidate.end_z}
+                    other: [2]f32
+                    at_terminal := architecture.City_Alley_Terminal.None
+                    if settlement_alley_point_near(point, start) {
+                        other, at_terminal = finish, candidate.start_terminal
+                    } else if settlement_alley_point_near(point, finish) {
+                        other, at_terminal = start, candidate.end_terminal
+                    } else {
+                        continue
+                    }
+                    protected = protected || at_terminal != .None
+                    if incident_count < 3 {
+                        incident_indices[incident_count] = candidate_index
+                        others[incident_count] = other
+                        lengths[incident_count] = linalg.length(other - point)
+                        if lengths[incident_count] > .001 {
+                            directions[incident_count] = (other - point) / lengths[incident_count]
+                        }
+                    }
+                    incident_count += 1
+                }
+                if protected || incident_count != 3 do continue
+                pair_a, pair_b := -1, -1
+                best_alignment := f32(.966)
+                for first in 0 ..< 3 {
+                    for second in first + 1 ..< 3 {
+                        alignment := linalg.dot(directions[first], directions[second])
+                        if alignment > best_alignment {
+                            best_alignment = alignment
+                            pair_a, pair_b = first, second
+                        }
+                    }
+                }
+                if pair_a < 0 do continue
+                stem_direction := linalg.normalize(directions[pair_a] + directions[pair_b])
+                maximum_stem := min(f32(3), min(lengths[pair_a], lengths[pair_b]) * .45)
+                if maximum_stem < .65 do continue
+                merge := point + stem_direction * .65
+                for candidate_length := f32(.65); candidate_length <= maximum_stem + .001; candidate_length += .25 {
+                    candidate_merge := point + stem_direction * candidate_length
+                    first_direction := linalg.normalize(others[pair_a] - candidate_merge)
+                    second_direction := linalg.normalize(others[pair_b] - candidate_merge)
+                    merge = candidate_merge
+                    if linalg.dot(first_direction, second_direction) <= .94 do break
+                }
+                if linalg.dot(
+                    linalg.normalize(others[pair_a] - merge),
+                    linalg.normalize(others[pair_b] - merge),
+                ) > .966 {
+                    continue
+                }
+                original_count := city_plan.alley_count
+                originals := make([]architecture.City_Alley, original_count, context.temp_allocator)
+                copy(originals, city_plan.alleys[:original_count])
+                connected_before := settlement_access_count_road_connected_doors(plan, city_plan, project)
+                baseline := plan^
+                settlement_plan_measure_access_topology(&baseline, city_plan, project)
+                width := f32(0)
+                demand := u16(0)
+                pair_indices := [2]int{pair_a, pair_b}
+                for pair_index in pair_indices {
+                    incident := &city_plan.alleys[incident_indices[pair_index]]
+                    width = max(width, incident.half_width)
+                    demand = max(demand, incident.household_demand)
+                    if settlement_alley_point_near(point, {incident.start_x, incident.start_z}) {
+                        incident.start_x, incident.start_z = merge[0], merge[1]
+                    } else {
+                        incident.end_x, incident.end_z = merge[0], merge[1]
+                    }
+                }
+                append(&city_plan.alleys, architecture.City_Alley {
+                    start_x = point[0],
+                    start_z = point[1],
+                    end_x = merge[0],
+                    end_z = merge[1],
+                    half_width = width,
+                    household_demand = demand,
+                })
+                city_plan.alley_count += 1
+                candidate := plan^
+                settlement_plan_measure_access_topology(&candidate, city_plan, project)
+                worsened :=
+                    settlement_access_count_road_connected_doors(plan, city_plan, project) < connected_before ||
+                    candidate.access_max_degree > 4 ||
+                    candidate.access_crossings > baseline.access_crossings ||
+                    candidate.access_unsplit_junctions > baseline.access_unsplit_junctions ||
+                    candidate.access_shallow_junctions >= baseline.access_shallow_junctions ||
+                    candidate.access_hairpin_bends > baseline.access_hairpin_bends ||
+                    candidate.access_bad_door_approaches > baseline.access_bad_door_approaches
+                if worsened {
+                    resize(&city_plan.alleys, original_count)
+                    copy(city_plan.alleys[:original_count], originals)
+                    city_plan.alley_count = original_count
+                    continue
+                }
+                stemmed += 1
+                changed = true
+                break
+            }
+            if changed do break
+        }
+        if !changed do break
+    }
+    return stemmed
+}
+
 settlement_access_remove_degenerate_segments :: proc(city_plan: ^architecture.City_Plan) {
     if city_plan == nil do return
     index := 0
@@ -2859,10 +3351,11 @@ settlement_access_simplify_hairpin_bends :: proc(plan: ^Settlement_Plan, city_pl
     }
 }
 
-// Two T-junctions separated by less than a walking pace render as overlapping
-// spline caps and read as an accidental paved blob. Where their connecting
-// edge is anonymous and the combined node stays four-way or simpler, replace
-// the pair with one surveyed junction. Doors and road throats never move.
+// Two anonymous graph nodes separated by less than a walking pace render as
+// overlapping spline caps or a useless paving sliver. Where their combined
+// node stays four-way or simpler, replace the pair with one surveyed point.
+// This includes degree-two nodes introduced by intersection splitting as well
+// as adjacent T-junctions. Doors and road throats never move.
 settlement_access_collapse_short_junction_links :: proc(
     plan: ^Settlement_Plan,
     project: ^terrain.Project,
@@ -2879,7 +3372,7 @@ settlement_access_collapse_short_junction_links :: proc(
             if length < .1 || length > 1.25 do continue
             start_degree := settlement_access_network_degree(city_plan, start)
             finish_degree := settlement_access_network_degree(city_plan, finish)
-            if start_degree < 3 || finish_degree < 3 || start_degree + finish_degree - 2 > 4 do continue
+            if start_degree < 2 || finish_degree < 2 || start_degree + finish_degree - 2 > 4 do continue
             midpoint := (start + finish) * .5
             if !settlement_access_junction_location_valid(plan, city_plan, midpoint) do continue
 
@@ -2937,9 +3430,9 @@ settlement_access_collapse_short_junction_links :: proc(
             original_count := city_plan.alley_count
             originals := make([]architecture.City_Alley, original_count, context.temp_allocator)
             copy(originals, city_plan.alleys[:original_count])
-            connected_before := settlement_access_count_road_connected_doors(plan, city_plan)
+            connected_before := settlement_access_count_road_connected_doors(plan, city_plan, project)
             baseline := plan^
-            settlement_plan_measure_access_topology(&baseline, city_plan)
+            settlement_plan_measure_access_topology(&baseline, city_plan, project)
             for &alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
                 if alley_index == candidate_index do continue
                 if settlement_alley_point_near({alley.start_x, alley.start_z}, start) ||
@@ -2956,9 +3449,9 @@ settlement_access_collapse_short_junction_links :: proc(
             resize(&city_plan.alleys, city_plan.alley_count)
             settlement_access_deduplicate_segments(city_plan)
             candidate_metrics := plan^
-            settlement_plan_measure_access_topology(&candidate_metrics, city_plan)
+            settlement_plan_measure_access_topology(&candidate_metrics, city_plan, project)
             worsened :=
-                settlement_access_count_road_connected_doors(plan, city_plan) < connected_before ||
+                settlement_access_count_road_connected_doors(plan, city_plan, project) < connected_before ||
                 candidate_metrics.access_max_degree > 4 ||
                 candidate_metrics.access_crossings > baseline.access_crossings ||
                 candidate_metrics.access_unsplit_junctions > baseline.access_unsplit_junctions ||
@@ -3169,6 +3662,101 @@ settlement_access_prune_shallow_seed_branches :: proc(city_plan: ^architecture.C
     }
 }
 
+// Access repair can reintroduce one of the optional near-parallel seed arms.
+// Remove it only when the finished graph proves that it is redundant: every
+// door remains road-connected and the measured topology strictly improves.
+settlement_access_prune_redundant_shallow_branches :: proc(
+    plan: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+) -> int {
+    if plan == nil || project == nil || city_plan == nil do return 0
+    removed_count := 0
+    for _ in 0 ..< 8 {
+        baseline := plan^
+        settlement_plan_measure_access_topology(&baseline, city_plan, project)
+        if baseline.access_shallow_junctions == 0 do break
+        connected_before := settlement_access_count_road_connected_doors(plan, city_plan, project)
+        accepted := false
+        seen := make([dynamic][2]f32, context.temp_allocator)
+        for alley in city_plan.alleys[:city_plan.alley_count] {
+            alley_points := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
+            for point in alley_points {
+                duplicate := false
+                for existing in seen {
+                    if settlement_alley_point_near(existing, point) {
+                        duplicate = true
+                        break
+                    }
+                }
+                if duplicate do continue
+                append(&seen, point)
+                indices: [8]int
+                directions: [8][2]f32
+                incident_count := 0
+                for candidate, candidate_index in city_plan.alleys[:city_plan.alley_count] {
+                    start, finish := [2]f32{candidate.start_x, candidate.start_z}, [2]f32{candidate.end_x, candidate.end_z}
+                    direction: [2]f32
+                    if settlement_alley_point_near(point, start) {
+                        if candidate.start_terminal != .None || candidate.end_terminal != .None do continue
+                        direction = finish - point
+                    } else if settlement_alley_point_near(point, finish) {
+                        if candidate.start_terminal != .None || candidate.end_terminal != .None do continue
+                        direction = start - point
+                    } else {
+                        continue
+                    }
+                    length := linalg.length(direction)
+                    if length <= .001 || incident_count >= len(indices) do continue
+                    indices[incident_count] = candidate_index
+                    directions[incident_count] = direction / length
+                    incident_count += 1
+                }
+                if incident_count < 2 do continue
+                for first in 0 ..< incident_count {
+                    for second in first + 1 ..< incident_count {
+                        if linalg.dot(directions[first], directions[second]) <= .966 do continue
+                        candidates := [2]int{indices[first], indices[second]}
+                        for remove_index in candidates {
+                            original_count := city_plan.alley_count
+                            originals := make([]architecture.City_Alley, original_count, context.temp_allocator)
+                            copy(originals, city_plan.alleys[:original_count])
+                            city_plan.alley_count -= 1
+                            city_plan.alleys[remove_index] = city_plan.alleys[city_plan.alley_count]
+                            resize(&city_plan.alleys, city_plan.alley_count)
+                            candidate_metrics := plan^
+                            settlement_plan_measure_access_topology(&candidate_metrics, city_plan, project)
+                            improved :=
+                                settlement_access_count_road_connected_doors(plan, city_plan, project) >= connected_before &&
+                                candidate_metrics.access_shallow_junctions < baseline.access_shallow_junctions &&
+                                candidate_metrics.access_crossings <= baseline.access_crossings &&
+                                candidate_metrics.access_unsplit_junctions <= baseline.access_unsplit_junctions &&
+                                candidate_metrics.access_hairpin_bends <= baseline.access_hairpin_bends &&
+                                candidate_metrics.access_bad_door_approaches <= baseline.access_bad_door_approaches &&
+                                candidate_metrics.access_bad_road_approaches <= baseline.access_bad_road_approaches &&
+                                candidate_metrics.access_orphan_endpoints <= baseline.access_orphan_endpoints
+                            if improved {
+                                removed_count += 1
+                                accepted = true
+                                break
+                            }
+                            resize(&city_plan.alleys, original_count)
+                            copy(city_plan.alleys[:original_count], originals)
+                            city_plan.alley_count = original_count
+                        }
+                        if accepted do break
+                    }
+                    if accepted do break
+                }
+                if accepted do break
+            }
+            if accepted do break
+        }
+        if !accepted do break
+    }
+    return removed_count
+}
+
 settlement_access_road_approach_aligned :: proc(
     plan: ^Settlement_Plan,
     endpoint, direction: [2]f32,
@@ -3239,10 +3827,10 @@ settlement_access_straighten_road_throats :: proc(plan: ^Settlement_Plan, city_p
         outward := endpoints[road_index] - origin
         outward_length := linalg.length(outward)
         if outward_length <= .001 do continue
-        throat_length := min(
-            f32(.75),
-            max(f32(.65), linalg.length(endpoints[other_index] - endpoints[road_index]) * .5),
-        )
+        segment_length := linalg.length(endpoints[other_index] - endpoints[road_index])
+        // A short road stub cannot contain a fixed .65 m throat without
+        // overshooting its next node and creating a tiny reversing tail.
+        throat_length := min(f32(.75), max(f32(.25), segment_length * .5))
         throat_end := endpoints[road_index] + outward / outward_length * throat_length
         if linalg.length(throat_end - endpoints[other_index]) < .1 do continue
         tail := alley^
@@ -3262,7 +3850,11 @@ settlement_access_straighten_road_throats :: proc(plan: ^Settlement_Plan, city_p
     }
 }
 
-settlement_plan_measure_access_topology :: proc(plan: ^Settlement_Plan, city_plan: ^architecture.City_Plan) {
+settlement_plan_measure_access_topology :: proc(
+    plan: ^Settlement_Plan,
+    city_plan: ^architecture.City_Plan,
+    project: ^terrain.Project = nil,
+) {
     if plan == nil || city_plan == nil do return
     plan.access_max_degree = 0
     plan.access_shallow_junctions = 0
@@ -3371,8 +3963,8 @@ settlement_plan_measure_access_topology :: proc(plan: ^Settlement_Plan, city_pla
         }
     }
     for structure, structure_index in city_plan.structures[:city_plan.count] {
-        door := settlement_structure_front_door_point(structure)
-        front := settlement_structure_entrance_outward(structure)
+        door := settlement_structure_front_door_point(structure, .22, project)
+        front := settlement_structure_entrance_approach_outward(structure, project)
         for alley in city_plan.alleys[:city_plan.alley_count] {
             start, finish := [2]f32{alley.start_x, alley.start_z}, [2]f32{alley.end_x, alley.end_z}
             direction: [2]f32
@@ -3410,12 +4002,164 @@ settlement_plan_measure_access_topology :: proc(plan: ^Settlement_Plan, city_pla
             near_road, aligned := settlement_access_road_approach_aligned(plan, endpoint, direction)
             road_edge := terminal == .Road || near_road || settlement_access_point_at_road_edge(plan, endpoint, .6)
             if road_edge {
-                if alley.half_width <= 1.25 && near_road && !aligned do plan.access_bad_road_approaches += 1
+                if alley.half_width <= 1.25 && near_road && !aligned {
+                    plan.access_bad_road_approaches += 1
+                }
             } else if alley.half_width <= 1.25 {
                 plan.access_orphan_endpoints += 1
             }
         }
     }
+}
+
+// Network cleanup may legally move the anonymous node immediately beyond a
+// door and leave the final visible segment arriving diagonally across its
+// threshold. Restore a short orthogonal throat at the very end of generation;
+// the old segment remains connected at the new landing node, so this changes
+// presentation geometry without changing door-to-road reachability.
+settlement_access_restore_door_throats :: proc(
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+) -> int {
+    if project == nil || city_plan == nil do return 0
+    restored := 0
+    for structure, structure_index in city_plan.structures[:city_plan.count] {
+        door := settlement_structure_front_door_point(structure, .22, project)
+        outward := settlement_structure_entrance_approach_outward(structure, project)
+        existing_count := city_plan.alley_count
+        for alley_index in 0 ..< existing_count {
+            alley := &city_plan.alleys[alley_index]
+            door_at_start := alley.start_terminal == .Door &&
+                settlement_alley_point_near(door, {alley.start_x, alley.start_z})
+            door_at_end := alley.end_terminal == .Door &&
+                settlement_alley_point_near(door, {alley.end_x, alley.end_z})
+            if !door_at_start && !door_at_end do continue
+            neighbor := [2]f32{alley.start_x, alley.start_z}
+            if door_at_start do neighbor = {alley.end_x, alley.end_z}
+            direction := neighbor - door
+            length := linalg.length(direction)
+            if length <= .001 || linalg.dot(direction / length, outward) >= .966 do break
+
+            preferred_length := min(max(alley.half_width * 1.1, f32(.55)), f32(.85))
+            landing: [2]f32
+            elbow: [2]f32
+            landing_found := false
+            dogleg := false
+            for length_scale in ([4]f32{1, .72, .48, .30}) {
+                candidate := door + outward * (preferred_length * length_scale)
+                continuation := neighbor - candidate
+                continuation_length := linalg.length(continuation)
+                if continuation_length <= .001 do continue
+                // The landing may turn, but it must not double back toward
+                // the wall; that would trade a diagonal threshold for a tiny
+                // artificial hairpin.
+                if linalg.dot(-outward, continuation / continuation_length) > .5 do continue
+                clearance := max(alley.half_width - .08, f32(.25))
+                if !settlement_access_segment_clear(
+                        city_plan,
+                        door,
+                        candidate,
+                        clearance,
+                        structure_index,
+                    ) ||
+                   !settlement_access_segment_clear(
+                        city_plan,
+                        candidate,
+                        neighbor,
+                        clearance,
+                        structure_index,
+                    ) {
+                    continue
+                }
+                landing, landing_found = candidate, true
+                break
+            }
+            if !landing_found {
+                // If the surviving network lies partly behind the stair foot,
+                // use a compact L-shaped landing rather than either arriving
+                // diagonally or creating an outward-and-back hairpin.
+                tangent := [2]f32{outward[1], -outward[0]}
+                tangent_sign := linalg.dot(neighbor - door, tangent) < 0 ? f32(-1) : f32(1)
+                lateral := tangent * tangent_sign
+                clearance := max(alley.half_width - .08, f32(.25))
+                for length_scale in ([3]f32{.62, .45, .30}) {
+                    candidate_landing := door + outward * (preferred_length * length_scale)
+                    tangent_distance := math.abs(linalg.dot(neighbor - candidate_landing, tangent))
+                    lateral_length := clamp(tangent_distance * .55, f32(.45), f32(1.05))
+                    candidate_elbow := candidate_landing + lateral * lateral_length
+                    continuation := neighbor - candidate_elbow
+                    continuation_length := linalg.length(continuation)
+                    if continuation_length <= .001 do continue
+                    if linalg.dot(-lateral, continuation / continuation_length) > .5 do continue
+                    if !settlement_access_segment_clear(
+                            city_plan,
+                            door,
+                            candidate_landing,
+                            clearance,
+                            structure_index,
+                        ) ||
+                       !settlement_access_segment_clear(
+                            city_plan,
+                            candidate_landing,
+                            candidate_elbow,
+                            clearance,
+                            structure_index,
+                        ) ||
+                       !settlement_access_segment_clear(
+                            city_plan,
+                            candidate_elbow,
+                            neighbor,
+                            clearance,
+                            structure_index,
+                        ) {
+                        continue
+                    }
+                    landing, elbow = candidate_landing, candidate_elbow
+                    landing_found, dogleg = true, true
+                    break
+                }
+            }
+            if !landing_found do break
+            original_terminal := door_at_start ? alley.start_terminal : alley.end_terminal
+            half_width := alley.half_width
+            replacement := dogleg ? elbow : landing
+            if door_at_start {
+                alley.start_x, alley.start_z = replacement[0], replacement[1]
+                alley.start_terminal = .None
+            } else {
+                alley.end_x, alley.end_z = replacement[0], replacement[1]
+                alley.end_terminal = .None
+            }
+            append(
+                &city_plan.alleys,
+                architecture.City_Alley {
+                    start_x = door[0],
+                    start_z = door[1],
+                    end_x = landing[0],
+                    end_z = landing[1],
+                    half_width = half_width,
+                    start_terminal = original_terminal,
+                },
+            )
+            city_plan.alley_count += 1
+            if dogleg {
+                append(
+                    &city_plan.alleys,
+                    architecture.City_Alley {
+                        start_x = landing[0],
+                        start_z = landing[1],
+                        end_x = elbow[0],
+                        end_z = elbow[1],
+                        half_width = half_width,
+                    },
+                )
+                city_plan.alley_count += 1
+            }
+            restored += 1
+            break
+        }
+    }
+    return restored
 }
 
 settlement_access_mark_road_connected_segments :: proc(
@@ -3496,11 +4240,15 @@ settlement_access_mark_road_connected_segments :: proc(
 // its real outward-facing doorstep, the coincident spur turns the private
 // threshold into a through-node. Remove only a leaf road spur, and only when
 // the authored Door segment remains road-connected without it.
-settlement_access_prune_road_spurs_at_doors :: proc(plan: ^Settlement_Plan, city_plan: ^architecture.City_Plan) {
+settlement_access_prune_road_spurs_at_doors :: proc(
+    plan: ^Settlement_Plan,
+    city_plan: ^architecture.City_Plan,
+    project: ^terrain.Project = nil,
+) {
     if plan == nil || city_plan == nil do return
     if plan.request.scale != .Village do return
     for structure in city_plan.structures[:city_plan.count] {
-        door := settlement_structure_front_door_point(structure)
+        door := settlement_structure_front_door_point(structure, .22, project)
         if settlement_access_network_degree(city_plan, door) <= 1 do continue
         candidate_index := 0
         for candidate_index < city_plan.alley_count {
@@ -3520,7 +4268,7 @@ settlement_access_prune_road_spurs_at_doors :: proc(plan: ^Settlement_Plan, city
             road_endpoint := 1 - door_endpoint
             road_direction := points[road_endpoint] - door
             road_length := linalg.length(road_direction)
-            outward := settlement_structure_entrance_outward(structure)
+            outward := settlement_structure_entrance_approach_outward(structure, project)
             if road_length > .001 && linalg.dot(road_direction / road_length, outward) <= .966 {
                 city_plan.alley_count -= 1
                 city_plan.alleys[candidate_index] = city_plan.alleys[city_plan.alley_count]
@@ -3609,8 +4357,9 @@ settlement_access_door_connection_valid :: proc(
     city_plan: ^architecture.City_Plan,
     structure: terrain.Structure,
     road_connected: []bool,
+    project: ^terrain.Project = nil,
 ) -> bool {
-    door := settlement_structure_front_door_point(structure)
+    door := settlement_structure_front_door_point(structure, .22, project)
     if settlement_access_point_at_road_edge(plan, door) do return true
     // Dense town/city blocks can deliberately give a threshold two public
     // faces (street plus court or passage). The private-leaf invariant is the
@@ -3625,7 +4374,7 @@ settlement_access_door_connection_valid :: proc(
         return false
     }
     if settlement_access_network_degree(city_plan, door) != 1 do return false
-    outward := settlement_structure_entrance_outward(structure)
+    outward := settlement_structure_entrance_approach_outward(structure, project)
     for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
         if alley_index >= len(road_connected) || !road_connected[alley_index] do continue
         start, finish := [2]f32{alley.start_x, alley.start_z}, [2]f32{alley.end_x, alley.end_z}
@@ -3655,12 +4404,12 @@ settlement_access_repair_disconnected_doors :: proc(
     for structure, structure_index in city_plan.structures[:city_plan.count] {
         road_connected := make([]bool, city_plan.alley_count, context.temp_allocator)
         settlement_access_mark_road_connected_segments(plan, city_plan, road_connected)
-        door := settlement_structure_front_door_point(structure)
-        connected := settlement_access_door_connection_valid(plan, city_plan, structure, road_connected)
+        door := settlement_structure_front_door_point(structure, .22, project)
+        connected := settlement_access_door_connection_valid(plan, city_plan, structure, road_connected, project)
         if connected do continue
         origin, _, route_normal, route_width, route_shoulder, _, _, found := settlement_nearest_route_frame(plan, door)
         if !found do continue
-        front := settlement_structure_entrance_outward(structure)
+        front := settlement_structure_entrance_approach_outward(structure, project)
         side_sign := linalg.dot(door - origin, route_normal) < 0 ? f32(-1) : f32(1)
         outward := route_normal * side_sign
         road_goal := origin + outward * (route_width * .5 + route_shoulder + .45)
@@ -3845,8 +4594,18 @@ settlement_access_repair_disconnected_doors :: proc(
             city_plan,
             city_plan.structures[structure_index],
             marked,
+            project,
         )
         if !verified && remaining_facade_attempts > 0 {
+            purpose := Settlement_Building_Purpose.Dwelling
+            if structure_index < plan.ordinary_purpose_count {
+                purpose = plan.ordinary_purposes[structure_index]
+            }
+            preserve_aegean_civic_frontage :=
+                plan.request.region == .Aegean &&
+                plan.request.scale == .Village &&
+                (purpose == .Inn_Shop || purpose == .Workshop)
+            if preserve_aegean_civic_frontage do continue
             current_side := int(city_plan.structures[structure_index].entrance_side)
             side_step := plan.request.scale == .Village ? 1 : 2
             city_plan.structures[structure_index].entrance_side = terrain.Entrance_Side((current_side + side_step) & 3)
@@ -3866,6 +4625,7 @@ settlement_access_repair_disconnected_doors :: proc(
 settlement_access_count_road_connected_doors :: proc(
     plan: ^Settlement_Plan,
     city_plan: ^architecture.City_Plan,
+    project: ^terrain.Project = nil,
 ) -> int {
     if plan == nil || city_plan == nil do return 0
     road_connected := make([]bool, city_plan.alley_count, context.temp_allocator)
@@ -3876,34 +4636,65 @@ settlement_access_count_road_connected_doors :: proc(
         // sharing coordinates with a connected segment is not sufficient:
         // that can certify a path which runs through one household's
         // threshold on its way to another.
-        if settlement_access_door_connection_valid(plan, city_plan, structure, road_connected) do connected += 1
+        if settlement_access_door_connection_valid(plan, city_plan, structure, road_connected, project) do connected += 1
     }
     return connected
 }
 
 settlement_access_prune_orphan_stubs :: proc(plan: ^Settlement_Plan, city_plan: ^architecture.City_Plan) {
     if plan == nil || city_plan == nil do return
-    remove := make([]bool, city_plan.alley_count, context.temp_allocator)
-    for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
-        if alley.half_width > 1.25 do continue
+    for {
+        remove := make([]bool, city_plan.alley_count, context.temp_allocator)
+        removed := 0
+        for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
+            if alley.half_width > 1.25 do continue
+            endpoints := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
+            terminals := [2]architecture.City_Alley_Terminal{alley.start_terminal, alley.end_terminal}
+            for endpoint, endpoint_index in endpoints {
+                if settlement_access_network_degree(city_plan, endpoint) != 1 ||
+                   settlement_access_network_degree(city_plan, endpoints[1 - endpoint_index]) < 2 ||
+                   terminals[endpoint_index] != .None ||
+                   settlement_access_point_at_road_edge(plan, endpoint, .6) {
+                    continue
+                }
+                serves_door := false
+                for structure in city_plan.structures[:city_plan.count] {
+                    if settlement_alley_point_near(endpoint, settlement_structure_front_door_point(structure)) {
+                        serves_door = true
+                        break
+                    }
+                }
+                if !serves_door {
+                    remove[alley_index] = true
+                    removed += 1
+                    break
+                }
+            }
+        }
+        if removed == 0 do break
+        write := 0
+        for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
+            if remove[alley_index] do continue
+            city_plan.alleys[write], write = alley, write + 1
+        }
+        city_plan.alley_count = write
+        resize(&city_plan.alleys, write)
+    }
+    // Trimming a dangling chain can expose the far end of a road-rooted
+    // public path. Preserve that useful final segment and explain its new
+    // endpoint explicitly instead of reporting a fresh orphan.
+    for &alley in city_plan.alleys[:city_plan.alley_count] {
+        terminals := [2]^architecture.City_Alley_Terminal{&alley.start_terminal, &alley.end_terminal}
         endpoints := [2][2]f32{{alley.start_x, alley.start_z}, {alley.end_x, alley.end_z}}
-        terminals := [2]architecture.City_Alley_Terminal{alley.start_terminal, alley.end_terminal}
-        for endpoint, endpoint_index in endpoints {
-            if settlement_access_network_degree(city_plan, endpoint) == 1 &&
-               settlement_access_network_degree(city_plan, endpoints[1 - endpoint_index]) >= 3 &&
-               terminals[endpoint_index] == .None {
-                remove[alley_index] = true
-                break
+        for endpoint_index in 0 ..< 2 {
+            other_index := 1 - endpoint_index
+            if terminals[endpoint_index]^ == .None &&
+               terminals[other_index]^ == .Road &&
+               settlement_access_network_degree(city_plan, endpoints[endpoint_index]) == 1 {
+                terminals[endpoint_index]^ = .Public_Space
             }
         }
     }
-    write := 0
-    for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
-        if remove[alley_index] do continue
-        city_plan.alleys[write], write = alley, write + 1
-    }
-    city_plan.alley_count = write
-    resize(&city_plan.alleys, write)
 }
 
 settlement_access_prune_stale_terminal_free_stubs :: proc(city_plan: ^architecture.City_Plan) {
@@ -4097,6 +4888,21 @@ settlement_access_shared_desired_half_width :: proc(original: f32, household_dem
     return min(desired, f32(1.25))
 }
 
+settlement_access_network_candidate_limit :: proc(scale: Settlement_Scale, road_distance: f32) -> f32 {
+    factor := f32(.90)
+    switch scale {
+    case .City:
+        factor = 1
+    case .Town:
+        // A slightly longer doorstep branch is worthwhile when it replaces a
+        // second parallel path with one shared hillside passage.
+        factor = 1.08
+    case .Village:
+        factor = .90
+    }
+    return max(road_distance, f32(0)) * factor
+}
+
 settlement_access_building_attachment :: proc(
     city_plan: ^architecture.City_Plan,
     structure: terrain.Structure,
@@ -4169,6 +4975,10 @@ settlement_access_graph_distance :: proc(city_plan: ^architecture.City_Plan, sta
     return 1e30
 }
 
+settlement_circulation_link_half_width :: proc(scale: Settlement_Scale) -> f32 {
+    return scale == .Town ? f32(.75) : f32(1.2)
+}
+
 // Improve the access graph before assigning widths. Sample plausible trips
 // between buildings and add a pedestrian cross-link only when the current
 // network sends that trip on a substantial detour. Repeating after every
@@ -4185,34 +4995,76 @@ settlement_access_promote_circulation_links :: proc(
     case .City:
         link_budget = 12
     case .Town:
-        link_budget = 8
+        // A few cross-passages make the hillside walkable; eight optional
+        // shortcuts on a compact town overdraw the fabric with a second web
+        // after every doorstep is already connected.
+        link_budget = 4
     case .Village:
         link_budget = 3
     }
-    seed_offset := int(plan.request.seed % u32(city_plan.count - 1))
+    capacity :: SETTLEMENT_SITE_CAPACITY
+    building_count := min(city_plan.count, capacity)
+    attachments: [capacity][2]f32
+    attached: [capacity]bool
+    for structure, structure_index in city_plan.structures[:building_count] {
+        attachments[structure_index], attached[structure_index] =
+            settlement_access_building_attachment(city_plan, structure)
+    }
+    rejected: [capacity][capacity]bool
     accepted := 0
-    for sample_index in 0 ..< city_plan.count * 3 {
+    for _ in 0 ..< link_budget * 8 {
         if accepted >= link_budget do break
-        source_index := sample_index % city_plan.count
-        offset := 1 + (seed_offset + source_index * 7 + sample_index * 11) % (city_plan.count - 1)
-        destination_index := (source_index + offset) % city_plan.count
-        source, source_found := settlement_access_building_attachment(city_plan, city_plan.structures[source_index])
-        destination, destination_found := settlement_access_building_attachment(
-            city_plan,
-            city_plan.structures[destination_index],
-        )
-        if !source_found || !destination_found do continue
-        direct_distance := linalg.length(destination - source)
-        if direct_distance < 5 || direct_distance > 34 do continue
-        existing_distance := settlement_access_graph_distance(city_plan, source, destination)
-        if existing_distance < direct_distance * 1.45 do continue
+        best_source, best_destination := -1, -1
+        best_existing, best_score := f32(0), f32(-1e30)
+        for source_index in 0 ..< building_count {
+            if !attached[source_index] do continue
+            nearest_indices := [4]int{-1, -1, -1, -1}
+            nearest_distances := [4]f32{1e30, 1e30, 1e30, 1e30}
+            for destination_index in 0 ..< building_count {
+                unavailable := destination_index == source_index ||
+                               !attached[destination_index] ||
+                               rejected[source_index][destination_index]
+                if unavailable do continue
+                direct_distance := linalg.length(attachments[destination_index] - attachments[source_index])
+                if direct_distance < 5 || direct_distance > 34 do continue
+                insertion := 3
+                if direct_distance >= nearest_distances[insertion] do continue
+                for insertion > 0 && direct_distance < nearest_distances[insertion - 1] {
+                    nearest_indices[insertion] = nearest_indices[insertion - 1]
+                    nearest_distances[insertion] = nearest_distances[insertion - 1]
+                    insertion -= 1
+                }
+                nearest_indices[insertion], nearest_distances[insertion] = destination_index, direct_distance
+            }
+            for neighbor_slot in 0 ..< len(nearest_indices) {
+                destination_index := nearest_indices[neighbor_slot]
+                if destination_index < 0 do continue
+                direct_distance := nearest_distances[neighbor_slot]
+                existing_distance := settlement_access_graph_distance(
+                    city_plan,
+                    attachments[source_index],
+                    attachments[destination_index],
+                )
+                if existing_distance >= 1e29 || existing_distance < direct_distance * 1.4 do continue
+                score := existing_distance - direct_distance + existing_distance / direct_distance * 3
+                if score > best_score {
+                    best_source, best_destination = source_index, destination_index
+                    best_existing, best_score = existing_distance, score
+                }
+            }
+        }
+        if best_source < 0 do break
+        rejected[best_source][best_destination] = true
+        rejected[best_destination][best_source] = true
+        source, destination := attachments[best_source], attachments[best_destination]
         path := settlement_access_path_find(project, city_plan, source, destination, -1, .9, true)
         if path.count < 2 do continue
         path_length := f32(0)
         for point_index in 0 ..< path.count - 1 {
             path_length += linalg.length(path.points[point_index + 1] - path.points[point_index])
         }
-        if path_length >= existing_distance * .82 do continue
+        if path_length >= best_existing * .82 do continue
+        passage_half_width := settlement_circulation_link_half_width(plan.request.scale)
         for point_index in 0 ..< path.count - 1 {
             append(
                 &city_plan.alleys,
@@ -4221,7 +5073,7 @@ settlement_access_promote_circulation_links :: proc(
                     start_z = path.points[point_index][1],
                     end_x = path.points[point_index + 1][0],
                     end_z = path.points[point_index + 1][1],
-                    half_width = 1.2,
+                    half_width = passage_half_width,
                 },
             )
             city_plan.alley_count += 1
@@ -4791,7 +5643,7 @@ settlement_plan_generate_building_access :: proc(
         // that frontage as a completed terminal; reconsidering both façade
         // orientations here can flip the building away from its public space
         // and leave the authored path attached to the former door.
-        authored_door := settlement_structure_front_door_point(structure)
+        authored_door := settlement_structure_front_door_point(structure, .22, project)
         authored_connected := settlement_access_point_at_road_edge(plan, authored_door)
         if !authored_connected {
             for alley, alley_index in city_plan.alleys[:city_plan.alley_count] {
@@ -4836,12 +5688,22 @@ settlement_plan_generate_building_access :: proc(
             clearance_count = 6
         }
         entrance_sides := [4]terrain.Entrance_Side{.Front, .Right, .Rear, .Left}
-        for entrance_side in entrance_sides {
+        entrance_side_count := len(entrance_sides)
+        if plan.request.region == .Aegean &&
+           plan.request.scale == .Village &&
+           (purpose == .Inn_Shop || purpose == .Workshop) {
+            // Placement has already oriented these public anchors toward the
+            // nearest route. Do not let access optimization rotate the door
+            // onto a shorter side wall and erase the civic frontage.
+            entrance_sides[0] = structure.entrance_side
+            entrance_side_count = 1
+        }
+        for entrance_side in entrance_sides[:entrance_side_count] {
             oriented_structure := structure
             oriented_structure.entrance_side = entrance_side
-            destination := settlement_structure_front_door_point(oriented_structure)
+            destination := settlement_structure_front_door_point(oriented_structure, .22, project)
             edge := settlement_access_structure_edge(oriented_structure, int(entrance_side))
-            front := edge.outward
+            front := settlement_structure_entrance_approach_outward(oriented_structure, project)
             side_path_found := false
             for path_clearance in clearances[:clearance_count] {
                 origin, route_tangent, route_normal, route_width, route_shoulder, _, _, found :=
@@ -4869,10 +5731,12 @@ settlement_plan_generate_building_access :: proc(
                 branch_points: [3][2]f32
                 branch_distances := [3]f32{1e30, 1e30, 1e30}
                 branch_indices := [3]int{-1, -1, -1}
+                network_candidate_limit :=
+                    settlement_access_network_candidate_limit(plan.request.scale, road_distance)
                 for network_point, network_index in network[:network_count] {
                     if network_degrees[network_index] >= 4 do continue
                     candidate_distance := linalg.length(destination - network_point)
-                    if candidate_distance >= road_distance * .9 do continue
+                    if candidate_distance >= network_candidate_limit do continue
                     for candidate_slot in 0 ..< len(branch_points) {
                         if candidate_distance >= branch_distances[candidate_slot] do continue
                         for shift_slot in candidate_slot + 1 ..< len(branch_points) {
@@ -4903,7 +5767,7 @@ settlement_plan_generate_building_access :: proc(
                     branch_point := alley_start + segment * along
                     if settlement_access_network_degree(city_plan, branch_point) >= 4 do continue
                     candidate_distance := linalg.length(destination - branch_point)
-                    if candidate_distance >= road_distance * .9 do continue
+                    if candidate_distance >= network_candidate_limit do continue
                     for candidate_slot in 0 ..< len(branch_points) {
                         if candidate_distance >= branch_distances[candidate_slot] do continue
                         for shift_slot in candidate_slot + 1 ..< len(branch_points) {
@@ -5127,6 +5991,12 @@ settlement_plan_generate_building_access :: proc(
                         path_maximum_grade,
                         direct_grade_limit,
                         joins_network,
+                        settlement_access_connection_shape_penalty(
+                            city_plan,
+                            path,
+                            front,
+                            joins_network,
+                        ),
                     )
                     if path_score < best_score {
                         best_path, best_half_width = path, path_clearance
@@ -5251,7 +6121,7 @@ settlement_plan_generate_building_access :: proc(
     // throat straightening, twig consolidation, or stale-stub pruning. Keep
     // the post-repair cleanup topology-preserving: aggressive simplification
     // has already run and would merely reopen the same failure.
-    if settlement_access_count_road_connected_doors(plan, city_plan) < plan.access_required_count {
+    if settlement_access_count_road_connected_doors(plan, city_plan, project) < plan.access_required_count {
         settlement_access_repair_disconnected_doors(plan, project, city_plan)
         settlement_access_split_intersections(city_plan)
         settlement_access_deduplicate_segments(city_plan)
@@ -5275,8 +6145,13 @@ settlement_plan_generate_building_access :: proc(
     settlement_access_snap_near_endpoints(city_plan)
     settlement_access_remove_degenerate_segments(city_plan)
     _ = settlement_access_collapse_short_junction_links(plan, project, city_plan)
-    settlement_access_prune_road_spurs_at_doors(plan, city_plan)
-    if settlement_access_count_road_connected_doors(plan, city_plan) < plan.access_required_count {
+    settlement_access_prune_road_spurs_at_doors(plan, city_plan, project)
+    // Simplification and circulation promotion can leave a narrow anonymous
+    // leaf hanging from a real junction. It serves neither a door nor a road
+    // and renders as one arm of a starburst across the verge.
+    settlement_access_prune_orphan_stubs(plan, city_plan)
+    settlement_access_remove_degenerate_segments(city_plan)
+    if settlement_access_count_road_connected_doors(plan, city_plan, project) < plan.access_required_count {
         settlement_access_repair_disconnected_doors(plan, project, city_plan)
         settlement_access_split_intersections(city_plan)
         settlement_access_deduplicate_segments(city_plan)
@@ -5290,8 +6165,8 @@ settlement_plan_generate_building_access :: proc(
     // Reapply the threshold invariant to the exact graph that will be
     // rendered and imported.
     for _ in 0 ..< 3 {
-        settlement_access_prune_road_spurs_at_doors(plan, city_plan)
-        if settlement_access_count_road_connected_doors(plan, city_plan) >= plan.access_required_count do break
+        settlement_access_prune_road_spurs_at_doors(plan, city_plan, project)
+        if settlement_access_count_road_connected_doors(plan, city_plan, project) >= plan.access_required_count do break
         settlement_access_repair_disconnected_doors(plan, project, city_plan)
         settlement_access_split_intersections(city_plan)
         settlement_access_deduplicate_segments(city_plan)
@@ -5299,9 +6174,40 @@ settlement_plan_generate_building_access :: proc(
         settlement_access_remove_degenerate_segments(city_plan)
     }
     settlement_access_clip_to_plazas(plan, city_plan)
-    plan.access_connected_count = settlement_access_count_road_connected_doors(plan, city_plan)
+    _ = settlement_access_restore_door_throats(project, city_plan)
+    // Clipping, repair, and curve preparation can be the last writers of a
+    // road leaf. Re-square those final mouths, then give any surviving
+    // near-parallel T branches a short common stem before rendering.
+    settlement_access_straighten_road_throats(plan, city_plan)
+    settlement_access_split_intersections(city_plan)
+    settlement_access_deduplicate_segments(city_plan)
+    settlement_access_snap_near_endpoints(city_plan)
+    settlement_access_remove_degenerate_segments(city_plan)
+    _ = settlement_access_stem_shallow_forks(plan, project, city_plan)
+    _ = settlement_access_collapse_short_junction_links(plan, project, city_plan)
+    _ = settlement_access_prune_redundant_shallow_branches(plan, project, city_plan)
+    settlement_access_simplify_hairpin_bends(plan, city_plan)
+    settlement_access_split_intersections(city_plan)
+    settlement_access_deduplicate_segments(city_plan)
+    settlement_access_snap_near_endpoints(city_plan)
+    settlement_access_remove_degenerate_segments(city_plan)
+    plan.access_connected_count = settlement_access_count_road_connected_doors(plan, city_plan, project)
+    if plan.access_connected_count < plan.access_required_count {
+        settlement_access_repair_disconnected_doors(plan, project, city_plan)
+        settlement_access_split_intersections(city_plan)
+        settlement_access_deduplicate_segments(city_plan)
+        settlement_access_snap_near_endpoints(city_plan)
+        settlement_access_remove_degenerate_segments(city_plan)
+        plan.access_connected_count = settlement_access_count_road_connected_doors(plan, city_plan, project)
+    }
+    // No topology simplifier runs after this point. Reassert the short
+    // perpendicular doorstep throat here so late orphan and branch cleanup
+    // cannot leave a path arriving diagonally across a facade.
+    _ = settlement_access_restore_door_throats(project, city_plan)
+    settlement_access_remove_degenerate_segments(city_plan)
+    plan.access_connected_count = settlement_access_count_road_connected_doors(plan, city_plan, project)
     settlement_access_finalize_curves(city_plan)
-    settlement_plan_measure_access_topology(plan, city_plan)
+    settlement_plan_measure_access_topology(plan, city_plan, project)
     return connected
 }
 
@@ -5821,6 +6727,7 @@ settlement_plan_generate_village_buildings :: proc(
     // detached compound beside several otherwise empty road arms.
     aegean_cluster_access := false
     aegean_cluster_centers: [3][2]f32
+    aegean_cluster_court_alleys := [3]int{-1, -1, -1}
     if plan.request.region == .Aegean && route_found {
         phase := f32(plan.request.seed & 0xffff) / f32(0xffff) * f32(math.TAU)
         // Cycladic dwellings are sampled around three family-scale clusters.
@@ -5835,6 +6742,7 @@ settlement_plan_generate_village_buildings :: proc(
             court_center := common + radial * 9
             aegean_cluster_centers[cluster_index] = court_center
             court_tangent := [2]f32{-radial[1], radial[0]}
+            court_alley_start := result.alley_count
             settlement_village_add_path(
                 &result,
                 court_center - court_tangent * 3.5,
@@ -5843,6 +6751,9 @@ settlement_plan_generate_village_buildings :: proc(
                 .Public_Space,
                 .Public_Space,
             )
+            if result.alley_count > court_alley_start {
+                aegean_cluster_court_alleys[cluster_index] = court_alley_start
+            }
         }
         root_index := 0
         root_distance := f32(1e30)
@@ -5864,6 +6775,19 @@ settlement_plan_generate_village_buildings :: proc(
             if direction_length > .01 {
                 side_sign := linalg.dot(direction, root_normal) < 0 ? f32(-1) : f32(1)
                 road_edge := root_origin + root_normal * side_sign * (root_width * .5 + root_shoulder + .45)
+                // The root court receives both the road throat and the first
+                // cluster lane. Turn its broad public-space axis square to
+                // the throat so those routes meet as a legible cross/T,
+                // rather than overlaying as two almost-parallel through-lines.
+                court_alley_index := aegean_cluster_court_alleys[root_index]
+                throat_direction := linalg.normalize(root_center - road_edge)
+                if court_alley_index >= 0 && linalg.length(throat_direction) > .001 {
+                    court_tangent := [2]f32{-throat_direction[1], throat_direction[0]}
+                    court := &result.alleys[court_alley_index]
+                    court_start, court_end := root_center - court_tangent * 3.5, root_center + court_tangent * 3.5
+                    court.start_x, court.start_z = court_start[0], court_start[1]
+                    court.end_x, court.end_z = court_end[0], court_end[1]
+                }
                 before := result.alley_count
                 settlement_village_add_path(&result, road_edge, root_center, 1.8, .Road)
                 aegean_cluster_access = result.alley_count > before
@@ -6218,6 +7142,7 @@ settlement_plan_generate_village_buildings :: proc(
             candidate_structure := terrain.structure_make(x, z, frontage, depth, 0, 1)
             candidate_structure.width, candidate_structure.depth = frontage, depth
             candidate_structure.rotation = rotation
+            if !settlement_structure_committed_roads_clear(project, candidate_structure) do continue
             if !settlement_structure_plazas_clear(plan, candidate_structure) do continue
             if settlement_access_structure_overlaps_alley(&result, candidate_structure) do continue
             if court_frontage_candidate {
@@ -6225,7 +7150,7 @@ settlement_plan_generate_village_buildings :: proc(
                 // address the court. Reserving this threshold during site
                 // selection prevents an earlier lane house from forcing the
                 // eventual door into a long A* detour.
-                candidate_door := settlement_structure_front_door_point(candidate_structure)
+                candidate_door := settlement_structure_front_door_point(candidate_structure, .22, project)
                 candidate_court_outward := linalg.normalize([2]f32{x, z} - frontage_lane.end)
                 candidate_threshold := frontage_lane.end + candidate_court_outward * frontage_lane.court_radius
                 if linalg.length(candidate_threshold - candidate_door) < .4 ||
@@ -6414,7 +7339,7 @@ settlement_plan_generate_village_buildings :: proc(
             // node, while the court's broad surface carries movement between
             // the individual thresholds.
             structure_index := result.count - 1
-            door := settlement_structure_front_door_point(result.structures[structure_index])
+            door := settlement_structure_front_door_point(result.structures[structure_index], .22, project)
             threshold := frontage_lane.end + best_court_outward * frontage_lane.court_radius
             court_half_span := frontage_lane.court_radius + .2
             court_along := clamp(
@@ -6491,6 +7416,153 @@ settlement_plan_generate_village_buildings :: proc(
     return result
 }
 
+settlement_town_district_building_target :: proc(district: Settlement_Neighborhood) -> int {
+    target := 1
+    if district.age < .78 do target = 2
+    if district.density > .24 && district.age < .62 do target = 3
+    if district.density > .38 && district.age < .40 do target = 4
+    return target
+}
+
+settlement_hero_config_for_scale :: proc(kind: hero.Kind, scale: Settlement_Scale) -> hero.Config {
+    config := hero.defaults(kind)
+    if scale == .Town {
+        // Keep civic anchors legible without letting two city-sized compounds
+        // consume the silhouette of a compact Riviera town. These remain
+        // comfortably above the hero generator's valid minimum dimensions.
+        config.frontage = max(config.frontage * .84, f32(18))
+        config.depth = max(config.depth * .87, f32(12))
+        config.arcade_depth = min(config.arcade_depth, config.depth * .54)
+    }
+    return config
+}
+
+settlement_town_frontage_side_sign :: proc(
+    district_center, route_origin, route_normal: [2]f32,
+    hash: u32,
+) -> f32 {
+    side_distance := linalg.dot(district_center - route_origin, route_normal)
+    if math.abs(side_distance) > .75 do return side_distance < 0 ? f32(-1) : f32(1)
+    return hash & 1 == 0 ? f32(-1) : f32(1)
+}
+
+settlement_town_try_pair_singleton :: proc(
+    settlement: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city: ^architecture.City_Plan,
+    structure_index: int,
+    district: Settlement_Neighborhood,
+) -> bool {
+    if settlement == nil || project == nil || city == nil ||
+       structure_index < 0 || structure_index >= city.count {
+        return false
+    }
+    first := city.structures[structure_index]
+    if settlement_structure_is_landmark(first) || buildings.is_landmark(first.building) do return false
+    minimum_height, maximum_height := settlement_height_band(settlement.request.region, .Town)
+    if first.height > maximum_height + .01 do return false
+    // Rescue the missing address with a genuinely narrow infill house. The
+    // former near-copy (.82 x .92) usually failed in exactly the constrained
+    // frontage gaps this pass exists to repair, leaving a detached singleton
+    // surrounded by lawn. Riviera terraces comfortably step down to a four-
+    // metre facade and a shallower rear wall while retaining the street line.
+    frontage := clamp(first.width * .68, f32(4), f32(7))
+    depth := clamp(first.depth * .78, f32(8), f32(16))
+    separation := settlement_building_separation(
+        settlement.request.region,
+        .Town,
+        district.age,
+        true,
+    )
+    tangent := [2]f32{f32(math.cos(f64(first.rotation))), f32(math.sin(f64(first.rotation)))}
+    pitch := (first.width + frontage) * .5 + separation + .2
+    preferred_side := linalg.dot(district.center - [2]f32{first.center_x, first.center_z}, tangent) < 0 ? f32(-1) : f32(1)
+    sides := [2]f32{preferred_side, -preferred_side}
+    for side in sides {
+        point := [2]f32{first.center_x, first.center_z} + tangent * pitch * side
+        if settlement_nearest_committed_road_distance(project, point) > 34 ||
+           !settlement_structure_footprint_on_land(project, point[0], point[1], frontage, depth, first.rotation) {
+            continue
+        }
+        rescue_height := architecture.facade_fitted_height_in_range(
+            clamp(first.height, minimum_height, maximum_height),
+            minimum_height,
+            maximum_height,
+        )
+        candidate := terrain.structure_make(point[0], point[1], frontage, depth, 0, rescue_height)
+        candidate.width = frontage
+        candidate.depth = depth
+        candidate.height = rescue_height
+        candidate.rotation = first.rotation
+        if !settlement_structure_routes_clear(settlement, candidate) ||
+           !settlement_structure_committed_roads_clear(project, candidate) ||
+           !settlement_structure_plazas_clear(settlement, candidate) ||
+           !settlement_structure_clear(
+               project,
+               city,
+               point[0],
+               point[1],
+               frontage,
+               depth,
+               first.rotation,
+               separation,
+           ) {
+            continue
+        }
+        // A rescued terrace mate should share the established facade/roof
+        // grammar. A fresh procedural seed can promote the smaller neighbor
+        // into an unrelated tall variant during architecture commit.
+        seed := first.seed
+        candidate.kind = .Architecture
+        candidate.seed = seed
+        candidate.color = architecture.architecture_color(seed, false)
+        if settlement.request.region == .Aegean do candidate.color = {236, 232, 216, 255}
+        candidate.building = first.building
+        parcel := architecture.City_Parcel {
+            frontage_width = frontage,
+            depth          = depth,
+            density        = clamp(district.density, 0, 1),
+            seed           = seed,
+            attached       = true,
+        }
+        half_frontage, half_depth := frontage * .5, depth * .5
+        normal := [2]f32{-tangent[1], tangent[0]}
+        parcel.corners = {
+            point - tangent * half_frontage - normal * half_depth,
+            point + tangent * half_frontage - normal * half_depth,
+            point + tangent * half_frontage + normal * half_depth,
+            point - tangent * half_frontage + normal * half_depth,
+        }
+        append(&city.structures, candidate)
+        append(&city.parcels, parcel)
+        city.count += 1
+        city.parcel_count += 1
+        if settlement.ordinary_purpose_count < len(settlement.ordinary_purposes) {
+            settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Dwelling
+            switch candidate.building.purpose {
+            case .Farmstead:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Farmstead
+            case .Barn_Granary:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Barn_Granary
+            case .Workshop:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Workshop
+            case .Inn_Shop:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Inn_Shop
+            case .Mill:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Mill
+            case .Fishery:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Fishery
+            case .Storehouse:
+                settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Storehouse
+            case .Dwelling:
+            }
+            settlement.ordinary_purpose_count += 1
+        }
+        return true
+    }
+    return false
+}
+
 settlement_plan_generate_buildings :: proc(
     settlement: ^Settlement_Plan,
     project: ^terrain.Project,
@@ -6516,8 +7588,12 @@ settlement_plan_generate_buildings :: proc(
         if !settlement_fabric_cell_kept(settlement.request.scale, district.age, hash) do continue
         target := 1
         if district.density > .48 && district.age < .78 do target = 2
-        town_consolidated := settlement.request.scale == .Town && district.density > .34 && district.age < .65
-        if town_consolidated do target = 1
+        if settlement.request.scale == .Town {
+            // A single oversized object per macro cell produces suburban
+            // dots and can never register a built block. Mature town tissue
+            // instead gets short runs of narrow houses sharing one frontage.
+            target = settlement_town_district_building_target(district)
+        }
         if settlement.request.scale == .City && district.density > .70 && district.age < .52 && hash & 3 != 0 {
             target = 3
         }
@@ -6551,6 +7627,14 @@ settlement_plan_generate_buildings :: proc(
             if settlement.request.region == .Aegean {
                 median_frontage, frontage_low, frontage_high = 6.5, 4, 11
                 depth_low, depth_high = 5.5, 16
+            } else if settlement.request.scale == .Town {
+                // Adriatic town fabric is made from narrow hillside addresses,
+                // not the broad apartment and palazzo parcels used by City.
+                // The old city limits produced 350–400 m² ordinary slabs that
+                // visually crowded roads even when their collision clearance
+                // was valid.
+                median_frontage, frontage_low, frontage_high = 7, 4.2, 12.5
+                depth_low, depth_high = 8, 20
             } else if settlement.request.scale == .Village {
                 median_frontage, frontage_low, frontage_high = 7.5, 4.5, 13
                 depth_low, depth_high = 6, 18
@@ -6559,6 +7643,8 @@ settlement_plan_generate_buildings :: proc(
             ratio_mode, ratio_high := f32(1.65), f32(2.5)
             if settlement.request.region == .Aegean {
                 ratio_mode, ratio_high = 1.25, 1.55
+            } else if settlement.request.scale == .Town {
+                ratio_mode, ratio_high = 1.5, 2.1
             } else if settlement.request.scale == .Village {
                 ratio_mode, ratio_high = 1.35, 1.60
             }
@@ -6568,33 +7654,27 @@ settlement_plan_generate_buildings :: proc(
                 depth_high,
             )
             // Architecture doors and their access paths use the frontage
-            // face. Canonicalize sampled footprints so that face is the broad
-            // elevation rather than the short end of a deep rectangle.
-            if depth > frontage {
+            // face. Cities and villages present the broad elevation, while
+            // Riviera towns retain narrow-fronted, deep row-house parcels so
+            // several addresses can compose a continuous street wall.
+            if depth > frontage && settlement.request.scale != .Town {
                 frontage, depth = depth, frontage
             }
-            hero_candidate := false
-            hero_kind := hero.Kind.Post_Office
-            if town_consolidated {
-                // A town core used to place two small buildings in each
-                // occupied fabric cell. Consolidate that coverage into one
-                // substantial building: sqrt(2) on each axis preserves the
-                // target footprint area without thinning the density field.
-                frontage *= f32(1.41421356237)
-                depth *= f32(1.41421356237)
-            }
-            // Promote a parcel that already fits the hero-building domain so
-            // civic identity does not perturb the established street/access
-            // topology merely by demanding a larger footprint.
-            hero_domain := frontage >= 16 && frontage <= 34 && depth >= 11 && depth <= 23
-            if hero_domain && !hero_post_office_placed {
-                hero_candidate = true
-            } else if hero_domain && !hero_clinic_placed {
-                hero_candidate = true
-                hero_kind = .Clinic
+            hero_candidate := !hero_post_office_placed || !hero_clinic_placed
+            hero_kind := !hero_post_office_placed ? hero.Kind.Post_Office : hero.Kind.Clinic
+            if hero_candidate {
+                // Civic buildings are program inputs, not identities painted
+                // onto whatever ordinary parcel happens to be large enough.
+                // Give placement, collision, terrain, and access planning the
+                // purpose-built footprint from the outset.
+                hero_config := settlement_hero_config_for_scale(hero_kind, settlement.request.scale)
+                frontage = hero_config.frontage
+                depth = hero_config.depth
             }
             x, z, rotation: f32
-            attached := settlement_rng_unit(rng) < settlement_attachment_probability(district.age)
+            attached :=
+                settlement_rng_unit(rng) <
+                settlement_attachment_probability(district.age, settlement.request.scale)
             separation := settlement_building_separation(
                 settlement.request.region,
                 settlement.request.scale,
@@ -6602,10 +7682,10 @@ settlement_plan_generate_buildings :: proc(
                 attached,
             )
             frontage_reach :=
-                settlement.request.scale == .City ? f32(30) : settlement.request.scale == .Town ? f32(24) : f32(18)
+                settlement.request.scale == .City ? f32(30) : settlement.request.scale == .Town ? f32(32) : f32(18)
             if settlement.request.region == .Adriatic {
                 frontage_reach =
-                    settlement.request.scale == .City ? f32(24) : settlement.request.scale == .Town ? f32(19) : f32(16)
+                    settlement.request.scale == .City ? f32(24) : settlement.request.scale == .Town ? f32(32) : f32(16)
             }
             frontage_slots := settlement.request.scale == .Village ? 1 : 4
             use_frontage := route_found && layout_index < frontage_slots && route_distance <= frontage_reach
@@ -6617,17 +7697,47 @@ settlement_plan_generate_buildings :: proc(
                 use_frontage = false
             }
             if use_frontage {
-                side := (layout_index + int(hash & 1)) & 1
-                row := layout_index / 2
-                signed_row := f32((row + 1) / 2) * (frontage + separation)
-                if row & 1 == 1 do signed_row = -signed_row
+                // Keep a macro cell's houses on one side of its street and
+                // compose them as a short terrace run. Alternating every slot
+                // across the carriageway produced isolated zig-zag houses,
+                // made a two-house group span an entire block, and forced
+                // separate spoke paths to each threshold.
+                centered_slot := f32(layout_index) - f32(target - 1) * .5
+                signed_row := centered_slot * (frontage + separation)
                 // The projected macro-cell centers otherwise line up at
                 // identical stations on long routes. Drift each frontage
                 // group within its own cell, without changing which street it
                 // addresses.
-                station_noise := f32((hash ~ u32(slot + 1) * u32(0x27d4eb2d)) & 0xffff) / f32(0xffff) - .5
-                signed_row += station_noise * district.radius * .68
-                side_sign := side == 0 ? f32(-1) : f32(1)
+                station_noise := f32((hash ~ u32(0x27d4eb2d)) & 0xffff) / f32(0xffff) - .5
+                signed_row += station_noise * district.radius * .25
+                // Once an ordinary frontage run has started, place the next
+                // successful house from the previous house's actual edge.
+                // Deriving every station independently from its own random
+                // width leaves conspicuous lawn slots between otherwise
+                // attached rowhouses. Keep collision retries free to seek a
+                // new station, and keep purpose-built civic parcels detached.
+                if layout_index == placement_index && placement_index > 0 && !hero_candidate {
+                    previous := result.structures[result.count - 1]
+                    if !settlement_structure_is_landmark(previous) {
+                        previous_station :=
+                            (previous.center_x - route_origin[0]) * route_tangent[0] +
+                            (previous.center_z - route_origin[1]) * route_tangent[1]
+                        signed_row = previous_station + previous.width * .5 + frontage * .5 + separation
+                    }
+                }
+                side_sign := hash & 1 == 0 ? f32(-1) : f32(1)
+                if settlement.request.scale == .Town {
+                    // Keep a cell's terrace on the side of the street where
+                    // its growth tissue actually lives. Randomly reflecting
+                    // whole groups across the route leaves alternating empty
+                    // wedges and makes neighboring infill collide.
+                    side_sign = settlement_town_frontage_side_sign(
+                        district.center,
+                        route_origin,
+                        route_normal,
+                        hash,
+                    )
+                }
                 setback_noise := f32((hash >> 12) & 255) / 255
                 setback_variation := (.15 + district.age * .65) * setback_noise
                 setback := route_width * .5 + route_shoulder + .8 + depth * .5 + separation * .5 + setback_variation
@@ -6729,6 +7839,16 @@ settlement_plan_generate_buildings :: proc(
                 }
                 rotation = settlement_rotation_face_point(rotation, {x, z}, group_center)
             }
+            if settlement.request.scale == .Town &&
+               settlement_nearest_committed_road_distance(project, {x, z}) > 34 {
+                // Optional planned lanes may be simplified out or declined
+                // when the shared road graph reaches its budget. Never place
+                // town fabric against such a paper street: the access repair
+                // would otherwise draw a conspicuous 60–100 m footpath to the
+                // nearest road that actually renders.
+                settlement_plan_record_rejected_site(settlement, x, z, frontage, depth, rotation)
+                continue
+            }
             if !settlement_structure_footprint_on_land(project, x, z, frontage, depth, rotation) {
                 settlement_plan_record_rejected_site(settlement, x, z, frontage, depth, rotation)
                 continue
@@ -6737,7 +7857,8 @@ settlement_plan_generate_buildings :: proc(
             candidate_structure.width = frontage
             candidate_structure.depth = depth
             candidate_structure.rotation = rotation
-            if !settlement_structure_routes_clear(settlement, candidate_structure) {
+            if !settlement_structure_routes_clear(settlement, candidate_structure) ||
+               !settlement_structure_committed_roads_clear(project, candidate_structure) {
                 settlement_plan_record_rejected_site(settlement, x, z, frontage, depth, rotation)
                 continue
             }
@@ -6752,15 +7873,22 @@ settlement_plan_generate_buildings :: proc(
             seed := settlement_rng_u32(rng)
             hero_plan: hero.Plan
             if hero_candidate {
-                hero_config := hero.defaults(hero_kind)
+                hero_config := settlement_hero_config_for_scale(hero_kind, settlement.request.scale)
                 hero_config.frontage = frontage
                 hero_config.depth = depth
                 hero_plan = hero.generate(seed, hero_config)
             }
             density := clamp(district.density, 0, 1)
-            height :=
-                minimum_height +
-                (maximum_height - minimum_height) * clamp(density * .78 + settlement_rng_unit(rng) * .22, 0, 1)
+            height_roll := settlement_rng_unit(rng)
+            height_factor := clamp(density * .78 + height_roll * .22, 0, 1)
+            if settlement.request.region == .Aegean {
+                // Aegean settlements need occasional upper rooms and roof
+                // terraces stepping above the predominantly low fabric. The
+                // former range could never cross the 7.2 m module threshold
+                // at Town density, so every ordinary house became 4.8 m.
+                height_factor = clamp(density * .90 + height_roll * .42, 0, 1)
+            }
+            height := minimum_height + (maximum_height - minimum_height) * height_factor
             height = architecture.facade_fitted_height_in_range(height, minimum_height, maximum_height)
             if hero_candidate do height = hero_plan.arcade_height + hero_plan.roof_height + hero_plan.monitor_height
             structure := terrain.structure_make(x, z, frontage, depth, 0, height)
@@ -6835,29 +7963,45 @@ settlement_plan_generate_buildings :: proc(
             }
             append(&result.structures, structure)
             if settlement.ordinary_purpose_count < len(settlement.ordinary_purposes) {
-                switch identity.purpose {
-                case .Dwelling:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Dwelling
-                case .Farmstead:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Farmstead
-                case .Barn_Granary:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Barn_Granary
-                case .Workshop:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Workshop
-                case .Inn_Shop:
+                if hero_candidate {
                     settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Inn_Shop
-                case .Mill:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Mill
-                case .Fishery:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Fishery
-                case .Storehouse:
-                    settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Storehouse
+                } else {
+                    switch identity.purpose {
+                    case .Dwelling:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Dwelling
+                    case .Farmstead:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Farmstead
+                    case .Barn_Granary:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Barn_Granary
+                    case .Workshop:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Workshop
+                    case .Inn_Shop:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Inn_Shop
+                    case .Mill:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Mill
+                    case .Fishery:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Fishery
+                    case .Storehouse:
+                        settlement.ordinary_purposes[settlement.ordinary_purpose_count] = .Storehouse
+                    }
                 }
                 settlement.ordinary_purpose_count += 1
             }
             result.count += 1
             append(&result.parcels, parcel)
             result.parcel_count += 1
+        }
+        if settlement.request.scale == .Town &&
+           result.count - district_start == 1 &&
+           district.density >= .18 &&
+           district.age < .92 {
+            _ = settlement_town_try_pair_singleton(
+                settlement,
+                project,
+                &result,
+                district_start,
+                district,
+            )
         }
         settlement_plan_record_built_group(
             settlement,
@@ -6867,6 +8011,11 @@ settlement_plan_generate_buildings :: proc(
             district.tissue,
         )
     }
+    // Buildings establish the construction datum. Lightly settle steep town
+    // footprints before routing passages so thresholds, stoops, and the A*
+    // grade checks all observe the same finished ground that will be rendered.
+    settlement_plan_prepare_block_terrain(settlement, project, &result)
+    settlement_plan_seat_city(&result, project)
     settlement_plan_generate_pedestrian_access(settlement, &result, rng)
     maximum_access_length := settlement.request.scale == .City ? f32(180) : f32(150)
     _ = settlement_plan_generate_building_access(settlement, project, &result, rng, maximum_access_length)
@@ -7097,8 +8246,44 @@ settlement_access_stair_nosing_range :: proc(
     return
 }
 
+settlement_access_stair_rest_count :: proc(run_length: f32) -> int {
+    if run_length <= 7 do return 0
+    return max(0, int(math.ceil(f64(run_length / 7))) - 1)
+}
+
+settlement_access_stair_interval_overlaps_rest :: proc(
+    interval_start, interval_finish, run_start, run_length: f32,
+    rest_count: int,
+    rest_length: f32 = 1.05,
+) -> bool {
+    if rest_count <= 0 || run_length <= 0 || interval_finish <= interval_start do return false
+    half_rest := max(rest_length, f32(0)) * .5
+    for rest_index in 0 ..< rest_count {
+        center := run_start + f32(rest_index + 1) / f32(rest_count + 1) * run_length
+        if interval_finish > center - half_rest && interval_start < center + half_rest do return true
+    }
+    return false
+}
+
 settlement_access_door_apron_width :: proc(alley: architecture.City_Alley) -> f32 {
     return max(alley.half_width * 2, f32(1.1))
+}
+
+settlement_access_door_apron :: proc(
+    scale: Settlement_Scale,
+    alley: architecture.City_Alley,
+    length: f32,
+) -> (run, width: f32) {
+    run = min(f32(.65), length)
+    width = settlement_access_door_apron_width(alley)
+    if scale == .Town {
+        // A Riviera threshold is a tiny paved forecourt: enough room for a
+        // stoop, pots, and two people passing, but still subordinate to the
+        // adjoining vicolo.
+        run = min(f32(1.6), length)
+        width = max(width, f32(2.2))
+    }
+    return
 }
 
 settlement_access_road_apron :: proc(
@@ -7211,10 +8396,12 @@ settlement_plan_import_city :: proc(
         structure, parcel := city_plan.structures[index], city_plan.parcels[index]
         purpose := Settlement_Building_Purpose.Dwelling
         if index < plan.ordinary_purpose_count do purpose = plan.ordinary_purposes[index]
+        site_kind := Settlement_Site_Kind.Ordinary
+        if buildings.is_landmark(structure.building) do site_kind = .Landmark
         plan.sites[plan.site_count] = {
             structure = structure,
             parcel    = parcel,
-            kind      = .Ordinary,
+            kind      = site_kind,
             tissue    = settlement_nearest_tissue(plan, structure.center_x, structure.center_z),
             density   = parcel.density,
             attached  = parcel.attached,
@@ -7241,6 +8428,76 @@ settlement_plan_seat_project_architecture :: proc(project: ^terrain.Project) {
         _, foundation_high := architecture.architecture_foundation_height_range(project, structure)
         structure.base_y = foundation_high
     }
+}
+
+// Turn the exposed downhill side of a steep town foundation into a modest
+// limestone retaining edge. Foundation seating already prevents buildings
+// from sinking into side slopes, but without a visible edge the resulting
+// height change reads as a house hovering over one continuous grass sheet.
+// Keep the entrance facade open for its stoop and generated access path.
+settlement_town_retaining_wall :: proc(
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+    structure: terrain.Structure,
+) -> (wall: terrain.Structure, valid: bool) {
+    if project == nil || city_plan == nil || structure.kind != .Architecture do return
+    local_x := [2]f32{f32(math.cos(f64(structure.rotation))), f32(math.sin(f64(structure.rotation)))}
+    local_z := [2]f32{-local_x[1], local_x[0]}
+    center := [2]f32{structure.center_x, structure.center_z}
+    edge_offsets := [4][2]f32 {
+        local_z * (structure.depth * .5),
+        local_x * (structure.width * .5),
+        -local_z * (structure.depth * .5),
+        -local_x * (structure.width * .5),
+    }
+    lowest_edge, lowest_height := -1, f32(1e30)
+    for offset, edge_index in edge_offsets {
+        if edge_index == int(structure.entrance_side) do continue
+        point := center + offset
+        height := terrain.sample_height(project, 0, point[0], point[1])
+        if height < lowest_height {
+            lowest_edge, lowest_height = edge_index, height
+        }
+    }
+    if lowest_edge < 0 do return
+    exposed_height := structure.base_y - lowest_height
+    if exposed_height < .65 do return
+
+    edge_center := center + edge_offsets[lowest_edge]
+    along := local_x
+    length := structure.width + .7
+    if lowest_edge == 1 || lowest_edge == 3 {
+        along = local_z
+        length = structure.depth + .7
+    }
+    wall_height := clamp(exposed_height + .12, f32(.7), f32(3.2))
+    wall = terrain.structure_make(edge_center[0], edge_center[1], length, .34, lowest_height - .04, wall_height)
+    wall.kind = .Box
+    wall.width, wall.depth, wall.height = length, .34, wall_height
+    wall.rotation = f32(math.atan2(f64(along[1]), f64(along[0])))
+    wall.color = {151, 145, 132, 255}
+    if !settlement_structure_committed_roads_clear(project, wall, .08) ||
+       settlement_access_structure_overlaps_alley(city_plan, wall) {
+        return {}, false
+    }
+    return wall, true
+}
+
+settlement_plan_commit_town_retaining_walls :: proc(
+    plan: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+) -> int {
+    if plan == nil || project == nil || city_plan == nil || plan.request.scale != .Town do return 0
+    committed := 0
+    for structure in city_plan.structures[:city_plan.count] {
+        if committed >= 18 do break
+        wall, valid := settlement_town_retaining_wall(project, city_plan, structure)
+        if !valid do continue
+        if terrain.add_structure(project, wall) < 0 do break
+        committed += 1
+    }
+    return committed
 }
 
 settlement_plan_record_reserved_site :: proc(
@@ -7326,6 +8583,8 @@ settlement_plan_record_terrain_edit :: proc(
     project: ^terrain.Project,
     kind: Settlement_Terrain_Edit_Kind,
     x, z, half_x, half_z, feather: f32,
+    smooth_strength: f32 = .72,
+    smooth_hardness: f32 = .62,
 ) {
     if plan == nil || project == nil || plan.terrain_edit_count >= len(plan.terrain_edits) do return
     samples := [5][2]f32 {
@@ -7355,12 +8614,55 @@ settlement_plan_record_terrain_edit :: proc(
     // The lab terrain is disposable. Smoothing is bounded to the recorded pad
     // and cascades through clipmap levels in the terrain package.
     if kind != .Retaining_Edge {
-        terrain.apply_stroke_with_hardness(project, .Smooth, x, z, max(half_x, half_z) + feather, .72, 1, .62)
+        terrain.apply_stroke_with_hardness(
+            project,
+            .Smooth,
+            x,
+            z,
+            max(half_x, half_z) + feather,
+            smooth_strength,
+            1,
+            smooth_hardness,
+        )
     }
 }
 
-settlement_plan_prepare_block_terrain :: proc(plan: ^Settlement_Plan, project: ^terrain.Project) {
+settlement_plan_prepare_block_terrain :: proc(
+    plan: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan = nil,
+) {
     if plan == nil || project == nil do return
+    if plan.request.scale == .Town && city_plan != nil {
+        // Preserve the elevation steps that give a hillside town its profile.
+        // Flattening each block's full bounding box caused neighboring edits
+        // to overlap into one broad plateau. Compact per-building pads still
+        // seat foundations, while same-frontage houses blend into a narrow
+        // contour terrace and adjacent runs retain their height difference.
+        budget := 28
+        prepared := 0
+        for structure in city_plan.structures[:city_plan.count] {
+            if prepared >= budget do break
+            local_slope := settlement_terrain_slope(project, structure.center_x, structure.center_z)
+            if local_slope < .035 do continue
+            half_x := min(structure.width * .5 + .35, f32(12))
+            half_z := min(structure.depth * .5 + .35, f32(9))
+            settlement_plan_record_terrain_edit(
+                plan,
+                project,
+                .Building_Pad,
+                structure.center_x,
+                structure.center_z,
+                half_x,
+                half_z,
+                .7,
+                .54,
+                .78,
+            )
+            prepared += 1
+        }
+        return
+    }
     budget := 24
     switch plan.request.scale {
     case .City:

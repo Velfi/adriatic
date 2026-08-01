@@ -3,6 +3,7 @@ package main
 import terrain "../packages/terrain"
 import "core:fmt"
 import "core:mem"
+import "core:os"
 
 map_artifact_capture :: proc(
     editor: ^Editor,
@@ -124,24 +125,42 @@ map_editor_load_from_path :: proc(editor: ^Editor, path: string) -> (Map_Artifac
 
 map_editor_save :: proc(editor: ^Editor) {
     if editor == nil do return
-    error, saved := map_editor_save_to_path(editor, EDITOR_MAP_ARTIFACT_PATH)
+    directory, directory_ok := map_artifact_save_directory(context.temp_allocator)
+    path, path_ok := map_artifact_save_path(context.temp_allocator)
+    if !directory_ok || !path_ok {
+        fmt.eprintln("map save failed: could not resolve the user data path")
+        terrain_file_feedback(editor, "MAP SAVE FAILED")
+        return
+    }
+    if directory_error := os.make_directory_all(directory); directory_error != nil && directory_error != .Exist {
+        fmt.eprintf("map save failed: could not create %s: %v\n", directory, directory_error)
+        terrain_file_feedback(editor, "MAP SAVE FAILED")
+        return
+    }
+    error, saved := map_editor_save_to_path(editor, path)
     defer map_artifact_error_dispose(&error)
     if saved {
         terrain_file_feedback(editor, "MAP SAVED")
     } else {
-        fmt.eprintf("map save failed: %v %s\n", error.kind, error.message)
+        fmt.eprintf("map save failed: %v %s %v\n", error.kind, error.message, error.os_error)
         terrain_file_feedback(editor, "MAP SAVE FAILED")
     }
 }
 
 map_editor_load :: proc(editor: ^Editor) {
     if editor == nil do return
-    error, loaded := map_editor_load_from_path(editor, EDITOR_MAP_ARTIFACT_PATH)
+    path, path_ok := map_artifact_save_path(context.temp_allocator)
+    if !path_ok {
+        fmt.eprintln("map load failed: could not resolve the user data path")
+        terrain_file_feedback(editor, "MAP LOAD FAILED")
+        return
+    }
+    error, loaded := map_editor_load_from_path(editor, path)
     defer map_artifact_error_dispose(&error)
     if loaded {
         terrain_file_feedback(editor, "MAP LOADED")
     } else {
-        fmt.eprintf("map load failed: %v %s\n", error.kind, error.message)
+        fmt.eprintf("map load failed: %v %s %v\n", error.kind, error.message, error.os_error)
         terrain_file_feedback(editor, "MAP LOAD FAILED")
     }
 }

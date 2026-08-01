@@ -1,6 +1,7 @@
 package main
 
 import roads "../packages/roads"
+import road_planner "../packages/road_planner"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:math/linalg"
@@ -9,6 +10,11 @@ SETTLEMENT_ROUTE_GRID :: 25
 SETTLEMENT_ROUTE_CAPACITY :: 12
 SETTLEMENT_ROAD_NETWORK_POI_CAPACITY :: 32
 SETTLEMENT_ROAD_GATEWAY_CAPACITY :: 3
+// A runway is exceptionally attractive to the terrain router because it is
+// broad and level. Make an at-grade crossing a last resort while keeping the
+// authored connector from a runway threshold usable.
+SETTLEMENT_ROUTE_RUNWAY_CROSSING_COST :: f32(250)
+SETTLEMENT_ROUTE_RUNWAY_SAFETY_MARGIN :: f32(6)
 
 Settlement_Route :: struct {
     points: [SETTLEMENT_ROUTE_CAPACITY][2]f32,
@@ -70,6 +76,11 @@ Settlement_Road_Network_PoI :: struct {
     required: bool,
 }
 
+settlement_route_edge_is_runway :: proc(edge: roads.Edge) -> bool {
+    runway_half_width := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_RUNWAY_HALF_WIDTH
+    return edge.pavement == .Asphalt && math.abs(edge.half_width - runway_half_width) <= .001
+}
+
 // Turn a regional road passing through the settlement fringe into explicit
 // town entrances before local routes are planned.  The town network can then
 // grow from shared graph nodes instead of discovering accidental crossings
@@ -103,6 +114,9 @@ settlement_plan_road_gateways :: proc(
         best_edge := -1
         best_amount, best_score := f32(0), f32(1e30)
         for edge, edge_index in graph.edges[:graph.edge_count] {
+            // Airport access is authored from a threshold. A runway is not a
+            // regional street and must never become an automatic town gateway.
+            if settlement_route_edge_is_runway(edge) do continue
             for sample in 2 ..< SAMPLES - 1 {
                 amount := f32(sample) / f32(SAMPLES)
                 point := roads.edge_point(graph, edge, amount)
@@ -178,6 +192,59 @@ settlement_route_segment_intersection :: proc(
     point = {a[0] + ab_x * along_ab, a[1] + ab_z * along_ab}
     found = true
     return
+}
+
+settlement_route_segment_overlaps_box :: proc(
+    a, b, box_start, box_finish: [2]f32,
+    half_width: f32,
+) -> bool {
+    box_delta := box_finish - box_start
+    box_length := linalg.length(box_delta)
+    if box_length <= .01 do return false
+    tangent := box_delta / box_length
+    normal := [2]f32{-tangent[1], tangent[0]}
+    local_a := [2]f32{linalg.dot(a - box_start, tangent), linalg.dot(a - box_start, normal)}
+    local_b := [2]f32{linalg.dot(b - box_start, tangent), linalg.dot(b - box_start, normal)}
+    local_delta := local_b - local_a
+    enter, exit := f32(0), f32(1)
+    bounds := [2][2]f32{{0, box_length}, {-half_width, half_width}}
+    for axis in 0 ..< 2 {
+        if math.abs(local_delta[axis]) <= .00001 {
+            if local_a[axis] < bounds[axis][0] || local_a[axis] > bounds[axis][1] do return false
+            continue
+        }
+        first := (bounds[axis][0] - local_a[axis]) / local_delta[axis]
+        second := (bounds[axis][1] - local_a[axis]) / local_delta[axis]
+        if first > second do first, second = second, first
+        enter = max(enter, first)
+        exit = min(exit, second)
+        if enter > exit do return false
+    }
+    return exit >= 0 && enter <= 1 && exit - enter > .00001
+}
+
+settlement_route_segment_crosses_runway :: proc(project: ^terrain.Project, a, b: [2]f32) -> bool {
+    if project == nil do return false
+    graph := &project.road_graph
+    CURVE_SEGMENTS :: 16
+    for edge in graph.edges[:graph.edge_count] {
+        if !settlement_route_edge_is_runway(edge) do continue
+        previous := roads.edge_point(graph, edge, 0)
+        for segment in 0 ..< CURVE_SEGMENTS {
+            current := roads.edge_point(graph, edge, f32(segment + 1) / f32(CURVE_SEGMENTS))
+            if settlement_route_segment_overlaps_box(
+                a,
+                b,
+                {previous.x, previous.z},
+                {current.x, current.z},
+                edge.half_width + SETTLEMENT_ROUTE_RUNWAY_SAFETY_MARGIN,
+            ) {
+                return true
+            }
+            previous = current
+        }
+    }
+    return false
 }
 
 settlement_route_insert_point :: proc(route: ^Settlement_Route, after_index: int, point: [2]f32) -> bool {
@@ -557,6 +624,7 @@ settlement_plan_extract_route_faces :: proc(plan: ^Settlement_Plan) -> int {
     return added
 }
 
+
 settlement_route_removal_priority :: proc(route: Settlement_Planned_Route) -> int {
     switch route.class {
     case .Alley, .Lane, .Stair:
@@ -594,6 +662,10 @@ settlement_plan_simplify_route_capacity :: proc(plan: ^Settlement_Plan, node_cap
     }
 }
 
+// Route every authored settlement connection through the shared planner. The
+// settlement layer owns product policy (road class, runway exclusion, and the
+// compact route representation); search and path reconstruction belong to
+// road_planner so editor roads and generated roads cannot drift apart.
 settlement_route_find :: proc(
     project: ^terrain.Project,
     start_x, start_z, finish_x, finish_z: f32,
@@ -602,274 +674,139 @@ settlement_route_find :: proc(
     result: Settlement_Route
     if project == nil do return result
 
-    span_x, span_z := math.abs(finish_x - start_x), math.abs(finish_z - start_z)
-    direct_length := linalg.length([2]f32{finish_x - start_x, finish_z - start_z})
-    direct_rise := math.abs(
-        terrain.sample_height(project, 0, finish_x, finish_z) - terrain.sample_height(project, 0, start_x, start_z),
-    )
-    if direct_length <= 12 && direct_rise / max(direct_length, f32(.01)) <= settlement_route_grade_limit(route_class) {
-        result.points[0] = {start_x, start_z}
-        result.points[1] = {finish_x, finish_z}
-        result.count = 2
-        return result
-    }
-    minimum_cell := direct_length <= 12 ? f32(2) : f32(10)
+    direct := [2]f32{finish_x - start_x, finish_z - start_z}
+    direct_length := linalg.length(direct)
+    if direct_length <= .01 do return result
+
+    config := road_planner.get_generation_config()
     grade_limit := settlement_route_grade_limit(route_class)
-    required_length := direct_rise / max(grade_limit, f32(.01))
-    // A symmetric dogleg needs this much lateral room to acquire the run
-    // required by the elevation change. Give road classes a broad corridor
-    // in which A* can form contour-following bends and switchbacks.
+    config.maximum_grade = grade_limit
+    config.heuristic_weight = 1
+    config.length_cost = 1
+    config.water_cost = 1e8
+    config.turn_cost = 2
+    config.switchback_cost = 24
+    switch route_class {
+    case .Civic_Spine, .Connector:
+        config.grade_cost = 42
+        config.steep_grade_cost = 220
+    case .Street:
+        config.grade_cost = 34
+        config.steep_grade_cost = 180
+    case .Lane, .Alley:
+        config.grade_cost = 20
+        config.steep_grade_cost = 100
+    case .Stair:
+        config.grade_cost = 4
+        config.steep_grade_cost = 20
+    case .Waterfront:
+        config.grade_cost = 56
+        config.steep_grade_cost = 260
+    case .Ridge:
+        config.grade_cost = 30
+        config.steep_grade_cost = 150
+    }
+
+    start_height := terrain.sample_height(project, 0, start_x, start_z)
+    finish_height := terrain.sample_height(project, 0, finish_x, finish_z)
+    required_length := math.abs(finish_height - start_height) / max(grade_limit, f32(.01))
     lateral_run := f32(0)
     if required_length > direct_length {
         lateral_run =
             f32(math.sqrt(f64(max(required_length * required_length - direct_length * direct_length, f32(0))))) * .5
     }
-    corridor_span := max(span_x, span_z) + lateral_run * 2
-    cell := max(corridor_span / f32(SETTLEMENT_ROUTE_GRID - 5), minimum_cell)
-    padding := max(cell * 2, lateral_run + cell)
-    min_x, min_z := min(start_x, finish_x) - padding, min(start_z, finish_z) - padding
-    max_x, max_z := max(start_x, finish_x) + padding, max(start_z, finish_z) + padding
-    width := clamp(int(math.ceil(f64((max_x - min_x) / cell))) + 1, 3, SETTLEMENT_ROUTE_GRID)
-    height := clamp(int(math.ceil(f64((max_z - min_z) / cell))) + 1, 3, SETTLEMENT_ROUTE_GRID)
-    node_count := width * height
-
-    costs: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]f32
-    estimates: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]f32
-    parents: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]int
-    open: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]bool
-    closed: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]bool
-    for index in 0 ..< node_count {
-        costs[index] = 1e30
-        estimates[index] = 1e30
-        parents[index] = -1
-    }
-
-    start_gx := clamp(int(math.round(f64((start_x - min_x) / cell))), 0, width - 1)
-    start_gz := clamp(int(math.round(f64((start_z - min_z) / cell))), 0, height - 1)
-    finish_gx := clamp(int(math.round(f64((finish_x - min_x) / cell))), 0, width - 1)
-    finish_gz := clamp(int(math.round(f64((finish_z - min_z) / cell))), 0, height - 1)
-    start := start_gz * width + start_gx
-    finish := finish_gz * width + finish_gx
-    costs[start] = 0
-    estimates[start] = 0
-    open[start] = true
-
-    // Two-to-one diagonals let a route gain horizontal run while making
-    // gradual progress across a steep contour. An eight-neighbor lattice
-    // cannot advance on terrain whose slope exceeds limit*sqrt(2), even when
-    // a perfectly valid winding road fits in the corridor.
-    directions := [16][2]int {
-        {1, 0},
-        {-1, 0},
-        {0, 1},
-        {0, -1},
-        {1, 1},
-        {-1, 1},
-        {1, -1},
-        {-1, -1},
-        {1, 2},
-        {-1, 2},
-        {1, -2},
-        {-1, -2},
-        {2, 1},
-        {-2, 1},
-        {2, -1},
-        {-2, -1},
-    }
-    for _ in 0 ..< node_count {
-        current := -1
-        best := f32(1e30)
-        for index in 0 ..< node_count {
-            if open[index] && estimates[index] < best {
-                best = estimates[index]
-                current = index
-            }
-        }
-        if current < 0 || current == finish do break
-        open[current] = false
-        closed[current] = true
-        cx, cz := current % width, current / width
-        current_x, current_z := min_x + f32(cx) * cell, min_z + f32(cz) * cell
-        if current == start do current_x, current_z = start_x, start_z
-        current_height := terrain.sample_height(project, 0, current_x, current_z)
-
-        for direction in directions {
-            nx, nz := cx + direction[0], cz + direction[1]
-            if nx < 0 || nz < 0 || nx >= width || nz >= height do continue
-            neighbor := nz * width + nx
-            if closed[neighbor] do continue
-            world_x, world_z := min_x + f32(nx) * cell, min_z + f32(nz) * cell
-            if neighbor == finish do world_x, world_z = finish_x, finish_z
-            next_height := terrain.sample_height(project, 0, world_x, world_z)
-            if next_height <= project.sea_level + .45 do continue
-            step_length := linalg.length([2]f32{world_x - current_x, world_z - current_z})
-            if step_length <= .01 do continue
-            step_route: Settlement_Route
-            step_route.points[0], step_route.points[1], step_route.count =
-                {current_x, current_z}, {world_x, world_z}, 2
-            if settlement_route_crosses_sea(project, step_route) do continue
-            distance_cost := step_length / cell
-            grade := math.abs(next_height - current_height) / step_length
-            preferred_grade := f32(.06)
-            grade_weight, earthwork_weight := f32(18), f32(.018)
-            roadbed_half_width := f32(4)
-            switch route_class {
-            case .Civic_Spine, .Connector:
-                preferred_grade = .06
-                roadbed_half_width = 6
-            case .Street:
-                preferred_grade = .08
-                roadbed_half_width = 4.5
-            case .Lane, .Alley:
-                preferred_grade = .12
-                grade_weight, earthwork_weight = 10, .012
-                roadbed_half_width = 2.5
-            case .Stair:
-                preferred_grade = .12
-                grade_weight, earthwork_weight = 2, .004
-                roadbed_half_width = 1.5
-            case .Waterfront:
-                preferred_grade = .04
-                grade_weight, earthwork_weight = 24, .025
-                roadbed_half_width = 5
-            case .Ridge:
-                preferred_grade = .07
-                grade_weight, earthwork_weight = 16, .014
-                roadbed_half_width = 3.5
-            }
-            if grade > grade_limit do continue
-            curvature_cost := f32(0)
-            previous := parents[current]
-            if previous >= 0 {
-                px, pz := previous % width, previous / width
-                previous_x, previous_z := min_x + f32(px) * cell, min_z + f32(pz) * cell
-                if previous == start do previous_x, previous_z = start_x, start_z
-                incoming := [2]f32{current_x - previous_x, current_z - previous_z}
-                outgoing := [2]f32{world_x - current_x, world_z - current_z}
-                incoming_length, outgoing_length := linalg.length(incoming), linalg.length(outgoing)
-                if incoming_length > .01 && outgoing_length > .01 {
-                    cosine := clamp(
-                        linalg.dot(incoming, outgoing) / (incoming_length * outgoing_length),
-                        f32(-1),
-                        f32(1),
-                    )
-                    if cosine < -.15 do continue
-                    curvature_cost = (1 - cosine) * (1 - cosine) * 12
-                }
-            }
-            construction := settlement_route_construction_cost(
+    minimum_cell := direct_length <= 12 ? f32(2) : f32(10)
+    corridor_span := max(math.abs(direct[0]), math.abs(direct[1])) + lateral_run * 2
+    config.cell_size = max(
+        min(config.cell_size, max(corridor_span / f32(SETTLEMENT_ROUTE_GRID - 5), minimum_cell)),
+        max(corridor_span / f32(road_planner.MAX_GRID_WIDTH - 5), minimum_cell),
+    )
+    padding := max(config.cell_size * 2, lateral_run + config.cell_size)
+    origin_x := min(start_x, finish_x) - padding
+    origin_z := min(start_z, finish_z) - padding
+    width := clamp(
+        int(math.ceil(f64((max(start_x, finish_x) + padding - origin_x) / config.cell_size))) + 1,
+        3,
+        road_planner.MAX_GRID_WIDTH,
+    )
+    height := clamp(
+        int(math.ceil(f64((max(start_z, finish_z) + padding - origin_z) / config.cell_size))) + 1,
+        3,
+        road_planner.MAX_GRID_HEIGHT,
+    )
+    heights := make([]f32, width * height)
+    defer delete(heights)
+    blocked := make([]bool, width * height)
+    defer delete(blocked)
+    for z in 0 ..< height {
+        for x in 0 ..< width {
+            world_x := origin_x + f32(x) * config.cell_size
+            world_z := origin_z + f32(z) * config.cell_size
+            heights[z * width + x] = terrain.sample_height(project, 0, world_x, world_z)
+            half_cell := config.cell_size * .5
+            blocked[z * width + x] = settlement_route_segment_crosses_runway(
                 project,
-                {current_x, current_z},
-                {world_x, world_z},
-                roadbed_half_width,
+                {world_x - half_cell, world_z - half_cell},
+                {world_x + half_cell, world_z + half_cell},
             )
-            excess_grade := max(grade - preferred_grade, f32(0))
-            terrain_cost :=
-                distance_cost * (1 + grade * grade_weight + excess_grade * grade_weight * 4 + curvature_cost) +
-                (construction.cut * 1.35 +
-                        construction.fill +
-                        construction.cross_slope * step_length * roadbed_half_width) *
-                    earthwork_weight
-            candidate := costs[current] + terrain_cost
-            if candidate >= costs[neighbor] do continue
-            costs[neighbor] = candidate
-            parents[neighbor] = current
-            heuristic := linalg.length([2]f32{f32(finish_gx - nx), f32(finish_gz - nz)})
-            estimates[neighbor] = candidate + heuristic
-            open[neighbor] = true
         }
     }
 
-    if start != finish && parents[finish] < 0 {
-        // A short route on a uniform shoulder may have no legal lattice edge
-        // even though a shallow dogleg provides enough run to stay drivable.
-        // Try the smallest perpendicular switchback before conceding to an
-        // over-grade direct chord.
-        direct := [2]f32{finish_x - start_x, finish_z - start_z}
-        direct_distance := linalg.length(direct)
-        if direct_distance > .01 {
-            normal := [2]f32{-direct[1] / direct_distance, direct[0] / direct_distance}
-            midpoint := [2]f32{(start_x + finish_x) * .5, (start_z + finish_z) * .5}
-            sides := [2]f32{-1, 1}
-            for offset_step in 1 ..= 12 {
-                offset := direct_distance * f32(offset_step) * .125
-                for side in sides {
-                    bend := midpoint + normal * (offset * side)
-                    bend_height := terrain.sample_height(project, 0, bend[0], bend[1])
-                    if bend_height <= project.sea_level + .45 do continue
-                    first_length := linalg.length(bend - [2]f32{start_x, start_z})
-                    second_length := linalg.length([2]f32{finish_x, finish_z} - bend)
-                    first_grade :=
-                        math.abs(bend_height - terrain.sample_height(project, 0, start_x, start_z)) /
-                        max(first_length, f32(.01))
-                    second_grade :=
-                        math.abs(terrain.sample_height(project, 0, finish_x, finish_z) - bend_height) /
-                        max(second_length, f32(.01))
-                    if first_grade > grade_limit || second_grade > grade_limit do continue
-                    result.points[0], result.points[1], result.points[2] =
-                        {start_x, start_z}, bend, {finish_x, finish_z}
-                    result.count = 3
-                    return result
-                }
-            }
-        }
-        result.points[0] = {start_x, start_z}
-        result.points[1] = {finish_x, finish_z}
-        result.count = 2
-        return result
-    }
+    workspace := new(road_planner.Workspace)
+    defer free(workspace)
+    planned := road_planner.plan(
+        workspace,
+        {
+            origin_x = origin_x,
+            origin_z = origin_z,
+            width = width,
+            height = height,
+            sea_level = project.sea_level + .45,
+            heights = heights,
+            blocked = blocked,
+        },
+        config,
+        {start_x, start_z},
+        {finish_x, finish_z},
+    )
+    if !planned.found || planned.point_count < 2 do return result
 
-    reversed: [SETTLEMENT_ROUTE_GRID * SETTLEMENT_ROUTE_GRID]int
-    reversed_count := 0
-    cursor := finish
-    for cursor >= 0 && reversed_count < len(reversed) {
-        reversed[reversed_count] = cursor
-        reversed_count += 1
-        if cursor == start do break
-        cursor = parents[cursor]
-    }
-    // Simplify the lattice path greedily, but only across chords that retain
-    // the route class's grade and land-clearance guarantees. Fixed-count
-    // subsampling can reconnect distant elevations into an over-grade main
-    // road even though every A* step was legal.
-    forward_index := 0
-    result.points[0] = {start_x, start_z}
+    // Planner endpoints live on grid cells. Preserve the authored contacts,
+    // then greedily retain the farthest legal waypoint that fits the bounded
+    // settlement route representation.
+    source: [road_planner.MAX_PATH_POINTS][2]f32
+    source_count := planned.point_count
+    for point, index in planned.points[:planned.point_count] do source[index] = {point.x, point.z}
+    source[0] = {start_x, start_z}
+    source[source_count - 1] = {finish_x, finish_z}
+    result.points[0] = source[0]
     result.count = 1
-    for forward_index < reversed_count - 1 && result.count < len(result.points) {
-        chosen := forward_index + 1
-        for candidate in forward_index + 1 ..< reversed_count {
-            reverse_index := reversed_count - 1 - candidate
-            node := reversed[reverse_index]
-            gx, gz := node % width, node / width
-            point := [2]f32{min_x + f32(gx) * cell, min_z + f32(gz) * cell}
-            if candidate == reversed_count - 1 do point = {finish_x, finish_z}
-            previous := result.points[result.count - 1]
-            distance := linalg.length(point - previous)
+    cursor := 0
+    for cursor < source_count - 1 && result.count < len(result.points) {
+        chosen := -1
+        for candidate := source_count - 1; candidate > cursor; candidate -= 1 {
+            a, b := source[cursor], source[candidate]
+            distance := linalg.length(b - a)
             if distance <= .01 do continue
             rise := math.abs(
-                terrain.sample_height(project, 0, point[0], point[1]) -
-                terrain.sample_height(project, 0, previous[0], previous[1]),
+                terrain.sample_height(project, 0, b[0], b[1]) -
+                    terrain.sample_height(project, 0, a[0], a[1]),
             )
             chord: Settlement_Route
-            chord.points[0], chord.points[1], chord.count = previous, point, 2
-            if rise / distance <= grade_limit + .001 && !settlement_route_crosses_sea(project, chord) {
+            chord.points[0], chord.points[1], chord.count = a, b, 2
+            if rise / distance <= grade_limit + .001 &&
+               !settlement_route_crosses_sea(project, chord) &&
+               !settlement_route_segment_crosses_runway(project, a, b) {
                 chosen = candidate
+                break
             }
         }
-        reverse_index := reversed_count - 1 - chosen
-        node := reversed[reverse_index]
-        gx, gz := node % width, node / width
-        point := [2]f32{min_x + f32(gx) * cell, min_z + f32(gz) * cell}
-        if chosen == reversed_count - 1 do point = {finish_x, finish_z}
-        result.points[result.count] = point
+        if chosen < 0 do return Settlement_Route{}
+        result.points[result.count] = source[chosen]
         result.count += 1
-        forward_index = chosen
+        cursor = chosen
     }
-    if forward_index < reversed_count - 1 {
-        // The route representation is intentionally bounded. Returning no
-        // route is safer than silently emitting an over-grade final chord.
-        result.count = 0
-    }
+    if cursor != source_count - 1 do return Settlement_Route{}
     return result
 }
 
@@ -953,6 +890,10 @@ settlement_route_truncate_at_plan_contact :: proc(
 // is chosen from routes that are actually buildable rather than from straight
 // line distance alone. An unreachable PoI remains disconnected instead of
 // forcing a submerged or over-grade chord into the landscape.
+settlement_town_connector_redundant :: proc(connector_length, road_distance: f32) -> bool {
+    return road_distance <= 24 && connector_length >= max(f32(72), road_distance * 3.25)
+}
+
 settlement_plan_connect_road_network :: proc(
     plan: ^Settlement_Plan,
     project: ^terrain.Project,
@@ -1001,7 +942,53 @@ settlement_plan_connect_road_network :: proc(
                 }
             }
         }
+        // Existing civic streets are already part of the connected town
+        // fabric. Give every unserved district a direct candidate to the
+        // nearest one, rather than making it chase an abstract PoI through a
+        // long parallel contour corridor. The ordinary Prim candidates above
+        // remain available when the lateral approach is too steep.
+        if plan.request.scale == .Town {
+            for to in 0 ..< poi_count {
+                if connected[to] do continue
+                road_point, _, _, _, _, road_distance, _, road_found :=
+                    settlement_nearest_route_frame(plan, pois[to].position)
+                if !road_found || road_distance <= .5 do continue
+                route := settlement_route_find(
+                    project,
+                    pois[to].position[0],
+                    pois[to].position[1],
+                    road_point[0],
+                    road_point[1],
+                    route_class,
+                )
+                route = settlement_route_truncate_at_plan_contact(plan, route)
+                if route.count < 2 || settlement_route_crosses_sea(project, route) do continue
+                length, average_grade, maximum_grade := settlement_route_length_and_grade(project, route)
+                if length <= .01 || maximum_grade > settlement_route_grade_limit(route_class) + .001 do continue
+                detour := length / max(road_distance, f32(.01))
+                score := length * (1 + average_grade * 12) * max(detour, f32(1))
+                if score < best_score {
+                    best_from, best_to = 0, to
+                    best_score = score
+                    best_route = route
+                }
+            }
+        }
         if best_to < 0 do break
+        if plan.request.scale == .Town && route_class == .Connector {
+            _, _, _, _, _, road_distance, _, road_found :=
+                settlement_nearest_route_frame(plan, pois[best_to].position)
+            connector_length := settlement_route_length(best_route)
+            if road_found && settlement_town_connector_redundant(connector_length, road_distance) {
+                // A compact hillside district this close to an existing
+                // street is already served by its pedestrian lanes and
+                // stairs. Do not carve a long, nearly parallel switchback
+                // merely because a short drivable lateral exceeds grade.
+                connected[best_to] = true
+                connected_count += 1
+                continue
+            }
+        }
         before := plan.route_count
         settlement_plan_add_route(
             plan,

@@ -852,7 +852,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
     }
     if presentation == .Speaking {
         hint: cstring =
-            controller_prompt_active(editor) ? fmt.ctprintf("%s REVEALS", controller_face_label(editor, .South)) : "ENTER REVEALS"
+            controller_prompt_active(editor) ? fmt.ctprintf("%s TO REVEAL", controller_face_label(editor, .South)) : "ENTER TO REVEAL"
         measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 16 * scale, .6 * scale)
         canvas2d.DrawTextEx(
             dialogue_font(),
@@ -867,7 +867,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         )
     } else if presentation == .Continuing {
         hint: cstring =
-            controller_prompt_active(editor) ? fmt.ctprintf("%s CONTINUES", controller_face_label(editor, .South)) : "ENTER CONTINUES"
+            controller_prompt_active(editor) ? fmt.ctprintf("%s TO CONTINUE", controller_face_label(editor, .South)) : "ENTER TO CONTINUE"
         measured := canvas2d.MeasureTextEx(dialogue_font(), hint, 17 * scale, .6 * scale)
         hint_bounds := canvas2d.Rectangle {
             layout.conversation.x + layout.conversation.width - measured.x - 38 * scale,

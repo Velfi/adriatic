@@ -269,7 +269,7 @@ rock_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     canvas2d.DrawRectangleRounded(panel, .05, 9, {15, 23, 24, 242})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .05, 9, 1, {143, 119, 75, 255})
     ui_draw_text(.Label, "ROCK LAB", {panel.x + 20, panel.y + 20}, .58, {240, 194, 111, 255})
-    ui_draw_text(.Data, "PROCEDURAL FORM + DYNAMIC EDGES", {panel.x + 20, panel.y + 52}, .20, {150, 169, 164, 255})
+    ui_draw_text(.Data, "MATERIAL • SHAPE • EDGE SHADING", {panel.x + 20, panel.y + 52}, .20, {150, 169, 164, 255})
     material_button := canvas2d.Rectangle{panel.x + 20, panel.y + 78, panel.width - 40, 30}
     canvas2d.DrawRectangleRounded(material_button, .14, 6, {34, 43, 43, 255})
     canvas2d.DrawRectangleRoundedLinesEx(material_button, .14, 6, 1, {143, 119, 75, 255})

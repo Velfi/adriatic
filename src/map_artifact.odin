@@ -1,6 +1,7 @@
 package main
 
 import harbor "../packages/harbor"
+import fixture_file "../packages/fixture_file"
 import hs "../packages/hs"
 import marina "../packages/marina"
 import story "../packages/story"
@@ -9,6 +10,7 @@ import "core:hash"
 import "core:math"
 import "core:mem"
 import "core:os"
+import "core:strings"
 
 MAP_ARTIFACT_MAGIC :: [8]byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
 MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)
@@ -20,6 +22,20 @@ MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
 DEFAULT_MAP_ARTIFACT_PATH :: "assets/maps/default.adriatic-map"
 EDITOR_MAP_ARTIFACT_PATH :: "adriatic.adriatic-map"
+
+map_artifact_save_directory :: proc(allocator := context.allocator) -> (string, bool) {
+    base, error := os.user_data_dir(allocator)
+    if error != nil || base == "" do return "", false
+    path, concatenate_error := strings.concatenate({base, "/Adriatic"}, allocator)
+    return path, concatenate_error == nil
+}
+
+map_artifact_save_path :: proc(allocator := context.allocator) -> (string, bool) {
+    directory, ok := map_artifact_save_directory(allocator)
+    if !ok do return "", false
+    path, error := strings.concatenate({directory, "/", EDITOR_MAP_ARTIFACT_PATH}, allocator)
+    return path, error == nil
+}
 
 Map_Artifact :: struct {
     generator_version:            u64,
@@ -56,6 +72,7 @@ Map_Artifact_Error_Kind :: enum {
     Trailing_Bytes,
     Checksum_Mismatch,
     Portable,
+    Sectioned,
     Invalid_State,
     Read,
     Write,
@@ -67,11 +84,13 @@ Map_Artifact_Error :: struct {
     message:  string,
     os_error: os.Error,
     portable: hs.Portable_Error,
+    sectioned: fixture_file.Sectioned_Container_Error,
 }
 
 map_artifact_error_dispose :: proc(error: ^Map_Artifact_Error) {
     if error == nil do return
     hs.portable_error_dispose(&error.portable)
+    error.sectioned = {}
     error^ = {}
 }
 
@@ -164,22 +183,73 @@ map_artifact_encode :: proc(artifact: ^Map_Artifact, alloc := context.allocator)
     if !encoded do return nil, {kind = .Portable, portable = portable_error}, false
     defer delete(payload, alloc)
     if len(payload) > MAP_ARTIFACT_MAX_PAYLOAD do return nil, {kind = .Limit_Exceeded}, false
-    data, allocation_error := make([]byte, MAP_ARTIFACT_HEADER_SIZE + len(payload), alloc)
-    if allocation_error != nil do return nil, {kind = .Limit_Exceeded}, false
-    magic := MAP_ARTIFACT_MAGIC
-    copy(data[:8], magic[:])
-    map_artifact_put_u16(data, 8, MAP_ARTIFACT_CONTAINER_VERSION)
-    map_artifact_put_u16(data, 10, 0)
-    map_artifact_put_u32(data, 12, MAP_ARTIFACT_FORMAT_VERSION)
-    map_artifact_put_u64(data, 16, artifact.generator_version)
-    map_artifact_put_u64(data, 24, u64(len(payload)))
-    map_artifact_put_u64(data, 32, hash.fnv64a(payload))
-    copy(data[MAP_ARTIFACT_HEADER_SIZE:], payload)
+    sections := []fixture_file.Section_Input{{key = {kind = .Core}, bytes = payload}}
+    data, sectioned_error, container_ok := fixture_file.sectioned_container_encode(
+        .Map,
+        MAP_ARTIFACT_FORMAT_VERSION,
+        artifact.generator_version,
+        sections,
+        alloc,
+    )
+    if !container_ok do return nil, {kind = .Sectioned, sectioned = sectioned_error}, false
     return data, {}, true
 }
 
 map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_Artifact, Map_Artifact_Error, bool) {
     if alloc.procedure == nil do return nil, {kind = .Invalid_Argument}, false
+    sectioned_magic := fixture_file.Sectioned_Container_Magic
+    sectioned := len(data) >= len(sectioned_magic)
+    if sectioned {
+        for value, index in sectioned_magic {
+            if data[index] != value {
+                sectioned = false
+                break
+            }
+        }
+    }
+    if sectioned {
+        if len(data) < fixture_file.Sectioned_Container_Header_Size {
+            return nil, {kind = .Truncated, offset = len(data)}, false
+        }
+        section_count, count_error, count_ok := fixture_file.sectioned_container_directory_count(data)
+        if !count_ok do return nil, {kind = .Sectioned, sectioned = count_error}, false
+        entries := make([]fixture_file.Section_Entry, section_count, context.temp_allocator)
+        view, sectioned_error, decoded := fixture_file.sectioned_container_decode(data, entries)
+        if !decoded {
+            #partial switch sectioned_error.kind {
+            case .Truncated: return nil, {kind = .Truncated, offset = sectioned_error.offset}, false
+            case .Checksum_Mismatch: return nil, {kind = .Checksum_Mismatch, offset = sectioned_error.offset}, false
+            case .Trailing_Bytes: return nil, {kind = .Trailing_Bytes, offset = sectioned_error.offset}, false
+            case: return nil, {kind = .Sectioned, sectioned = sectioned_error}, false
+            }
+        }
+        if view.artifact_kind != .Map do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Artifact, offset = 10}}, false
+        if view.schema_version != MAP_ARTIFACT_FORMAT_VERSION {
+            return nil, {kind = .Unsupported_Format, offset = 12}, false
+        }
+        if view.generator_version != MAP_ARTIFACT_GENERATOR_VERSION {
+            return nil, {kind = .Stale_Generator, offset = 16}, false
+        }
+        payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
+        if !found do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Directory, offset = 24}}, false
+        artifact := new(Map_Artifact, alloc)
+        if artifact == nil do return nil, {kind = .Limit_Exceeded}, false
+        portable_error, portable_ok := hs.portable_decode(
+            any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
+            payload,
+            map_artifact_portable_config(),
+            alloc,
+        )
+        if !portable_ok {
+            map_artifact_destroy(artifact, alloc)
+            return nil, {kind = .Portable, portable = portable_error}, false
+        }
+        if message, valid := map_artifact_valid(artifact); !valid {
+            map_artifact_destroy(artifact, alloc)
+            return nil, {kind = .Invalid_State, message = message}, false
+        }
+        return artifact, {}, true
+    }
     if len(data) < MAP_ARTIFACT_HEADER_SIZE do return nil, {kind = .Truncated, offset = len(data)}, false
     magic := MAP_ARTIFACT_MAGIC
     for index in 0 ..< len(magic) {

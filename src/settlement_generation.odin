@@ -179,7 +179,7 @@ settlement_terrain_slope :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
 
 settlement_site_suitability :: proc(project: ^terrain.Project, x, z: f32, profile: Settlement_Profile) -> f32 {
     height := terrain.sample_height(project, 0, x, z)
-    if height <= project.sea_level + .6 do return 0
+    if height <= project.sea_level + .6 || terrain.active_waterway_at(project, 0, x, z) do return 0
     slope := settlement_terrain_slope(project, x, z)
     return clamp(1 - slope / max(profile.max_slope, f32(.01)), 0, 1)
 }
@@ -193,7 +193,9 @@ settlement_fit_landscape_point :: proc(project: ^terrain.Project, x, z: f32, sea
             candidate_x := x + f32(ix) * search_radius * .5
             candidate_z := z + f32(iz) * search_radius * .5
             height := terrain.sample_height(project, 0, candidate_x, candidate_z)
-            if height <= project.sea_level + .6 do continue
+            if height <= project.sea_level + .6 || terrain.active_waterway_at(project, 0, candidate_x, candidate_z) {
+                continue
+            }
             slope := settlement_terrain_slope(project, candidate_x, candidate_z)
             distance := f32(ix * ix + iz * iz)
             elevation_change := math.abs(height - origin_height)

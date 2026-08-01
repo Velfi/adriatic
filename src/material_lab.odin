@@ -533,7 +533,9 @@ material_lab_update_camera :: proc(editor: ^Editor) {
 }
 
 material_lab_lighting_bounds :: proc(width: i32) -> canvas2d.Rectangle {
-    return {f32(width) - 300, 28, 270, 58}
+    inspector_width := min(f32(350), max(f32(300), f32(width) * .25))
+    inspector_x := f32(width) - inspector_width - 18
+    return {inspector_x - 288, 28, 270, 58}
 }
 
 material_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
@@ -694,15 +696,22 @@ material_lab_layout :: proc(
     panel, list, search_box, name_box, tags_box: canvas2d.Rectangle,
     slider_x, slider_y, slider_w: f32,
 ) {
-    panel = {22, 22, min(f32(width) - 44, f32(560)), min(f32(height) - 44, f32(610))}
-    search_box = {panel.x + 20, panel.y + 84, 190, 34}
-    list = {panel.x + 20, panel.y + 124, 190, panel.height - 204}
-    name_box = {panel.x + 230, panel.y + 84, panel.width - 250, 38}
-    tags_box = {panel.x + 230, panel.y + 130, panel.width - 250, 28}
-    slider_x = panel.x + 310
-    slider_y = panel.y + 184
-    slider_w = panel.width - 340
+    panel = {18, 18, 264, f32(height) - 36}
+    inspector := material_lab_inspector_bounds(width, height)
+    compact := inspector.height < 760
+    search_box = {panel.x + 16, panel.y + 78, panel.width - 32, 38}
+    list = {panel.x + 16, panel.y + 128, panel.width - 32, panel.height - 202}
+    name_box = {inspector.x + 18, inspector.y + (compact ? 64 : 78), inspector.width - 36, compact ? 36 : 40}
+    tags_box = {inspector.x + 18, inspector.y + (compact ? 119 : 146), inspector.width - 36, compact ? 30 : 34}
+    slider_x = inspector.x + 118
+    slider_y = inspector.y + (compact ? 221 : 252)
+    slider_w = inspector.width - 198
     return
+}
+
+material_lab_inspector_bounds :: proc(width, height: i32) -> canvas2d.Rectangle {
+    inspector_width := min(f32(350), max(f32(300), f32(width) * .25))
+    return {f32(width) - inspector_width - 18, 18, inspector_width, f32(height) - 36}
 }
 
 material_lab_search_text :: proc() -> string {
@@ -858,12 +867,15 @@ material_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
     width, height := canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight()
     panel, list, search_box, name_box, tags_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
-    _ = panel
+    inspector := material_lab_inspector_bounds(width, height)
+    slider_stride := inspector.height < 760 ? f32(36) : f32(54)
     mouse := canvas2d.GetMousePosition()
     pressed := canvas2d.IsMouseButtonPressed(.LEFT)
     lighting_bounds := material_lab_lighting_bounds(width)
     viewport_input :=
-        !canvas2d.CheckCollisionPointRec(mouse, panel) && !canvas2d.CheckCollisionPointRec(mouse, lighting_bounds)
+        !canvas2d.CheckCollisionPointRec(mouse, panel) &&
+        !canvas2d.CheckCollisionPointRec(mouse, inspector) &&
+        !canvas2d.CheckCollisionPointRec(mouse, lighting_bounds)
 
     if viewport_input && canvas2d.IsMouseButtonDown(.RIGHT) {
         mouse_delta := canvas2d.GetMouseDelta()
@@ -977,12 +989,13 @@ material_lab_process_input :: proc(editor: ^Editor) {
         material_lab.search_editing = false
     }
 
-    buttons_y := panel.y + panel.height - 58
-    new_button := canvas2d.Rectangle{panel.x + 20, buttons_y, 82, 34}
-    duplicate_button := canvas2d.Rectangle{panel.x + 110, buttons_y, 100, 34}
-    delete_button := canvas2d.Rectangle{panel.x + 230, buttons_y, 82, 34}
-    revert_button := canvas2d.Rectangle{panel.x + 320, buttons_y, 82, 34}
-    save_button := canvas2d.Rectangle{panel.x + panel.width - 110, buttons_y, 90, 34}
+    buttons_y := panel.y + panel.height - 54
+    new_button := canvas2d.Rectangle{panel.x + 16, buttons_y, 92, 36}
+    duplicate_button := canvas2d.Rectangle{panel.x + 116, buttons_y, panel.width - 132, 36}
+    inspector_buttons_y := inspector.y + inspector.height - 54
+    delete_button := canvas2d.Rectangle{inspector.x + 18, inspector_buttons_y, 74, 36}
+    revert_button := canvas2d.Rectangle{inspector.x + inspector.width - 190, inspector_buttons_y, 82, 36}
+    save_button := canvas2d.Rectangle{inspector.x + inspector.width - 100, inspector_buttons_y, 82, 36}
     if pressed && canvas2d.CheckCollisionPointRec(mouse, new_button) do material_lab_add(false)
     if pressed && canvas2d.CheckCollisionPointRec(mouse, duplicate_button) do material_lab_add(true)
     if pressed && canvas2d.CheckCollisionPointRec(mouse, delete_button) do material_lab_delete()
@@ -1014,7 +1027,7 @@ material_lab_process_input :: proc(editor: ^Editor) {
 
     if pressed {
         for index in 0 ..< MATERIAL_LAB_SLIDER_COUNT {
-            bounds := canvas2d.Rectangle{slider_x, slider_y + f32(index) * 54 - 12, slider_w, 36}
+            bounds := canvas2d.Rectangle{slider_x, slider_y + f32(index) * slider_stride - 12, slider_w, 36}
             if canvas2d.CheckCollisionPointRec(mouse, bounds) {
                 material_lab.dragging = index
                 material_lab_set_slider(index, (mouse.x - slider_x) / slider_w)
@@ -1144,8 +1157,13 @@ material_lab_button :: proc(bounds: canvas2d.Rectangle, label: cstring, accent: 
 
 material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     panel, list, search_box, name_box, tags_box, slider_x, slider_y, slider_w := material_lab_layout(width, height)
-    canvas2d.DrawRectangleRounded(panel, .045, 10, {15, 23, 24, 242})
-    canvas2d.DrawRectangleRoundedLinesEx(panel, .045, 10, 1, {143, 119, 75, 255})
+    inspector := material_lab_inspector_bounds(width, height)
+    compact := inspector.height < 760
+    slider_stride := compact ? f32(36) : f32(54)
+    canvas2d.DrawRectangleRounded(panel, .035, 10, {15, 23, 24, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 10, 1, {74, 93, 91, 255})
+    canvas2d.DrawRectangleRounded(inspector, .035, 10, {15, 23, 24, 255})
+    canvas2d.DrawRectangleRoundedLinesEx(inspector, .035, 10, 1, {74, 93, 91, 255})
     lighting_bounds := material_lab_lighting_bounds(width)
     canvas2d.DrawRectangleRounded(lighting_bounds, .12, 8, {15, 23, 24, 230})
     ui_draw_text(.Label, "LIGHTING", {lighting_bounds.x + 14, lighting_bounds.y + 10}, .25, {240, 194, 111, 255})
@@ -1171,14 +1189,16 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         7,
         {239, 232, 210, 255},
     )
-    ui_draw_text(.Label, "BRDF MATERIAL LAB", {panel.x + 20, panel.y + 20}, .58, {240, 194, 111, 255})
+    ui_draw_text(.Label, "MATERIALS", {panel.x + 16, panel.y + 18}, .42, {240, 194, 111, 255})
     ui_draw_text(
         .Data,
-        "BUILD • COMPARE • SAVE TO YOUR LIBRARY",
-        {panel.x + 20, panel.y + 50},
-        .22,
+        fmt.ctprintf("%d IN LIBRARY", material_lab.library.count),
+        {panel.x + 16, panel.y + 48},
+        .16,
         {150, 169, 164, 255},
     )
+    ui_draw_text(.Label, "MATERIAL INSPECTOR", {inspector.x + 18, inspector.y + 18}, .36, {240, 194, 111, 255})
+    ui_draw_text(.Data, "NAME", {name_box.x, name_box.y - 18}, .15, {150, 169, 164, 255})
 
     canvas2d.DrawRectangleRounded(search_box, .14, 6, {8, 15, 16, 255})
     canvas2d.DrawRectangleRoundedLinesEx(
@@ -1287,8 +1307,9 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         material_lab.tags_editing ? canvas2d.Color{240, 194, 111, 255} : canvas2d.Color{74, 93, 91, 255},
     )
     tags := material_lab_tags(material_lab_current())
+    ui_draw_text(.Data, "TAGS", {tags_box.x, tags_box.y - 17}, .15, {150, 169, 164, 255})
     tags_label :=
-        tags == "" ? "TAGS: add comma-separated tags" : fmt.ctprintf("TAGS: %s%s", tags, material_lab.tags_editing && int(canvas2d.GetTime() * 2) % 2 == 0 ? "_" : "")
+        tags == "" ? "Add comma-separated tags" : fmt.ctprintf("%s%s", tags, material_lab.tags_editing && int(canvas2d.GetTime() * 2) % 2 == 0 ? "_" : "")
     tags_text_size := ui_measure_text(.Data, tags_label, .15)
     tags_text_x := tags_box.x + 10
     if material_lab.tags_editing && tags_text_size.x > tags_box.width - 20 {
@@ -1313,19 +1334,28 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         {164, 179, 174, 255},
     }
     for label, index in labels {
-        y := slider_y + f32(index) * 54
+        y := slider_y + f32(index) * slider_stride
         value := material_lab_slider_value(index)
-        ui_draw_text(.Label, label, {panel.x + 230, y - 7}, .28, {179, 190, 185, 255})
+        ui_draw_text(.Label, label, {inspector.x + 18, y - 7}, .24, {179, 190, 185, 255})
         canvas2d.DrawRectangleRounded({slider_x, y, slider_w, 9}, 1, 4, {48, 57, 57, 255})
         canvas2d.DrawRectangleRounded({slider_x, y, slider_w * value, 9}, 1, 4, colors[index])
         canvas2d.DrawCircleV({slider_x + slider_w * value, y + 4.5}, 8, {239, 232, 210, 255})
         value_text := index < 3 ? fmt.ctprintf("%d", int(value * 255 + .5)) : fmt.ctprintf("%.2f", value)
-        ui_draw_text(.Data, value_text, {slider_x + slider_w - 36, y - 20}, .21, {151, 168, 163, 255})
+        value_bounds := canvas2d.Rectangle{inspector.x + inspector.width - 62, y - 13, 44, 28}
+        canvas2d.DrawRectangleRounded(value_bounds, .18, 5, {8, 15, 16, 255})
+        ui_draw_text(.Data, value_text, {value_bounds.x + 7, value_bounds.y + 8}, .18, {205, 211, 202, 255})
     }
 
     material := material_lab_current()
     if material != nil {
-        swatch_bounds := canvas2d.Rectangle{panel.x + 230, panel.y + 437, panel.width - 250, 38}
+        base_color_y := inspector.y + (compact ? f32(161) : f32(198))
+        ui_draw_text(.Data, "BASE COLOR", {inspector.x + 18, base_color_y}, .15, {150, 169, 164, 255})
+        swatch_bounds := canvas2d.Rectangle {
+            inspector.x + 118,
+            base_color_y - 7,
+            inspector.width - 136,
+            compact ? 32 : 36,
+        }
         canvas2d.DrawRectangleRounded(
             swatch_bounds,
             .16,
@@ -1344,45 +1374,58 @@ material_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
                 material.metallic,
                 material.roughness,
             ),
-            {swatch_bounds.x + 12, swatch_bounds.y + 13},
-            .22,
+            {swatch_bounds.x + 10, swatch_bounds.y + 12},
+            .18,
             contrast,
         )
+        maps_y :=
+            compact ? min(inspector.y + 415, inspector.y + inspector.height - 176) : min(inspector.y + 538, inspector.y + inspector.height - 176)
+        ui_draw_text(.Data, "TEXTURE MAPS", {inspector.x + 18, maps_y - 20}, .15, {150, 169, 164, 255})
         for map_name, index in MATERIAL_LAB_MAP_NAMES {
             attached := material_lab_map_path(material, Material_Lab_Map_Kind(index)) != ""
+            map_bounds := canvas2d.Rectangle{inspector.x + 18, maps_y + f32(index) * 30, inspector.width - 36, 25}
+            canvas2d.DrawRectangleRounded(map_bounds, .12, 5, {24, 33, 33, 255})
             ui_draw_text(
                 .Data,
-                fmt.ctprintf("%s %s", attached ? "●" : "○", map_name),
-                {panel.x + 230 + f32(index) * 76, panel.y + 488},
-                .17,
+                fmt.ctprintf("%s", map_name),
+                {map_bounds.x + 10, map_bounds.y + 8},
+                .16,
                 attached ? canvas2d.Color{240, 194, 111, 255} : canvas2d.Color{116, 133, 130, 255},
+            )
+            status: cstring = attached ? "ATTACHED" : "EMPTY"
+            status_size := ui_measure_text(.Data, status, .14)
+            ui_draw_text(
+                .Data,
+                status,
+                {map_bounds.x + map_bounds.width - status_size.x - 10, map_bounds.y + 9},
+                .14,
+                attached ? canvas2d.Color{170, 196, 154, 255} : canvas2d.Color{104, 121, 118, 255},
             )
         }
     }
 
-    buttons_y := panel.y + panel.height - 58
-    material_lab_button({panel.x + 20, buttons_y, 82, 34}, "NEW")
-    material_lab_button({panel.x + 110, buttons_y, 100, 34}, "DUPLICATE")
-    material_lab_button({panel.x + 230, buttons_y, 82, 34}, "DELETE")
-    material_lab_button({panel.x + 320, buttons_y, 82, 34}, "REVERT")
+    buttons_y := panel.y + panel.height - 54
+    material_lab_button({panel.x + 16, buttons_y, 92, 36}, "+ NEW")
+    material_lab_button({panel.x + 116, buttons_y, panel.width - 132, 36}, "DUPLICATE")
+    inspector_buttons_y := inspector.y + inspector.height - 54
+    material_lab_button({inspector.x + 18, inspector_buttons_y, 74, 36}, "DELETE")
+    material_lab_button({inspector.x + inspector.width - 190, inspector_buttons_y, 82, 36}, "REVERT")
     material_lab_button(
-        {panel.x + panel.width - 110, buttons_y, 90, 34},
+        {inspector.x + inspector.width - 100, inspector_buttons_y, 82, 36},
         material_lab.dirty ? "SAVE *" : "SAVED",
-        true,
+        material_lab.dirty,
     )
     if material_lab.status != nil && canvas2d.GetTime() < material_lab.status_until {
-        ui_draw_text(
-            .Data,
-            material_lab.status,
-            {panel.x + panel.width - 152, panel.y + 54},
-            .22,
-            {240, 194, 111, 255},
-        )
+        ui_draw_text(.Data, material_lab.status, {inspector.x + 18, inspector.y + 48}, .18, {240, 194, 111, 255})
     }
+    help: cstring = "RIGHT-DRAG  ORBIT   WHEEL  ZOOM   SHIFT+WHEEL  LIGHT   ESC  EXIT"
+    help_size := ui_measure_text(.Data, help, .20)
+    preview_left := panel.x + panel.width
+    preview_width := inspector.x - preview_left
     ui_draw_text(
         .Data,
-        "RIGHT-DRAG  ORBIT   WHEEL  ZOOM   SHIFT+WHEEL  LIGHT   ESC  EXIT",
-        {f32(width) - 520, f32(height) - 27},
+        help,
+        {preview_left + (preview_width - help_size.x) * .5, f32(height) - 27},
         .20,
         {190, 198, 190, 255},
     )

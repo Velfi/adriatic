@@ -4,6 +4,7 @@ import atmosphere "../packages/atmosphere"
 import flowers "../packages/flower_mesh"
 import third_person "../packages/third_person"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 
@@ -14,6 +15,7 @@ flower_generator_whorls := 1
 flower_generator_isolated := false
 flower_generator_stage := flowers.Lifecycle_Stage.Bloom
 flower_generator_lifecycle_gallery := false
+flower_generator_clustered := false
 
 flower_generator_shape_name :: proc(shape: flowers.Petal_Shape) -> string {
     switch shape {
@@ -153,7 +155,12 @@ flower_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
     flower_generator_whorls = 1
     flower_generator_stage = .Bloom
     flower_generator_lifecycle_gallery = target == "lifecycle"
+    flower_generator_clustered = target == "cluster" || target == "bushy-cluster"
     flower_generator_isolated = target != "" && target != "gallery" && target != "lifecycle"
+    if flower_generator_clustered {
+        flower_generator_shape = .Rounded
+        flower_generator_petals = 4
+    }
     for shape in flowers.Petal_Shape {
         if target == flower_generator_shape_slug(shape) {
             flower_generator_shape = shape
@@ -245,6 +252,10 @@ flower_generator_lab_process_input :: proc(_: ^Editor) {
         flower_generator_lifecycle_gallery = !flower_generator_lifecycle_gallery
         flower_generator_isolated = false
     }
+    if canvas2d.IsKeyPressed(.C) {
+        flower_generator_clustered = !flower_generator_clustered
+        flower_generator_isolated = true
+    }
 }
 
 flower_generator_draw_mesh :: proc(
@@ -253,6 +264,10 @@ flower_generator_draw_mesh :: proc(
     scale: f32,
     petal_color: canvas2d.Color,
     stage: flowers.Lifecycle_Stage = .Bloom,
+    draw_stem: bool = true,
+    frame_right: third_person.Vec3 = {1, 0, 0},
+    frame_up: third_person.Vec3 = {0, 0, -1},
+    frame_outward: third_person.Vec3 = {0, 1, 0},
 ) {
     lifecycle := flowers.Lifecycle_Config {
         stage  = stage,
@@ -269,13 +284,15 @@ flower_generator_draw_mesh :: proc(
         for corner in 0 ..< 3 {
             index := mesh.indices[first + corner]
             source := mesh.vertices[index]
-            points[corner] = {
-                origin.x + source.position[0] * scale,
-                origin.y + source.position[2] * scale,
-                origin.z - source.position[1] * scale,
-            }
+            points[corner] =
+                origin +
+                frame_right * source.position[0] * scale +
+                frame_up * source.position[1] * scale +
+                frame_outward * source.position[2] * scale
             normals[corner] = linalg.normalize0(
-                third_person.Vec3{source.normal[0], source.normal[2], -source.normal[1]},
+                frame_right * source.normal[0] +
+                frame_up * source.normal[1] +
+                frame_outward * source.normal[2],
             )
             center_triangle = center_triangle && int(index) >= center_first
         }
@@ -305,9 +322,72 @@ flower_generator_draw_mesh :: proc(
             .88,
         )
     }
+    if draw_stem {
+        world_tube_between(
+            {origin.x, .10, origin.z},
+            {origin.x, origin.y, origin.z},
+            {1, 0, 0},
+            .035 * scale,
+            .022 * scale,
+            {65, 112, 65, 255},
+        )
+    }
+}
+
+flower_generator_draw_cluster :: proc(
+    config: flowers.Config,
+    origin: third_person.Vec3,
+    scale: f32,
+    color: canvas2d.Color,
+    stage: flowers.Lifecycle_Stage,
+) {
+    cluster_config := flowers.cluster_defaults(.Ball)
+    // Hydrangea-scale preview: many small florets form one continuous puff.
+    cluster_config.flower_count = 80
+    // Keep the same floret-to-envelope ratio used by the hydrangea plant:
+    // broad in plan, shallow in profile, and close enough to overlap.
+    cluster_config.radius = .72
+    cluster_config.height = .46
+    cluster_config.floret_scale = .18
+    cluster_config.scale_variation = .12
+    cluster := flowers.generate_cluster(cluster_config)
+    for instance in cluster.instances[:cluster.count] {
+        floret_origin :=
+            origin +
+            third_person.Vec3 {
+                instance.position[0] * scale,
+                instance.position[2] * scale,
+                -instance.position[1] * scale,
+            }
+        floret_outward := linalg.normalize0(
+            third_person.Vec3{instance.normal[0], instance.normal[2], -instance.normal[1]},
+        )
+        floret_right := third_person.Vec3{1, 0, 0} -
+            floret_outward * linalg.dot(third_person.Vec3{1, 0, 0}, floret_outward)
+        if linalg.dot(floret_right, floret_right) < .001 {
+            floret_right = third_person.Vec3{0, 0, -1} -
+                floret_outward * linalg.dot(third_person.Vec3{0, 0, -1}, floret_outward)
+        }
+        floret_right = linalg.normalize0(floret_right)
+        floret_up := linalg.normalize0(linalg.cross(floret_outward, floret_right))
+        cosine, sine := math.cos(instance.rotation), math.sin(instance.rotation)
+        rotated_right := linalg.normalize0(floret_right * cosine + floret_up * sine)
+        rotated_up := linalg.normalize0(-floret_right * sine + floret_up * cosine)
+        flower_generator_draw_mesh(
+            config,
+            floret_origin,
+            scale * instance.scale,
+            color,
+            stage,
+            false,
+            rotated_right,
+            rotated_up,
+            floret_outward,
+        )
+    }
     world_tube_between(
         {origin.x, .10, origin.z},
-        {origin.x, origin.y, origin.z},
+        origin,
         {1, 0, 0},
         .035 * scale,
         .022 * scale,
@@ -327,7 +407,11 @@ world_flower_generator_lab :: proc(_: ^Editor) {
         if flower_generator_stage == .Immature_Fruit do color = {91, 143, 66, 255}
         if flower_generator_stage == .Ripening_Fruit do color = {183, 145, 58, 255}
         if flower_generator_stage == .Ripe_Fruit do color = {211, 145, 48, 255}
-        flower_generator_draw_mesh(config, {0, .55, 1.2}, 2.7, color, flower_generator_stage)
+        if flower_generator_clustered {
+            flower_generator_draw_cluster(config, {0, .55, 1.2}, 2.7, color, flower_generator_stage)
+        } else {
+            flower_generator_draw_mesh(config, {0, .55, 1.2}, 2.7, color, flower_generator_stage)
+        }
         return
     }
     if flower_generator_lifecycle_gallery {
@@ -388,15 +472,16 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
     canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "FLOWER MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
-    summary: cstring = "WHORLED / SPIRAL CONSTRUCTION  —  SEVEN PROCEDURAL PETAL PROFILES"
+    summary: cstring = "ARRANGEMENT  /  PETAL SHAPE  /  GROWTH STAGE"
     if flower_generator_lifecycle_gallery {
         summary = "ONE ATTACHMENT FRAME  —  FOUR OPENING STAGES / FOUR FRUIT STAGES"
     }
     if flower_generator_isolated {
         arrangement: cstring = flower_generator_arrangement == .Whorled ? "WHORLED" : "SPIRAL"
         summary = fmt.ctprintf(
-            "%s  /  %s  /  %s  /  %d PETALS  /  %d WHORL%s",
+            "%s%s  /  %s  /  %s  /  %d PETALS  /  %d WHORL%s",
             flower_generator_shape_name(flower_generator_shape),
+            flower_generator_clustered ? " FLATTENED BUSHY CLUSTER" : "",
             arrangement,
             flower_generator_stage_name(flower_generator_stage),
             flower_generator_petals,
@@ -407,7 +492,7 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
     canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
     canvas2d.DrawTextEx(
         canvas2d.Font{},
-        "LEFT/RIGHT SHAPE   1/2 PETALS   A ARRANGE   W WHORLS   L LIFECYCLE   F GALLERY",
+        "LEFT/RIGHT SHAPE   1/2 PETALS   A ARRANGE   W WHORLS   C CLUSTER   L LIFECYCLE   F GALLERY",
         {38, 96},
         11,
         1,

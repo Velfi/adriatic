@@ -24,6 +24,10 @@ connected_segments_form_a_finite_capped_hull :: proc(t: ^testing.T) {
             vertex.normal[2] * vertex.normal[2],
         )
         testing.expect(t, math.abs(normal_length - 1) < .001)
+        testing.expect(t, vertex.uv[0] >= 0 && vertex.uv[0] <= 1)
+        testing.expect(t, vertex.uv[1] >= 0 && vertex.uv[1] <= 1)
+        testing.expect(t, vertex.bark_uv[0] >= 0 && vertex.bark_uv[0] < 1)
+        testing.expect(t, vertex.bark_uv[1] >= 0)
     }
     for index in mesh.indices do testing.expect(t, int(index) < len(mesh.vertices))
     for first := 0; first + 2 < len(mesh.indices); first += 3 {
@@ -48,7 +52,9 @@ fork_depths_create_separate_watertight_hulls :: proc(t: ^testing.T) {
     defer destroy(&mesh)
     // The two-segment trunk contributes four rings plus two cap centers; the
     // one-segment fork contributes three rings plus two cap centers.
-    testing.expect_value(t, len(mesh.vertices), 46)
+    // xatlas duplicates vertices at chart seams while retaining the source
+    // hull's two capped chains and complete triangle topology.
+    testing.expect(t, len(mesh.vertices) >= 46)
 }
 
 @(test)

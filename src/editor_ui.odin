@@ -3,6 +3,7 @@ package main
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import farmland "../packages/farmland"
+import road_designer "../packages/road_designer"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:fmt"
@@ -26,11 +27,17 @@ Authoring_Tool :: enum {
     GreekAssets,
 }
 
+Plant_Stamp_Mode :: enum u8 {
+    Ground,
+    Climbing,
+}
+
 // GreekAssets remains as a frozen enum value for historical Fixture decoding,
 // but is no longer part of the live editor tool palette.
 AUTHORING_TOOL_COUNT :: 14
-AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_COUNT + 1
-AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_COUNT]Authoring_Tool {
+AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 1
+AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_DISPLAY_COUNT + 1
+AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Sculpt,
     .Smooth,
     .Paint,
@@ -39,7 +46,6 @@ AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_COUNT]Authoring_Tool {
     .Roads,
     .Formations,
     .Foliage,
-    .ClimbingLeaves,
     .Building,
     .Farm,
     .Marina,
@@ -85,7 +91,7 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     case .Formations:
         return "FORMATIONS"
     case .Foliage:
-        return "FOLIAGE"
+        return "PLANT STAMP"
     case .Ridge:
         return "RIDGE"
     case .Cliff:
@@ -99,7 +105,7 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     case .Wreck:
         return "WRECK STAMP"
     case .ClimbingLeaves:
-        return "CLIMBING LEAVES"
+        return "PLANT STAMP"
     case .Roads:
         return "ROADS"
     case .GreekAssets:
@@ -145,7 +151,14 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
 
 authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     if editor == nil do return
-    editor.authoring_tool = selected
+    // ClimbingLeaves is retained only as a frozen Fixture enum value. Route
+    // legacy selection and the old L shortcut into the unified plant stamp.
+    resolved := selected
+    if selected == .ClimbingLeaves {
+        resolved = .Foliage
+        editor.plant_stamp_mode = .Climbing
+    }
+    editor.authoring_tool = resolved
     editor.architecture_painting = false
     architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
@@ -159,13 +172,15 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.wreck_paint_mode = false
     editor.climbing_leaf_paint_mode = false
     editor.climbing_leaf_painting = false
+    editor.plant_stamp_target_valid = false
+    editor.plant_stamp_target_index = -1
     editor.formation_brush_painting = false
     editor.formation_brush_group_id = 0
     editor.rock_placement_mode = false
     editor.greek_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false
-    switch selected {
+    switch resolved {
     case .Sculpt:
         editor.tool = .Raise
     case .Smooth:
@@ -176,6 +191,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.tool = .Structure
     case .Foliage:
         editor.tool = .Structure
+        editor.climbing_leaf_paint_mode = editor.plant_stamp_mode == .Climbing
     case .Ridge:
         editor.tool = .Structure
         editor.curve_mode = true
@@ -201,8 +217,6 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.tool = .Structure
         editor.wreck_paint_mode = true
     case .ClimbingLeaves:
-        editor.tool = .Structure
-        editor.climbing_leaf_paint_mode = true
     case .Roads:
         editor.tool = .Structure
         editor.road_mode = true
@@ -440,6 +454,7 @@ editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, in
 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
+    if fixture_note_placement_active() do return "Place note: left-click terrain to commit; right-click or Escape cancels."
     if editor.rock_placement_mode do return "Left spawns rocks; right erases rocks. Drag to build clusters; adjust density in the inspector."
     if editor.marina_paint_mode {
         switch editor.marina_brush_status {
@@ -459,8 +474,26 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor.road_mode {
         if editor.road_drag_node >= 0 && editor.road_drag_node_moved do return "Drag the road node into place; connected curves follow it."
         if editor.road_drag_edge >= 0 do return "Drag the control handle to shape the road; release to commit."
-        if editor.road_selected_node >= 0 do return "Drag nodes or handles to reshape; click terrain or another node to extend."
-        return "Click terrain to start a spline; K cycles roads and procedural steps."
+        if editor.road_construction_phase == .Drag_Start_Tangent do return "Drag away from the start to set its tangent; release to choose an endpoint."
+        if editor.road_construction_phase == .Drag_End_Tangent do return "Drag the endpoint handle; release to commit the authored curve."
+        if editor.road_preview_status != .Idle && editor.road_preview_status != .Valid {
+            return road_preview_status_text(editor.road_preview_status)
+        }
+        if editor.road_preview_status == .Valid {
+            return fmt.ctprintf(
+                "Preview ready — %.0fm, %.0f°, rise %+.1fm, max grade %.0f%%. Click to commit.",
+                editor.road_preview_distance,
+                editor.road_preview_angle,
+                editor.road_preview_rise,
+                editor.road_preview_maximum_grade * 100,
+            )
+        }
+        if editor.road_selected_node >= 0 {
+            if editor.road_construction_mode == .Authored_Curve do return "Click-drag the selected node to set the start tangent."
+            if editor.road_hover_edge >= 0 do return "Drag the white curve handle to reshape the road; release to commit."
+            return "Drag a cyan curve handle to reshape the road, or move away to preview a new route."
+        }
+        return "Click terrain to place the first road node; K cycles road surfaces."
     }
     if editor.architecture_paint_mode do return "Drag to orient one settlement piece; release to stamp. Right-drag erases."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
@@ -477,6 +510,12 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Formations:
         return "Left stamps formations; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Foliage:
+        if editor.plant_stamp_mode == .Climbing {
+            if editor.plant_stamp_target_valid {
+                return "Left stamps the previewed climber onto this surface; right erases it."
+            }
+            return "Hover a building, rock, ridge, cliff, spire, or mountain to attach a climber."
+        }
         if editor.foliage_hedgerow_mode {
             return "Drag a cheap hedgerow. Radius controls its width and height."
         }
@@ -497,7 +536,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Wreck:
         return "Left places the previewed wreck; right generates a new seed."
     case .ClimbingLeaves:
-        return "Left spreads climbing leaves; right erases. Wheel zooms; Shift spread; Alt hardness."
+        return "Choose Ground or Climber in Plant Stamp."
     case .Roads:
         return "Click terrain to add spline nodes; drag nodes or handles to reshape roads and steps."
     case .GreekAssets:
@@ -518,7 +557,7 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     hovered_tool := -1
     for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
         bounds := editor_ui_tool_bounds(layout, index)
-        rock_tool := index == AUTHORING_TOOL_COUNT
+        rock_tool := index == AUTHORING_TOOL_DISPLAY_COUNT
         tool := rock_tool ? Authoring_Tool.Formations : AUTHORING_TOOL_DISPLAY_ORDER[index]
         selected :=
             rock_tool ? editor.rock_placement_mode : editor.authoring_tool == tool && !(tool == .Formations && editor.rock_placement_mode)
@@ -533,7 +572,7 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         if hovered do hovered_tool = index
     }
     if hovered_tool >= 0 {
-        if hovered_tool == AUTHORING_TOOL_COUNT {
+        if hovered_tool == AUTHORING_TOOL_DISPLAY_COUNT {
             bounds := editor_ui_tool_bounds(layout, hovered_tool)
             size := ui_measure_text(.Label, "ROCKS", .5)
             tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
@@ -664,6 +703,60 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             )
         }
     case .Foliage:
+        preview_bounds := editor_ui_slider_bounds(layout, row)
+        ui_draw_text(.Label, "PLANT PREVIEWS", {preview_bounds.x, preview_bounds.y}, .5, {209, 215, 222, 255})
+        preview_gap := f32(8)
+        preview_width := (preview_bounds.width - preview_gap) * .5
+        ground_preview := canvas2d.Rectangle{preview_bounds.x, preview_bounds.y + 24, preview_width, 70}
+        climbing_preview := canvas2d.Rectangle {
+            preview_bounds.x + preview_width + preview_gap,
+            preview_bounds.y + 24,
+            preview_width,
+            70,
+        }
+        ground_button := canvas2d.Rectangle{ground_preview.x, ground_preview.y + 42, ground_preview.width, 28}
+        climbing_button := canvas2d.Rectangle{climbing_preview.x, climbing_preview.y + 42, climbing_preview.width, 28}
+        editor_ui_panel_button(ground_button, "GROUND", editor.plant_stamp_mode == .Ground)
+        editor_ui_panel_button(climbing_button, "CLIMBER", editor.plant_stamp_mode == .Climbing)
+        // Small silhouettes make the choice scannable before reading labels.
+        canvas2d.DrawCircleV({ground_preview.x + 25, ground_preview.y + 22}, 10, {91, 147, 76, 255})
+        canvas2d.DrawCircleV({ground_preview.x + 42, ground_preview.y + 20}, 13, {70, 126, 68, 255})
+        canvas2d.DrawRectangleRec(
+            {climbing_preview.x + 18, climbing_preview.y + 9, 32, 28},
+            {146, 133, 108, 255},
+        )
+        canvas2d.DrawLineEx(
+            {climbing_preview.x + 22, climbing_preview.y + 35},
+            {climbing_preview.x + 45, climbing_preview.y + 12},
+            3,
+            {55, 111, 61, 255},
+        )
+        canvas2d.DrawCircleV({climbing_preview.x + 31, climbing_preview.y + 25}, 5, {76, 143, 72, 255})
+        row += 2
+        if editor.plant_stamp_mode == .Climbing {
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "ATTACH RADIUS (m)",
+                editor.climbing_leaf_brush_radius,
+                terrain.BASE_CELL_SIZE,
+                240,
+                1,
+            )
+            row += 1
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "GROWTH",
+                editor.climbing_leaf_brush_strength,
+                .02,
+                1,
+                2,
+            )
+            row += 1
+            status: cstring = editor.plant_stamp_target_valid ? "SURFACE READY — CLICK TO ATTACH" : "HOVER AN ELIGIBLE SURFACE"
+            status_color := editor.plant_stamp_target_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+            ui_draw_text(.Data, status, {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, status_color)
+            break
+        }
         bounds := editor_ui_slider_bounds(layout, row)
         ui_draw_text(.Label, "MODE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
         half := (bounds.width - 6) * .5
@@ -909,7 +1002,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             .5,
             {134, 224, 216, 255},
         )
-        preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE BEST CANDIDATE" : "NO SUITABLE CANDIDATE"
+        preview_label: cstring = editor.farm_preview_valid ? "CLICK TO PLACE FARM" : "NO SUITABLE SITE"
         preview_color :=
             editor.farm_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
         ui_draw_text(.Data, preview_label, {bounds.x, bounds.y + 38}, .4, preview_color)
@@ -957,8 +1050,17 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row += 1
     case .Roads:
+        top_bounds := editor_ui_slider_bounds(layout, row)
         editor_ui_panel_button(
-            editor_ui_slider_bounds(layout, row),
+            top_bounds,
+            fmt.ctprintf("MODE   %s", road_mode_name(editor.road_construction_mode)),
+            true,
+            true,
+        )
+        row += 1
+        top_bounds = editor_ui_slider_bounds(layout, row)
+        editor_ui_panel_button(
+            top_bounds,
             fmt.ctprintf("SURFACE   %s", roads.pavement_name(editor.road_pavement)),
             editor.road_pavement == .Steps,
             true,
@@ -975,10 +1077,81 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             1,
         )
         row += 1
+        if editor.road_construction_mode == .Terrain_Route {
+            bounds := editor_ui_slider_bounds(layout, row)
+            gap := f32(3)
+            button_width := (bounds.width - gap * 3) / 4
+            labels := [4]cstring{"REC", "CHEAP", "FAST", "LIGHT"}
+            for index in 0 ..< 4 {
+                editor_ui_panel_button(
+                    {bounds.x + f32(index) * (button_width + gap), bounds.y, button_width, 25},
+                    labels[index],
+                    int(editor.road_design_alternative) == index,
+                )
+            }
+            row += 1
+            if editor.road_design_optimizer != nil {
+                optimizer := editor.road_design_optimizer
+                editor_ui_panel_button(
+                    editor_ui_slider_bounds(layout, row),
+                    fmt.ctprintf(
+                        "%s  GEN %d  EVAL %d",
+                        editor.road_design_paused ? "RESUME" : "PAUSE",
+                        optimizer.generation,
+                        optimizer.evaluations,
+                    ),
+                    editor.road_design_paused,
+                    true,
+                )
+                row += 1
+                selected, selected_ok := road_designer.candidate(optimizer, editor.road_design_alternative)
+                if selected_ok {
+                    ui_draw_text(
+                        .Data,
+                        fmt.ctprintf(
+                            "C %.0f   T %.1fs   I %.0f",
+                            selected.metrics.construction,
+                            selected.metrics.travel_seconds,
+                            selected.metrics.impact,
+                        ),
+                        {editor_ui_slider_bounds(layout, row).x + 5, editor_ui_slider_bounds(layout, row).y + 14},
+                        .42,
+                        {134, 224, 216, 255},
+                    )
+                    row += 1
+                }
+            }
+        }
+        bounds := editor_ui_slider_bounds(layout, row)
+        gap := f32(4)
+        button_width := (bounds.width - gap * 2) / 3
+        labels := [6]cstring{"NODES", "EDGES", "GRID", "ANGLES", "TANGENT", "PERP"}
+        values := [6]bool {
+            editor.road_snap_nodes,
+            editor.road_snap_edges,
+            editor.road_snap_grid,
+            editor.road_snap_angles,
+            editor.road_snap_tangents,
+            editor.road_snap_perpendiculars,
+        }
+        for index in 0 ..< 6 {
+            column, toggle_row := index % 3, index / 3
+            editor_ui_panel_button(
+                {bounds.x + f32(column) * (button_width + gap), bounds.y + f32(toggle_row) * 23, button_width, 20},
+                labels[index],
+                values[index],
+            )
+        }
+        row += 1
         if editor.road_selected_node >= 0 && editor.road_selected_node < editor.project.road_graph.node_count {
             radius := editor.project.road_graph.nodes[editor.road_selected_node].junction_radius
             editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "JUNCTION RADIUS", radius, 1, 40, 1)
             row += 1
+            if editor.road_construction_mode == .Terrain_Route &&
+               roads.node_degree(&editor.project.road_graph, editor.road_selected_node) == 2 {
+                editor_ui_panel_button(editor_ui_slider_bounds(layout, row), "REDESIGN SELECTED CHAIN", false, true)
+                row += 1
+            }
         }
     case .GreekAssets:
         editor_ui_panel_button(
@@ -1109,7 +1282,7 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             }
             for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
                 if canvas2d.CheckCollisionPointRec(mouse, editor_ui_tool_bounds(layout, index)) {
-                    if index == AUTHORING_TOOL_COUNT {
+                    if index == AUTHORING_TOOL_DISPLAY_COUNT {
                         authoring_select_rock_tool(editor)
                     } else {
                         authoring_select_tool(editor, AUTHORING_TOOL_DISPLAY_ORDER[index])
@@ -1201,6 +1374,44 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
         row += 1
     case .Foliage:
+        preview_bounds := editor_ui_slider_bounds(layout, row)
+        preview_gap := f32(8)
+        preview_width := (preview_bounds.width - preview_gap) * .5
+        ground_preview := canvas2d.Rectangle{preview_bounds.x, preview_bounds.y + 24, preview_width, 70}
+        climbing_preview := canvas2d.Rectangle {
+            preview_bounds.x + preview_width + preview_gap,
+            preview_bounds.y + 24,
+            preview_width,
+            70,
+        }
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, ground_preview) {
+            editor.plant_stamp_mode = .Ground
+            editor.climbing_leaf_paint_mode = false
+            editor.climbing_leaf_painting = false
+            editor.plant_stamp_target_valid = false
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, climbing_preview) {
+            editor.plant_stamp_mode = .Climbing
+            editor.climbing_leaf_paint_mode = true
+            editor.formation_brush_painting = false
+            editor.formation_brush_group_id = 0
+        }
+        row += 2
+        if editor.plant_stamp_mode == .Climbing {
+            _ = editor_ui_slider_input(
+                editor,
+                layout,
+                11,
+                row,
+                &editor.climbing_leaf_brush_radius,
+                terrain.BASE_CELL_SIZE,
+                240,
+                terrain.BASE_CELL_SIZE,
+            )
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 12, row, &editor.climbing_leaf_brush_strength, .02, 1, .01)
+            row += 1
+            break
+        }
         bounds := editor_ui_slider_bounds(layout, row)
         half := (bounds.width - 6) * .5
         if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
@@ -1347,6 +1558,22 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 13, row, &editor.climbing_leaf_brush_hardness, 0, 1, .01)
         row += 1
     case .Roads:
+        mode_bounds := editor_ui_slider_bounds(layout, row)
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, mode_bounds) {
+            switch editor.road_construction_mode {
+            case .Straight:
+                editor.road_construction_mode = .Terrain_Route
+            case .Terrain_Route:
+                editor.road_construction_mode = .Authored_Curve
+            case .Authored_Curve:
+                editor.road_construction_mode = .Straight
+            }
+            editor.road_construction_phase = editor.road_selected_node >= 0 ? .Choose_End : .Idle
+            editor.road_preview_control_from = {}
+            editor.road_preview_control_to = {}
+            road_preview_clear(editor)
+        }
+        row += 1
         surface_bounds := editor_ui_slider_bounds(layout, row)
         if pressed && canvas2d.CheckCollisionPointRec(mouse, surface_bounds) {
             road_cycle_pavement(editor)
@@ -1392,12 +1619,75 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.project.revision += 1
         }
         row += 1
+        if editor.road_construction_mode == .Terrain_Route {
+            alternatives := editor_ui_slider_bounds(layout, row)
+            gap := f32(3)
+            button_width := (alternatives.width - gap * 3) / 4
+            for index in 0 ..< 4 {
+                candidate_bounds := canvas2d.Rectangle {
+                    alternatives.x + f32(index) * (button_width + gap),
+                    alternatives.y,
+                    button_width,
+                    25,
+                }
+                if pressed && canvas2d.CheckCollisionPointRec(mouse, candidate_bounds) {
+                    editor.road_design_alternative = road_designer.Named_Alternative(index)
+                    _ = road_design_preview_step(editor)
+                }
+            }
+            row += 1
+            if editor.road_design_optimizer != nil {
+                if pressed && canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row)) {
+                    editor.road_design_paused = !editor.road_design_paused
+                }
+                row += 1
+                _, selected_ok := road_designer.candidate(editor.road_design_optimizer, editor.road_design_alternative)
+                if selected_ok do row += 1
+            }
+        }
+        bounds := editor_ui_slider_bounds(layout, row)
+        gap := f32(4)
+        button_width := (bounds.width - gap * 2) / 3
+        for index in 0 ..< 6 {
+            column, toggle_row := index % 3, index / 3
+            candidate := canvas2d.Rectangle {
+                bounds.x + f32(column) * (button_width + gap),
+                bounds.y + f32(toggle_row) * 23,
+                button_width,
+                20,
+            }
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, candidate) {
+                switch index {
+                case 0:
+                    editor.road_snap_nodes = !editor.road_snap_nodes
+                case 1:
+                    editor.road_snap_edges = !editor.road_snap_edges
+                case 2:
+                    editor.road_snap_grid = !editor.road_snap_grid
+                case 3:
+                    editor.road_snap_angles = !editor.road_snap_angles
+                case 4:
+                    editor.road_snap_tangents = !editor.road_snap_tangents
+                case 5:
+                    editor.road_snap_perpendiculars = !editor.road_snap_perpendiculars
+                }
+                editor.road_preview_cell_valid = false
+            }
+        }
+        row += 1
         if editor.road_selected_node >= 0 && editor.road_selected_node < editor.project.road_graph.node_count {
             node := &editor.project.road_graph.nodes[editor.road_selected_node]
             if editor_ui_slider_input(editor, layout, 10, row, &node.junction_radius, 1, 40, .5, 2) {
                 editor.project.revision += 1
             }
             row += 1
+            if editor.road_construction_mode == .Terrain_Route &&
+               roads.node_degree(&editor.project.road_graph, editor.road_selected_node) == 2 {
+                if pressed && canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row)) {
+                    _ = road_design_redesign_selected_chain(editor)
+                }
+                row += 1
+            }
         }
     case .GreekAssets:
         region_bounds := editor_ui_slider_bounds(layout, row)

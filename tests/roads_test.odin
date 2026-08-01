@@ -29,6 +29,7 @@ road_bake_outputs_indexed_road_shoulders_and_caps :: proc(t: ^testing.T) {
     testing.expect(t, len(mesh.vertices) > 0)
     testing.expect(t, len(mesh.indices) > 0)
     saw_road, saw_shoulder, saw_junction, saw_verge := false, false, false, false
+    saw_edge_station := false
     for vertex in mesh.vertices {
         saw_road = saw_road || vertex.surface == .Road
         saw_shoulder = saw_shoulder || vertex.surface == .Shoulder
@@ -38,8 +39,14 @@ road_bake_outputs_indexed_road_shoulders_and_caps :: proc(t: ^testing.T) {
         // transverse scale instead of stretching with the road's UV width.
         testing.expect(t, math.abs(vertex.road_half_width - 3) < .0001)
         testing.expect(t, math.abs(vertex.use_intensity - 1) < .0001)
+        if vertex.source_edge > 0 {
+            saw_edge_station = true
+            testing.expect_value(t, vertex.source_edge, 1)
+            testing.expect(t, vertex.edge_t >= 0 && vertex.edge_t <= 1)
+        }
     }
     testing.expect(t, saw_road && saw_shoulder && saw_junction && saw_verge)
+    testing.expect(t, saw_edge_station)
     for index in mesh.indices do testing.expect(t, int(index) < len(mesh.vertices))
 }
 
@@ -222,6 +229,53 @@ road_graph_rejects_invalid_topology :: proc(t: ^testing.T) {
     testing.expect(t, roads.add_straight_edge(&graph, only, only, 5) == -1)
     testing.expect(t, roads.add_straight_edge(&graph, only, 12, 5) == -1)
     testing.expect(t, graph.edge_count == 0)
+}
+
+@(test)
+road_nearest_edge_point_finds_curved_interior_and_endpoints :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 2, 0})
+    finish := roads.add_node(&graph, {30, 8, 0})
+    _ = roads.add_edge(&graph, start, finish, {8, 4, 14}, {22, 6, 14}, 6)
+    interior := roads.nearest_edge_point(&graph, {15, 0, 10.6})
+    testing.expect(t, interior.found)
+    testing.expect_value(t, interior.edge_index, 0)
+    testing.expect(t, interior.amount > .45 && interior.amount < .55)
+    testing.expect(t, interior.distance_squared < .1)
+    endpoint := roads.nearest_edge_point(&graph, {-2, 0, 0})
+    testing.expect(t, endpoint.found)
+    testing.expect(t, endpoint.amount < .01)
+}
+
+@(test)
+road_split_preflight_and_operation_preserve_curve_and_properties :: proc(t: ^testing.T) {
+    graph: roads.Graph
+    start := roads.add_node(&graph, {0, 2, 0})
+    finish := roads.add_node(&graph, {30, 8, 0})
+    _ = roads.add_edge(&graph, start, finish, {8, 4, 14}, {22, 6, 14}, 7, 1.75, .Cobblestone, .37)
+    samples: [17]roads.Vec3
+    for &sample, index in samples do sample = roads.edge_point(&graph, graph.edges[0], f32(index) / 16)
+    testing.expect(t, roads.can_split_edge(&graph, 0, .4))
+    junction := roads.split_edge(&graph, 0, .4, 5)
+    testing.expect(t, junction >= 0)
+    testing.expect_value(t, graph.edge_count, 2)
+    for edge in graph.edges[:graph.edge_count] {
+        testing.expect(t, math.abs(edge.half_width - 3.5) < .0001)
+        testing.expect(t, math.abs(edge.shoulder_width - 1.75) < .0001)
+        testing.expect_value(t, edge.pavement, roads.Pavement.Cobblestone)
+        testing.expect(t, math.abs(edge.use_intensity - .37) < .0001)
+    }
+    for expected, index in samples {
+        amount := f32(index) / 16
+        actual: roads.Vec3
+        if amount <= .4 {
+            actual = roads.edge_point(&graph, graph.edges[0], amount / .4)
+        } else {
+            actual = roads.edge_point(&graph, graph.edges[1], (amount - .4) / .6)
+        }
+        delta := expected - actual
+        testing.expect(t, math.abs(delta.x) + math.abs(delta.y) + math.abs(delta.z) < .001)
+    }
 }
 
 @(test)

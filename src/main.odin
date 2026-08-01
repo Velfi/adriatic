@@ -30,6 +30,8 @@ import particle_systems "../packages/particles"
 import player_mail "../packages/player_mail"
 import postale_game "../packages/postale"
 import quest "../packages/quest"
+import road_designer "../packages/road_designer"
+import road_planner "../packages/road_planner"
 import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import spray_audio "../packages/spray_audio"
@@ -123,6 +125,7 @@ Default_Map_Regeneration_Stage :: enum u8 {
 }
 
 Structure_History_State :: struct {
+    sequence:                     u64,
     structures:                   [dynamic]terrain.Structure,
     count:                        int,
     next_id:                      u64,
@@ -158,10 +161,67 @@ Marina_Brush_Status :: enum {
 }
 
 CURVE_POINT_CAPACITY :: 48
+FIXTURE_NOTE_CAPACITY :: 64
+FIXTURE_NOTE_TEXT_CAPACITY :: 256
 CURVE_MERGE_MINIMUM_COSINE :: f32(0.9961947) // 5 degrees
 
 Curve_Point :: struct {
     x, z: f32,
+}
+
+Road_Construction_Mode :: enum u8 {
+    Straight,
+    Terrain_Route,
+    Authored_Curve,
+}
+
+Road_Construction_Phase :: enum u8 {
+    Idle,
+    Choose_End,
+    Drag_Start_Tangent,
+    Drag_End_Tangent,
+}
+
+Road_Snap_Kind :: enum u8 {
+    Raw,
+    Grid,
+    Angle,
+    Tangent,
+    Perpendicular,
+    Edge,
+    Node,
+}
+
+Road_Snap :: struct {
+    kind:       Road_Snap_Kind,
+    position:   roads.Vec3,
+    node:       int,
+    edge:       int,
+    edge_t:     f32,
+    guide_from: roads.Vec3,
+    valid:      bool,
+}
+
+Road_Preview_Status :: enum u8 {
+    Idle,
+    Valid,
+    Stale,
+    Degenerate,
+    No_Route,
+    Capacity,
+    Invalid_Junction,
+}
+
+Fixture_Note_Target :: enum u8 {
+    Scene,
+    Structure,
+}
+
+Fixture_Note :: struct {
+    text:              [FIXTURE_NOTE_TEXT_CAPACITY]u8,
+    target:            Fixture_Note_Target,
+    target_id:         u64,
+    fallback_position: third_person.Vec3,
 }
 
 Fixture :: struct {
@@ -295,6 +355,9 @@ Fixture :: struct {
     road_drag_node_moved:                           bool `fixture:"-"`,
     road_drag_edge:                                 int `fixture:"-"`,
     road_drag_handle:                               int `fixture:"-"`,
+    road_hover_edge:                                int `fixture:"-"`,
+    road_hover_handle:                              int `fixture:"-"`,
+    road_drag_handle_moved:                         bool `fixture:"-"`,
     road_width:                                     f32,
     road_shoulder_width:                            f32,
     road_pavement:                                  roads.Pavement,
@@ -485,6 +548,7 @@ Fixture :: struct {
     tweak_status:                                   Tweak_Status `fixture:"-"`,
     tweak_panel_visible:                            bool `fixture:"-"`,
     tweak_panel_toggle_down:                        bool `fixture:"-"`,
+    notes_visible:                                  bool `fixture:"-"`,
     default_map_regeneration_active:                bool `hs:"-" fixture:"-"`,
     default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,
     default_map_regeneration_stage:                 Default_Map_Regeneration_Stage `hs:"-" fixture:"-"`,
@@ -509,12 +573,59 @@ Fixture :: struct {
     customization_preview_dragging:                 bool `fixture:"-"`,
     customization_preview_drag_x:                   f32 `fixture:"-"`,
     customization_preview_yaw:                      f32 `fixture:"-"`,
+    notes:                                          [FIXTURE_NOTE_CAPACITY]Fixture_Note,
+    note_count:                                     int,
 }
 
-FIXTURE_SCHEMA_VERSION :: 15
+FIXTURE_SCHEMA_VERSION :: 17
 
 Editor :: struct {
     using fixture:                      Fixture,
+    road_construction_mode:             Road_Construction_Mode,
+    road_construction_phase:            Road_Construction_Phase,
+    road_preview_graph:                 roads.Graph,
+    road_design_base_graph:             roads.Graph,
+    road_preview_first_edge:            int,
+    road_preview_target_node:           int,
+    road_preview_status:                Road_Preview_Status,
+    road_preview_snap:                  Road_Snap,
+    road_preview_pending_snap:          Road_Snap,
+    road_preview_pending_since:         f64,
+    road_preview_start:                 roads.Vec3,
+    road_preview_control_from:          roads.Vec3,
+    road_preview_control_to:            roads.Vec3,
+    road_preview_endpoint:              roads.Vec3,
+    road_preview_distance:              f32,
+    road_preview_angle:                 f32,
+    road_preview_rise:                  f32,
+    road_preview_maximum_grade:         f32,
+    road_preview_cell_x:                int,
+    road_preview_cell_z:                int,
+    road_preview_cell_valid:            bool,
+    road_design_optimizer:              ^road_designer.Optimizer,
+    road_design_workspace:              ^road_designer.Workspace,
+    road_design_heights:                [dynamic]f32,
+    road_design_alternative:            road_designer.Named_Alternative,
+    road_design_paused:                 bool,
+    road_design_source_revision:        u64,
+    road_design_terrain_revision:       u64,
+    road_design_request_key:            u64,
+    road_design_frame_budget:           int,
+    road_design_preview_id:             u32,
+    road_design_start_node:             int,
+    road_design_target_node:            int,
+    road_design_redesign_active:        bool,
+    road_design_undo:                   [ROAD_EDIT_HISTORY_CAPACITY]Road_Edit_Transaction,
+    road_design_redo:                   [ROAD_EDIT_HISTORY_CAPACITY]Road_Edit_Transaction,
+    road_design_undo_count:             int,
+    road_design_redo_count:             int,
+    road_edit_sequence:                 u64,
+    road_snap_nodes:                    bool,
+    road_snap_edges:                    bool,
+    road_snap_grid:                     bool,
+    road_snap_angles:                   bool,
+    road_snap_tangents:                 bool,
+    road_snap_perpendiculars:           bool,
     surface_weather:                    surface_weather.Field,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
     mouse_emote:                        Mouse_Emote_State,
@@ -544,6 +655,11 @@ Editor :: struct {
     capture_bougainvillea_seed_enabled: bool,
     capture_bougainvillea_structure_id: u64,
     capture_bougainvillea_seed:         u32,
+    plant_stamp_mode:                   Plant_Stamp_Mode,
+    plant_stamp_target_index:           int,
+    plant_stamp_target_valid:           bool,
+    plant_stamp_target_locked:          bool,
+    plant_stamp_last_stamped_id:        u64,
     benchmark_ground_grass_disabled:    bool,
     structure_undo:                     [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
     structure_redo:                     [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
@@ -986,8 +1102,11 @@ structure_history_push :: proc(
 
 structure_history_push_undo :: proc(editor: ^Editor) {
     if editor == nil do return
+    editor.road_edit_sequence += 1
     structure_history_push(&editor.structure_undo, &editor.structure_undo_count, editor)
+    editor.structure_undo[editor.structure_undo_count - 1].sequence = editor.road_edit_sequence
     editor.structure_redo_count = 0
+    road_design_history_clear(&editor.road_design_redo, &editor.road_design_redo_count)
 }
 
 structure_history_push_redo :: proc(editor: ^Editor) {
@@ -997,7 +1116,9 @@ structure_history_push_redo :: proc(editor: ^Editor) {
 
 structure_undo :: proc(editor: ^Editor) {
     if editor == nil || editor.structure_undo_count <= 0 do return
+    sequence := editor.structure_undo[editor.structure_undo_count - 1].sequence
     structure_history_push_redo(editor)
+    editor.structure_redo[editor.structure_redo_count - 1].sequence = sequence
     editor.structure_undo_count -= 1
     structure_history_restore(editor, &editor.structure_undo[editor.structure_undo_count])
     if editor.structure_selected >= 0 && editor.structure_selected >= editor.project.structure_count {
@@ -1007,7 +1128,9 @@ structure_undo :: proc(editor: ^Editor) {
 
 structure_redo :: proc(editor: ^Editor) {
     if editor == nil || editor.structure_redo_count <= 0 do return
+    sequence := editor.structure_redo[editor.structure_redo_count - 1].sequence
     structure_history_push(&editor.structure_undo, &editor.structure_undo_count, editor)
+    editor.structure_undo[editor.structure_undo_count - 1].sequence = sequence
     editor.structure_redo_count -= 1
     structure_history_restore(editor, &editor.structure_redo[editor.structure_redo_count])
 }
@@ -1039,6 +1162,7 @@ structure_history_storage_destroy :: proc(editor: ^Editor) {
 
 structure_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
+    road_design_runtime_destroy(editor)
     fixture_storage_destroy(&editor.fixture)
     structure_history_storage_destroy(editor)
 }
@@ -1074,6 +1198,7 @@ terrain_history_push_undo :: proc(editor: ^Editor) {
         terrain_history_capture(editor, &editor.terrain_undo[TERRAIN_HISTORY_CAPACITY - 1])
     }
     editor.terrain_redo_count = 0
+    road_design_history_clear(&editor.road_design_redo, &editor.road_design_redo_count)
 }
 
 terrain_history_push_redo :: proc(editor: ^Editor) {
@@ -1179,14 +1304,8 @@ default_map_regeneration_step :: proc(editor: ^Editor) {
         seed_default_island_towns_seeded(editor, editor.default_map_regeneration_seeds)
         editor.default_map_regeneration_stage = .Finalize
     case .Finalize:
-        west_airport_x, west_airport_z := terrain.default_airport_center_for_seed(
-            -1,
-            editor.default_map_regeneration_seeds[0],
-        )
-        east_airport_x, east_airport_z := terrain.default_airport_center_for_seed(
-            1,
-            editor.default_map_regeneration_seeds[1],
-        )
+        west_airport_x, west_airport_z := terrain.default_airport_center_for_project(&editor.project, -1)
+        east_airport_x, east_airport_z := terrain.default_airport_center_for_project(&editor.project, 1)
         editor.attendant_position = {
             east_airport_x,
             terrain.sample_height(&editor.project, 0, east_airport_x, east_airport_z),
@@ -1412,6 +1531,7 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
 formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || editor.tool != .Structure do return
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
+    if editor.authoring_tool == .Foliage && editor.plant_stamp_mode == .Climbing do return
     if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode do return
     if !cursor_hit {
         if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
@@ -1551,22 +1671,360 @@ road_handle_at :: proc(editor: ^Editor, x, z: f32) -> (edge_index, handle_index:
     edge_index, handle_index = -1, -1
     if editor == nil || editor.road_selected_node < 0 do return
     graph := &editor.project.road_graph
-    hit_radius := max(editor.road_width * .65, terrain.BASE_CELL_SIZE * .25)
+    cursor := roads.Vec3{x, terrain.sample_height(&editor.project, 0, x, z), z}
+    // Match the snap affordances: the handle remains easy to acquire at an
+    // overview zoom without becoming an enormous target close to the road.
+    hit_radius := max(editor.road_width * .55, road_snap_world_radius(editor, cursor) * .46)
     best_distance := hit_radius * hit_radius
     for edge, index in graph.edges[:graph.edge_count] {
         if edge.from != editor.road_selected_node && edge.to != editor.road_selected_node do continue
-        handles := [2]roads.Vec3{edge.control_from, edge.control_to}
-        for candidate, handle in handles {
-            dx, dz := x - candidate.x, z - candidate.z
-            distance := dx * dx + dz * dz
-            if distance <= best_distance {
-                best_distance = distance
-                edge_index = index
-                handle_index = handle
-            }
+        // Expose only the tangent owned by the selected junction. The far
+        // control belongs to the opposite node and becomes editable when that
+        // node is selected, matching a road-tool gizmo rather than a Bézier
+        // debugger.
+        handle := edge.from == editor.road_selected_node ? 0 : 1
+        candidate := handle == 0 ? edge.control_from : edge.control_to
+        dx, dz := x - candidate.x, z - candidate.z
+        distance := dx * dx + dz * dz
+        if distance <= best_distance {
+            best_distance = distance
+            edge_index = index
+            handle_index = handle
         }
     }
     return
+}
+
+road_mode_name :: proc(mode: Road_Construction_Mode) -> string {
+    switch mode {
+    case .Straight:
+        return "STRAIGHT"
+    case .Terrain_Route:
+        return "TERRAIN"
+    case .Authored_Curve:
+        return "CURVE"
+    }
+    return "TERRAIN ROUTE"
+}
+
+road_preview_status_text :: proc(status: Road_Preview_Status) -> cstring {
+    switch status {
+    case .Idle:
+        return ""
+    case .Valid:
+        return "Preview ready — click to commit."
+    case .Stale:
+        return "Updating terrain route…"
+    case .Degenerate:
+        return "Road is too short to build."
+    case .No_Route:
+        return "No terrain route satisfies the current costs."
+    case .Capacity:
+        return "Road graph has no capacity for this route."
+    case .Invalid_Junction:
+        return "Cannot split the target road at this point."
+    }
+    return ""
+}
+
+road_snap_world_radius :: proc(editor: ^Editor, point: roads.Vec3) -> f32 {
+    if editor == nil do return 8
+    dx := editor.camera_pose.position.x - point.x
+    dy := editor.camera_pose.position.y - point.y
+    dz := editor.camera_pose.position.z - point.z
+    distance := f32(math.sqrt(f64(dx * dx + dy * dy + dz * dz)))
+    return clamp(distance * .018, f32(3), f32(24))
+}
+
+road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
+    if editor == nil do return {node = -1, edge = -1}
+    result := Road_Snap {
+        kind     = .Raw,
+        position = {x, terrain.sample_height(&editor.project, 0, x, z), z},
+        node     = -1,
+        edge     = -1,
+        valid    = true,
+    }
+    graph := &editor.project.road_graph
+    radius := road_snap_world_radius(editor, result.position)
+    radius_squared := radius * radius
+    if editor.road_preview_snap.valid &&
+       (editor.road_preview_snap.kind == .Node || editor.road_preview_snap.kind == .Edge) {
+        dx := editor.road_preview_snap.position.x - x
+        dz := editor.road_preview_snap.position.z - z
+        release_radius := radius * 1.35
+        if dx * dx + dz * dz <= release_radius * release_radius do return editor.road_preview_snap
+    }
+
+    if editor.road_snap_nodes {
+        best := radius_squared
+        for node, index in graph.nodes[:graph.node_count] {
+            dx, dz := node.position.x - x, node.position.z - z
+            candidate := dx * dx + dz * dz
+            if candidate <= best {
+                best = candidate
+                result.kind, result.position, result.node = .Node, node.position, index
+            }
+        }
+        if result.kind == .Node do return result
+    }
+
+    if editor.road_snap_edges {
+        nearest := roads.nearest_edge_point(graph, result.position)
+        if nearest.found && nearest.distance_squared <= radius_squared {
+            edge := graph.edges[nearest.edge_index]
+            endpoint_threshold := f32(.035)
+            if nearest.amount <= endpoint_threshold {
+                result.kind, result.position, result.node = .Node, graph.nodes[edge.from].position, edge.from
+            } else if nearest.amount >= 1 - endpoint_threshold {
+                result.kind, result.position, result.node = .Node, graph.nodes[edge.to].position, edge.to
+            } else {
+                result.kind = .Edge
+                result.position = nearest.position
+                result.edge = nearest.edge_index
+                result.edge_t = nearest.amount
+            }
+            return result
+        }
+    }
+
+    if editor.road_selected_node >= 0 && editor.road_selected_node < graph.node_count {
+        start := graph.nodes[editor.road_selected_node].position
+        raw_dx, raw_dz := x - start.x, z - start.z
+        raw_length := f32(math.sqrt(f64(raw_dx * raw_dx + raw_dz * raw_dz)))
+        if raw_length > .001 {
+            if editor.road_snap_tangents {
+                best_distance := radius_squared
+                best_position: roads.Vec3
+                found := false
+                for edge in graph.edges[:graph.edge_count] {
+                    if edge.from != editor.road_selected_node && edge.to != editor.road_selected_node do continue
+                    tangent :=
+                        edge.from == editor.road_selected_node ? roads.edge_tangent(graph, edge, 0) : -roads.edge_tangent(graph, edge, 1)
+                    tangent.y = 0
+                    tangent_length := f32(math.sqrt(f64(tangent.x * tangent.x + tangent.z * tangent.z)))
+                    if tangent_length <= .001 do continue
+                    tangent /= tangent_length
+                    along := raw_dx * tangent.x + raw_dz * tangent.z
+                    if along <= 0 do continue
+                    candidate := start + tangent * along
+                    dx, dz := candidate.x - x, candidate.z - z
+                    distance_squared := dx * dx + dz * dz
+                    if distance_squared <= best_distance {
+                        best_distance, best_position, found = distance_squared, candidate, true
+                    }
+                }
+                if found {
+                    best_position.y = terrain.sample_height(&editor.project, 0, best_position.x, best_position.z)
+                    result.kind, result.position, result.guide_from = .Tangent, best_position, start
+                    return result
+                }
+            }
+            if editor.road_snap_perpendiculars {
+                nearest := roads.nearest_edge_point(graph, result.position)
+                if nearest.found {
+                    tangent := nearest.tangent
+                    tangent.y = 0
+                    tangent_length := f32(math.sqrt(f64(tangent.x * tangent.x + tangent.z * tangent.z)))
+                    if tangent_length > .001 {
+                        tangent /= tangent_length
+                        normal := roads.Vec3{-tangent.z, 0, tangent.x}
+                        along := raw_dx * normal.x + raw_dz * normal.z
+                        candidate := start + normal * along
+                        dx, dz := candidate.x - x, candidate.z - z
+                        if dx * dx + dz * dz <= radius_squared {
+                            candidate.y = terrain.sample_height(&editor.project, 0, candidate.x, candidate.z)
+                            result.kind, result.position, result.guide_from = .Perpendicular, candidate, start
+                            return result
+                        }
+                    }
+                }
+            }
+            if editor.road_snap_angles {
+                angle := f32(math.atan2(f64(raw_dz), f64(raw_dx)))
+                step := f32(math.PI / 12)
+                snapped_angle := f32(math.round(f64(angle / step))) * step
+                candidate := roads.Vec3 {
+                    start.x + f32(math.cos(f64(snapped_angle))) * raw_length,
+                    0,
+                    start.z + f32(math.sin(f64(snapped_angle))) * raw_length,
+                }
+                dx, dz := candidate.x - x, candidate.z - z
+                if dx * dx + dz * dz <= radius_squared {
+                    candidate.y = terrain.sample_height(&editor.project, 0, candidate.x, candidate.z)
+                    result.kind, result.position, result.guide_from = .Angle, candidate, start
+                    return result
+                }
+            }
+        }
+    }
+    if editor.road_snap_grid {
+        grid_x := terrain.snap_to_grid(x, editor.project.levels[0].cell_size)
+        grid_z := terrain.snap_to_grid(z, editor.project.levels[0].cell_size)
+        result.kind = .Grid
+        result.position = {grid_x, terrain.sample_height(&editor.project, 0, grid_x, grid_z), grid_z}
+    }
+    return result
+}
+
+road_preview_metrics :: proc(editor: ^Editor) {
+    graph := &editor.road_preview_graph
+    editor.road_preview_distance = 0
+    editor.road_preview_maximum_grade = 0
+    if editor.road_preview_first_edge < 0 do return
+    for edge in graph.edges[editor.road_preview_first_edge:graph.edge_count] {
+        previous := roads.edge_point(graph, edge, 0)
+        for sample in 1 ..= 16 {
+            point := roads.edge_point(graph, edge, f32(sample) / 16)
+            dx, dz := point.x - previous.x, point.z - previous.z
+            horizontal := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            editor.road_preview_distance += horizontal
+            if horizontal > .001 {
+                editor.road_preview_maximum_grade = max(
+                    editor.road_preview_maximum_grade,
+                    math.abs(point.y - previous.y) / horizontal,
+                )
+            }
+            previous = point
+        }
+    }
+    dx := editor.road_preview_endpoint.x - editor.road_preview_start.x
+    dz := editor.road_preview_endpoint.z - editor.road_preview_start.z
+    editor.road_preview_angle = f32(math.atan2(f64(dz), f64(dx))) * 180 / math.PI
+    editor.road_preview_rise = editor.road_preview_endpoint.y - editor.road_preview_start.y
+}
+
+road_preview_clear :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if editor.road_design_optimizer != nil && editor.road_design_optimizer.status == .Running {
+        road_designer.cancel(editor.road_design_optimizer)
+    }
+    editor.road_preview_graph = {}
+    editor.road_preview_first_edge = -1
+    editor.road_preview_target_node = -1
+    editor.road_preview_status = .Idle
+    editor.road_preview_snap = {}
+    editor.road_preview_pending_snap = {}
+    editor.road_preview_pending_since = 0
+    editor.road_preview_cell_valid = false
+    editor.road_design_request_key = 0
+    editor.road_design_redesign_active = false
+}
+
+road_preview_rebuild :: proc(editor: ^Editor, snap: Road_Snap) {
+    if editor == nil ||
+       editor.road_selected_node < 0 ||
+       editor.road_selected_node >= editor.project.road_graph.node_count {
+        return
+    }
+    start_graph := &editor.project.road_graph
+    start := start_graph.nodes[editor.road_selected_node].position
+    dx, dz := snap.position.x - start.x, snap.position.z - start.z
+    if dx * dx + dz * dz < 1 {
+        road_preview_clear(editor)
+        editor.road_preview_status = .Degenerate
+        return
+    }
+    preview := start_graph^
+    target := -1
+    if snap.kind == .Node {
+        target = snap.node
+    } else if snap.kind == .Edge {
+        if !roads.can_split_edge(&preview, snap.edge, snap.edge_t) {
+            road_preview_clear(editor)
+            editor.road_preview_status = .Invalid_Junction
+            return
+        }
+        target = roads.split_edge(&preview, snap.edge, snap.edge_t, max(editor.road_width * .8, f32(2)))
+    } else {
+        if !roads.can_add(&preview, 1, 0) {
+            road_preview_clear(editor)
+            editor.road_preview_status = .Capacity
+            return
+        }
+        target = roads.add_node(&preview, snap.position, max(editor.road_width * .8, f32(2)))
+    }
+    if target < 0 || target == editor.road_selected_node {
+        road_preview_clear(editor)
+        editor.road_preview_status = .Degenerate
+        return
+    }
+    editor.road_preview_first_edge = preview.edge_count
+    if editor.road_construction_mode == .Terrain_Route {
+        editor.road_preview_target_node = target
+        editor.road_preview_snap = snap
+        editor.road_preview_start = start
+        editor.road_preview_endpoint = snap.position
+        if !road_design_preview_begin(editor, preview, editor.road_selected_node, target) ||
+           !road_design_preview_step(editor) {
+            editor.road_preview_status = .No_Route
+            return
+        }
+        return
+    }
+    added := -1
+    switch editor.road_construction_mode {
+    case .Straight:
+        added = roads.add_straight_edge(
+            &preview,
+            editor.road_selected_node,
+            target,
+            editor.road_width,
+            editor.road_shoulder_width,
+            editor.road_pavement,
+        )
+    case .Terrain_Route:
+    // Handled above by the progressive shared road designer.
+    case .Authored_Curve:
+        control_from := editor.road_preview_control_from
+        control_to := editor.road_preview_control_to
+        if editor.road_construction_phase == .Idle {
+            control_from = start + (snap.position - start) / 3
+        }
+        if editor.road_construction_phase != .Drag_End_Tangent {
+            control_to = start + (snap.position - start) * (f32(2) / 3)
+        }
+        added = roads.add_edge(
+            &preview,
+            editor.road_selected_node,
+            target,
+            control_from,
+            control_to,
+            editor.road_width,
+            editor.road_shoulder_width,
+            editor.road_pavement,
+        )
+    }
+    if added < 0 {
+        road_preview_clear(editor)
+        editor.road_preview_status = editor.road_construction_mode == .Terrain_Route ? .No_Route : .Capacity
+        return
+    }
+    editor.road_preview_graph = preview
+    editor.road_preview_target_node = target
+    editor.road_preview_status = .Valid
+    editor.road_preview_snap = snap
+    editor.road_preview_start = start
+    editor.road_preview_endpoint = snap.position
+    road_preview_metrics(editor)
+}
+
+road_preview_commit :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.road_preview_status != .Valid do return false
+    if editor.road_construction_mode == .Terrain_Route {
+        if !road_design_commit_graph(editor, editor.road_preview_graph, editor.road_design_preview_id) do return false
+    } else {
+        structure_history_push_undo(editor)
+        road_design_history_clear(&editor.road_design_redo, &editor.road_design_redo_count)
+        editor.project.road_graph = editor.road_preview_graph
+        editor.project.revision += 1
+    }
+    editor.road_selected_node = editor.road_preview_target_node
+    road_preview_clear(editor)
+    editor.road_construction_phase = editor.road_construction_mode == .Authored_Curve ? .Idle : .Choose_End
+    editor.road_preview_control_from = {}
+    editor.road_preview_control_to = {}
+    return true
 }
 
 road_add_node :: proc(editor: ^Editor, x, z: f32) -> int {
@@ -1581,19 +2039,148 @@ road_add_node :: proc(editor: ^Editor, x, z: f32) -> int {
     )
 }
 
-road_connect :: proc(editor: ^Editor, from, to: int) -> int {
-    if editor == nil || from == to do return -1
-    graph := &editor.project.road_graph
+road_connect_graph :: proc(editor: ^Editor, graph: ^roads.Graph, from, to: int) -> int {
+    if editor == nil || graph == nil || from == to do return -1
     existing := roads.edge_between(graph, from, to)
     if existing >= 0 do return existing
-    return roads.add_straight_edge(
+    a, b := graph.nodes[from].position, graph.nodes[to].position
+    config := road_planner.get_generation_config()
+    span_x, span_z := math.abs(b.x - a.x), math.abs(b.z - a.z)
+    config.cell_size = max(config.cell_size, max(span_x, span_z) / f32(road_planner.MAX_GRID_WIDTH - 13))
+    margin := config.cell_size * 6
+    origin_x, origin_z := min(a.x, b.x) - margin, min(a.z, b.z) - margin
+    width := clamp(
+        int(math.ceil(f64((max(a.x, b.x) + margin - origin_x) / config.cell_size))) + 1,
+        2,
+        road_planner.MAX_GRID_WIDTH,
+    )
+    height := clamp(
+        int(math.ceil(f64((max(a.z, b.z) + margin - origin_z) / config.cell_size))) + 1,
+        2,
+        road_planner.MAX_GRID_HEIGHT,
+    )
+    heights := make([]f32, width * height)
+    defer delete(heights)
+    for z in 0 ..< height {
+        for x in 0 ..< width {
+            heights[z * width + x] = terrain.sample_height(
+                &editor.project,
+                0,
+                origin_x + f32(x) * config.cell_size,
+                origin_z + f32(z) * config.cell_size,
+            )
+        }
+    }
+    workspace := new(road_planner.Workspace)
+    defer free(workspace)
+    route := road_planner.plan(
+        workspace,
+        {
+            origin_x = origin_x,
+            origin_z = origin_z,
+            width = width,
+            height = height,
+            sea_level = editor.project.sea_level,
+            heights = heights,
+        },
+        config,
+        {a.x, a.z},
+        {b.x, b.z},
+    )
+    if !route.found do return -1
+    bends: [roads.MAX_NODES]road_planner.Point
+    bend_count := 0
+    for point, index in route.points[:route.point_count] {
+        if index == 0 || index == route.point_count - 1 do continue
+        before, after := route.points[index - 1], route.points[index + 1]
+        if point.x - before.x == after.x - point.x && point.z - before.z == after.z - point.z do continue
+        if bend_count >= len(bends) do return -1
+        bends[bend_count] = point
+        bend_count += 1
+    }
+    if graph.node_count + bend_count > roads.MAX_NODES || graph.edge_count + bend_count + 1 > roads.MAX_EDGES do return -1
+    chain_nodes: [roads.MAX_NODES]int
+    chain_points: [roads.MAX_NODES]roads.Vec3
+    chain_nodes[0], chain_points[0] = from, a
+    chain_count := 1
+    for point in bends[:bend_count] {
+        y := terrain.sample_height(&editor.project, 0, point.x, point.z)
+        position := roads.Vec3{point.x, y, point.z}
+        local_radius := min(editor.road_width * .55, config.cell_size * .18)
+        node := roads.add_node(graph, position, max(local_radius, f32(.75)))
+        if node < 0 do return -1
+        chain_nodes[chain_count] = node
+        chain_points[chain_count] = position
+        chain_count += 1
+    }
+    chain_nodes[chain_count], chain_points[chain_count] = to, b
+    chain_count += 1
+    return road_planning_add_smooth_chain(
         graph,
-        from,
-        to,
+        chain_nodes[:chain_count],
+        chain_points[:chain_count],
         editor.road_width,
         editor.road_shoulder_width,
         editor.road_pavement,
     )
+}
+
+road_connect :: proc(editor: ^Editor, from, to: int) -> int {
+    if editor == nil do return -1
+    return road_connect_graph(editor, &editor.project.road_graph, from, to)
+}
+
+road_preview_update :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
+    if editor == nil ||
+       !cursor_hit ||
+       editor.road_selected_node < 0 ||
+       editor.road_selected_node >= editor.project.road_graph.node_count {
+        road_preview_clear(editor)
+        return
+    }
+    snap := road_snap_candidate(editor, world_x, world_z)
+    if editor.road_construction_mode == .Terrain_Route {
+        cell := max(road_planner.get_generation_config().cell_size, f32(.001))
+        cell_x := int(math.round(f64(snap.position.x / cell)))
+        cell_z := int(math.round(f64(snap.position.z / cell)))
+        request_changed :=
+            editor.road_design_optimizer == nil ||
+            editor.road_design_source_revision != editor.project.revision ||
+            editor.road_design_terrain_revision != editor.terrain_revision ||
+            editor.road_design_start_node != editor.road_selected_node ||
+            editor.road_design_optimizer.request.pavement != editor.road_pavement ||
+            editor.road_design_optimizer.request.width != editor.road_width ||
+            editor.road_design_optimizer.request.shoulder != editor.road_shoulder_width
+        changed :=
+            request_changed ||
+            !editor.road_preview_cell_valid ||
+            editor.road_preview_cell_x != cell_x ||
+            editor.road_preview_cell_z != cell_z ||
+            editor.road_preview_pending_snap.kind != snap.kind ||
+            editor.road_preview_pending_snap.node != snap.node ||
+            editor.road_preview_pending_snap.edge != snap.edge
+        if changed {
+            editor.road_preview_cell_x = cell_x
+            editor.road_preview_cell_z = cell_z
+            editor.road_preview_cell_valid = true
+            editor.road_preview_pending_snap = snap
+            editor.road_preview_pending_since = canvas2d.GetTime()
+            editor.road_preview_status = .Stale
+            editor.road_preview_snap = snap
+            return
+        }
+        if editor.road_design_optimizer != nil &&
+           editor.road_design_optimizer.status != .Cancelled &&
+           editor.road_preview_status != .Stale {
+            _ = road_design_preview_step(editor)
+            return
+        }
+        if canvas2d.GetTime() - editor.road_preview_pending_since < .055 {
+            return
+        }
+        snap = editor.road_preview_pending_snap
+    }
+    road_preview_rebuild(editor, snap)
 }
 
 road_set_pavement :: proc(editor: ^Editor, pavement: roads.Pavement) {
@@ -1632,6 +2219,10 @@ road_delete_selected :: proc(editor: ^Editor) {
         editor.project.revision += 1
     }
     editor.road_selected_node = -1
+    editor.road_construction_phase = .Idle
+    editor.road_preview_first_edge = -1
+    editor.road_preview_target_node = -1
+    editor.road_preview_status = .Idle
     editor.road_drag_node = -1
     editor.road_drag_node_previous_selection = -1
     editor.road_drag_node_moved = false
@@ -1641,8 +2232,52 @@ road_delete_selected :: proc(editor: ^Editor) {
 
 road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.road_mode do return
+    if editor.road_design_redesign_active {
+        _ = road_design_preview_step(editor)
+        if canvas2d.IsMouseButtonPressed(.RIGHT) {
+            road_preview_clear(editor)
+            editor.road_construction_phase = .Choose_End
+        } else if canvas2d.IsMouseButtonReleased(.LEFT) {
+            _ = road_preview_commit(editor)
+        }
+        return
+    }
     graph := &editor.project.road_graph
+    editor.road_hover_edge, editor.road_hover_handle = -1, -1
+    if cursor_hit &&
+       editor.road_drag_edge < 0 &&
+       editor.road_construction_phase != .Drag_Start_Tangent &&
+       editor.road_construction_phase != .Drag_End_Tangent {
+        editor.road_hover_edge, editor.road_hover_handle = road_handle_at(editor, world_x, world_z)
+    }
+    if editor.road_construction_phase == .Drag_Start_Tangent {
+        if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
+            editor.road_preview_control_from = {
+                world_x,
+                terrain.sample_height(&editor.project, 0, world_x, world_z) + .08,
+                world_z,
+            }
+        }
+        if canvas2d.IsMouseButtonReleased(.LEFT) {
+            editor.road_construction_phase = .Choose_End
+            editor.road_preview_cell_valid = false
+        }
+        return
+    }
+    if editor.road_construction_phase == .Drag_End_Tangent {
+        if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
+            editor.road_preview_control_to = {
+                world_x,
+                terrain.sample_height(&editor.project, 0, world_x, world_z) + .08,
+                world_z,
+            }
+            road_preview_rebuild(editor, editor.road_preview_snap)
+        }
+        if canvas2d.IsMouseButtonReleased(.LEFT) do _ = road_preview_commit(editor)
+        return
+    }
     if editor.road_drag_node >= 0 {
+        road_preview_clear(editor)
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             node := &graph.nodes[editor.road_drag_node]
             snapped_x := structure_editor_snap(world_x, editor)
@@ -1692,6 +2327,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         return
     }
     if editor.road_drag_edge >= 0 {
+        road_preview_clear(editor)
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             edge := &graph.edges[editor.road_drag_edge]
             snapped_x := structure_editor_snap(world_x, editor)
@@ -1701,61 +2337,125 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 terrain.sample_height(&editor.project, 0, snapped_x, snapped_z) + .08,
                 snapped_z,
             }
+            changed := false
             if editor.road_drag_handle == 0 {
-                edge.control_from = point
+                if edge.control_from != point {
+                    if !editor.road_drag_handle_moved do structure_history_push_undo(editor)
+                    edge.control_from = point
+                    editor.road_drag_handle_moved = true
+                    changed = true
+                }
             } else {
-                edge.control_to = point
+                if edge.control_to != point {
+                    if !editor.road_drag_handle_moved do structure_history_push_undo(editor)
+                    edge.control_to = point
+                    editor.road_drag_handle_moved = true
+                    changed = true
+                }
             }
-            editor.project.revision += 1
+            if changed do editor.project.revision += 1
         }
         if canvas2d.IsMouseButtonReleased(.LEFT) {
             editor.road_drag_edge = -1
             editor.road_drag_handle = -1
+            editor.road_drag_handle_moved = false
         }
         return
     }
     if canvas2d.IsMouseButtonPressed(.RIGHT) {
+        if editor.road_construction_phase == .Drag_Start_Tangent ||
+           editor.road_construction_phase == .Drag_End_Tangent {
+            editor.road_construction_phase = .Choose_End
+            road_preview_clear(editor)
+            return
+        }
         editor.road_selected_node = -1
+        editor.road_construction_phase = .Idle
+        road_preview_clear(editor)
         return
     }
+    if editor.road_construction_mode != .Authored_Curve || editor.road_construction_phase == .Choose_End {
+        road_preview_update(editor, world_x, world_z, cursor_hit)
+    }
     if !cursor_hit || !canvas2d.IsMouseButtonPressed(.LEFT) do return
-    edge_index, handle_index := road_handle_at(editor, world_x, world_z)
+    edge_index, handle_index := editor.road_hover_edge, editor.road_hover_handle
     if edge_index >= 0 {
-        structure_history_push_undo(editor)
         editor.road_drag_edge = edge_index
         editor.road_drag_handle = handle_index
+        editor.road_drag_handle_moved = false
         return
     }
     clicked_node := road_node_at(editor, world_x, world_z)
     if clicked_node >= 0 {
+        if editor.road_construction_mode == .Authored_Curve && editor.road_selected_node == clicked_node {
+            editor.road_construction_phase = .Drag_Start_Tangent
+            editor.road_preview_start = graph.nodes[clicked_node].position
+            editor.road_preview_control_from = editor.road_preview_start
+            road_preview_clear(editor)
+            return
+        }
+        if editor.road_selected_node >= 0 &&
+           editor.road_selected_node != clicked_node &&
+           editor.road_preview_status == .Valid {
+            if editor.road_construction_mode == .Authored_Curve {
+                editor.road_construction_phase = .Drag_End_Tangent
+                editor.road_preview_control_to = editor.road_preview_endpoint
+            } else {
+                _ = road_preview_commit(editor)
+            }
+            return
+        }
         editor.road_drag_node = clicked_node
         editor.road_drag_node_previous_selection = editor.road_selected_node
         editor.road_drag_node_moved = false
         editor.road_selected_node = clicked_node
         return
     }
+    if editor.road_selected_node >= 0 {
+        if editor.road_preview_status != .Valid do return
+        if editor.road_construction_mode == .Authored_Curve {
+            editor.road_construction_phase = .Drag_End_Tangent
+            editor.road_preview_control_to = editor.road_preview_endpoint
+        } else {
+            _ = road_preview_commit(editor)
+        }
+        return
+    }
     structure_history_push_undo(editor)
     new_node := road_add_node(editor, world_x, world_z)
     if new_node >= 0 {
-        if editor.road_selected_node >= 0 do _ = road_connect(editor, editor.road_selected_node, new_node)
         editor.road_selected_node = new_node
+        editor.road_construction_phase = editor.road_construction_mode == .Authored_Curve ? .Idle : .Choose_End
         editor.project.revision += 1
     }
+    road_preview_clear(editor)
 }
 
 editor_cancel_interaction :: proc(editor: ^Editor) {
     if editor == nil do return
+    if editor.road_mode && editor.road_selected_node >= 0 && editor.road_construction_phase != .Idle {
+        editor.road_construction_phase = .Idle
+        editor.road_preview_control_from = {}
+        editor.road_preview_control_to = {}
+        road_preview_clear(editor)
+        return
+    }
     editor.structure_placing = false
     editor.structure_moving = false
     editor.architecture_painting = false
     architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
     editor.road_selected_node = -1
+    editor.road_construction_phase = .Idle
+    road_preview_clear(editor)
     editor.road_drag_node = -1
     editor.road_drag_node_previous_selection = -1
     editor.road_drag_node_moved = false
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
+    editor.road_hover_edge = -1
+    editor.road_hover_handle = -1
+    editor.road_drag_handle_moved = false
     curve_reset(editor)
 }
 
@@ -2429,7 +3129,7 @@ benchmark_report :: proc(
     world_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_indices) + instance_index_count
     world_unique_vertex_count :=
         len(world_renderer.vertices) + len(world_renderer.static_vertices) + len(world_renderer.instance_vertices)
-    road_vertex_count := len(world_renderer.road_vertices)
+    road_vertex_count := len(world_renderer.road_geometry_cache)
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +
         len(world_renderer.bougainvillea_vertices) +
@@ -2445,7 +3145,7 @@ benchmark_report :: proc(
     road_vertex_capacity := int(world_buffer_min_size(world_renderer.road_vertex[:]) / size_of(World_Vertex))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(road_vertex_capacity, 1))
     fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"clipmap_full_rebuilds\":%d,\"clipmap_incremental_shifts\":%d,\"clipmap_cells_copied\":%d,\"clipmap_cells_generated\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}}}}}}\n",
+        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"clipmap_full_rebuilds\":%d,\"clipmap_incremental_shifts\":%d,\"clipmap_cells_copied\":%d,\"clipmap_cells_generated\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}},\"renderer\":{{\"dirty_build_ms\":%.4f,\"frame_build_ms\":%.4f,\"visibility_build_cpu_ms\":%.4f,\"texture_upload_ms\":%.4f,\"rebuilt_objects\":%d,\"rebuilt_pages\":%d,\"static_bytes_uploaded\":%d,\"indexed_cells\":%d,\"visible_clusters\":%d,\"indirect_commands\":%d,\"retired_bytes\":%d}}}}}}\n",
         scenario,
         len(sorted),
         window_width,
@@ -2500,6 +3200,17 @@ benchmark_report :: proc(
         world_renderer.climbing_leaf_cache_reuses,
         world_renderer.town_mouse_cache_builds,
         world_renderer.town_mouse_cache_reuses,
+        world_renderer.dirty_build_ms,
+        world_renderer.frame_build_ms,
+        world_renderer.visibility_build_cpu_ms,
+        world_renderer.texture_upload_ms,
+        world_renderer.rebuilt_static_objects,
+        world_renderer.rebuilt_static_pages,
+        world_renderer.static_bytes_uploaded,
+        world_renderer.indexed_cells,
+        world_renderer.visible_clusters,
+        world_renderer.indirect_command_count,
+        world_renderer.retired_bytes,
     )
 }
 
@@ -2904,7 +3615,7 @@ road_car_surface :: proc(
     }
 }
 
-seed_city_capture :: proc(editor: ^Editor) {
+seed_city_capture :: proc(editor: ^Editor, target: string = "") {
     if editor == nil do return
     seed_road_capture(editor)
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
@@ -2916,6 +3627,75 @@ seed_city_capture :: proc(editor: ^Editor) {
     plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
     defer architecture.city_plan_destroy(&plan)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
+    architecture_count := 0
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind == .Architecture do architecture_count += 1
+    }
+    if architecture_count == 0 {
+        // Keep deterministic architectural QA available while road and site
+        // policy evolves. These transient fixtures are created only for an
+        // otherwise-empty capture world and never enter authored maps.
+        fixture_seeds := [3]u32{5, 2, 43}
+        fixture_offsets := [3][2]f32{{-48, 52}, {0, 66}, {48, 52}}
+        for seed, fixture_index in fixture_seeds {
+            x := center + fixture_offsets[fixture_index][0]
+            z := center + fixture_offsets[fixture_index][1]
+            base_y := terrain.sample_height(&editor.project, 0, x, z)
+            structure := terrain.structure_make(x, z, 30, 24, base_y, 19.2)
+            structure.kind = .Architecture
+            structure.seed = seed
+            structure.building = architecture.architecture_identity(
+                {
+                    purpose = .Inn_Shop,
+                    tissue = .Mercantile,
+                    density = .70,
+                    frontage = structure.width,
+                    depth = structure.depth,
+                    route = .Street,
+                    purpose_explicit = true,
+                },
+                seed,
+            )
+            structure.building.archetype = .Mixed_Use_Dwelling
+            structure.building.purpose = .Inn_Shop
+            added := terrain.add_structure(&editor.project, structure)
+            if added >= 0 do editor.project.structures[added].seed = seed
+        }
+    }
+    stoop_seed := -1
+    switch target {
+    case "stoop-straight":
+        stoop_seed = 3
+    case "stoop-left":
+        stoop_seed = 4
+    case "stoop-right":
+        stoop_seed = 5
+    }
+    if stoop_seed >= 0 {
+        // Dedicated QA fixture: lift an ordinary frontage above otherwise
+        // untouched terrain so all three deterministic stair plans remain
+        // visible regardless of changes to generated city placement.
+        x, z := center, center + 176
+        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        structure := terrain.structure_make(x, z, 18, 14, ground_y + 2.2, 12)
+        structure.kind = .Architecture
+        structure.seed = u32(stoop_seed)
+        structure.building = architecture.architecture_identity(
+            {
+                purpose = .Dwelling,
+                tissue = .Unspecified,
+                density = .45,
+                frontage = structure.width,
+                depth = structure.depth,
+                route = .Street,
+                purpose_explicit = true,
+            },
+            structure.seed,
+        )
+        structure.building.archetype = .Dwelling
+        added := terrain.add_structure(&editor.project, structure)
+        if added >= 0 do editor.project.structures[added].seed = structure.seed
+    }
     // Give the architectural capture a restrained, deterministic vine pass so
     // surface attachment is visible without requiring interactive brush input.
     for structure in editor.project.structures[:editor.project.structure_count] {
@@ -2956,33 +3736,6 @@ seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(ter
         }
         town_center := editor.settlement_plan.request.center
         region := settlement_building_region(settlement_regions[island_index])
-        // Give every island a permanent postal counter on its main street.
-        // Promote an existing central parcel so the office inherits the
-        // generated town's frontage, access, and regional architecture.
-        post_office_index := -1
-        post_office_score := f32(1e30)
-        for structure_index in first_structure ..< editor.project.structure_count {
-            structure := &editor.project.structures[structure_index]
-            if structure.kind != .Architecture || structure.height > 60 do continue
-            score := math.abs(structure.center_z - town_center[1]) * 2 + math.abs(structure.center_x - town_center[0])
-            if score < post_office_score {
-                post_office_score = score
-                post_office_index = structure_index
-            }
-        }
-        if post_office_index >= 0 {
-            post_office := &editor.project.structures[post_office_index]
-            post_office.building = architecture.architecture_identity(
-                {
-                    region = region,
-                    purpose = .Inn_Shop,
-                    route = .Civic,
-                    landmark_kind = .Post_Office,
-                    purpose_explicit = true,
-                },
-                post_office.seed,
-            )
-        }
         // Every town also needs a deterministic commercial address. In
         // particular, Zora's home pose deliberately looks for a storefront on
         // the Aegean island; leaving this to density luck made Fortuna (and
@@ -2990,9 +3743,10 @@ seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(ter
         storefront_index := -1
         storefront_score := -f32(1)
         for structure_index in first_structure ..< editor.project.structure_count {
-            if structure_index == post_office_index do continue
             structure := &editor.project.structures[structure_index]
             if structure.kind != .Architecture || structure.height > 60 do continue
+            identity := architecture.architecture_resolve_legacy_identity(structure^)
+            if identity.archetype == .Post_Office || identity.archetype == .Clinic do continue
             // Prefer a separate end of the main street so the postal and
             // commercial landmarks give each generated town two anchors.
             score := math.abs(structure.center_x - town_center[0]) * 2 + math.abs(structure.center_z - town_center[1])
@@ -3032,8 +3786,96 @@ seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(ter
             }
         }
         seed_default_island_lighthouse(editor, sign, island_index)
+        seed_default_runway_access(editor, sign)
+        seed_default_hero_building_access(editor, sign, 0)
     }
     editor.architecture_node_mode = true
+}
+
+// Airports are POIs, not road-layout authorities. Join the inward runway
+// threshold to the generated town over the cheapest buildable terrain route;
+// marina, lighthouse, and town routes then provide the rest of the connected
+// island network.
+seed_default_runway_access :: proc(editor: ^Editor, sign: f32) -> bool {
+    if editor == nil do return false
+    airport_x, airport_z := terrain.default_airport_center_for_project(&editor.project, sign)
+    runway_x, runway_z := terrain.default_runway_center_for_project(&editor.project, sign)
+    runway_half_length := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_RUNWAY_HALF_LENGTH
+    threshold_x := runway_x - sign * runway_half_length
+    town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
+    route := settlement_route_find(&editor.project, threshold_x, runway_z, town_x, town_z, .Connector)
+    if route.count < 2 || settlement_route_crosses_sea(&editor.project, route) do return false
+    _, _, maximum_grade := settlement_route_length_and_grade(&editor.project, route)
+    if maximum_grade > settlement_route_grade_limit(.Connector) + .001 do return false
+    settlement_route_commit(&editor.project, route, 7, 1.25, .Gravel, .85)
+    terminal := roads.add_node(
+        &editor.project.road_graph,
+        {airport_x, terrain.sample_height(&editor.project, 0, airport_x, airport_z), airport_z},
+        5,
+    )
+    threshold := -1
+    for node, node_index in editor.project.road_graph.nodes[:editor.project.road_graph.node_count] {
+        if math.abs(node.position.x - threshold_x) < .01 && math.abs(node.position.z - runway_z) < .01 {
+            threshold = node_index
+            break
+        }
+    }
+    if terminal >= 0 && threshold >= 0 {
+        _ = roads.add_straight_edge(&editor.project.road_graph, terminal, threshold, 7, 1.25, .Gravel, .85)
+    }
+    return true
+}
+
+default_road_nearest_point :: proc(
+    project: ^terrain.Project,
+    point: [2]f32,
+) -> (
+    nearest: [2]f32,
+    distance: f32,
+    found: bool,
+) {
+    distance_squared := f32(1e30)
+    if project == nil do return {}, 0, false
+    graph := &project.road_graph
+    for edge in graph.edges[:graph.edge_count] {
+        for sample_index in 0 ..= 24 {
+            sample := roads.edge_point(graph, edge, f32(sample_index) / 24)
+            dx, dz := sample.x - point[0], sample.z - point[1]
+            candidate := dx * dx + dz * dz
+            if candidate < distance_squared {
+                distance_squared = candidate
+                nearest = {sample.x, sample.z}
+                found = true
+            }
+        }
+    }
+    if found do distance = f32(math.sqrt(f64(distance_squared)))
+    return
+}
+
+seed_default_hero_building_access :: proc(editor: ^Editor, sign: f32, first_structure: int) {
+    if editor == nil do return
+    for structure in editor.project.structures[first_structure:editor.project.structure_count] {
+        if structure.kind != .Architecture || structure.center_x * sign <= 0 do continue
+        identity := architecture.architecture_resolve_legacy_identity(structure)
+        if identity.archetype != .Post_Office && identity.archetype != .Clinic do continue
+        entrance := settlement_structure_front_door_point(structure, 1)
+        _, road_distance, road_found := default_road_nearest_point(&editor.project, entrance)
+        if road_found && road_distance <= 16 do continue
+        nearest, _, found := default_road_nearest_point(&editor.project, entrance)
+        if !found do continue
+        from := roads.add_node(
+            &editor.project.road_graph,
+            {entrance[0], terrain.sample_height(&editor.project, 0, entrance[0], entrance[1]), entrance[1]},
+            2,
+        )
+        to := roads.add_node(
+            &editor.project.road_graph,
+            {nearest[0], terrain.sample_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
+            2,
+        )
+        if from >= 0 && to >= 0 do _ = roads.add_straight_edge(&editor.project.road_graph, from, to, 4, .8, .Cobblestone, .75)
+    }
 }
 
 seed_default_island_towns :: proc(editor: ^Editor) {
@@ -3054,6 +3896,8 @@ default_lighthouse_has_access :: proc(project: ^terrain.Project, x, z: f32) -> b
             if dx * dx + dz * dz <= 9 do return true
         }
     }
+    _, distance, found := default_road_nearest_point(project, {x, z})
+    if found && distance <= 4 do return true
     return false
 }
 
@@ -3064,10 +3908,24 @@ seed_default_lighthouse_access :: proc(editor: ^Editor, sign: f32, structure: te
     if default_lighthouse_has_access(&editor.project, keeper.x, keeper.z) do return true
     town_x, town_z := terrain.default_town_center_for_project(&editor.project, sign)
     route := settlement_route_find(&editor.project, town_x, town_z, keeper.x, keeper.z, .Street)
-    if route.count < 2 || settlement_route_crosses_sea(&editor.project, route) do return false
-    _, _, maximum_grade := settlement_route_length_and_grade(&editor.project, route)
-    if maximum_grade > settlement_route_grade_limit(.Street) + .001 do return false
-    settlement_route_commit(&editor.project, route, 4, 1, .Cobblestone, .55)
+    if route.count >= 2 && !settlement_route_crosses_sea(&editor.project, route) {
+        _, _, maximum_grade := settlement_route_length_and_grade(&editor.project, route)
+        if maximum_grade <= settlement_route_grade_limit(.Street) + .001 {
+            settlement_route_commit(&editor.project, route, 4, 1, .Cobblestone, .55)
+        }
+    }
+    if !default_lighthouse_has_access(&editor.project, keeper.x, keeper.z) {
+        nearest, _, road_found := default_road_nearest_point(&editor.project, {keeper.x, keeper.z})
+        if road_found {
+            from := roads.add_node(&editor.project.road_graph, {keeper.x, keeper.y, keeper.z}, 2)
+            to := roads.add_node(
+                &editor.project.road_graph,
+                {nearest[0], terrain.sample_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
+                2,
+            )
+            if from >= 0 && to >= 0 do _ = roads.add_straight_edge(&editor.project.road_graph, from, to, 4, 1, .Cobblestone, .55)
+        }
+    }
     return default_lighthouse_has_access(&editor.project, keeper.x, keeper.z)
 }
 
@@ -3145,8 +4003,19 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
             u32(0x1a17e000 + island_index),
         ),
     }
-    _ = terrain.add_structure(&editor.project, structure)
-    _ = seed_default_lighthouse_access(editor, sign, structure)
+    structure_index := terrain.add_structure(&editor.project, structure)
+    if structure_index >= 0 && !seed_default_lighthouse_access(editor, sign, structure) {
+        keeper, _, keeper_found := world_lighthouse_keeper_pose(editor, structure)
+        if keeper_found {
+            nearest, _, road_found := default_road_nearest_point(&editor.project, {keeper.x, keeper.z})
+            if road_found {
+                placed := &editor.project.structures[structure_index]
+                placed.center_x += nearest[0] - keeper.x
+                placed.center_z += nearest[1] - keeper.z
+                placed.base_y = terrain.sample_height(&editor.project, 0, placed.center_x, placed.center_z)
+            }
+        }
+    }
 }
 
 DEFAULT_MARINA_TOWN_SEPARATION :: f32(420)
@@ -3338,6 +4207,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     storefront_display_seed_override := -1
     storefront_angle_seed_override := -1
     storefront_plan_seed_override := -1
+    stoop_seed_override := -1
     ground_level_capture := false
     roof_capture := false
     roof_landmark_capture := target_arg == "roof-landmark"
@@ -3346,6 +4216,12 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     roof_style_capture := false
     roof_style_target := architecture.Roof_Style.Gable
     switch target_arg {
+    case "stoop-straight":
+        stoop_seed_override, ground_level_capture = 3, true
+    case "stoop-left":
+        stoop_seed_override, ground_level_capture = 4, true
+    case "stoop-right":
+        stoop_seed_override, ground_level_capture = 5, true
     case "roof-style-gable":
         roof_style_capture, roof_style_target = true, .Gable
     case "roof-style-low-gable":
@@ -3590,6 +4466,13 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
                 break
             }
             ordinal += 1
+        }
+    }
+    if stoop_seed_override >= 0 {
+        for structure, index in editor.project.structures[:editor.project.structure_count] {
+            if structure.kind == .Architecture && structure.seed == u32(stoop_seed_override) {
+                target_index = index
+            }
         }
     }
     if roof_style_capture {
@@ -4387,13 +5270,145 @@ wreck_brush_process_input :: proc(editor: ^Editor, _: f32, _: f32, cursor_hit: b
     editor.wreck_preview_valid = false
 }
 
-climbing_leaf_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: bool) {
+plant_stamp_climbing_eligible :: #force_inline proc(kind: terrain.Formation_Kind) -> bool {
+    return(
+        kind == .Architecture ||
+        kind == .Rock ||
+        kind == .Spire ||
+        kind == .Mountain ||
+        kind == .Ridge ||
+        kind == .Cliff \
+    )
+}
+
+plant_stamp_structure_distance_squared :: proc(structure: terrain.Structure, world_x, world_z: f32) -> f32 {
+    dx, dz := world_x - structure.center_x, world_z - structure.center_z
+    cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+    local_x := dx * cosine + dz * sine
+    local_z := -dx * sine + dz * cosine
+    outside_x := max(math.abs(local_x) - structure.width * .5, f32(0))
+    outside_z := max(math.abs(local_z) - structure.depth * .5, f32(0))
+    return outside_x * outside_x + outside_z * outside_z
+}
+
+plant_stamp_ray_axis :: #force_inline proc(origin, direction, minimum, maximum: f32, near, far: ^f32) -> bool {
+    if math.abs(direction) < 1.0e-6 {
+        return origin >= minimum && origin <= maximum
+    }
+    first, second := (minimum - origin) / direction, (maximum - origin) / direction
+    if first > second do first, second = second, first
+    near^ = max(near^, first)
+    far^ = min(far^, second)
+    return near^ <= far^
+}
+
+plant_stamp_ray_structure_distance :: proc(
+    structure: terrain.Structure,
+    origin, direction: third_person.Vec3,
+    padding: f32 = 0,
+) -> (
+    f32,
+    bool,
+) {
+    cosine, sine := math.cos(structure.rotation), math.sin(structure.rotation)
+    dx, dz := origin.x - structure.center_x, origin.z - structure.center_z
+    local_origin := third_person.Vec3{dx * cosine + dz * sine, origin.y, -dx * sine + dz * cosine}
+    local_direction := third_person.Vec3 {
+        direction.x * cosine + direction.z * sine,
+        direction.y,
+        -direction.x * sine + direction.z * cosine,
+    }
+    near, far := f32(0), f32(1.0e30)
+    if !plant_stamp_ray_axis(
+           local_origin.x,
+           local_direction.x,
+           -structure.width * .5 - padding,
+           structure.width * .5 + padding,
+           &near,
+           &far,
+       ) ||
+       !plant_stamp_ray_axis(
+               local_origin.y,
+               local_direction.y,
+               structure.base_y,
+               structure.base_y + structure.height,
+               &near,
+               &far,
+           ) ||
+       !plant_stamp_ray_axis(
+               local_origin.z,
+               local_direction.z,
+               -structure.depth * .5 - padding,
+               structure.depth * .5 + padding,
+               &near,
+               &far,
+           ) {
+        return 0, false
+    }
+    return near, far >= 0
+}
+
+plant_stamp_update_target :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+    enabled: bool,
+) {
+    if editor == nil {
+        return
+    }
+    if editor.plant_stamp_target_locked do return
+    editor.plant_stamp_target_valid = false
+    editor.plant_stamp_target_index = -1
+    if !enabled || width <= 0 || height <= 0 || editor.authoring_tool != .Foliage || editor.plant_stamp_mode != .Climbing do return
+    screen_x := (mouse.x / f32(width) - .5) * 2
+    screen_y := (.5 - mouse.y / f32(height)) * 2
+    aspect := f32(width) / f32(height)
+    direction := linalg.normalize0(
+        third_person.Vec3 {
+            camera.forward.x +
+            camera.right.x * screen_x * aspect / camera.focal_length +
+            camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y +
+            camera.right.y * screen_x * aspect / camera.focal_length +
+            camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z +
+            camera.right.z * screen_x * aspect / camera.focal_length +
+            camera.up.z * screen_y / camera.focal_length,
+        },
+    )
+    best_distance := f32(1.0e30)
+    padding := clamp(editor.climbing_leaf_brush_radius * .08, f32(.35), terrain.BASE_CELL_SIZE)
+    for index in 0 ..< editor.project.structure_count {
+        structure := editor.project.structures[index]
+        if !plant_stamp_climbing_eligible(structure.kind) do continue
+        distance, hit := plant_stamp_ray_structure_distance(structure, camera.position, direction, padding)
+        if hit && distance < best_distance {
+            best_distance = distance
+            editor.plant_stamp_target_index = index
+            editor.plant_stamp_target_valid = true
+        }
+    }
+}
+
+climbing_leaf_paint_stamp :: proc(editor: ^Editor, _: f32, _: f32, erase: bool) {
     if editor == nil do return
+    if !editor.plant_stamp_target_valid ||
+       editor.plant_stamp_target_index < 0 ||
+       editor.plant_stamp_target_index >= editor.project.structure_count {
+        return
+    }
+    target := editor.project.structures[editor.plant_stamp_target_index]
+    // The editor radius controls target acquisition, not a terrain paint
+    // splash. Keep the persistent stamp tight to the chosen footprint so a
+    // nearby row of buildings does not all acquire the same climber.
+    stamp_radius := max(terrain.BASE_CELL_SIZE, max(target.width, target.depth) * .62)
     _ = architecture.city_density_stamp(
         &editor.project.climbing_leaf_density,
-        world_x,
-        world_z,
-        editor.climbing_leaf_brush_radius,
+        target.center_x,
+        target.center_z,
+        stamp_radius,
         editor.climbing_leaf_brush_strength * .08,
         editor.climbing_leaf_brush_hardness,
         erase,
@@ -4402,8 +5417,8 @@ climbing_leaf_paint_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase:
 }
 
 climbing_leaf_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
-    if editor == nil || editor.in_map || !editor.climbing_leaf_paint_mode do return
-    if !cursor_hit {
+    if editor == nil || editor.in_map || editor.authoring_tool != .Foliage || editor.plant_stamp_mode != .Climbing do return
+    if !cursor_hit || !editor.plant_stamp_target_valid {
         if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) do editor.climbing_leaf_painting = false
         return
     }
@@ -4414,17 +5429,13 @@ climbing_leaf_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32
         editor.climbing_leaf_painting = true
         editor.climbing_leaf_last_x, editor.climbing_leaf_last_z = world_x, world_z
         climbing_leaf_paint_stamp(editor, world_x, world_z, canvas2d.IsMouseButtonDown(.RIGHT))
+        editor.plant_stamp_last_stamped_id = editor.project.structures[editor.plant_stamp_target_index].id
     }
     if editor.climbing_leaf_painting && down && !pressed {
-        dx, dz := world_x - editor.climbing_leaf_last_x, world_z - editor.climbing_leaf_last_z
-        distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-        step := max(editor.climbing_leaf_brush_radius * .22, terrain.BASE_CELL_SIZE * .35)
-        stamps := max(int(math.ceil(f64(distance / step))), 1)
-        for stamp in 1 ..= stamps {
-            amount := f32(stamp) / f32(stamps)
-            x := editor.climbing_leaf_last_x + dx * amount
-            z := editor.climbing_leaf_last_z + dz * amount
-            climbing_leaf_paint_stamp(editor, x, z, canvas2d.IsMouseButtonDown(.RIGHT))
+        target_id := editor.project.structures[editor.plant_stamp_target_index].id
+        if target_id != editor.plant_stamp_last_stamped_id {
+            climbing_leaf_paint_stamp(editor, world_x, world_z, canvas2d.IsMouseButtonDown(.RIGHT))
+            editor.plant_stamp_last_stamped_id = target_id
         }
         editor.climbing_leaf_last_x, editor.climbing_leaf_last_z = world_x, world_z
     }
@@ -4878,7 +5889,7 @@ tweak_panel_console_key_pressed :: proc(editor: ^Editor) -> bool {
 
 postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    runway_x, runway_z := terrain.default_runway_center(1)
+    runway_x, runway_z := terrain.default_runway_center_for_project(&editor.project, 1)
     x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     z := runway_z
     ground := postale_game.drivable_surface_height(
@@ -5533,7 +6544,7 @@ active_aircraft_ground_clearance :: proc(editor: ^Editor) -> f32 {
 
 libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    runway_x, runway_z := terrain.default_runway_center(1)
+    runway_x, runway_z := terrain.default_runway_center_for_project(&editor.project, 1)
     x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
     z := runway_z + 8
     return {x, terrain.sample_height(&editor.project, 0, x, z) + 2.1, z}
@@ -5550,7 +6561,7 @@ rondine_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
 attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
     // Marta works the reception counter in the east airport terminal, whose
     // forecourt is a node on the runway-to-town access road.
-    x, z := terrain.default_airport_center(1)
+    x, z := terrain.default_airport_center_for_project(&editor.project, 1)
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
@@ -5579,7 +6590,7 @@ libellula_vertex_world :: #force_inline proc(
 }
 
 gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
-    x, z := terrain.default_airport_center(-1)
+    x, z := terrain.default_airport_center_for_project(&editor.project, -1)
     return {x, terrain.sample_height(&editor.project, 0, x, z), z}
 }
 
@@ -8600,7 +9611,7 @@ draw_editor_palette :: proc(editor: ^Editor) {
         "RIDGE [Z]",
         "CLIFF [C]",
         "CITY [N]",
-        "VINES [L]",
+        "PLANTS [H/L]",
         "ROADS [M]",
     }
     for index in 0 ..< 9 {
@@ -8609,7 +9620,9 @@ draw_editor_palette :: proc(editor: ^Editor) {
             editor.tool == editor_palette_tool(index) &&
             ((editor_palette_curve_mode(index) && editor.curve_mode && (index == 5) == editor.curve_cliff_mode) ||
                     (editor_palette_architecture_mode(index) && editor.architecture_paint_mode) ||
-                    (editor_palette_climbing_leaves_mode(index) && editor.climbing_leaf_paint_mode) ||
+                    (editor_palette_climbing_leaves_mode(index) &&
+                            editor.authoring_tool == .Foliage &&
+                            editor.plant_stamp_mode == .Climbing) ||
                     (editor_palette_road_mode(index) && editor.road_mode) ||
                     (!editor_palette_curve_mode(index) &&
                             !editor_palette_architecture_mode(index) &&
@@ -8726,7 +9739,7 @@ draw_editor_context :: proc(editor: ^Editor) {
         )
     } else if editor.climbing_leaf_painting {
         message = fmt.tprintf(
-            "PAINTING CLIMBING LEAVES  radius %.0f m  |  LMB spread  RMB erase  Wheel zoom  Shift spread  Alt hardness",
+            "ATTACHING CLIMBER  radius %.0f m  |  LMB stamp  RMB erase  Shift growth  Alt hardness",
             editor.climbing_leaf_brush_radius,
         )
     } else if editor.tool == .Structure &&
@@ -8758,7 +9771,7 @@ draw_editor_context :: proc(editor: ^Editor) {
 
 runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    runway_x, runway_z := terrain.default_runway_center(1)
+    runway_x, runway_z := terrain.default_runway_center_for_project(&editor.project, 1)
     x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     // Start beside the parked aircraft so the default camera presents it and
     // the runway immediately instead of placing the character inside its mesh.
@@ -9338,6 +10351,9 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     canvas2d.ClearBackground({r = 104, g = 154, b = 181, a = 255})
     if editor.pause_screen == .Customization do return
     if editor.pause_screen == .Photo do return
+    // Queue fixture notes with the rest of the Canvas UI, after whichever
+    // scene-specific path below finishes building its overlay.
+    defer fixture_notes_draw(editor, width, height)
     if editor.vehicle_paint_scene {
         vehicle_paint_draw(editor, width, height)
         return
@@ -10228,6 +11244,7 @@ adriatic_run :: proc(
     if capture_kind == .Plant_Generator_Lab do capture_lab_name = "plant-generator"
     if capture_kind == .Leaf_Generator_Lab do capture_lab_name = "leaf-generator"
     if capture_kind == .Flower_Generator_Lab do capture_lab_name = "flower-generator"
+    if capture_kind == .Window_Generator_Lab do capture_lab_name = "window-generator"
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
     if capture_kind == .Cemetery_Generator_Lab do capture_lab_name = "cemetery-generator"
     if capture_kind == .Estuary_Delta_Lab do capture_lab_name = "estuary-delta"
@@ -10260,6 +11277,7 @@ adriatic_run :: proc(
         capture_kind == .Plant_Generator_Lab ||
         capture_kind == .Leaf_Generator_Lab ||
         capture_kind == .Flower_Generator_Lab ||
+        capture_kind == .Window_Generator_Lab ||
         capture_kind == .Fountain_Generator_Lab ||
         capture_kind == .Cemetery_Generator_Lab ||
         capture_kind == .Estuary_Delta_Lab ||
@@ -10397,6 +11415,7 @@ adriatic_run :: proc(
     }
     editor := new(Editor)
     defer free(editor)
+    defer fixture_notes_flush_autosave(editor)
     cliff_rock_assets_init()
     defer cliff_rock_assets_destroy()
     defer fixture_migration_result_dispose(&editor.fixture_owner)
@@ -10574,6 +11593,20 @@ adriatic_run :: proc(
     editor.curve_width = terrain.BASE_CELL_SIZE * 2.5
     editor.curve_height = terrain.BASE_CELL_SIZE * 2.0
     editor.road_selected_node = -1
+    editor.road_hover_edge = -1
+    editor.road_hover_handle = -1
+    editor.road_construction_mode = .Terrain_Route
+    editor.road_construction_phase = .Idle
+    editor.road_preview_first_edge = -1
+    editor.road_preview_status = .Idle
+    editor.road_preview_cell_x = -0x3fffffff
+    editor.road_preview_cell_z = -0x3fffffff
+    editor.road_snap_nodes = true
+    editor.road_snap_edges = true
+    editor.road_snap_grid = true
+    editor.road_snap_angles = true
+    editor.road_snap_tangents = true
+    editor.road_snap_perpendiculars = true
     editor.road_drag_node = -1
     editor.road_drag_node_previous_selection = -1
     editor.road_drag_edge = -1
@@ -10799,7 +11832,7 @@ adriatic_run :: proc(
                 authoring_select_tool(editor, .Building)
                 editor.structure_selected = -1
             } else {
-                seed_city_capture(editor)
+                seed_city_capture(editor, capture_target)
             }
         } else {
             // The dune QA target inspects untouched generated coastline.
@@ -10834,6 +11867,59 @@ adriatic_run :: proc(
             editor.editor_focus.y = terrain.sample_height(&editor.project, 0, center_x, center_z) + 7
             editor.editor_camera.distance = 62
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        }
+        if capture_editor_mode && capture_target == "plant-stamp" {
+            authoring_select_tool(editor, .Foliage)
+            editor.plant_stamp_mode = .Climbing
+            editor.climbing_leaf_paint_mode = true
+            editor.climbing_leaf_brush_radius = 30
+            editor.climbing_leaf_brush_strength = .62
+            center_x, center_z := editor.editor_focus.x, editor.editor_focus.z
+            target_index := capture_add_formation(editor, center_x, center_z, 24, 13, 17, .Rock)
+            if target_index >= 0 {
+                editor.project.structures[target_index].color = rock_tool_color(editor)
+                editor.plant_stamp_target_index = target_index
+                editor.plant_stamp_target_valid = true
+                editor.plant_stamp_target_locked = true
+            }
+            editor.editor_focus = {
+                center_x,
+                terrain.sample_height(&editor.project, 0, center_x, center_z) + 6,
+                center_z,
+            }
+            editor.editor_camera.pitch_radians = .34
+            editor.editor_camera.distance = 54
+            editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        }
+        if capture_editor_mode && capture_target == "road-tool" {
+            editor.project.road_graph = {}
+            seed_road_capture(editor)
+            authoring_select_tool(editor, .Roads)
+            // Frame the four-way junction rather than a distant endpoint so
+            // the deterministic screenshot actually exercises curve handles.
+            editor.road_selected_node = editor.project.road_graph.node_count > 1 ? 1 : -1
+            editor.road_construction_mode = .Terrain_Route
+            editor.road_construction_phase = .Idle
+            if editor.road_selected_node >= 0 {
+                start := editor.project.road_graph.nodes[editor.road_selected_node].position
+                // Pull the selected junction's four owned tangents into a
+                // compact review layout. This is capture-only presentation;
+                // the durable seeded graph remains representative elsewhere.
+                offsets := [4]roads.Vec3{{-27, 0, 18}, {30, 0, -18}, {-22, 0, -28}, {21, 0, 29}}
+                for &edge, edge_index in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
+                    control := start + offsets[edge_index]
+                    control.y = terrain.sample_height(&editor.project, 0, control.x, control.z) + .08
+                    if edge.from == editor.road_selected_node {
+                        edge.control_from = control
+                    } else if edge.to == editor.road_selected_node {
+                        edge.control_to = control
+                    }
+                }
+                editor.editor_focus = {start.x + 3, start.y + 1, start.z + 1}
+                editor.editor_camera.pitch_radians = .52
+                editor.editor_camera.distance = 68
+                editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+            }
         }
         if capture_editor_mode && capture_target_is_generated_dunes(capture_target) {
             _ = configure_generated_dune_capture_camera(
@@ -10873,6 +11959,11 @@ adriatic_run :: proc(
         }
         if capture_foliage_understory_mode {
             configure_foliage_understory_camera(editor)
+        }
+        if capture_foliage_forest_mode {
+            // Forest captures compare canopy value shapes across LODs;
+            // gameplay HUD and tracked-errand panels would cover the subject.
+            editor.capture_world_only = true
         }
     }
     if capture_lab_mode {
@@ -12253,6 +13344,21 @@ adriatic_run :: proc(
             editor.camera_pose = grass_pose
         }
         if capture_target == "pause" do editor.pause_screen = .Pause
+        if capture_target == "scrapbook" {
+            editor.pause_screen = .Scrapbook
+            scrapbook_init()
+            scrapbook_focus = 1
+        }
+        if capture_target == "world-map" do editor.pause_screen = .World_Map
+        if capture_target == "world-map-weather" {
+            editor.pause_screen = .World_Map
+            editor.world_select_weather = true
+            atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
+            atmosphere.trigger_front(&editor.atmosphere)
+            front := &editor.atmosphere.schedule.front
+            editor.atmosphere.schedule.elapsed_seconds =
+                front.start_seconds + (front.end_seconds - front.start_seconds) * .5
+        }
         if capture_target == "options" do editor.pause_screen = .Options
         if capture_target == "options-dark" {
             editor.pause_screen = .Options
@@ -12554,7 +13660,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := canvas2d.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose: third_person.Camera_Pose
     selector_capture_pose_set := false
@@ -12754,11 +13860,18 @@ adriatic_run :: proc(
         }
         if !editor.in_map && !pause_menu_is_open(editor) do editor_ui_process_input(editor, width, height)
         if !editor.in_map && !pause_menu_is_open(editor) {
+            if editor.authoring_tool == .ClimbingLeaves {
+                editor.plant_stamp_mode = .Climbing
+                authoring_select_tool(editor, .Foliage)
+            }
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
                 if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
                 if canvas2d.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
-                if canvas2d.IsKeyPressed(.H) do authoring_select_tool(editor, .Foliage)
+                if canvas2d.IsKeyPressed(.H) {
+                    editor.plant_stamp_mode = .Ground
+                    authoring_select_tool(editor, .Foliage)
+                }
                 if !control_key_down() && canvas2d.IsKeyPressed(.Z) do authoring_select_tool(editor, .Ridge)
                 if !control_key_down() && canvas2d.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
                 if !control_key_down() && canvas2d.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
@@ -12787,7 +13900,7 @@ adriatic_run :: proc(
                 terrain_redo(editor)
             }
             if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && canvas2d.IsKeyPressed(.Z) {
-                structure_undo(editor)
+                road_history_undo(editor)
                 editor.road_drag_node = -1
                 editor.road_drag_node_previous_selection = -1
                 editor.road_drag_node_moved = false
@@ -12795,7 +13908,7 @@ adriatic_run :: proc(
                 editor.road_drag_handle = -1
             }
             if !imgui_captures_keyboard() && editor.road_mode && control_key_down() && canvas2d.IsKeyPressed(.Y) {
-                structure_redo(editor)
+                road_history_redo(editor)
                 editor.road_drag_node = -1
                 editor.road_drag_node_previous_selection = -1
                 editor.road_drag_node_moved = false
@@ -12939,20 +14052,32 @@ adriatic_run :: proc(
             editor.cursor_height = terrain.sample_height(&editor.project, 0, world_x, world_z)
             editor.cursor_material = terrain.sample_material(&editor.project, 0, world_x, world_z)
         }
-        architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        airport_stamp_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        farm_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
-        farm_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        wreck_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
-        wreck_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        climbing_leaf_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        ruin_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
-        ruin_stamp_process_input(editor, cursor_hit && !ui_hit)
-        curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        if !editor.architecture_paint_mode &&
+        note_placement_consumes_input := fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
+        if !note_placement_consumes_input {
+            architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            airport_stamp_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            farm_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+            farm_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            wreck_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+            wreck_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            plant_stamp_update_target(
+                editor,
+                editor_view_camera,
+                world_mouse,
+                world_render_width,
+                world_render_height,
+                world_mouse_inside && !ui_hit,
+            )
+            climbing_leaf_paint_process_input(editor, world_x, world_z, editor.plant_stamp_target_valid && !ui_hit)
+            formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            ruin_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
+            ruin_stamp_process_input(editor, cursor_hit && !ui_hit)
+            curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+            road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        }
+        if !note_placement_consumes_input &&
+           !editor.architecture_paint_mode &&
            !editor.marina_paint_mode &&
            !editor.farm_paint_mode &&
            !editor.wreck_paint_mode &&
@@ -13674,6 +14799,9 @@ adriatic_run :: proc(
             if !editor.settlement_vertical_map && editor.cameras.active != .Inspection {
                 editor.camera_pose = gameplay_physics_resolve_camera(editor, editor.camera_pose)
             }
+        }
+        if benchmark_mode && frame == benchmark_warmup {
+            world_benchmark_static_counters_reset()
         }
         if benchmark_scenario == "terrain_edit" && frame >= benchmark_warmup {
             edit_frame := frame - benchmark_warmup

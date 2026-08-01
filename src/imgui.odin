@@ -189,6 +189,7 @@ imgui_captures_keyboard :: #force_inline proc() -> bool {
 }
 
 imgui_draw :: proc(editor: ^Editor) {
+    fixture_notes_process_autosave(editor)
     imgui_draw_tweaks(editor)
     if imgui.show_demo do im.ShowDemoWindow(&imgui.show_demo)
 }

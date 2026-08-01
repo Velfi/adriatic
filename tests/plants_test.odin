@@ -41,11 +41,43 @@ plant_catalog_generates_every_species_at_every_detail :: proc(t: ^testing.T) {
                     support = support_pointer,
                 },
             )
-            testing.expect_value(t, result.error, plants.Generate_Error.None)
-            testing.expect(t, len(result.plant.segments) > 0)
+            testing.expectf(
+                t,
+                result.error == .None,
+                "%s detail=%v generation error=%v",
+                plants.species_name(species),
+                detail,
+                result.error,
+            )
+            testing.expectf(
+                t,
+                len(result.plant.segments) > 0,
+                "%s detail=%v generated no segments",
+                plants.species_name(species),
+                detail,
+            )
             segment_limit, attachment_limit := plants.limits(detail)
-            testing.expect(t, len(result.plant.segments) <= segment_limit)
-            testing.expect(t, len(result.plant.attachments) <= attachment_limit)
+            if habit != .Free_Standing {
+                segment_limit, attachment_limit = plants.climbing_density_limits(detail, &support)
+            }
+            testing.expectf(
+                t,
+                len(result.plant.segments) <= segment_limit,
+                "%s detail=%v segments=%d limit=%d",
+                plants.species_name(species),
+                detail,
+                len(result.plant.segments),
+                segment_limit,
+            )
+            testing.expectf(
+                t,
+                len(result.plant.attachments) <= attachment_limit,
+                "%s detail=%v attachments=%d limit=%d",
+                plants.species_name(species),
+                detail,
+                len(result.plant.attachments),
+                attachment_limit,
+            )
             for segment in result.plant.segments {
                 testing.expect(t, segment.radius_start > 0)
                 testing.expect(t, segment.radius_end > 0)
@@ -68,6 +100,135 @@ plant_catalog_generates_every_species_at_every_detail :: proc(t: ^testing.T) {
 }
 
 @(test)
+climbing_limits_scale_with_support_area_not_a_global_count :: proc(t: ^testing.T) {
+    small := plants.Support_Surface{width = 2, height = 3}
+    large := plants.Support_Surface{width = 4, height = 6}
+    for detail in plants.Detail_Level {
+        small_segments, small_attachments := plants.climbing_density_limits(detail, &small)
+        large_segments, large_attachments := plants.climbing_density_limits(detail, &large)
+        testing.expect_value(t, large_segments, small_segments * 4)
+        testing.expect_value(t, large_attachments, small_attachments * 4)
+    }
+}
+
+@(test)
+climbing_generation_fills_supports_within_area_density :: proc(t: ^testing.T) {
+    supports := [2]plants.Support_Surface {
+        {width = 2, height = 3, plane_z = .1, root_x = 0},
+        {width = 8, height = 7, plane_z = .1, root_x = 0},
+    }
+    segment_counts: [2]int
+    for &support, index in supports {
+        result := plants.generate(
+            {
+                species = .Bougainvillea,
+                seed = 73,
+                maturity = 1,
+                detail = .Near,
+                habit = .Wall_Trained,
+                support = &support,
+            },
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        segment_limit, attachment_limit := plants.climbing_density_limits(.Near, &support)
+        testing.expect(t, len(result.plant.segments) <= segment_limit)
+        testing.expect(t, len(result.plant.attachments) <= attachment_limit)
+        testing.expect_value(t, len(result.plant.segments) % 6, 0)
+        segment_counts[index] = len(result.plant.segments)
+    }
+    testing.expect(t, segment_counts[1] > segment_counts[0])
+}
+
+@(test)
+star_jasmine_spreads_a_connected_flowering_fan_across_its_wall :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    result := plants.generate(
+        {
+            species = .Star_Jasmine,
+            seed = 73,
+            maturity = 1,
+            detail = .Near,
+            habit = .Wall_Trained,
+            support = &support,
+        },
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    width := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+    height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+    testing.expect(t, width > support.width * .62)
+    testing.expect(t, height > support.height * .88)
+    testing.expect(t, result.plant.bounds.minimum[0] < -support.width * .24)
+    testing.expect(t, result.plant.bounds.maximum[0] > support.width * .24)
+    segment_limit, _ := plants.climbing_density_limits(.Near, &support)
+    testing.expect(t, len(result.plant.segments) >= 270)
+    testing.expect(t, len(result.plant.segments) <= segment_limit)
+    leaf_count, flower_count := 0, 0
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Leaf do leaf_count += 1
+        if attachment.kind == .Flower do flower_count += 1
+    }
+    testing.expect(t, leaf_count > 0)
+    testing.expect(t, flower_count > 0)
+}
+
+@(test)
+wisteria_spreads_woody_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    result := plants.generate(
+        {
+            species = .Wisteria,
+            seed = 73,
+            maturity = 1,
+            detail = .Near,
+            habit = .Wall_Trained,
+            support = &support,
+        },
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    width := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+    height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+    testing.expect(t, width > support.width * .62)
+    testing.expect(t, height > support.height * .88)
+    flower_count := 0
+    maximum_radius := f32(0)
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Flower do flower_count += 1
+    }
+    for segment in result.plant.segments do maximum_radius = max(maximum_radius, segment.radius_start)
+    testing.expect(t, flower_count > 0)
+    testing.expect(t, maximum_radius > .018)
+}
+
+@(test)
+climbing_rose_spreads_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    result := plants.generate(
+        {
+            species = .Climbing_Rose,
+            seed = 73,
+            maturity = 1,
+            detail = .Near,
+            habit = .Wall_Trained,
+            support = &support,
+        },
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    width := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+    height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+    testing.expect(t, width > support.width * .62)
+    testing.expect(t, height > support.height * .88)
+    flower_count := 0
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Flower do flower_count += 1
+    }
+    testing.expect(t, flower_count > 0)
+}
+
+@(test)
 plant_species_assign_distinct_leaf_semantics :: proc(t: ^testing.T) {
     grape := plants.leaf_traits(.Grapevine, 0, 1)
     fig := plants.leaf_traits(.Fig, 0, 1)
@@ -80,8 +241,176 @@ plant_species_assign_distinct_leaf_semantics :: proc(t: ^testing.T) {
 }
 
 @(test)
+cacti_and_succulents_use_distinct_fleshy_architectures :: proc(t: ^testing.T) {
+    species := [4]plants.Species{.Prickly_Pear, .Golden_Barrel, .Agave, .Aloe}
+    for plant_species in species {
+        near := plants.generate(
+            {species = plant_species, seed = 0xcac71, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        far := plants.generate(
+            {species = plant_species, seed = 0xcac71, maturity = 1, detail = .Far, habit = .Free_Standing},
+        )
+        defer plants.destroy(&near)
+        defer plants.destroy(&far)
+        testing.expectf(t, near.error == .None, "%s failed near generation", plants.species_name(plant_species))
+        testing.expectf(t, far.error == .None, "%s failed far generation", plants.species_name(plant_species))
+        testing.expect(t, len(near.plant.segments) > 0)
+        testing.expect(t, len(near.plant.attachments) >= len(far.plant.attachments))
+        testing.expect(t, len(far.plant.attachments) > 0)
+    }
+
+    barrel := plants.generate(
+        {species = .Golden_Barrel, seed = 0xcac71, maturity = 1, detail = .Near, habit = .Free_Standing},
+    )
+    agave := plants.generate({species = .Agave, seed = 0xcac71, maturity = 1, detail = .Near, habit = .Free_Standing})
+    aloe := plants.generate({species = .Aloe, seed = 0xcac71, maturity = 1, detail = .Near, habit = .Free_Standing})
+    defer plants.destroy(&barrel)
+    defer plants.destroy(&agave)
+    defer plants.destroy(&aloe)
+    testing.expect_value(t, len(barrel.plant.attachments), 20)
+    testing.expect(t, len(aloe.plant.attachments) > len(agave.plant.attachments))
+    testing.expect(t, plants.leaf_traits(.Agave, 0, 1).length > plants.leaf_traits(.Aloe, 0, 1).length)
+    testing.expect(t, plants.leaf_traits(.Golden_Barrel, 0, 1).cup > plants.leaf_traits(.Agave, 0, 1).cup)
+}
+
+@(test)
+expanded_succulent_catalog_preserves_six_distinct_architectures :: proc(t: ^testing.T) {
+    species := [6]plants.Species {
+        .Aeonium,
+        .Echeveria,
+        .Jade_Plant,
+        .Stonecrop,
+        .Blue_Chalk_Sticks,
+        .Golden_Torch_Cactus,
+    }
+    near: [6]plants.Generate_Result
+    defer for &result in near do plants.destroy(&result)
+    for plant_species, index in species {
+        near[index] = plants.generate(
+            {species = plant_species, seed = 0x5acc, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        far := plants.generate(
+            {species = plant_species, seed = 0x5acc, maturity = 1, detail = .Far, habit = .Free_Standing},
+        )
+        defer plants.destroy(&far)
+        testing.expectf(t, near[index].error == .None, "%s failed near generation", plants.species_name(plant_species))
+        testing.expectf(t, far.error == .None, "%s failed far generation", plants.species_name(plant_species))
+        testing.expect(t, len(near[index].plant.segments) > 0)
+        testing.expect(t, len(near[index].plant.attachments) > 0)
+        testing.expect(t, len(near[index].plant.attachments) >= len(far.plant.attachments))
+        testing.expect(t, plants.leaf_traits(plant_species, 0, 1).thickness > 0)
+    }
+
+    aeonium := &near[0].plant
+    echeveria := &near[1].plant
+    jade := &near[2].plant
+    stonecrop := &near[3].plant
+    chalk := &near[4].plant
+    torch := &near[5].plant
+    testing.expect(t, len(aeonium.segments) >= 5)
+    testing.expect(t, len(echeveria.attachments) > len(echeveria.segments) * 20)
+    testing.expect_value(t, len(jade.attachments), len(jade.segments) * 2)
+    stonecrop_width := stonecrop.bounds.maximum[0] - stonecrop.bounds.minimum[0]
+    stonecrop_height := stonecrop.bounds.maximum[1] - stonecrop.bounds.minimum[1]
+    testing.expect(t, stonecrop_width > stonecrop_height * 2)
+    testing.expect(t, len(chalk.attachments) >= 20)
+    torch_width := torch.bounds.maximum[0] - torch.bounds.minimum[0]
+    torch_height := torch.bounds.maximum[1] - torch.bounds.minimum[1]
+    testing.expect(t, torch_height > torch_width * 2)
+}
+
+@(test)
+mediterranean_broadleaf_catalog_has_distinct_silhouettes_and_leaves :: proc(t: ^testing.T) {
+    species := [4]plants.Species{.Holm_Oak, .Oriental_Plane, .European_Hackberry, .White_Poplar}
+    expected_shapes := [4]leaf_mesh.Shape{.Ovate, .Lobed, .Ovate, .Deltoid}
+    for tree, index in species {
+        result := plants.generate({species = tree, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing})
+        defer plants.destroy(&result)
+        testing.expectf(t, result.error == .None, "%s failed to generate", plants.species_name(tree))
+        testing.expect(t, len(result.plant.segments) > 20)
+        testing.expect(t, len(result.plant.attachments) > 20)
+        testing.expect_value(t, plants.leaf_traits(tree, 0, 1).shape, expected_shapes[index])
+    }
+
+    oak := plants.profile_for(.Holm_Oak)
+    plane := plants.profile_for(.Oriental_Plane)
+    hackberry := plants.profile_for(.European_Hackberry)
+    poplar := plants.profile_for(.White_Poplar)
+    testing.expect(t, oak.width_scale > plane.width_scale)
+    testing.expect(t, plane.width_scale > hackberry.width_scale)
+    testing.expect(t, poplar.height_scale > plane.height_scale)
+    testing.expect_value(t, plants.leaf_cluster_size(.Oriental_Plane, .Near, 1), 1)
+    testing.expect_value(t, plants.leaf_cluster_size(.European_Hackberry, .Near, 1), 2)
+    testing.expect_value(t, plants.leaf_cluster_size(.White_Poplar, .Near, 1), 2)
+}
+
+@(test)
+mature_white_poplar_keeps_an_ascending_but_substantial_crown_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate(
+            {species = .White_Poplar, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        testing.expect(t, width > height * .58)
+        testing.expect(t, width < height * 1.10)
+        testing.expect(t, min(width_x, width_z) > width * .58)
+    }
+}
+
+@(test)
+mature_holm_oak_keeps_a_dense_rounded_crown_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate(
+            {species = .Holm_Oak, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        crown_minimum_x, crown_minimum_y, crown_minimum_z: f32
+        crown_maximum_x, crown_maximum_y, crown_maximum_z: f32
+        crown_first := true
+        for attachment in result.plant.attachments {
+            if attachment.kind != .Leaf do continue
+            if crown_first {
+                crown_minimum_x, crown_minimum_y, crown_minimum_z =
+                    attachment.position[0], attachment.position[1], attachment.position[2]
+                crown_maximum_x, crown_maximum_y, crown_maximum_z =
+                    attachment.position[0], attachment.position[1], attachment.position[2]
+                crown_first = false
+            } else {
+                crown_minimum_x = min(crown_minimum_x, attachment.position[0])
+                crown_minimum_y = min(crown_minimum_y, attachment.position[1])
+                crown_minimum_z = min(crown_minimum_z, attachment.position[2])
+                crown_maximum_x = max(crown_maximum_x, attachment.position[0])
+                crown_maximum_y = max(crown_maximum_y, attachment.position[1])
+                crown_maximum_z = max(crown_maximum_z, attachment.position[2])
+            }
+        }
+        crown_width := max(crown_maximum_x - crown_minimum_x, crown_maximum_z - crown_minimum_z)
+        crown_height := crown_maximum_y - crown_minimum_y
+        testing.expect(t, width > height * .90)
+        testing.expect(t, width < height * 1.80)
+        testing.expect(t, min(width_x, width_z) > width * .60)
+        testing.expect(t, crown_height > 0)
+        testing.expect(t, crown_width < crown_height * 2.20)
+        testing.expect(t, len(result.plant.attachments) > len(result.plant.segments) * 2)
+    }
+}
+
+@(test)
 plant_leaf_density_scales_by_species_and_detail :: proc(t: ^testing.T) {
     testing.expect(t, plants.leaf_cluster_size(.Italian_Cypress, .Near, 1) > plants.leaf_cluster_size(.Fig, .Near, 1))
+    testing.expect_value(t, plants.leaf_cluster_size(.Olive, .Near, 1), 2)
+    testing.expect_value(t, plants.leaf_cluster_size(.Olive, .Medium, 1), 2)
+    testing.expect_value(t, plants.leaf_cluster_size(.Olive, .Far, 1), 1)
     near := plants.generate({species = .Olive, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing})
     far := plants.generate({species = .Olive, seed = 73, maturity = 1, detail = .Far, habit = .Free_Standing})
     defer plants.destroy(&near)
@@ -144,6 +473,89 @@ mature_lemon_keeps_a_compact_leafy_crown_across_seeds :: proc(t: ^testing.T) {
             testing.expect(t, attachment.depth >= 2)
         }
         testing.expect(t, fruit_count >= 4)
+    }
+}
+
+@(test)
+mature_fig_keeps_a_balanced_spreading_vase_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate({species = .Fig, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing})
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        center_x := (result.plant.bounds.minimum[0] + result.plant.bounds.maximum[0]) * .5
+        center_z := (result.plant.bounds.minimum[2] + result.plant.bounds.maximum[2]) * .5
+        testing.expect(t, width > height * 1.08)
+        testing.expect(t, min(width_x, width_z) > width * .60)
+        testing.expect(t, math.abs(center_x) < width * .18)
+        testing.expect(t, math.abs(center_z) < width * .18)
+    }
+}
+
+@(test)
+mature_pomegranate_keeps_a_balanced_multistem_vase_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate(
+            {species = .Pomegranate, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        center_x := (result.plant.bounds.minimum[0] + result.plant.bounds.maximum[0]) * .5
+        center_z := (result.plant.bounds.minimum[2] + result.plant.bounds.maximum[2]) * .5
+        testing.expect(t, width > height * .82)
+        testing.expect(t, min(width_x, width_z) > width * .62)
+        testing.expect(t, math.abs(center_x) < width * .16)
+        testing.expect(t, math.abs(center_z) < width * .16)
+    }
+}
+
+@(test)
+mature_carob_keeps_a_balanced_heavy_crown_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate(
+            {species = .Carob, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        center_x := (result.plant.bounds.minimum[0] + result.plant.bounds.maximum[0]) * .5
+        center_z := (result.plant.bounds.minimum[2] + result.plant.bounds.maximum[2]) * .5
+        testing.expect(t, width > height * 1.02)
+        testing.expect(t, min(width_x, width_z) > width * .60)
+        testing.expect(t, math.abs(center_x) < width * .18)
+        testing.expect(t, math.abs(center_z) < width * .18)
+    }
+}
+
+@(test)
+mature_bay_laurel_keeps_a_balanced_upright_oval_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(60) ..= 80 {
+        result := plants.generate(
+            {species = .Bay_Laurel, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width_x := result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0]
+        width_z := result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2]
+        width := max(width_x, width_z)
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        center_x := (result.plant.bounds.minimum[0] + result.plant.bounds.maximum[0]) * .5
+        center_z := (result.plant.bounds.minimum[2] + result.plant.bounds.maximum[2]) * .5
+        testing.expect(t, width > height * .58)
+        testing.expect(t, width < height * 1.12)
+        testing.expect(t, min(width_x, width_z) > width * .62)
+        testing.expect(t, math.abs(center_x) < width * .16)
+        testing.expect(t, math.abs(center_z) < width * .16)
     }
 }
 
@@ -546,6 +958,7 @@ stone_pine_preserves_a_clothed_umbrella_crown_across_seeds :: proc(t: ^testing.T
         crown_minimum_x, crown_maximum_x := f32(1e9), f32(-1e9)
         crown_minimum_z, crown_maximum_z := f32(1e9), f32(-1e9)
         crown_attachment_count := 0
+        primary_attachment_count, terminal_attachment_count := 0, 0
         for attachment in pine.plant.attachments {
             if attachment.kind != .Leaf || attachment.position[1] < height * .48 do continue
             crown_minimum_x = min(crown_minimum_x, attachment.position[0])
@@ -553,10 +966,15 @@ stone_pine_preserves_a_clothed_umbrella_crown_across_seeds :: proc(t: ^testing.T
             crown_minimum_z = min(crown_minimum_z, attachment.position[2])
             crown_maximum_z = max(crown_maximum_z, attachment.position[2])
             crown_attachment_count += 1
+            if attachment.depth == 1 do primary_attachment_count += 1
+            if attachment.depth >= 2 do terminal_attachment_count += 1
         }
         crown_width := max(crown_maximum_x - crown_minimum_x, crown_maximum_z - crown_minimum_z)
         testing.expect(t, crown_attachment_count >= 48)
         testing.expect(t, crown_width >= plants.leaf_traits(.Stone_Pine, 0, 1).length * 1.5)
+        // Needle mass belongs to the terminal umbrella pads, leaving the old
+        // inner scaffold legible instead of clothing every arm uniformly.
+        testing.expect(t, terminal_attachment_count > primary_attachment_count * 4)
         plants.destroy(&pine)
     }
 }
@@ -646,6 +1064,42 @@ mature_almond_forms_a_broad_volumetric_leafy_crown :: proc(t: ^testing.T) {
         testing.expect(t, foliage_by_band[1] > 0)
         testing.expect(t, foliage_by_band[2] > 0)
         testing.expect(t, foliage_by_band[3] > 0)
+        testing.expect_value(t, plants.leaf_cluster_size(.Almond, .Near, 1), 1)
+        testing.expect(t, result.plant.segments[0].radius_start < .11)
+    }
+}
+
+@(test)
+strawberry_tree_forms_a_radial_multistem_fruiting_crown_across_seeds :: proc(t: ^testing.T) {
+    for seed in u64(70) ..= 76 {
+        result := plants.generate(
+            {species = .Strawberry_Tree, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        width := max(
+            result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0],
+            result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2],
+        )
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        testing.expect(t, height > width * .82)
+        testing.expect(t, height < width * 2.35)
+        positive_x, negative_x, positive_z, negative_z := false, false, false, false
+        leaf_count, fruit_count := 0, 0
+        for segment in result.plant.segments {
+            positive_x = positive_x || segment.end[0] > 0
+            negative_x = negative_x || segment.end[0] < 0
+            positive_z = positive_z || segment.end[2] > 0
+            negative_z = negative_z || segment.end[2] < 0
+        }
+        for attachment in result.plant.attachments {
+            if attachment.kind == .Leaf do leaf_count += 1
+            if attachment.kind == .Fruit do fruit_count += 1
+        }
+        testing.expect(t, positive_x && negative_x && positive_z && negative_z)
+        testing.expect(t, leaf_count > 0)
+        testing.expect(t, fruit_count > 0)
+        testing.expect_value(t, plants.leaf_cluster_size(.Strawberry_Tree, .Near, 1), 2)
+        plants.destroy(&result)
     }
 }
 
@@ -1208,6 +1662,84 @@ bougainvillea_preserves_a_broad_generated_fan_above_an_opening :: proc(t: ^testi
 }
 
 @(test)
+bougainvillea_distributes_foliage_along_routed_canes :: proc(t: ^testing.T) {
+    support: plants.Support_Surface
+    exclusions: [2]plants.Rect
+    plant_support(&support, &exclusions)
+    result := plants.generate(
+        {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    maximum_nearest_distance_squared := f32(0)
+    inspected_segment_count := 0
+    for segment in result.plant.segments {
+        midpoint := (segment.start + segment.end) * .5
+        eligible :=
+            (segment.depth >= 1 && midpoint[1] >= support.height * .20) ||
+            midpoint[1] >= support.height * .42
+        for exclusion in support.exclusions {
+            if midpoint[0] >= exclusion.minimum_x && midpoint[0] <= exclusion.maximum_x &&
+               midpoint[1] >= exclusion.minimum_y && midpoint[1] <= exclusion.maximum_y {
+                eligible = false
+                break
+            }
+        }
+        if !eligible do continue
+        nearest_distance_squared := f32(1e9)
+        for attachment in result.plant.attachments {
+            if attachment.kind != .Leaf do continue
+            delta := attachment.position - midpoint
+            nearest_distance_squared = min(nearest_distance_squared, linalg.dot(delta, delta))
+        }
+        maximum_nearest_distance_squared = max(maximum_nearest_distance_squared, nearest_distance_squared)
+        inspected_segment_count += 1
+    }
+    testing.expect(t, inspected_segment_count >= 24)
+    debug_upper_bands: [8]int
+    for attachment in result.plant.attachments {
+        if attachment.kind != .Leaf || attachment.position[1] < 2.8 do continue
+        normalized_x := clamp(attachment.position[0] / support.width + .5, f32(0), f32(.999))
+        debug_upper_bands[clamp(int(normalized_x * 8), 0, 7)] += 1
+    }
+    testing.expectf(t, false, "upper foliage bands: %v; total attachments: %d", debug_upper_bands, len(result.plant.attachments))
+    testing.expectf(
+        t,
+        maximum_nearest_distance_squared <= .36,
+        "maximum routed-cane foliage gap squared: %.3f",
+        maximum_nearest_distance_squared,
+    )
+}
+
+@(test)
+climbing_projection_keeps_branch_junctions_connected :: proc(t: ^testing.T) {
+    support: plants.Support_Surface
+    exclusions: [2]plants.Rect
+    plant_support(&support, &exclusions)
+    result := plants.generate(
+        {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    disconnected_count := 0
+    for segment, segment_index in result.plant.segments {
+        if segment_index == 0 || segment.start[1] <= .01 do continue
+        connected := false
+        for candidate in result.plant.segments {
+            delta := candidate.end - segment.start
+            if linalg.dot(delta, delta) <= 1e-8 {
+                connected = true
+                break
+            }
+        }
+        if !connected do disconnected_count += 1
+    }
+    testing.expectf(t, disconnected_count == 0, "disconnected routed branch starts: %d", disconnected_count)
+}
+
+@(test)
 grapevine_routes_generated_growth_onto_trellis_wire_tiers :: proc(t: ^testing.T) {
     support := plants.Support_Surface {
         width   = 5.8,
@@ -1221,27 +1753,71 @@ grapevine_routes_generated_growth_onto_trellis_wire_tiers :: proc(t: ^testing.T)
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
 
-    first_wire := f32(.55)
-    spacing := (support.height * .96 - first_wire) / 3
-    trained_endpoint_count := 0
-    occupied_tiers: [4]bool
+    minimum_x, maximum_x := f32(1000), f32(-1000)
+    maximum_y := f32(0)
+    trunk_segment_count, cordon_segment_count := 0, 0
+    spur_segment_count, shoot_segment_count := 0, 0
     for segment in result.plant.segments {
-        for endpoint_index in 0 ..< 2 {
-            endpoint := endpoint_index == 0 ? segment.start : segment.end
-            if endpoint[1] < first_wire - .001 do continue
-            tier := clamp(int(math.round(f64((endpoint[1] - first_wire) / spacing))), 0, 3)
-            expected_y := first_wire + f32(tier) * spacing
-            testing.expect(t, math.abs(endpoint[1] - expected_y) < .001)
-            occupied_tiers[tier] = true
-            trained_endpoint_count += 1
+        minimum_x = min(minimum_x, min(segment.start[0], segment.end[0]))
+        maximum_x = max(maximum_x, max(segment.start[0], segment.end[0]))
+        maximum_y = max(maximum_y, max(segment.start[1], segment.end[1]))
+        if segment.depth == -23 do trunk_segment_count += 1
+        if segment.depth == -20 do cordon_segment_count += 1
+        if segment.depth == -22 do spur_segment_count += 1
+        if segment.depth == -21 do shoot_segment_count += 1
+        testing.expect(t, segment.start[0] >= -support.width * .48 - .001)
+        testing.expect(t, segment.start[0] <= support.width * .48 + .001)
+        testing.expect(t, segment.end[0] >= -support.width * .48 - .001)
+        testing.expect(t, segment.end[0] <= support.width * .48 + .001)
+        testing.expect(t, segment.start[1] >= 0 && segment.start[1] <= support.height)
+        testing.expect(t, segment.end[1] >= 0 && segment.end[1] <= support.height)
+    }
+    testing.expect(t, maximum_x - minimum_x > support.width * .75)
+    testing.expect(t, maximum_y > support.height * .86)
+    testing.expect_value(t, trunk_segment_count, 3)
+    testing.expect_value(t, cordon_segment_count, 12)
+    testing.expect_value(t, spur_segment_count, 10)
+    testing.expect(t, shoot_segment_count >= 40)
+    testing.expect(t, shoot_segment_count <= 110)
+}
+
+@(test)
+grapevine_vsp_network_preserves_permanent_wood_and_variable_shoots_across_seeds :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, root_x = 0}
+    minimum_shoot_segments, maximum_shoot_segments := 1_000, 0
+    for seed in u64(70) ..= 76 {
+        result := plants.generate(
+            {species = .Grapevine, seed = seed, maturity = 1, detail = .Near, habit = .Trellised, support = &support},
+        )
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        trunk_count, cordon_count, spur_count, shoot_count := 0, 0, 0, 0
+        maximum_y := f32(0)
+        for segment in result.plant.segments {
+            maximum_y = max(maximum_y, max(segment.start[1], segment.end[1]))
+            switch segment.depth {
+            case -23: trunk_count += 1
+            case -20: cordon_count += 1
+            case -22: spur_count += 1
+            case -21: shoot_count += 1
+            }
         }
+        testing.expect_value(t, trunk_count, 3)
+        testing.expect_value(t, cordon_count, 12)
+        testing.expect_value(t, spur_count, 10)
+        testing.expect(t, maximum_y > support.height * .86)
+        testing.expect(t, shoot_count >= 35 && shoot_count <= 110)
+        leaf_count := 0
+        for attachment in result.plant.attachments {
+            if attachment.kind == .Leaf do leaf_count += 1
+        }
+        // Fruit and tendrils accompany rather than replace the leaf at each
+        // grapevine phytomer.
+        testing.expect_value(t, leaf_count, shoot_count)
+        minimum_shoot_segments = min(minimum_shoot_segments, shoot_count)
+        maximum_shoot_segments = max(maximum_shoot_segments, shoot_count)
+        plants.destroy(&result)
     }
-    occupied_count := 0
-    for occupied in occupied_tiers {
-        if occupied do occupied_count += 1
-    }
-    testing.expect(t, trained_endpoint_count >= 24)
-    testing.expect(t, occupied_count >= 3)
+    testing.expect(t, maximum_shoot_segments > minimum_shoot_segments)
 }
 
 @(test)
@@ -1268,6 +1844,206 @@ plant_species_preserve_characteristic_silhouettes :: proc(t: ^testing.T) {
 }
 
 @(test)
+hydrangea_catalog_separates_pruned_bush_and_tree_forms :: proc(t: ^testing.T) {
+    bush := plants.generate(
+        {species = .Hydrangea_Bush, seed = 91, maturity = 1, detail = .Near, habit = .Free_Standing},
+    )
+    tree := plants.generate(
+        {species = .Hydrangea_Tree, seed = 91, maturity = 1, detail = .Near, habit = .Free_Standing},
+    )
+    defer plants.destroy(&bush)
+    defer plants.destroy(&tree)
+    testing.expect_value(t, bush.error, plants.Generate_Error.None)
+    testing.expect_value(t, tree.error, plants.Generate_Error.None)
+
+    bush_height := bush.plant.bounds.maximum[1] - bush.plant.bounds.minimum[1]
+    tree_height := tree.plant.bounds.maximum[1] - tree.plant.bounds.minimum[1]
+    bush_width := max(
+        bush.plant.bounds.maximum[0] - bush.plant.bounds.minimum[0],
+        bush.plant.bounds.maximum[2] - bush.plant.bounds.minimum[2],
+    )
+    tree_width := max(
+        tree.plant.bounds.maximum[0] - tree.plant.bounds.minimum[0],
+        tree.plant.bounds.maximum[2] - tree.plant.bounds.minimum[2],
+    )
+    testing.expectf(t, bush_height >= .65 && bush_height <= 1.8, "bush hydrangea height %.2fm is out of scale", bush_height)
+    testing.expectf(t, bush_width >= .75 && bush_width <= 2.4, "bush hydrangea width %.2fm is out of scale", bush_width)
+    testing.expectf(t, tree_height >= 1.5 && tree_height <= 4.5, "tree hydrangea height %.2fm is out of scale", tree_height)
+    testing.expectf(t, tree_width >= .75 && tree_width <= 2.8, "tree hydrangea width %.2fm is out of scale", tree_width)
+    testing.expectf(
+        t,
+        tree_height > bush_height * 1.25,
+        "tree hydrangea %.2fm does not clear bush form %.2fm",
+        tree_height,
+        bush_height,
+    )
+    bush_flowers, tree_flowers := 0, 0
+    interior_flowers := 0
+    for attachment in bush.plant.attachments {
+        if attachment.kind == .Flower {
+            bush_flowers += 1
+            if attachment.depth != -9 do interior_flowers += 1
+        }
+    }
+    for attachment in tree.plant.attachments {
+        if attachment.kind == .Flower {
+            tree_flowers += 1
+            if attachment.depth != -9 do interior_flowers += 1
+        }
+    }
+    testing.expect(t, bush_flowers >= 4)
+    testing.expect(t, tree_flowers >= 4)
+    testing.expect_value(t, interior_flowers, 0)
+    testing.expect_value(t, plants.leaf_cluster_size(.Hydrangea_Bush, .Near, 1), 2)
+    testing.expect_value(t, plants.leaf_cluster_size(.Hydrangea_Tree, .Near, 1), 2)
+}
+
+@(test)
+hydrangea_far_detail_preserves_terminal_mopheads :: proc(t: ^testing.T) {
+    result := plants.generate(
+        {species = .Hydrangea_Bush, seed = 91, maturity = 1, detail = .Far, habit = .Free_Standing},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    flower_count := 0
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Flower {
+            flower_count += 1
+            testing.expect_value(t, attachment.depth, -9)
+        }
+    }
+    testing.expectf(t, flower_count >= 16, "far hydrangea lost its bushy terminal mophead mass (%d)", flower_count)
+    testing.expect_value(t, plants.leaf_cluster_size(.Hydrangea_Bush, .Far, 1), 2)
+}
+
+@(test)
+juvenile_hydrangea_omits_dormant_flower_frames :: proc(t: ^testing.T) {
+    result := plants.generate(
+        {species = .Hydrangea_Bush, seed = 91, maturity = .20, detail = .Near, habit = .Free_Standing},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    for attachment in result.plant.attachments {
+        testing.expect(t, attachment.depth != -9)
+        testing.expect(t, attachment.kind != .Flower)
+    }
+}
+
+@(test)
+mature_hydrangea_stays_bushy_and_floriferous_across_seeds :: proc(t: ^testing.T) {
+    seeds := [5]u64{0, 1, 73, 91, 999}
+    for seed in seeds {
+        result := plants.generate(
+            {species = .Hydrangea_Bush, seed = seed, maturity = 1, detail = .Near, habit = .Free_Standing},
+        )
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        if result.error != .None {
+            plants.destroy(&result)
+            continue
+        }
+        width := max(
+            result.plant.bounds.maximum[0] - result.plant.bounds.minimum[0],
+            result.plant.bounds.maximum[2] - result.plant.bounds.minimum[2],
+        )
+        height := result.plant.bounds.maximum[1] - result.plant.bounds.minimum[1]
+        flower_count := 0
+        for attachment in result.plant.attachments {
+            if attachment.kind == .Flower {
+                flower_count += 1
+                testing.expect_value(t, attachment.depth, -9)
+            }
+        }
+        testing.expectf(t, flower_count == 24, "seed %d emitted %d terminal heads", seed, flower_count)
+        testing.expectf(t, width >= .75, "seed %d collapsed to %.2fm width", seed, width)
+        testing.expectf(
+            t,
+            height >= width * .35 && height <= width * 1.4,
+            "seed %d lost bush proportions (%.2fm wide x %.2fm tall)",
+            seed,
+            width,
+            height,
+        )
+        plants.destroy(&result)
+    }
+}
+
+@(test)
+agapanthus_separates_a_basal_strap_rosette_from_elevated_umbels :: proc(t: ^testing.T) {
+    result := plants.generate(
+        {species = .Agapanthus, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+    testing.expect_value(t, len(result.plant.segments), 4)
+    testing.expect_value(t, plants.leaf_cluster_size(.Agapanthus, .Near, 1), 1)
+    leaf_count, flower_count := 0, 0
+    lowest_flower := f32(1000)
+    highest_leaf_anchor := f32(0)
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Leaf {
+            leaf_count += 1
+            highest_leaf_anchor = max(highest_leaf_anchor, attachment.position[1])
+        }
+        if attachment.kind == .Flower {
+            flower_count += 1
+            lowest_flower = min(lowest_flower, attachment.position[1])
+            testing.expect_value(t, attachment.depth, -5)
+        }
+    }
+    testing.expect_value(t, leaf_count, 22)
+    testing.expect_value(t, flower_count, 3)
+    testing.expect(t, lowest_flower > .50)
+    testing.expect(t, lowest_flower > highest_leaf_anchor + .45)
+}
+
+@(test)
+new_ornamental_catalog_species_generate_deterministically :: proc(t: ^testing.T) {
+    support: plants.Support_Surface
+    exclusions: [2]plants.Rect
+    plant_support(&support, &exclusions)
+    ornamentals := [6]plants.Species {
+        .Wisteria,
+        .Climbing_Rose,
+        .Hydrangea_Bush,
+        .Hydrangea_Tree,
+        .Agapanthus,
+        .Star_Jasmine,
+    }
+    for species in ornamentals {
+        habit := plants.default_habit(species)
+        support_pointer: ^plants.Support_Surface
+        if habit != .Free_Standing do support_pointer = &support
+        first := plants.generate(
+            {
+                species = species,
+                seed = 0x0a71d3,
+                maturity = 1,
+                detail = .Near,
+                habit = habit,
+                support = support_pointer,
+            },
+        )
+        second := plants.generate(
+            {
+                species = species,
+                seed = 0x0a71d3,
+                maturity = 1,
+                detail = .Near,
+                habit = habit,
+                support = support_pointer,
+            },
+        )
+        defer plants.destroy(&first)
+        defer plants.destroy(&second)
+        testing.expectf(t, first.error == .None, "%s failed generation: %v", plants.species_name(species), first.error)
+        testing.expect(t, len(first.plant.segments) > 0)
+        testing.expect_value(t, len(first.plant.segments), len(second.plant.segments))
+        testing.expect_value(t, len(first.plant.attachments), len(second.plant.attachments))
+        testing.expect_value(t, first.plant.bounds, second.plant.bounds)
+    }
+}
+
+@(test)
 rosemary_needles_form_staggered_shoot_sprays :: proc(t: ^testing.T) {
     rosemary := plants.generate({species = .Rosemary, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing})
     defer plants.destroy(&rosemary)
@@ -1275,7 +2051,8 @@ rosemary_needles_form_staggered_shoot_sprays :: proc(t: ^testing.T) {
     testing.expect(t, len(rosemary.plant.attachments) >= plants.leaf_cluster_size(.Rosemary, .Near, 1))
     first := rosemary.plant.attachments[0].position
     maximum_offset := f32(0)
-    for attachment in rosemary.plant.attachments[1:plants.leaf_cluster_size(.Rosemary, .Near, 1)] {
+    station_sample_count := min(len(rosemary.plant.attachments), plants.leaf_cluster_size(.Rosemary, .Near, 1) * 4)
+    for attachment in rosemary.plant.attachments[1:station_sample_count] {
         delta := attachment.position - first
         maximum_offset = max(maximum_offset, f32(math.sqrt(f64(linalg.dot(delta, delta)))))
     }
@@ -1291,6 +2068,11 @@ rosemary_needles_form_staggered_shoot_sprays :: proc(t: ^testing.T) {
     // Foliage should clothe the basal shoots instead of leaving a miniature
     // tree trunk beneath a terminal crown.
     testing.expect(t, lowest_needle < crown_height * .22)
+    testing.expect_value(t, plants.leaf_cluster_size(.Rosemary, .Near, 1), 2)
+    testing.expect_value(t, len(rosemary.plant.segments), 80)
+    maximum_stem_radius := f32(0)
+    for segment in rosemary.plant.segments do maximum_stem_radius = max(maximum_stem_radius, segment.radius_start)
+    testing.expect(t, maximum_stem_radius < .003)
 }
 
 @(test)
@@ -1308,12 +2090,18 @@ lavender_preserves_a_rounded_flowering_habit_across_seeds :: proc(t: ^testing.T)
         testing.expect(t, height > width * .58)
         testing.expect(t, height < width * 1.65)
         leaf_count, flower_count := 0, 0
+        interior_flower_count := 0
         for attachment in lavender.plant.attachments {
             if attachment.kind == .Leaf do leaf_count += 1
-            if attachment.kind == .Flower do flower_count += 1
+            if attachment.kind == .Flower {
+                flower_count += 1
+                if attachment.depth != -7 do interior_flower_count += 1
+            }
         }
         testing.expect(t, leaf_count > 0)
         testing.expect(t, flower_count >= 8)
+        testing.expect_value(t, interior_flower_count, 0)
+        testing.expect_value(t, plants.leaf_cluster_size(.Lavender, .Near, 1), 2)
         plants.destroy(&lavender)
     }
 }
@@ -1332,17 +2120,24 @@ thyme_remains_a_low_flowering_mat_across_seeds :: proc(t: ^testing.T) {
         testing.expect(t, height > width * .12)
         testing.expect(t, height < width * .72)
         leaf_count, flower_count := 0, 0
+        interior_flower_count := 0
         maximum_stem_radius := f32(0)
         for segment in thyme.plant.segments {
             maximum_stem_radius = max(maximum_stem_radius, segment.radius_start)
         }
         for attachment in thyme.plant.attachments {
             if attachment.kind == .Leaf do leaf_count += 1
-            if attachment.kind == .Flower do flower_count += 1
+            if attachment.kind == .Flower {
+                flower_count += 1
+                if attachment.depth != -8 do interior_flower_count += 1
+            }
         }
         testing.expect(t, flower_count >= 8)
         testing.expect(t, leaf_count > flower_count * 2)
         testing.expect(t, maximum_stem_radius < plants.leaf_traits(.Thyme, 0, 1).length * .35)
+        testing.expect_value(t, interior_flower_count, 0)
+        testing.expect_value(t, plants.leaf_cluster_size(.Thyme, .Near, 1), 2)
+        testing.expect_value(t, len(thyme.plant.segments), 48)
         plants.destroy(&thyme)
     }
 }
@@ -1360,12 +2155,18 @@ sage_preserves_a_broad_leafy_mound_across_seeds :: proc(t: ^testing.T) {
         testing.expect(t, height > width * .32)
         testing.expect(t, height < width * 1.35)
         leaf_count, flower_count := 0, 0
+        interior_flower_count := 0
         for attachment in sage.plant.attachments {
             if attachment.kind == .Leaf do leaf_count += 1
-            if attachment.kind == .Flower do flower_count += 1
+            if attachment.kind == .Flower {
+                flower_count += 1
+                if attachment.depth != -6 do interior_flower_count += 1
+            }
         }
         testing.expect(t, flower_count >= 8)
         testing.expect(t, leaf_count > flower_count)
+        testing.expect_value(t, interior_flower_count, 0)
+        testing.expect_value(t, plants.leaf_cluster_size(.Sage, .Near, 1), 2)
         plants.destroy(&sage)
     }
 }
@@ -1401,10 +2202,13 @@ pelargonium_preserves_a_low_leafy_flowering_mound_across_seeds :: proc(t: ^testi
         testing.expect(t, width > 0)
         testing.expect(t, height > width * .30)
         testing.expect(t, height < width * 1.35)
-        testing.expect(t, flower_count >= 12)
+        testing.expect(t, flower_count >= 6)
         testing.expect(t, leaf_count > flower_count)
         testing.expect(t, highest_flower > highest_leaf)
         testing.expect(t, maximum_stem_radius < .022)
+        testing.expect_value(t, plants.leaf_cluster_size(.Pelargonium, .Near, 1), 1)
+        testing.expect_value(t, len(pelargonium.plant.segments), 54)
+        testing.expect(t, maximum_stem_radius < .004)
         plants.destroy(&pelargonium)
     }
 }
@@ -1421,8 +2225,8 @@ myrtle_preserves_a_fine_multistem_shrub_habit_across_seeds :: proc(t: ^testing.T
             myrtle.plant.bounds.maximum[2] - myrtle.plant.bounds.minimum[2],
         )
         height := myrtle.plant.bounds.maximum[1] - myrtle.plant.bounds.minimum[1]
-        testing.expect(t, height > width * .52)
-        testing.expect(t, height < width * 1.9)
+        testing.expect(t, height > width * .78)
+        testing.expectf(t, height < width * 1.60, "myrtle seed %d is too narrow: %.2fm high x %.2fm wide", seed, height, width)
         basal_stems := 0
         maximum_radius := f32(0)
         for segment in myrtle.plant.segments {
@@ -1432,6 +2236,7 @@ myrtle_preserves_a_fine_multistem_shrub_habit_across_seeds :: proc(t: ^testing.T
         testing.expect(t, basal_stems >= 5)
         testing.expect(t, maximum_radius < plants.leaf_traits(.Myrtle, 0, 1).length * .5)
         testing.expect(t, len(myrtle.plant.attachments) > len(myrtle.plant.segments))
+        testing.expect_value(t, plants.leaf_cluster_size(.Myrtle, .Near, 1), 2)
         plants.destroy(&myrtle)
     }
 }
@@ -1464,6 +2269,7 @@ mastic_preserves_a_dense_rounded_multistem_habit_across_seeds :: proc(t: ^testin
         testing.expect(t, basal_stems >= 6)
         testing.expect(t, maximum_radius < plants.leaf_traits(.Mastic, 0, 1).length * .5)
         testing.expect(t, leaf_count > len(mastic.plant.segments))
+        testing.expect_value(t, plants.leaf_cluster_size(.Mastic, .Near, 1), 2)
         plants.destroy(&mastic)
     }
 }
@@ -1520,19 +2326,27 @@ pomegranate_preserves_a_leafy_suckering_shrub_habit_across_seeds :: proc(t: ^tes
         basal_stems := 0
         maximum_radius := f32(0)
         leaf_count, flower_count, fruit_count := 0, 0, 0
+        interior_reproductive_count := 0
         for segment in pomegranate.plant.segments {
             maximum_radius = max(maximum_radius, segment.radius_start)
             if segment.start[1] < height * .08 do basal_stems += 1
         }
         for attachment in pomegranate.plant.attachments {
             if attachment.kind == .Leaf do leaf_count += 1
-            if attachment.kind == .Flower do flower_count += 1
-            if attachment.kind == .Fruit do fruit_count += 1
+            if attachment.kind == .Flower {
+                flower_count += 1
+                if attachment.depth < 1 do interior_reproductive_count += 1
+            }
+            if attachment.kind == .Fruit {
+                fruit_count += 1
+                if attachment.depth < 1 do interior_reproductive_count += 1
+            }
         }
         testing.expect(t, basal_stems >= 5)
         testing.expect(t, maximum_radius < plants.leaf_traits(.Pomegranate, 0, 1).length * .5)
         testing.expect(t, flower_count > 0)
         testing.expect(t, fruit_count > 0)
+        testing.expect_value(t, interior_reproductive_count, 0)
         testing.expect(t, leaf_count > (flower_count + fruit_count) * 3)
         plants.destroy(&pomegranate)
     }
@@ -1553,7 +2367,7 @@ prickly_pear_preserves_a_grounded_layered_pad_clump_across_seeds :: proc(t: ^tes
         testing.expect(t, width > 0)
         testing.expect(t, height > width * .30)
         testing.expect(t, height < width * 1.55)
-        pad_count, basal_pad_count, fruit_count := 0, 0, 0
+        pad_count, basal_pad_count, middle_pad_count, upper_pad_count, fruit_count := 0, 0, 0, 0, 0
         maximum_joint_radius := f32(0)
         for segment in cactus.plant.segments {
             maximum_joint_radius = max(maximum_joint_radius, segment.radius_start)
@@ -1562,11 +2376,15 @@ prickly_pear_preserves_a_grounded_layered_pad_clump_across_seeds :: proc(t: ^tes
             if attachment.kind == .Leaf {
                 pad_count += 1
                 if attachment.position[1] < height * .08 do basal_pad_count += 1
+                if attachment.depth == 1 do middle_pad_count += 1
+                if attachment.depth >= 2 do upper_pad_count += 1
             }
             if attachment.kind == .Fruit do fruit_count += 1
         }
         testing.expect(t, pad_count >= 12)
-        testing.expect(t, basal_pad_count >= 1)
+        testing.expect(t, basal_pad_count >= 3)
+        testing.expect(t, middle_pad_count >= 6)
+        testing.expect(t, upper_pad_count >= 4)
         testing.expect(t, fruit_count > 0)
         testing.expect(t, maximum_joint_radius < plants.leaf_traits(.Prickly_Pear, 0, 1).width * .18)
         plants.destroy(&cactus)

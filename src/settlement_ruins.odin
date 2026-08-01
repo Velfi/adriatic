@@ -111,14 +111,44 @@ settlement_ruin_try_place :: proc(
     return true
 }
 
+settlement_ruin_mode_for_scale :: proc(scale: Settlement_Scale) -> ruins.Mode {
+    return scale == .City ? ruins.Mode.Complex : .Ruin
+}
+
+settlement_ruin_radial_fraction :: proc(scale: Settlement_Scale) -> f32 {
+    switch scale {
+    case .City:
+        return .78
+    case .Town:
+        return .52
+    case .Village:
+        return .65
+    }
+    return .65
+}
+
+settlement_ruin_anchor_supported :: proc(
+    scale: Settlement_Scale,
+    project: ^terrain.Project,
+    point: [2]f32,
+) -> bool {
+    if scale != .Town do return true
+    return settlement_nearest_committed_road_distance(project, point) <= 20
+}
+
 settlement_ruins_generate :: proc(plan: ^Settlement_Plan, project: ^terrain.Project) -> bool {
     if plan == nil || project == nil || settlement_plan_reserved_kind_count(plan, .Ruin) > 0 do return false
-    mode := plan.request.scale == .Village ? ruins.Mode.Ruin : .Complex
-    radius := mode == .Complex ? f32(38) : f32(22)
+    // A monumental archaeological complex can anchor a city edge, but at
+    // town scale it reads as a second detached settlement and overwhelms the
+    // nearby row houses. Towns and villages use a compact inherited ruin.
+    mode := settlement_ruin_mode_for_scale(plan.request.scale)
+    radial_fraction := settlement_ruin_radial_fraction(plan.request.scale)
     for attempt in 0 ..< 24 {
         seed := plan.request.seed ~ u32(attempt * 0x9e3779b9) ~ 0x5255494e
         angle := f32(attempt) * math.PI * 2 / 24 + ruins.random_range(seed, -.08, .08)
-        point := plan.request.center + [2]f32{math.cos(angle), math.sin(angle)} * plan.request.radius * .78
+        point :=
+            plan.request.center +
+            [2]f32{math.cos(angle), math.sin(angle)} * plan.request.radius * radial_fraction
         if plan.macro_cell_count > 0 {
             best, best_distance := point, f32(1e30)
             for cell in plan.macro_cells[:plan.macro_cell_count] {
@@ -129,9 +159,66 @@ settlement_ruins_generate :: proc(plan: ^Settlement_Plan, project: ^terrain.Proj
             }
             point = best
         }
+        if !settlement_ruin_anchor_supported(plan.request.scale, project, point) do continue
         if settlement_ruin_try_place(plan, project, point, seed, mode) do return true
     }
     return false
+}
+
+settlement_ruin_add_access :: proc(
+    plan: ^Settlement_Plan,
+    project: ^terrain.Project,
+    city_plan: ^architecture.City_Plan,
+) -> bool {
+    if plan == nil || project == nil || city_plan == nil do return false
+    ruin_index := -1
+    for site, site_index in plan.sites[:plan.site_count] {
+        if site.accepted && site.kind == .Ruin {
+            ruin_index = site_index
+            break
+        }
+    }
+    if ruin_index < 0 do return false
+    ruin := plan.sites[ruin_index].structure
+    ruin_center := [2]f32{ruin.center_x, ruin.center_z}
+    route_origin, _, _, route_width, route_shoulder, _, _, route_found :=
+        settlement_nearest_route_frame(plan, ruin_center)
+    if !route_found do return false
+    approach := settlement_structure_approach_point(ruin, route_origin, .45)
+    outward := linalg.normalize0(approach - route_origin)
+    if linalg.length(outward) <= .001 do return false
+    road_edge := route_origin + outward * (route_width * .5 + route_shoulder + .3)
+    path := settlement_access_path_find(
+        project,
+        city_plan,
+        approach,
+        road_edge,
+        -1,
+        .7,
+        true,
+    )
+    if path.count < 2 do return false
+    path_length := f32(0)
+    for index in 0 ..< path.count - 1 {
+        path_length += linalg.length(path.points[index + 1] - path.points[index])
+    }
+    if path_length > 24 do return false
+    for index in 0 ..< path.count - 1 {
+        append(
+            &city_plan.alleys,
+            architecture.City_Alley {
+                start_x = path.points[index][0],
+                start_z = path.points[index][1],
+                end_x = path.points[index + 1][0],
+                end_z = path.points[index + 1][1],
+                half_width = .7,
+                start_terminal = index == 0 ? .Public_Space : .None,
+                end_terminal = index == path.count - 2 ? .Road : .None,
+            },
+        )
+        city_plan.alley_count += 1
+    }
+    return true
 }
 
 world_settlement_ruin :: proc(structure: terrain.Structure, lod: Structure_LOD) {

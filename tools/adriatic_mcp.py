@@ -270,8 +270,8 @@ TOOLS = [
                 "tool": {
                     "type": "string",
                     "enum": [
-                        "sculpt", "smooth", "paint", "formations", "foliage", "ridge", "cliff",
-                        "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "ruins",
+                        "sculpt", "smooth", "paint", "formations", "plant_stamp", "ridge", "cliff",
+                        "building", "marina", "farm", "wreck", "roads", "ruins",
                     ],
                 },
                 "radius": {"type": "number", "description": "Brush radius in metres."},
@@ -280,7 +280,11 @@ TOOLS = [
                 "width": {"type": "number", "description": "Ridge, cliff, or road width in metres."},
                 "height": {"type": "number", "description": "Ridge or cliff height in metres."},
                 "size": {"type": "number", "description": "Farm or wreck footprint size in metres."},
-                "mode": {"type": "string", "enum": ["mass", "hedge"], "description": "Foliage brush mode."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["ground", "hedge", "climbing"],
+                    "description": "Plant stamp placement mode.",
+                },
             },
             "minProperties": 1,
             "additionalProperties": False,
@@ -436,8 +440,8 @@ def handle(message: dict[str, object]) -> None:
                     raise ValueError("terrain_brush_set requires one or more brush settings")
                 tool = arguments.get("tool", "-")
                 tools = {
-                    "sculpt", "smooth", "paint", "formations", "foliage", "ridge", "cliff",
-                    "building", "marina", "farm", "wreck", "climbing_leaves", "roads", "ruins",
+                    "sculpt", "smooth", "paint", "formations", "plant_stamp", "ridge", "cliff",
+                    "building", "marina", "farm", "wreck", "roads", "ruins",
                 }
                 if tool != "-" and tool not in tools:
                     raise ValueError("unknown terrain editor tool")
@@ -448,8 +452,8 @@ def handle(message: dict[str, object]) -> None:
                         raise ValueError(f"{key} must be a number")
                     values.append(value)
                 mode = arguments.get("mode", "-")
-                if mode not in {"-", "mass", "hedge"}:
-                    raise ValueError("mode must be mass or hedge")
+                if mode not in {"-", "ground", "hedge", "climbing"}:
+                    raise ValueError("mode must be ground, hedge, or climbing")
                 result = live_control("terrain_brush_set", tool, *values, mode)
             reply(request_id, {"content": [{"type": "text", "text": json.dumps(result)}], "isError": not result.get("ok", False)})
         except (ValueError, TimeoutError, OSError) as exc:

@@ -397,6 +397,7 @@ Settlement_Metrics :: struct {
     parcel_frontage:            Settlement_Scalar_Stats,
     parcel_depth:               Settlement_Scalar_Stats,
     building_height:            Settlement_Scalar_Stats,
+    building_base_elevation:    Settlement_Scalar_Stats,
     building_footprint:         Settlement_Scalar_Stats,
     building_floors:            Settlement_Scalar_Stats,
     network_density:            f32,
@@ -579,7 +580,10 @@ settlement_height_band :: proc(region: Settlement_Region, scale: Settlement_Scal
     return 4, 11
 }
 
-settlement_attachment_probability :: proc(age: f32) -> f32 {
+settlement_attachment_probability :: proc(age: f32, scale: Settlement_Scale = .City) -> f32 {
+    if scale == .Town {
+        return .96 + (.68 - .96) * clamp(age, 0, 1)
+    }
     return .82 + (.32 - .82) * clamp(age, 0, 1)
 }
 
@@ -589,16 +593,16 @@ settlement_building_separation :: proc(
     age: f32,
     attached: bool,
 ) -> f32 {
-    scale_spacing := f32(0)
     if scale == .Town {
-        scale_spacing = .6
-    } else if scale == .Village {
-        scale_spacing = 1.2
+        // Riviera town cores are read as continuous street walls. Leave only
+        // a drainage/light slot between attached houses, then loosen the
+        // fabric toward the younger edge. Detached villas still keep a real
+        // side yard.
+        base := attached ? (region == .Aegean ? f32(.24) : f32(.38)) : f32(2.6)
+        return base + clamp(age, 0, 1) * (attached ? f32(.82) : f32(2.2))
     }
-    base_spacing := f32(4.5)
-    if attached {
-        base_spacing = region == .Aegean ? f32(1.8) : f32(2.4)
-    }
+    scale_spacing := scale == .Village ? f32(1.2) : f32(0)
+    base_spacing := attached ? (region == .Aegean ? f32(1.8) : f32(2.4)) : f32(4.5)
     return base_spacing + scale_spacing + clamp(age, 0, 1) * (attached ? f32(1.8) : f32(3))
 }
 
@@ -621,6 +625,36 @@ settlement_route_width_sample :: proc(rng: ^Settlement_Rng, class: Settlement_Ro
         return settlement_sample_lognormal(rng, 1.4, .24, .8, 2.5)
     }
     return 3
+}
+
+settlement_route_width_sample_for_scale :: proc(
+    rng: ^Settlement_Rng,
+    class: Settlement_Route_Class,
+    scale: Settlement_Scale,
+) -> f32 {
+    if scale == .Town {
+        // A Riviera town's hierarchy is expressed by paving, frontage, and
+        // destination—not by city-width carriageways. Keep hillside
+        // connectors intimate and the civic room narrow enough for adjacent
+        // façades to enclose it.
+        #partial switch class {
+        case .Civic_Spine, .Waterfront:
+            return settlement_sample_triangular(rng, 4.4, 5.3, 6.6)
+        case .Connector:
+            return settlement_sample_triangular(rng, 3.2, 4.2, 5.5)
+        case .Street:
+            // Ordinary town streets are paved shared spaces, not miniature
+            // city carriageways. Narrowing this band also pulls the derived
+            // frontage setback inward, so attached terraces enclose the
+            // street instead of floating behind broad grass verges.
+            return settlement_sample_triangular(rng, 2.7, 3.4, 4.2)
+        case .Lane:
+            return settlement_sample_triangular(rng, 1.7, 2.2, 2.9)
+        case .Ridge:
+            return settlement_sample_triangular(rng, 2.8, 3.6, 4.8)
+        }
+    }
+    return settlement_route_width_sample(rng, class)
 }
 
 // Route hierarchy is also a useful stable proxy for long-term wear. It keeps
@@ -753,6 +787,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
     frontages := make([dynamic]f32, context.temp_allocator)
     depths := make([dynamic]f32, context.temp_allocator)
     heights := make([dynamic]f32, context.temp_allocator)
+    base_elevations := make([dynamic]f32, context.temp_allocator)
     footprints := make([dynamic]f32, context.temp_allocator)
     floors := make([dynamic]f32, context.temp_allocator)
     total_route_length, wide_route_length, minor_route_length: f32
@@ -789,6 +824,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
             append(&frontages, site.parcel.frontage_width)
             append(&depths, site.parcel.depth)
             append(&heights, site.structure.height)
+            append(&base_elevations, site.structure.base_y)
             append(&footprints, site.structure.width * site.structure.depth)
             append(&floors, max(f32(math.round(f64(site.structure.height / 3))), f32(1)))
             if site.attached do attached_count += 1
@@ -902,6 +938,7 @@ settlement_plan_measure :: proc(plan: ^Settlement_Plan) {
     plan.metrics.parcel_frontage = settlement_stats(frontages[:])
     plan.metrics.parcel_depth = settlement_stats(depths[:])
     plan.metrics.building_height = settlement_stats(heights[:])
+    plan.metrics.building_base_elevation = settlement_stats(base_elevations[:])
     plan.metrics.building_footprint = settlement_stats(footprints[:])
     plan.metrics.building_floors = settlement_stats(floors[:])
     if total_route_length > 0 {
@@ -1080,7 +1117,7 @@ settlement_plan_acceptance_valid :: proc(plan: ^Settlement_Plan, project: ^terra
 settlement_plan_report :: proc(plan: ^Settlement_Plan) -> string {
     if plan == nil do return ""
     return fmt.tprintf(
-        "routes %d width %.2f [%.2f..%.2f] grade p90 %.3f access %d/%d J%d/%d/H%d X%d/T%d D%d/R%d S%d/E%d W%d/%d/Q%.2f O%d ends %d/%.1fm | blocks %d %.1fx%.1f | buildings %d height %.1f [%.1f..%.1f] form %.2f/%dQ | landmarks %d parks %d | terrain %d cut %.0f fill %.0f | wide %.1f%% minor %.1f%% | acceptance %v",
+        "routes %d width %.2f [%.2f..%.2f] grade p90 %.3f access %d/%d J%d/%d/H%d X%d/T%d D%d/R%d S%d/E%d W%d/%d/Q%.2f O%d ends %d/%.1fm | blocks %d %.1fx%.1f | buildings %d height %.1f [%.1f..%.1f] step %.1fm form %.2f/%dQ | landmarks %d parks %d | terrain %d cut %.0f fill %.0f | wide %.1f%% minor %.1f%% | acceptance %v",
         plan.route_count,
         plan.metrics.route_width.mean,
         plan.metrics.route_width.min,
@@ -1110,6 +1147,7 @@ settlement_plan_report :: proc(plan: ^Settlement_Plan) -> string {
         plan.metrics.building_height.mean,
         plan.metrics.building_height.min,
         plan.metrics.building_height.max,
+        plan.metrics.building_base_elevation.max - plan.metrics.building_base_elevation.min,
         plan.metrics.fabric_aspect_ratio,
         plan.metrics.fabric_quadrants,
         plan.metrics.landmark_count,

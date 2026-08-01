@@ -17,6 +17,7 @@ Garden_Style :: enum u8 {
     Courtyard,
     Kitchen,
     Wild,
+    Stone,
 }
 
 Garden_Plant_Kind :: enum u8 {
@@ -103,6 +104,8 @@ garden_style_name :: proc(style: Garden_Style) -> cstring {
         return "KITCHEN"
     case .Wild:
         return "WILD"
+    case .Stone:
+        return "STONE GARDEN"
     }
     return "COURTYARD"
 }
@@ -275,6 +278,37 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
             kind := garden_random01(seed, index, 71) > .82 ? Garden_Plant_Kind.Shrub : Garden_Plant_Kind.Flower
             color := kind == .Shrub ? GARDEN_LEAF : palette[index % len(palette)]
             garden_add_plant(&plan, {{x, 0, z}, kind, .65 + garden_random01(seed, index, 79) * .75, color})
+        }
+    case .Stone:
+        // A restrained Mediterranean stone garden: sculptural olives and
+        // drought-tolerant plants rise from pale gravel instead of dense beds.
+        garden_add_plant(&plan, {{-6.8, 0, 3.9}, .Olive_Tree, 1.02, {69, 101, 62, 255}})
+        garden_add_plant(&plan, {{6.7, 0, -4.6}, .Olive_Tree, .82, {76, 106, 67, 255}})
+        succulent_centers := [7]third_person.Vec3 {
+            {-7.4, 0, -4.8},
+            {-4.7, 0, 1.4},
+            {-2.3, 0, -4.2},
+            {2.5, 0, 3.9},
+            {4.9, 0, -.7},
+            {7.4, 0, 4.7},
+            {1.1, 0, -5.8},
+        }
+        for center, index in succulent_centers {
+            garden_add_plant(
+                &plan,
+                {center, .Succulent, .72 + garden_random01(seed, index, 181) * .32, {76, 118, 84, 255}},
+            )
+        }
+        for index in 0 ..< 18 {
+            angle := f32(index) * 2.399963 + garden_random01(seed, index, 191) * .28
+            radius := 2.8 + garden_random01(seed, index, 193) * 5.3
+            x := math.cos(angle) * radius
+            z := math.sin(angle) * radius * .72
+            if abs(x) < 1.25 do x += x < 0 ? f32(-1.25) : f32(1.25)
+            garden_add_plant(
+                &plan,
+                {{x, 0, z}, .Groundcover, .38 + garden_random01(seed, index, 197) * .22, {84, 111, 73, 255}},
+            )
         }
     }
     return plan
@@ -654,6 +688,8 @@ garden_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     case "wild-alt", "meadow-alt":
         garden_lab_style = .Wild
         garden_lab_seed = 211
+    case "stone", "stone-garden":
+        garden_lab_style = .Stone
     case "flowers", "pelargonium":
         garden_lab_style = .Courtyard
     case "alternate":
@@ -682,6 +718,9 @@ garden_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     case .Wild:
         camera_position = {7.2, 3.3, 9.7}
         camera_target = {0, .65, -.7}
+    case .Stone:
+        camera_position = {7.5, 4.5, 11.6}
+        camera_target = {0, .55, -.4}
     }
     if focus_arch {
         camera_position = {4.6, 2.8, -11.5}
@@ -733,6 +772,10 @@ garden_lab_process_input :: proc(_: ^Editor) {
     }
     if canvas2d.IsKeyPressed(.THREE) {
         garden_lab_style = .Wild
+        changed = true
+    }
+    if canvas2d.IsKeyPressed(.FOUR) {
+        garden_lab_style = .Stone
         changed = true
     }
     if changed do garden_lab_rebuild()
@@ -1642,6 +1685,36 @@ world_garden_lab :: proc(_: ^Editor) {
             }
         }
         garden_draw_bench({-6.8, 0, -6.6})
+    case .Stone:
+        // Warm gravel gives the garden a quiet, dry ground plane. A loose
+        // central stepping path and offset boulder groups avoid formal symmetry.
+        world_box({0, .005, 0}, {20.5, .06, 15.5}, {184, 173, 143, 255})
+        for z in -5 ..= 5 {
+            index := z + 5
+            x := math.sin(f32(z) * .72) * .55
+            garden_draw_path_tile(x, f32(z) * 1.31, 1.35, .92)
+            if index % 2 == 0 {
+                world_ellipsoid_rotated(
+                    {x + (z % 4 < 0 ? f32(-2.3) : f32(2.5)), .18, f32(z) * 1.08},
+                    .58 + garden_random01(garden_lab_seed, index, 211) * .34,
+                    .34 + garden_random01(garden_lab_seed, index, 223) * .18,
+                    .48 + garden_random01(garden_lab_seed, index, 227) * .28,
+                    garden_random01(garden_lab_seed, index, 229) * .8 - .4,
+                    index % 4 == 0 ? GARDEN_STONE_DARK : GARDEN_STONE,
+                )
+            }
+        }
+        boulders := [5]third_person.Vec3{{-7.6, 0, -4.7}, {-5.1, 0, 1.7}, {3.0, 0, 4.1}, {5.3, 0, -.6}, {7.5, 0, 4.8}}
+        for center, index in boulders {
+            world_ellipsoid_rotated(
+                {center.x + .35, .26, center.z + .28},
+                .78 + garden_random01(garden_lab_seed, index, 233) * .3,
+                .42 + garden_random01(garden_lab_seed, index, 239) * .18,
+                .64 + garden_random01(garden_lab_seed, index, 241) * .25,
+                garden_random01(garden_lab_seed, index, 251) * 1.2,
+                index % 2 == 0 ? GARDEN_STONE_DARK : GARDEN_STONE,
+            )
+        }
     }
     garden_lab_draw_optimized_plants()
 }
@@ -1658,7 +1731,14 @@ garden_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         garden_lab_plan.plant_count,
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 65}, 13, 1, {174, 207, 160, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "1 COURTYARD   2 KITCHEN   3 WILD   R REGENERATE", {38, 91}, 11, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "1 COURTYARD   2 KITCHEN   3 WILD   4 STONE   R REGENERATE",
+        {38, 91},
+        11,
+        1,
+        {184, 191, 174, 255},
+    )
     species_summary: cstring
     switch garden_lab_style {
     case .Courtyard:
@@ -1667,6 +1747,8 @@ garden_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         species_summary = "ROSEMARY / LAVENDER / THYME / SAGE / GRAPEVINE / LEMON"
     case .Wild:
         species_summary = "STONE PINE / OLIVE / MAQUIS / LAVENDER / THYME / SAGE"
+    case .Stone:
+        species_summary = "OLIVE / PRICKLY PEAR / MYRTLE / STONE / GRAVEL"
     }
     canvas2d.DrawTextEx(canvas2d.Font{}, species_summary, {38, 110}, 10, 1, {174, 207, 160, 255})
     mesh_summary := fmt.ctprintf(

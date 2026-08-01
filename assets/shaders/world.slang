@@ -119,6 +119,7 @@ static const uint MATERIAL_MATERIAL_LAB = 22;
 static const uint MATERIAL_SETTLEMENT = 23;
 static const uint MATERIAL_FOG_SHELL = 24;
 static const uint MATERIAL_ROCK = 25;
+static const uint MATERIAL_BARK = 26;
 
 float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
     float2 offset = p.xz - a.xy;
@@ -229,7 +230,15 @@ VertexOutput vertex_main(VertexInput input) {
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
         float2 wind_across = float2(-wind_direction.y, wind_direction.x);
-        float crown_weight = smoothstep(-.08, .76, input.normal.y);
+        // Leaf and petal sheets are emitted twice with opposite normals for
+        // two-sided rendering. Their wind position must not depend on which
+        // copy faces the camera, or adjacent facets separate where visibility
+        // switches sides and expose bright hairline mesh edges.
+        float wind_normal_y =
+            input.kind == MATERIAL_LEAF || input.kind == MATERIAL_PETAL
+                ? abs(input.normal.y)
+                : input.normal.y;
+        float crown_weight = smoothstep(-.08, .76, wind_normal_y);
         float downwind_coordinate = dot(input.position.xz, wind_direction);
         float crosswind_coordinate = dot(input.position.xz, wind_across);
         float wind_time = push.water.x * (.34 + wind_speed * .012);
@@ -293,7 +302,11 @@ VertexOutput instance_vertex_main(InstanceVertexInput input) {
         float wind_speed = length(wind);
         float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
         float2 wind_across = float2(-wind_direction.y, wind_direction.x);
-        float crown_weight = smoothstep(-.08, .76, world_normal.y);
+        float wind_normal_y =
+            input.kind == MATERIAL_LEAF || input.kind == MATERIAL_PETAL
+                ? abs(world_normal.y)
+                : world_normal.y;
+        float crown_weight = smoothstep(-.08, .76, wind_normal_y);
         float downwind_coordinate = dot(world_position.xz, wind_direction);
         float crosswind_coordinate = dot(world_position.xz, wind_across);
         float wind_time = push.water.x * (.34 + wind_speed * .012);
@@ -692,6 +705,175 @@ float3 shade_material_lab(VertexOutput input) {
     return shade_brdf(material, normal, input.world_position);
 }
 
+float bark_value_noise(float2 p) {
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(
+        lerp(hash12(i), hash12(i + float2(1, 0)), f.x),
+        lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), f.x),
+        f.y
+    );
+}
+
+float bark_voronoi_plate(float2 p) {
+    float2 cell = floor(p);
+    float2 local = frac(p);
+    float nearest = 100.0;
+    float second = 100.0;
+    [unroll] for (int y = -1; y <= 1; ++y) {
+        [unroll] for (int x = -1; x <= 1; ++x) {
+            float2 neighbor = float2(x, y);
+            float2 id = cell + neighbor;
+            float2 jitter = float2(
+                bark_value_noise(id + 13.7),
+                bark_value_noise(id + 47.3)
+            );
+            float distance_to_site = length(neighbor + jitter - local);
+            if (distance_to_site < nearest) {
+                second = nearest;
+                nearest = distance_to_site;
+            } else if (distance_to_site < second) {
+                second = distance_to_site;
+            }
+        }
+    }
+    return smoothstep(.035, .13, second - nearest);
+}
+
+float3 shade_bark(VertexOutput input) {
+    uint pattern = (uint)floor(input.material.x + .0001);
+    float detail_strength = saturate(frac(input.material.x) * 100.0);
+    // Integer-only payloads from older or auxiliary callers mean full detail.
+    detail_strength = detail_strength < .001 ? 1.0 : detail_strength;
+    float2 uv = input.uv;
+    float uv_footprint = max(length(ddx(uv)), length(ddy(uv)));
+    float footprint_detail = 1.0 - smoothstep(.008, .045, uv_footprint);
+    detail_strength *= footprint_detail;
+    float warp = bark_value_noise(float2(uv.y * .42, uv.x * 1.7 + 9.3)) - .5;
+    float2 grain_uv = float2(uv.x + warp * .075, uv.y);
+    float broad = bark_value_noise(grain_uv * float2(4.0, 1.35));
+    float fine = bark_value_noise(grain_uv * float2(17.0, 8.0) + 7.1);
+    // Broad color identity can survive at a larger footprint than relief.
+    // This preserves plane camouflage and peeling color at game distance
+    // while the fine bump signal still filters away on narrow branches.
+    float identity_strength = 1.0 - smoothstep(.045, .20, uv_footprint);
+    float identity_broad = lerp(.5, broad, identity_strength);
+    float mask = .5;
+
+    if (pattern == 1) {
+        // Long, wandering valleys. Two frequencies prevent the evenly
+        // spaced corduroy that makes a trunk read as machined or banded.
+        float primary = abs(sin((grain_uv.x * 5.2 + warp * .42) * 6.2831853));
+        float secondary = abs(sin((grain_uv.x * 10.7 - warp * .24 + broad * .10) * 6.2831853));
+        float ridges = smoothstep(.16, .62, primary) * .76 + smoothstep(.28, .70, secondary) * .16;
+        mask = saturate(ridges + broad * .16);
+    } else if (pattern == 2) {
+        // Fine peeling flakes need broken organic outlines. A warped,
+        // vertically elongated Voronoi field avoids the brick-grid rhythm
+        // that becomes especially obvious on long trained grape canes.
+        float2 flake_uv = grain_uv * float2(6.4, 3.1);
+        flake_uv.x += (bark_value_noise(float2(grain_uv.y * 1.1, 31.7)) - .5) * .62;
+        flake_uv.y += (bark_value_noise(float2(grain_uv.x * 2.3, 17.2)) - .5) * .28;
+        float flake = bark_voronoi_plate(flake_uv);
+        mask = smoothstep(.08, .88, flake) * lerp(.72, 1.0, broad);
+    } else if (pattern == 3) {
+        float2 warped = uv * float2(9.2, 4.4);
+        warped.x += (bark_value_noise(float2(uv.y * 1.7, 8.4)) - .5) * .94;
+        warped.y += (bark_value_noise(float2(uv.x * 1.3, 2.1)) - .5) * .64;
+        float plate = bark_voronoi_plate(warped);
+        float vertical_split = smoothstep(.18, .72, abs(sin((grain_uv.x * 13.0 + warp * .7) * 6.2831853)));
+        mask = plate * lerp(.74, 1.0, broad) * lerp(.88, 1.0, vertical_split);
+    } else if (pattern == 4) {
+        mask = smoothstep(.30, .68, broad);
+    } else if (pattern == 5) {
+        float fiber = bark_value_noise(float2(uv.x * 18.0, uv.y * 3.2));
+        mask = lerp(.58, 1.0, fiber) * lerp(.82, 1.0, broad);
+    } else if (pattern == 6) {
+        float lenticel_noise = bark_value_noise(uv * float2(8.0, 18.0));
+        float lenticel = smoothstep(.82, .93, lenticel_noise);
+        mask = lerp(.92, .48, lenticel) * lerp(.90, 1.06, broad);
+    } else if (pattern == 7) {
+        mask = lerp(.94, 1.04, fine);
+    } else {
+        mask = lerp(.88, 1.08, broad * .65 + fine * .35);
+    }
+
+    // Low-detail trunks carry fewer radial faces and cover fewer pixels.
+    // Fade procedural contrast before it aliases into rigid bars or crawling
+    // highlights, retaining the catalog base color as the distant identity.
+    mask = lerp(.5, mask, detail_strength);
+    broad = lerp(.5, broad, detail_strength);
+    fine = lerp(.5, fine, detail_strength);
+
+    float contrast = pattern == 3 ? .28 : pattern == 1 ? .26 : pattern == 2 ? .25 : .18;
+    float tone = lerp(1.0 - contrast, 1.0 + contrast * .34, saturate(mask));
+    float height = saturate(mask * .78 + fine * .22);
+    float2 gradient = float2(ddx(height), ddy(height));
+    float3 geometric_normal = normalize(input.normal);
+    float normal_strength = (pattern == 3 ? .14 : pattern == 1 ? .12 : .08) * detail_strength;
+    // `gradient` is in screen-derivative space, not UV tangent space. Build
+    // the surface gradient directly from position derivatives so relief
+    // follows bent and horizontal limbs without turning into dotted facets.
+    float3 position_dx = ddx(input.world_position);
+    float3 position_dy = ddy(input.world_position);
+    float3 gradient_basis_x = cross(position_dy, geometric_normal);
+    float3 gradient_basis_y = cross(geometric_normal, position_dx);
+    float determinant = dot(position_dx, gradient_basis_x);
+    float3 surface_gradient = sign(determinant) *
+                              (gradient.x * gradient_basis_x + gradient.y * gradient_basis_y);
+    float3 mapped_normal = normalize(
+        max(abs(determinant), 1e-6) * geometric_normal -
+        surface_gradient * normal_strength
+    );
+
+    BrdfMaterial material;
+    float3 bark_color = input.color.rgb * tone;
+    if (pattern == 2) {
+        // Thin flakes expose a warm, cleaner face above cooler old bark.
+        // Keeping this relative to the catalog color lets strawberry tree,
+        // pomegranate, and hydrangea retain separate identities.
+        float peel_wave = .5 + .5 * sin(
+            grain_uv.y * 8.2 + grain_uv.x * 10.4 + warp * 3.6
+        );
+        peel_wave = lerp(.5, peel_wave, identity_strength);
+        float peel = smoothstep(
+            .32,
+            .70,
+            identity_broad * .34 + mask * .28 + peel_wave * .38
+        );
+        float3 old_bark = input.color.rgb * float3(.66, .60, .56);
+        float3 fresh_face = saturate(input.color.rgb * float3(1.22, 1.09, 1.01) + float3(.026, .007, 0));
+        bark_color = lerp(old_bark, fresh_face, peel);
+        bark_color *= lerp(.92, 1.06, fine);
+    } else if (pattern == 3) {
+        // Plate faces sun-bleach while their separating fissures stay cool.
+        float plate_face = smoothstep(.24, .76, mask);
+        float3 fissure = input.color.rgb * float3(.72, .67, .63);
+        float3 face = saturate(input.color.rgb * 1.08 + float3(.010, .005, 0));
+        bark_color = lerp(fissure, face, plate_face);
+    } else if (pattern == 4) {
+        // Plane bark is recognized first by broad cream, olive, and taupe
+        // camouflage patches, not by high-frequency relief.
+        float mottle_wave = .5 + .5 * sin(
+            grain_uv.y * 6.4 + grain_uv.x * 9.2 +
+            bark_value_noise(grain_uv * float2(1.35, .82) + 6.8) * 3.8
+        );
+        mottle_wave = lerp(.5, mottle_wave, identity_strength);
+        float patch = smoothstep(.26, .72, identity_broad * .42 + mottle_wave * .58);
+        float island_noise = bark_value_noise(grain_uv * float2(1.65, .62) + 19.4);
+        float island = lerp(.5, smoothstep(.34, .69, island_noise), identity_strength);
+        float3 olive_patch = input.color.rgb * float3(.57, .65, .51);
+        float3 taupe_patch = input.color.rgb * float3(.88, .84, .73);
+        float3 cream_patch = saturate(input.color.rgb * float3(1.30, 1.25, 1.13) + float3(.052, .043, .025));
+        bark_color = lerp(olive_patch, taupe_patch, smoothstep(.12, .55, patch));
+        bark_color = lerp(bark_color, cream_patch, smoothstep(.52, .88, patch * .72 + island * .28));
+    }
+    material.base_color = bark_color;
+    material.metallic = 0.0;
+    material.roughness = clamp(input.material.y + (fine - .5) * .08, .62, 1.0);
+    return shade_brdf(material, mapped_normal, input.world_position);
+}
+
 float3 shade_rock(VertexOutput input) {
     float4 albedo = material_lab_albedo.Sample(material_lab_albedo_sampler, input.uv);
     float roughness_map = material_lab_roughness.Sample(material_lab_roughness_sampler, input.uv).r;
@@ -940,6 +1122,88 @@ float3 shade_architecture(VertexOutput input) {
     return base * lerp(.72, 1.0, visibility);
 }
 
+float3 shade_window_room(VertexOutput input, float3 view, float facing) {
+    float encoded = input.material.y;
+    float variant = max(floor(encoded) - 1.0, 0.0);
+    float payload = floor(frac(encoded) * 4096.0);
+    float room_depth = lerp(.35, .95, floor(payload / 64.0) / 63.0);
+    float pane_aspect = lerp(.25, 4.0, fmod(payload, 64.0) / 63.0);
+    float3 normal = normalize(input.normal);
+    float3 up = float3(0.0, 1.0, 0.0);
+    float3 right = normalize(cross(up, normal));
+    float3 inward = -normal;
+    float3 ray_world = -view;
+    float3 ray = float3(
+        dot(ray_world, right),
+        dot(ray_world, up) * pane_aspect,
+        dot(ray_world, inward)
+    );
+    ray.z = max(ray.z, .035);
+    float3 origin = float3(input.uv.x - .5, .5 - input.uv.y, 0.0);
+
+    float side_x = ray.x >= 0.0 ? .5 : -.5;
+    float side_y = ray.y >= 0.0 ? .5 : -.5;
+    float tx = (side_x - origin.x) / (abs(ray.x) < .0001 ? (ray.x < 0.0 ? -.0001 : .0001) : ray.x);
+    float ty = (side_y - origin.y) / (abs(ray.y) < .0001 ? (ray.y < 0.0 ? -.0001 : .0001) : ray.y);
+    float tz = room_depth / ray.z;
+    float distance = min(tx, min(ty, tz));
+    float3 hit = origin + ray * distance;
+
+    bool back = tz <= tx && tz <= ty;
+    bool horizontal = !back && ty <= tx;
+    float3 unlit_back = input.color.rgb * float3(.27, .30, .29);
+    float warmth = frac(variant * .381966);
+    float3 lit_back = lerp(
+        srgb_to_linear(float3(.34, .20, .095)),
+        srgb_to_linear(float3(.34, .29, .19)),
+        warmth
+    );
+    float occupied = saturate(input.material.x);
+    float3 back_color = lerp(unlit_back, lit_back, occupied);
+    float3 room = back_color;
+    if (horizontal) {
+        bool floor_surface = side_y < 0.0;
+        room *= floor_surface ? float3(.72, .66, .55) : float3(.34, .36, .37);
+        if (floor_surface) {
+            float boards = .88 + .12 * step(.52, frac((hit.x + hit.z * .37) * 9.0 + variant));
+            room *= boards;
+        }
+    } else if (!back) {
+        room *= float3(.56, .60, .59);
+    } else {
+        float panel = smoothstep(.025, .055, abs(frac((hit.x + .5) * 2.0 + variant * .17) - .5));
+        room *= lerp(.82, 1.04, panel);
+    }
+
+    // Analytic corner occlusion anchors the virtual walls without another
+    // texture lookup or ray. It also keeps unoccupied rooms convincingly dark.
+    float edge_x = max(.5 - abs(hit.x), 0.0);
+    float edge_y = max(.5 - abs(hit.y), 0.0);
+    float edge_z = max(min(hit.z, room_depth - hit.z), 0.0);
+    float corner_distance = back ? min(edge_x, edge_y) :
+                            (horizontal ? min(edge_x, edge_z) : min(edge_y, edge_z));
+    float corner = smoothstep(.0, .14, corner_distance);
+    room *= lerp(.42, 1.0, corner);
+
+    // One intermediate slice supplies a deterministic curtain or furniture
+    // silhouette. At distance this collapses into useful tonal asymmetry.
+    float slice_z = room_depth * lerp(.28, .56, frac(variant * .754877));
+    float slice_t = slice_z / ray.z;
+    float2 slice_hit = origin.xy + ray.xy * slice_t;
+    bool slice_inside = slice_t < distance && all(abs(slice_hit) < float2(.49, .49));
+    float family = fmod(variant, 3.0);
+    bool curtain = family < 1.0 && abs(slice_hit.x + lerp(-.29, .29, frac(variant * .43))) > .24;
+    bool cabinet = family >= 1.0 && family < 2.0 && abs(slice_hit.x) < .31 && slice_hit.y < -.08;
+    bool lamp = family >= 2.0 && length((slice_hit - float2(.18, .10)) / float2(.13, .20)) < 1.0;
+    float silhouette = slice_inside && (curtain || cabinet || lamp) ? 1.0 : 0.0;
+    room = lerp(room, room * lerp(.16, .34, occupied), silhouette * .90);
+
+    // Interior mapping degrades at grazing angles; blend smoothly back to the
+    // established flat pane instead of allowing the virtual box to stretch.
+    float grazing_fade = smoothstep(.06, .24, facing);
+    return lerp(input.color.rgb * .32, room, grazing_fade);
+}
+
 float3 shade_glass(VertexOutput input) {
     float3 normal = normalize(input.normal);
     float3 view = normalize(push.camera_position.xyz - input.world_position);
@@ -966,16 +1230,20 @@ float3 shade_glass(VertexOutput input) {
 
     float interior_light = saturate(input.material.x);
     float night = 1.0 - smoothstep(.0, .34, daylight);
-    float3 interior = input.color.rgb;
+    float3 interior = input.material.y > .5 ? shade_window_room(input, view, facing) : input.color.rgb;
     // Residential panes need a clearly readable opaque sky body even when
     // viewed head-on. Storefront and occupied panes retain more of their
     // authored interior color.
     float reflection_weight = lerp(.78, .90, fresnel);
-    reflection_weight = lerp(
-        reflection_weight,
-        lerp(.62, .82, fresnel),
-        interior_light
-    );
+    if (input.material.y > .5) {
+        // Interior-mapped panes need enough transmission for the virtual
+        // walls to read head-on, while grazing views remain sky-dominant.
+        reflection_weight = lerp(.18, .84, fresnel);
+    }
+    float occupied_reflection = input.material.y > .5 ?
+                                lerp(.28, .86, fresnel) :
+                                lerp(.62, .82, fresnel);
+    reflection_weight = lerp(reflection_weight, occupied_reflection, interior_light);
     reflection_weight *= lerp(1.0, .55, interior_light * night);
     float3 color = lerp(interior, reflected_sky, reflection_weight);
     if (interior_light > 0.0) {
@@ -1521,23 +1789,33 @@ float3 shade_foliage(VertexOutput input) {
 float3 shade_thin_transmission(VertexOutput input, bool petal) {
     float3 view_direction =
         normalize(push.camera_position.xyz - input.world_position);
-    float3 normal = normalize(input.normal);
+    float3 geometric_normal = normalize(input.normal);
+    float3 normal = geometric_normal;
     if (dot(normal, view_direction) < 0.0) normal = -normal;
 
     float3 sun_direction = normalize(push.sun.xyz);
     float front_light = saturate(dot(normal, sun_direction));
     float back_light = saturate(dot(-normal, sun_direction));
     float daylight = saturate(push.sun.w);
+    // Shadow bias must use the sun-facing side of a two-sided sheet. Using the
+    // view-facing normal makes the bias change sign as the camera crosses it.
+    float3 shadow_normal = geometric_normal;
+    if (dot(shadow_normal, sun_direction) < 0.0) shadow_normal = -shadow_normal;
     float visibility =
-        dynamic_shadow_visibility(input.world_position, normal);
+        dynamic_shadow_visibility(input.world_position, shadow_normal);
 
     float wrap = saturate((dot(normal, sun_direction) + .42) / 1.42);
     float body_light =
         .24 + wrap * .50 * visibility * lerp(.32, 1.0, daylight);
     float transmission_strength = petal ? .72 : .48;
+    // Favor light travelling through the sheet toward the viewer, but retain
+    // enough broad scatter for thin silhouettes to read away from exact solar
+    // alignment.
+    float forward_scatter =
+        lerp(.38, 1.0, pow(saturate(dot(view_direction, -sun_direction)), petal ? 1.5 : 2.2));
     float transmission =
         pow(back_light, petal ? 1.35 : 1.8) *
-        transmission_strength * visibility * daylight;
+        transmission_strength * forward_scatter * visibility * daylight;
 
     // Absorption enriches the material's own hue instead of washing thin
     // silhouettes toward white. Leaves retain a warm yellow-green vein glow;
@@ -1551,6 +1829,38 @@ float3 shade_thin_transmission(VertexOutput input, bool petal) {
         input.color.rgb * body_light +
         transmitted_color * transmission +
         input.color.rgb * rim * .06;
+    if (!petal && input.material.y > .5) {
+        // Procedural leaf texture. The CPU supplies canonical blade UVs and a
+        // shape index; density varies slightly by botanical profile while the
+        // mask remains resolution-independent and follows every curved mesh.
+        float shape = input.material.x;
+        float pairs = (shape == 1.0 || shape == 9.0) ? 9.0 :
+                      (shape >= 6.0 && shape <= 8.0) ? 5.0 : 7.0;
+        float center_distance = abs(input.uv.x - .5);
+        // A restrained lamina gradient gives the blade a living, waxy depth
+        // before any vein marks are applied: slightly shaded at the petiole
+        // and margin, with a broad soft lift through the central tissue.
+        float center_bloom = 1.0 - smoothstep(.08, .48, center_distance);
+        float tip_fade = smoothstep(.06, .22, input.uv.y) *
+                         (1.0 - smoothstep(.84, 1.0, input.uv.y));
+        result *= lerp(.91, 1.045, center_bloom * tip_fade);
+
+        float midrib = 1.0 - smoothstep(.008, .024, center_distance);
+        float sweep = lerp(.18, .32, saturate(input.uv.y));
+        float branch_coordinate = input.uv.y - center_distance * sweep;
+        float branch_phase = abs(frac(branch_coordinate * pairs + .5) - .5);
+        float secondary = 1.0 - smoothstep(.024, .070, branch_phase);
+        secondary *= smoothstep(.045, .13, center_distance);
+        secondary *= 1.0 - smoothstep(.37, .49, center_distance);
+        secondary *= smoothstep(.045, .14, input.uv.y) *
+                     (1.0 - smoothstep(.90, .99, input.uv.y));
+        float vein = saturate(max(midrib, secondary * .66));
+        // Veins should organize the surface, not read as luminous paint.
+        // Lift the already-lit lamina so the mark remains visible in shadow
+        // without turning into the fluorescent overlay used previously.
+        float3 vein_color = saturate(result * float3(1.16, 1.22, 1.04) + float3(.006, .014, .002));
+        result = lerp(result, vein_color, vein * .56);
+    }
     return saturate(result);
 }
 
@@ -2275,6 +2585,10 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = shade_rock(input);
             output_alpha = 1.0;
             break;
+        case MATERIAL_BARK:
+            base = shade_bark(input);
+            output_alpha = 1.0;
+            break;
         case MATERIAL_SETTLEMENT:
             base = shade_settlement_material(input);
             break;
@@ -2483,7 +2797,8 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         input.kind == MATERIAL_VEHICLE ||
         input.kind == MATERIAL_CAR_PAINT ||
         input.kind == MATERIAL_MATERIAL_LAB ||
-        input.kind == MATERIAL_SETTLEMENT) {
+        input.kind == MATERIAL_SETTLEMENT ||
+        input.kind == MATERIAL_BARK) {
         // Local light is added after night adaptation: the environment should
         // darken unlit surfaces, not erase illumination arriving from a nearby
         // theatrical source.

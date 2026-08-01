@@ -33,3 +33,18 @@
   `make mcp`.
 - The MCP communicates with the already-running game; do not restart the game
   to use it.
+
+## Player-facing UI copy
+
+- Treat every visible string as product copy. Keep it terse, literal, and
+  action-oriented.
+- Every string must help the player act, identify something, or understand the
+  current state. If a new string is not necessary, do not add one.
+- Do not add ornamental subtitles, taglines, marketing-style feature callouts,
+  or implementation terminology. Avoid generated-sounding summaries such as
+  `A • B • C` unless the items are actual selectable values or useful state.
+- Use concrete nouns and direct verbs. Buttons name the resulting action;
+  prompts use `[input] to [action]`; status messages state what happened or
+  what the player must do next.
+- Preserve established game terms. Prefer deleting nonessential copy, and ask
+  for review when a new player-facing concept needs a name.

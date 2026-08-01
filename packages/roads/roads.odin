@@ -29,6 +29,31 @@ Edge :: struct {
     // Normalized circulation intensity. One is a maintained, frequently used
     // road; zero is neglected enough for vegetation to reclaim its joints.
     use_intensity:            f32,
+    // Zero identifies legacy/manual geometry. Non-zero IDs group the
+    // contiguous elements produced by one engineered road-design commit.
+    design_id:                u32,
+    alignment_kind:           Alignment_Element_Kind,
+    station_from, station_to: f32,
+    curvature_from, curvature_to: f32,
+    superelevation_from, superelevation_to: f32,
+    structure_kind:           Structure_Span_Kind,
+    engineering_designed:     bool,
+    policy_pavement:          Pavement,
+    authored_profile:         bool,
+}
+
+Alignment_Element_Kind :: enum u8 {
+    Legacy_Bezier,
+    Tangent,
+    Spiral,
+    Arc,
+}
+
+Structure_Span_Kind :: enum u8 {
+    Legacy_Automatic,
+    At_Grade,
+    Bridge,
+    Culvert,
 }
 
 Graph :: struct {
@@ -85,6 +110,15 @@ Pavement_Query_Node :: struct {
     left, right:  int,
 }
 
+Nearest_Edge_Point :: struct {
+    edge_index:       int,
+    amount:           f32,
+    position:         Vec3,
+    tangent:          Vec3,
+    distance_squared: f32,
+    found:            bool,
+}
+
 Grip_Profile :: struct {
     longitudinal:       f32,
     lateral:            f32,
@@ -104,6 +138,10 @@ Vertex :: struct {
     pavement:        Pavement,
     road_half_width: f32,
     use_intensity:   f32,
+    // One-based source spline index. Junction vertices retain zero so terrain
+    // fitting does not mistake them for edge-zero bridge vertices.
+    source_edge:     int,
+    edge_t:          f32,
 }
 
 Mesh :: struct {
@@ -266,6 +304,16 @@ split_edge :: proc(graph: ^Graph, edge_index: int, amount: f32, junction_radius:
     return node
 }
 
+can_add :: #force_inline proc(graph: ^Graph, nodes, edges: int) -> bool {
+    return graph != nil && nodes >= 0 && edges >= 0 &&
+        graph.node_count + nodes <= MAX_NODES && graph.edge_count + edges <= MAX_EDGES
+}
+
+can_split_edge :: #force_inline proc(graph: ^Graph, edge_index: int, amount: f32) -> bool {
+    return graph != nil && edge_index >= 0 && edge_index < graph.edge_count &&
+        amount > .0001 && amount < .9999 && can_add(graph, 1, 1)
+}
+
 pavement_name :: proc(pavement: Pavement) -> string {
     switch pavement {
     case .Asphalt:
@@ -357,6 +405,62 @@ edge_between :: proc(graph: ^Graph, a, b: int) -> int {
         if (edge.from == a && edge.to == b) || (edge.from == b && edge.to == a) do return index
     }
     return -1
+}
+
+// Find the nearest point on the graph in the horizontal authoring plane. A
+// coarse pass finds the relevant basin and a bounded ternary refinement keeps
+// the query deterministic without allocating or depending on mesh density.
+nearest_edge_point :: proc(graph: ^Graph, point: Vec3, samples: int = 24) -> Nearest_Edge_Point {
+    result := Nearest_Edge_Point{edge_index = -1, distance_squared = f32(1e30)}
+    if graph == nil || graph.edge_count <= 0 do return result
+    sample_count := clamp(samples, 4, 96)
+    for edge, edge_index in graph.edges[:graph.edge_count] {
+        best_sample := 0
+        for sample_index in 0 ..= sample_count {
+            amount := f32(sample_index) / f32(sample_count)
+            candidate := edge_point(graph, edge, amount)
+            dx, dz := candidate.x - point.x, candidate.z - point.z
+            distance_squared := dx * dx + dz * dz
+            if distance_squared < result.distance_squared {
+                result.distance_squared = distance_squared
+                result.edge_index = edge_index
+                result.amount = amount
+                result.position = candidate
+                best_sample = sample_index
+                result.found = true
+            }
+        }
+        if result.edge_index != edge_index do continue
+        low := f32(max(best_sample - 1, 0)) / f32(sample_count)
+        high := f32(min(best_sample + 1, sample_count)) / f32(sample_count)
+        for _ in 0 ..< 12 {
+            left := low + (high - low) / 3
+            right := high - (high - low) / 3
+            left_point := edge_point(graph, edge, left)
+            right_point := edge_point(graph, edge, right)
+            ldx, ldz := left_point.x - point.x, left_point.z - point.z
+            rdx, rdz := right_point.x - point.x, right_point.z - point.z
+            if ldx * ldx + ldz * ldz <= rdx * rdx + rdz * rdz {
+                high = right
+            } else {
+                low = left
+            }
+        }
+        amount := (low + high) * .5
+        candidate := edge_point(graph, edge, amount)
+        dx, dz := candidate.x - point.x, candidate.z - point.z
+        distance_squared := dx * dx + dz * dz
+        if distance_squared <= result.distance_squared {
+            result.distance_squared = distance_squared
+            result.amount = amount
+            result.position = candidate
+        }
+    }
+    if result.found {
+        edge := graph.edges[result.edge_index]
+        result.tangent = edge_tangent(graph, edge, result.amount)
+    }
+    return result
 }
 
 remove_edge :: proc(graph: ^Graph, index: int) -> bool {
@@ -716,7 +820,7 @@ edge_trim_range :: proc(graph: ^Graph, edge: Edge) -> (f32, f32) {
     return from_trim, 1 - to_trim
 }
 
-bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Settings) -> Edge_Boundaries {
+bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, edge_index: int, settings: Bake_Settings) -> Edge_Boundaries {
     boundaries: Edge_Boundaries
     segment_count := edge_segment_count(graph, edge, settings)
     start_t, end_t := edge_trim_range(graph, edge)
@@ -778,6 +882,8 @@ bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, settings: Bake_Setting
                     pavement = edge.pavement,
                     road_half_width = edge.half_width,
                     use_intensity = edge.use_intensity,
+                    source_edge = edge_index + 1,
+                    edge_t = t,
                 },
             )
         }
@@ -1043,7 +1149,7 @@ bake :: proc(graph: ^Graph, settings: Bake_Settings = DEFAULT_BAKE_SETTINGS) -> 
     mesh.chunks = make([dynamic]Mesh_Chunk)
     edge_boundaries: [MAX_EDGES]Edge_Boundaries
     for edge, edge_index in graph.edges[:graph.edge_count] {
-        edge_boundaries[edge_index] = bake_edge(&mesh, graph, edge, settings)
+        edge_boundaries[edge_index] = bake_edge(&mesh, graph, edge, edge_index, settings)
     }
     for node_index in 0 ..< graph.node_count {
         first_index := len(mesh.indices)

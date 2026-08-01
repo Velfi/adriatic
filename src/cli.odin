@@ -63,7 +63,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
     fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
     fmt.println(
-        "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, rock-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, fountain-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
+        "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, rock-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, window-generator, fountain-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunrise, sky-sunset, sky-storm, sky-night, player-*")
@@ -404,7 +404,8 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 settle_frames = parsed
             case "--style":
                 switch value {
-                case "standard": visual_style = .Standard
+                case "standard":
+                    visual_style = .Standard
                 case "dither":
                     visual_style = .Dither
                     if dither_mode == .Off do dither_mode = .Bayer
@@ -423,9 +424,12 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
             case "--dither":
                 visual_style = .Dither
                 switch value {
-                case "bayer": dither_mode = .Bayer
-                case "blue": dither_mode = .Blue_Noise
-                case "matriax8": dither_mode = .Matriax_8
+                case "bayer":
+                    dither_mode = .Bayer
+                case "blue":
+                    dither_mode = .Blue_Noise
+                case "matriax8":
+                    dither_mode = .Matriax_8
                 case:
                     fmt.eprintf("adriatic: --dither must be bayer, blue, or matriax8, got %s\n", value)
                     return true, false

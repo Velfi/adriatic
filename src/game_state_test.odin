@@ -3,6 +3,7 @@ package main
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
 import marina "../packages/marina"
+import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
@@ -323,9 +324,107 @@ when ODIN_TEST {
         }
         testing.expect(t, west_found)
         testing.expect(t, east_found)
-        // Six runway-airport-town links are created with the terrain. Each
-        // marina adds one or more terrain-following connector segments.
-        testing.expect(t, editor.project.road_graph.edge_count >= 8)
+        // Terrain generation contributes only the two runway surfaces. Each
+        // marina adds at least one terrain-following network segment.
+        testing.expect(t, editor.project.road_graph.edge_count >= 4)
+    }
+
+    @(test)
+    runway_access_uses_terrain_routed_connectors :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        terrain.init_project(&editor.project)
+        defer terrain.destroy_project(&editor.project)
+
+        edges_before := editor.project.road_graph.edge_count
+        for sign in terrain.DEFAULT_ISLAND_SIGNS {
+            testing.expect(t, seed_default_runway_access(editor, sign))
+        }
+        testing.expect(t, editor.project.road_graph.edge_count > edges_before)
+        for edge in editor.project.road_graph.edges[edges_before:editor.project.road_graph.edge_count] {
+            testing.expect_value(t, edge.pavement, roads.Pavement.Gravel)
+        }
+    }
+
+    @(test)
+    town_streets_do_not_relocate_the_airport_terminal :: proc(t: ^testing.T) {
+        project := new(terrain.Project)
+        defer free(project)
+        terrain.init_project(project)
+        defer terrain.destroy_project(project)
+
+        for sign in terrain.DEFAULT_ISLAND_SIGNS {
+            nominal_x, nominal_z := terrain.default_airport_center(sign)
+            town_x, town_z := terrain.default_town_center_for_project(project, sign)
+            from := roads.add_node(&project.road_graph, {town_x - 40, 0, town_z}, 4)
+            to := roads.add_node(&project.road_graph, {town_x + 40, 0, town_z}, 4)
+            _ = roads.add_straight_edge(&project.road_graph, from, to, 4, 1, .Cobblestone, .8)
+
+            airport_x, airport_z := terrain.default_airport_center_for_project(project, sign)
+            testing.expect(t, math.abs(airport_x - nominal_x) < .01)
+            testing.expect(t, math.abs(airport_z - nominal_z) < .01)
+        }
+    }
+
+    @(test)
+    regenerated_worlds_spawn_hero_buildings_on_the_road_network :: proc(t: ^testing.T) {
+        seeds := terrain.DEFAULT_ISLAND_SEEDS
+        for generation in 0 ..< 2 {
+            if generation > 0 do seeds = terrain.next_default_island_seeds(seeds)
+            editor := new(Editor)
+            terrain.init_project_seeded(&editor.project, seeds)
+            seed_default_island_marinas_seeded(editor, seeds)
+            seed_default_island_towns_seeded(editor, seeds)
+
+            for sign in terrain.DEFAULT_ISLAND_SIGNS {
+                post_offices, clinics, lighthouses := 0, 0, 0
+                island_x, island_z := terrain.default_island_center(sign)
+                for structure in editor.project.structures[:editor.project.structure_count] {
+                    if structure.kind != .Architecture do continue
+                    dx, dz := structure.center_x - island_x, structure.center_z - island_z
+                    if dx * dx + dz * dz > 1400 * 1400 do continue
+                    identity := architecture.architecture_resolve_legacy_identity(structure)
+                    if identity.archetype == .Post_Office || identity.archetype == .Clinic {
+                        entrance := settlement_structure_front_door_point(structure, 1)
+                        _, distance, found := default_road_nearest_point(&editor.project, entrance)
+                        testing.expect(t, found && distance <= 16)
+                    }
+                    if identity.archetype == .Post_Office do post_offices += 1
+                    if identity.archetype == .Clinic do clinics += 1
+                    if identity.archetype == .Lighthouse {
+                        lighthouses += 1
+                        keeper, _, found := world_lighthouse_keeper_pose(editor, structure)
+                        testing.expect(t, found && default_lighthouse_has_access(&editor.project, keeper.x, keeper.z))
+                    }
+                }
+                testing.expect(t, post_offices >= 1)
+                testing.expect(t, clinics >= 1)
+                testing.expect_value(t, lighthouses, 1)
+                airport_x, airport_z := terrain.default_airport_center_for_project(&editor.project, sign)
+                for structure in editor.project.structures[:editor.project.structure_count] {
+                    if structure.kind != .Architecture do continue
+                    testing.expect(
+                        t,
+                        settlement_airport_terminals_clear(
+                            &editor.project,
+                            structure.center_x,
+                            structure.center_z,
+                            structure.width,
+                            structure.depth,
+                            structure.rotation,
+                            2,
+                        ),
+                    )
+                }
+                _, airport_distance, airport_connected := default_road_nearest_point(
+                    &editor.project,
+                    {airport_x, airport_z},
+                )
+                testing.expect(t, airport_connected && airport_distance <= 8)
+            }
+            terrain.destroy_project(&editor.project)
+            free(editor)
+        }
     }
 
     @(test)

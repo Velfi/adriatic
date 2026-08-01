@@ -12,7 +12,9 @@ Render_Graph_Context :: struct {
     buffer:                   ^engine.Vk_Buffer,
     static_vertex_buffer:     ^engine.Vk_Buffer,
     static_index_buffer:      ^engine.Vk_Buffer,
+    static_indirect_buffer:   ^engine.Vk_Buffer,
     road_buffer:              ^engine.Vk_Buffer,
+    road_indirect_buffer:     ^engine.Vk_Buffer,
     foliage_buffer:           ^engine.Vk_Buffer,
     bougainvillea_buffer:     ^engine.Vk_Buffer,
     grass_instance_buffer:    ^engine.Vk_Buffer,
@@ -93,22 +95,16 @@ render_graph_geometry :: proc(user_data: rawptr) {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.buffer.handle, &ctx.offset)
         vk.CmdDraw(cmd, u32(world_vertex_count), 1, 0, 0)
     }
-    if len(world_renderer.retained_static_draws) > 0 {
+    if len(world_renderer.static_draw_commands) > 0 {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.static_vertex_buffer.handle, &ctx.offset)
         vk.CmdBindIndexBuffer(cmd, ctx.static_index_buffer.handle, 0, .UINT32)
-        for draw in world_renderer.retained_static_draws {
-            if draw.cache_index < 0 || draw.cache_index >= len(world_renderer.static_geometry_cache) {
-                continue
-            }
-            entry := &world_renderer.static_geometry_cache[draw.cache_index]
-            if !entry.valid || len(entry.world_indices) == 0 do continue
-            vk.CmdDrawIndexed(
+        for command_index in 0 ..< len(world_renderer.static_draw_commands) {
+            vk.CmdDrawIndexedIndirect(
                 cmd,
-                u32(len(entry.world_indices)),
+                ctx.static_indirect_buffer.handle,
+                vk.DeviceSize(command_index * size_of(vk.DrawIndexedIndirectCommand)),
                 1,
-                entry.retained_first_index,
-                i32(entry.retained_first_vertex),
-                0,
+                u32(size_of(vk.DrawIndexedIndirectCommand)),
             )
         }
     }
@@ -354,7 +350,7 @@ render_graph_terrain :: proc(user_data: rawptr) {
 
 render_graph_roads :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
-    if len(world_renderer.road_vertices) <= 0 do return
+    if len(world_renderer.road_draw_commands) <= 0 do return
     cmd := ctx.pass.frame.command_buffer
     render_graph_stage_label(ctx, "Adriatic / Roads")
     vk.CmdBindDescriptorSets(
@@ -387,7 +383,15 @@ render_graph_roads :: proc(user_data: rawptr) {
         &ctx.world_push,
     )
     vk.CmdBindVertexBuffers(cmd, 0, 1, &ctx.road_buffer.handle, &ctx.offset)
-    vk.CmdDraw(cmd, u32(len(world_renderer.road_vertices)), 1, 0, 0)
+    for command_index in 0 ..< len(world_renderer.road_draw_commands) {
+        vk.CmdDrawIndirect(
+            cmd,
+            ctx.road_indirect_buffer.handle,
+            vk.DeviceSize(command_index * size_of(vk.DrawIndirectCommand)),
+            1,
+            u32(size_of(vk.DrawIndirectCommand)),
+        )
+    }
     render_graph_stage_end(ctx)
 }
 

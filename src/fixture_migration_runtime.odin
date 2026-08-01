@@ -139,7 +139,7 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [14]Fixture_Migration_Step = {
+fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION - 1]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,
@@ -223,6 +223,18 @@ fixture_migration_production_steps: [14]Fixture_Migration_Step = {
         to_version = FIXTURE_MIGRATION_V0014_TO_V0015_TO_VERSION,
         wrapper = fixture_migration_step_v0014_to_v0015,
         change_id = "field-type:adriatic:packages/particles.Wing_Trails.particles",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0015_TO_V0016_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0015_TO_V0016_TO_VERSION,
+        wrapper = fixture_migration_step_v0015_to_v0016,
+        change_id = "field-add:adriatic:src.Fixture.notes",
+    },
+    {
+        from_version = FIXTURE_MIGRATION_V0016_TO_V0017_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0016_TO_V0017_TO_VERSION,
+        wrapper = fixture_migration_step_v0016_to_v0017,
+        change_id = "field-add:adriatic:packages/roads.Edge.design_id",
     },
 }
 

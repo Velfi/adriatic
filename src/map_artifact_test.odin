@@ -1,7 +1,9 @@
 package main
 
 import terrain "../packages/terrain"
+import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 when ODIN_TEST {
@@ -29,6 +31,18 @@ when ODIN_TEST {
         }
         artifact.default_marina_count = 0
         return artifact
+    }
+
+    @(test)
+    map_artifact_editor_path_uses_writable_user_data :: proc(t: ^testing.T) {
+        base, base_error := os.user_data_dir(context.temp_allocator)
+        path, path_ok := map_artifact_save_path(context.temp_allocator)
+        testing.expect(t, base_error == nil)
+        testing.expect(t, path_ok)
+        if base_error == nil && path_ok {
+            testing.expect(t, strings.has_prefix(path, base))
+            testing.expect(t, strings.has_suffix(path, "/Adriatic/adriatic.adriatic-map"))
+        }
     }
 
     @(test)

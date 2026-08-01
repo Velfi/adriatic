@@ -66,6 +66,80 @@ generator_clamps_extreme_counts_to_capacity :: proc(t: ^testing.T) {
 }
 
 @(test)
+bushy_clusters_are_bounded_deterministic_domes :: proc(t: ^testing.T) {
+    config := cluster_defaults(.Dome)
+    config.flower_count = 19
+    config.radius = .11
+    config.height = .06
+    config.floret_scale = .024
+    config.phase = .73
+    first := generate_cluster(config)
+    second := generate_cluster(config)
+    testing.expect_value(t, first.count, 19)
+    testing.expect_value(t, first, second)
+    testing.expect(t, first.instances[0].position[2] > .059)
+    edge_count := 0
+    for instance in first.instances[:first.count] {
+        radial := math.sqrt(instance.position[0] * instance.position[0] + instance.position[1] * instance.position[1])
+        testing.expect(t, radial <= config.radius + .0001)
+        testing.expect(t, instance.position[2] >= 0 && instance.position[2] <= config.height + .0001)
+        testing.expect(t, instance.scale > 0)
+        normal_length := math.sqrt(
+            instance.normal[0] * instance.normal[0] +
+            instance.normal[1] * instance.normal[1] +
+            instance.normal[2] * instance.normal[2],
+        )
+        testing.expect(t, math.abs(normal_length - 1) < .001)
+        if radial > config.radius * .85 do edge_count += 1
+    }
+    testing.expect(t, edge_count >= 4)
+}
+
+@(test)
+cluster_counts_clamp_and_single_ignores_bushy_capacity :: proc(t: ^testing.T) {
+    config := cluster_defaults(.Dome)
+    config.flower_count = 999
+    testing.expect_value(t, generate_cluster(config).count, MAX_CLUSTER_FLOWERS)
+    config = cluster_defaults(.Single)
+    config.flower_count = 17
+    single := generate_cluster(config)
+    testing.expect_value(t, single.count, 1)
+    testing.expect_value(t, single.instances[0].position, [3]f32{})
+}
+
+@(test)
+ball_clusters_support_flattened_mophead_proportions :: proc(t: ^testing.T) {
+    config := cluster_defaults(.Ball)
+    config.flower_count = MAX_CLUSTER_FLOWERS
+    config.radius = .078
+    config.height = .052
+    cluster := generate_cluster(config)
+    minimum_z, maximum_z := f32(1000), f32(-1000)
+    maximum_radial := f32(0)
+    for instance in cluster.instances[:cluster.count] {
+        radial := math.sqrt(instance.position[0] * instance.position[0] + instance.position[1] * instance.position[1])
+        maximum_radial = max(maximum_radial, radial)
+        minimum_z = min(minimum_z, instance.position[2])
+        maximum_z = max(maximum_z, instance.position[2])
+        gradient := [3]f32 {
+            instance.position[0] / (config.radius * config.radius),
+            instance.position[1] / (config.radius * config.radius),
+            instance.position[2] / (config.height * config.height),
+        }
+        gradient_length := math.sqrt(gradient[0] * gradient[0] + gradient[1] * gradient[1] + gradient[2] * gradient[2])
+        gradient /= gradient_length
+        alignment :=
+            gradient[0] * instance.normal[0] +
+            gradient[1] * instance.normal[1] +
+            gradient[2] * instance.normal[2]
+        testing.expect(t, alignment > .999)
+    }
+    testing.expect(t, minimum_z < 0 && maximum_z > 0)
+    testing.expect(t, maximum_radial > .07)
+    testing.expect(t, maximum_z - minimum_z < maximum_radial * 1.6)
+}
+
+@(test)
 fruit_profiles_generate_closed_finite_meshes :: proc(t: ^testing.T) {
     for shape in Fruit_Shape {
         config := fruit_defaults(shape)

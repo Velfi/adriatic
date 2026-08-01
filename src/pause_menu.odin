@@ -1,7 +1,10 @@
 package main
 
+import atmosphere "../packages/atmosphere"
 import game_input "../packages/game_input"
 import player_mail "../packages/player_mail"
+import roads "../packages/roads"
+import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -19,11 +22,12 @@ Pause_Screen :: enum {
     Mail,
     Options,
     Customization,
+    Scrapbook,
     Photo,
 }
 
 pause_menu_pointer_enabled := true
-PAUSE_MENU_BUTTON_COUNT :: 6
+PAUSE_MENU_BUTTON_COUNT :: 7
 
 Gameplay_Options :: struct {
     look_sensitivity:    f32,
@@ -116,7 +120,7 @@ sound_fx_muted :: #force_inline proc(editor: ^Editor) -> bool {
 @(no_instrumentation)
 pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> canvas2d.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
-    panel_height := options ? f32(560) : f32(488)
+    panel_height := options ? f32(560) : f32(546)
     panel_height = min(panel_height, f32(height) - 32)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
@@ -147,13 +151,18 @@ main_menu_button_bounds :: #force_inline proc(panel: canvas2d.Rectangle, row: in
 @(no_instrumentation)
 world_select_panel :: #force_inline proc(width, height: i32) -> canvas2d.Rectangle {
     panel_width := min(f32(820), f32(width) - 48)
-    panel_height := min(f32(590), f32(height) - 48)
+    // The map is a true 8 km x 8 km orthographic plan, so give the world
+    // selector enough vertical room to present it at a square aspect.
+    panel_height := min(f32(820), f32(height) - 48)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
 
 @(no_instrumentation)
 world_select_map_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
-    return {panel.x + 34, panel.y + 112, panel.width - 68, panel.height - 238}
+    available_width := panel.width - 68
+    available_height := panel.height - 238
+    size := min(available_width, available_height)
+    return {panel.x + (panel.width - size) * .5, panel.y + 112, size, size}
 }
 
 @(no_instrumentation)
@@ -304,6 +313,211 @@ photo_mode_close :: proc(editor: ^Editor) {
     editor.pause_focus = 0
     editor.photo_capture_pending = false
     set_pointer_locked(false)
+}
+
+SCRAPBOOK_PHOTO_COUNT :: 12
+SCRAPBOOK_COLUMNS :: 4
+
+Scrapbook_Sort :: enum {
+    Manual,
+    Newest,
+    Favorites,
+}
+
+scrapbook_focus := 0
+scrapbook_sort := Scrapbook_Sort.Manual
+scrapbook_manage := false
+scrapbook_viewing := false
+scrapbook_initialized := false
+scrapbook_favorites: [SCRAPBOOK_PHOTO_COUNT]bool
+scrapbook_archived: [SCRAPBOOK_PHOTO_COUNT]bool
+scrapbook_order: [SCRAPBOOK_PHOTO_COUNT]int
+
+scrapbook_titles := [SCRAPBOOK_PHOTO_COUNT]cstring {
+    "FIRST FLIGHT",
+    "PORTO ROSSO",
+    "AFTER THE RAIN",
+    "MARTA'S HANGAR",
+    "THE OLD LIGHT",
+    "GERTA AT NOON",
+    "ISLAND POST",
+    "BOUGAINVILLEA",
+    "QUIET RUNWAY",
+    "MARKOV WRECK",
+    "GOLDEN CROSSING",
+    "HOMEWARD",
+}
+
+scrapbook_dates := [SCRAPBOOK_PHOTO_COUNT]cstring {
+    "18 APR",
+    "23 APR",
+    "02 MAY",
+    "09 MAY",
+    "17 MAY",
+    "25 MAY",
+    "03 JUN",
+    "12 JUN",
+    "21 JUN",
+    "29 JUN",
+    "08 JUL",
+    "17 JUL",
+}
+
+scrapbook_init :: proc() {
+    if scrapbook_initialized do return
+    for index in 0 ..< SCRAPBOOK_PHOTO_COUNT do scrapbook_order[index] = index
+    scrapbook_favorites[1] = true
+    scrapbook_favorites[6] = true
+    scrapbook_favorites[10] = true
+    scrapbook_initialized = true
+}
+
+scrapbook_visible_count :: proc() -> int {
+    count := 0
+    for index in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+        if !scrapbook_archived[index] do count += 1
+    }
+    return count
+}
+
+scrapbook_photo_at :: proc(visible_index: int) -> int {
+    scrapbook_init()
+    seen := 0
+    if scrapbook_sort == .Newest {
+        for reverse in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+            photo := scrapbook_order[SCRAPBOOK_PHOTO_COUNT - 1 - reverse]
+            if scrapbook_archived[photo] do continue
+            if seen == visible_index do return photo
+            seen += 1
+        }
+    } else if scrapbook_sort == .Favorites {
+        for wanted_favorite in 0 ..< 2 {
+            favorite := wanted_favorite == 0
+            for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+                photo := scrapbook_order[position]
+                if scrapbook_archived[photo] || scrapbook_favorites[photo] != favorite do continue
+                if seen == visible_index do return photo
+                seen += 1
+            }
+        }
+    } else {
+        for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+            photo := scrapbook_order[position]
+            if scrapbook_archived[photo] do continue
+            if seen == visible_index do return photo
+            seen += 1
+        }
+    }
+    return 0
+}
+
+scrapbook_sort_label :: proc() -> cstring {
+    switch scrapbook_sort {
+    case .Manual:
+        return "CUSTOM ORDER"
+    case .Newest:
+        return "NEWEST FIRST"
+    case .Favorites:
+        return "FAVORITES FIRST"
+    }
+    return "CUSTOM ORDER"
+}
+
+scrapbook_open :: proc(editor: ^Editor) {
+    if editor == nil do return
+    scrapbook_init()
+    scrapbook_focus = clamp(scrapbook_focus, 0, max(scrapbook_visible_count() - 1, 0))
+    scrapbook_manage = false
+    scrapbook_viewing = false
+    editor.pause_screen = .Scrapbook
+}
+
+scrapbook_move_manual :: proc(direction: int) {
+    if scrapbook_sort != .Manual || direction == 0 do return
+    count := scrapbook_visible_count()
+    if count < 2 do return
+    target := clamp(scrapbook_focus + direction, 0, count - 1)
+    if target == scrapbook_focus do return
+    a := scrapbook_photo_at(scrapbook_focus)
+    b := scrapbook_photo_at(target)
+    a_position, b_position := -1, -1
+    for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+        if scrapbook_order[position] == a do a_position = position
+        if scrapbook_order[position] == b do b_position = position
+    }
+    if a_position >= 0 && b_position >= 0 {
+        scrapbook_order[a_position], scrapbook_order[b_position] =
+            scrapbook_order[b_position], scrapbook_order[a_position]
+        scrapbook_focus = target
+    }
+}
+
+scrapbook_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
+    if editor == nil do return
+    if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+        if scrapbook_viewing {
+            scrapbook_viewing = false
+        } else if scrapbook_manage {
+            scrapbook_manage = false
+        } else {
+            editor.pause_screen = .Pause
+            editor.pause_focus = 2
+        }
+        return
+    }
+    count := scrapbook_visible_count()
+    if count == 0 do return
+    mouse := canvas2d.GetMousePosition()
+    mouse_delta := canvas2d.GetMouseDelta()
+    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    if mouse_active && !scrapbook_viewing {
+        panel := canvas2d.Rectangle{32, 26, f32(width) - 64, f32(height) - 52}
+        for visible_index in 0 ..< count {
+            if canvas2d.CheckCollisionPointRec(mouse, scrapbook_card_bounds(panel, visible_index)) {
+                if canvas2d.IsMouseButtonPressed(.LEFT) && scrapbook_focus == visible_index && !scrapbook_manage {
+                    scrapbook_viewing = true
+                    return
+                }
+                scrapbook_focus = visible_index
+            }
+        }
+    }
+    if input_action_pressed(.Menu_Accept) {
+        scrapbook_viewing = !scrapbook_viewing
+        return
+    }
+    if canvas2d.IsKeyPressed(.M) || gamepad_pressed(.North) {
+        scrapbook_manage = !scrapbook_manage
+        scrapbook_viewing = false
+    }
+    photo := scrapbook_photo_at(scrapbook_focus)
+    if canvas2d.IsKeyPressed(.F) || gamepad_pressed(.West) do scrapbook_favorites[photo] = !scrapbook_favorites[photo]
+    if scrapbook_manage && (canvas2d.IsKeyPressed(.BACKSPACE) || gamepad_pressed(.East)) {
+        scrapbook_archived[photo] = true
+        scrapbook_focus = clamp(scrapbook_focus, 0, max(scrapbook_visible_count() - 1, 0))
+        return
+    }
+    if !scrapbook_manage && (canvas2d.IsKeyPressed(.Q) || gamepad_pressed(.Left_Shoulder)) {
+        scrapbook_sort = Scrapbook_Sort((int(scrapbook_sort) + 2) % 3)
+    }
+    if !scrapbook_manage && (canvas2d.IsKeyPressed(.E) || gamepad_pressed(.Right_Shoulder)) {
+        scrapbook_sort = Scrapbook_Sort((int(scrapbook_sort) + 1) % 3)
+    }
+    horizontal, vertical := game_input.menu_steps(
+        &editor.runtime_input,
+        gamepad_axis(.Left_X),
+        gamepad_axis(.Left_Y),
+        delta_seconds,
+    )
+    if canvas2d.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
+    if canvas2d.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
+    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
+    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
+    if scrapbook_manage && horizontal != 0 {
+        scrapbook_move_manual(horizontal)
+    } else {
+        scrapbook_focus = clamp(scrapbook_focus + horizontal + vertical * SCRAPBOOK_COLUMNS, 0, count - 1)
+    }
 }
 
 photo_mode_process_input :: proc(editor: ^Editor, delta_seconds: f32) {
@@ -1074,6 +1288,10 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         player_mail_process_input(editor, delta_seconds)
         return
     }
+    if editor.pause_screen == .Scrapbook {
+        scrapbook_process_input(editor, width, height, delta_seconds)
+        return
+    }
     if editor.pause_screen == .Photo {
         photo_mode_process_input(editor, delta_seconds)
         return
@@ -1137,11 +1355,13 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     case 1:
         player_mail_open(editor)
     case 2:
-        photo_mode_open(editor)
+        scrapbook_open(editor)
     case 3:
+        photo_mode_open(editor)
+    case 4:
         editor.pause_screen = .Options
         editor.options_focus = 0
-    case 4:
+    case 5:
         if editor.vehicle_paint_scene {
             if vehicle_paint_close(editor) do editor.pause_screen = .Closed
         } else if markov_wreck_return_from_flight(editor) {
@@ -1150,7 +1370,7 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         } else {
             pause_menu_return_to_editor(editor)
         }
-    case 5:
+    case 6:
         if editor.vehicle_paint_scene {
             if vehicle_paint_discard(editor) do editor.pause_screen = .Closed
         } else {
@@ -1216,8 +1436,8 @@ options_menu_draw_scrollbar :: proc(panel: canvas2d.Rectangle, scroll_y: f32) {
 
 options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     pause_menu_draw_header(panel, "", "OPTIONS")
-    navigation_hint: cstring = "ARROWS MOVE + CHANGE"
-    if controller_prompt_active(editor) do navigation_hint = "D-PAD / LS MOVE + CHANGE"
+    navigation_hint: cstring = "ARROWS SELECT + ADJUST"
+    if controller_prompt_active(editor) do navigation_hint = "D-PAD / LS SELECT + ADJUST"
     navigation_size := ui_measure_text(.Data, navigation_hint, .2)
     ui_draw_text(
         .Data,
@@ -1485,6 +1705,10 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.T
         player_mail_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Scrapbook {
+        scrapbook_draw(editor, width, height)
+        return
+    }
     if editor.pause_screen == .World_Select {
         world_select_draw(editor, width, height, false)
         return
@@ -1517,6 +1741,382 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.T
     )
 }
 
+scrapbook_card_bounds :: proc(panel: canvas2d.Rectangle, visible_index: int) -> canvas2d.Rectangle {
+    gap := f32(14)
+    card_width := (panel.width - 88 - gap * f32(SCRAPBOOK_COLUMNS - 1)) / SCRAPBOOK_COLUMNS
+    card_height := min(f32(154), card_width * .86)
+    column := visible_index % SCRAPBOOK_COLUMNS
+    row := visible_index / SCRAPBOOK_COLUMNS
+    return {
+        panel.x + 44 + f32(column) * (card_width + gap),
+        panel.y + 126 + f32(row) * (card_height + 14),
+        card_width,
+        card_height,
+    }
+}
+
+scrapbook_draw_photo :: proc(bounds: canvas2d.Rectangle, photo: int) {
+    image := canvas2d.Rectangle{bounds.x + 7, bounds.y + 7, bounds.width - 14, bounds.height - 43}
+    sky_colors := [4]canvas2d.Color {
+        {126, 184, 201, 255},
+        {222, 164, 112, 255},
+        {111, 142, 156, 255},
+        {179, 201, 190, 255},
+    }
+    sea_colors := [4]canvas2d.Color{{52, 115, 137, 255}, {71, 119, 126, 255}, {54, 86, 105, 255}, {65, 127, 118, 255}}
+    sky := sky_colors[photo % 4]
+    sea := sea_colors[(photo / 2) % 4]
+    canvas2d.DrawRectangleRec(image, sky)
+    horizon := image.y + image.height * (.52 + f32(photo % 3) * .05)
+    canvas2d.DrawRectangleRec({image.x, horizon, image.width, image.y + image.height - horizon}, sea)
+    sun_x := image.x + image.width * (.2 + f32((photo * 37) % 61) / 100)
+    sun_y := image.y + image.height * (.18 + f32(photo % 4) * .055)
+    canvas2d.DrawCircleV({sun_x, sun_y}, max(f32(5), image.width * .045), {247, 215, 142, 235})
+    island := canvas2d.Color{74, 91, 74, 255}
+    canvas2d.DrawCircleV({image.x + image.width * .28, horizon + 10}, image.width * .19, island)
+    canvas2d.DrawCircleV({image.x + image.width * .48, horizon + 13}, image.width * .23, island)
+    canvas2d.DrawCircleV({image.x + image.width * .72, horizon + 11}, image.width * .18, island)
+    building := canvas2d.Color{230, 211, 171, 255}
+    roof := canvas2d.Color{157, 70, 49, 255}
+    house_x := image.x + image.width * (.28 + f32(photo % 5) * .08)
+    canvas2d.DrawRectangleRec({house_x, horizon - 3, image.width * .16, image.height * .20}, building)
+    canvas2d.DrawRectangleRec({house_x - 2, horizon - 7, image.width * .16 + 4, 5}, roof)
+    if photo % 3 == 0 {
+        canvas2d.DrawRectangleRec(
+            {image.x + image.width * .72, horizon - image.height * .23, 7, image.height * .28},
+            building,
+        )
+        canvas2d.DrawCircleV({image.x + image.width * .72 + 3.5, horizon - image.height * .23}, 5, roof)
+    }
+    // A small white aeroplane silhouette ties the memories back to travel.
+    plane_x := image.x + image.width * (.58 + f32(photo % 3) * .08)
+    plane_y := image.y + image.height * (.25 + f32(photo % 2) * .10)
+    canvas2d.DrawRectangleRec({plane_x, plane_y, image.width * .13, 3}, {249, 242, 220, 235})
+    canvas2d.DrawRectangleRec({plane_x + image.width * .055, plane_y - 5, 3, 13}, {249, 242, 220, 235})
+}
+
+scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
+    if editor == nil do return
+    scrapbook_init()
+    panel := canvas2d.Rectangle{32, 26, f32(width) - 64, f32(height) - 52}
+    canvas2d.DrawRectangleRounded(panel, .025, 12, ui_theme_surface())
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border_strong())
+    ui_draw_text(.Data, "BECK'S COLLECTION", {panel.x + 44, panel.y + 24}, .35, ui_theme_accent())
+    title: cstring = scrapbook_manage ? "ARRANGE SCRAPBOOK" : "SCRAPBOOK"
+    ui_draw_text(.Display, title, {panel.x + 44, panel.y + 48}, .54, ui_theme_text())
+    sort_label := fmt.ctprintf("%s  ·  %d PHOTOS", scrapbook_sort_label(), scrapbook_visible_count())
+    sort_size := ui_measure_text(.Data, sort_label, .22)
+    ui_draw_text(
+        .Data,
+        sort_label,
+        {panel.x + panel.width - 44 - sort_size.x, panel.y + 67},
+        .22,
+        ui_theme_text_muted(),
+    )
+    canvas2d.DrawLineEx(
+        {panel.x + 44, panel.y + 101},
+        {panel.x + panel.width - 44, panel.y + 101},
+        1,
+        ui_theme_border(),
+    )
+
+    count := scrapbook_visible_count()
+    if count == 0 {
+        empty: cstring = "NO PHOTOS IN THIS SCRAPBOOK"
+        size := ui_measure_text(.Label, empty, .5)
+        ui_draw_text(
+            .Label,
+            empty,
+            {panel.x + (panel.width - size.x) * .5, panel.y + panel.height * .5},
+            .5,
+            ui_theme_text_muted(),
+        )
+    } else if scrapbook_viewing {
+        photo := scrapbook_photo_at(scrapbook_focus)
+        preview_width := min(panel.width * .68, f32(760))
+        preview := canvas2d.Rectangle {
+            panel.x + (panel.width - preview_width) * .5,
+            panel.y + 120,
+            preview_width,
+            panel.height - 205,
+        }
+        canvas2d.DrawRectangleRounded(
+            {preview.x - 10, preview.y - 10, preview.width + 20, preview.height + 56},
+            .02,
+            8,
+            ui_theme_surface_elevated(),
+        )
+        scrapbook_draw_photo({preview.x, preview.y, preview.width, preview.height + 36}, photo)
+        label := fmt.ctprintf(
+            "%02d  /  %02d     %s     %s",
+            scrapbook_focus + 1,
+            count,
+            scrapbook_titles[photo],
+            scrapbook_dates[photo],
+        )
+        ui_draw_text(.Label, label, {preview.x + 8, preview.y + preview.height + 19}, .38, ui_theme_text())
+        if scrapbook_favorites[photo] do ui_draw_text(.Data, "FAVORITE", {preview.x + preview.width - 76, preview.y + 12}, .2, {255, 247, 228, 255})
+    } else {
+        for visible_index in 0 ..< count {
+            photo := scrapbook_photo_at(visible_index)
+            card := scrapbook_card_bounds(panel, visible_index)
+            focused := visible_index == scrapbook_focus
+            canvas2d.DrawRectangleRounded(card, .035, 7, focused ? ui_theme_surface_elevated() : ui_theme_control())
+            canvas2d.DrawRectangleRoundedLinesEx(
+                card,
+                .035,
+                7,
+                focused ? 3 : 1,
+                focused ? ui_theme_focus() : ui_theme_border(),
+            )
+            scrapbook_draw_photo(card, photo)
+            ui_draw_text(.Data, scrapbook_titles[photo], {card.x + 9, card.y + card.height - 28}, .19, ui_theme_text())
+            date_size := ui_measure_text(.Data, scrapbook_dates[photo], .17)
+            ui_draw_text(
+                .Data,
+                scrapbook_dates[photo],
+                {card.x + card.width - date_size.x - 9, card.y + card.height - 27},
+                .17,
+                ui_theme_text_muted(),
+            )
+            if scrapbook_favorites[photo] {
+                canvas2d.DrawCircleV({card.x + card.width - 18, card.y + 18}, 10, ui_theme_accent())
+                ui_draw_text(.Data, "*", {card.x + card.width - 21, card.y + 14}, .26, ui_theme_text_inverse())
+            }
+            if focused && scrapbook_manage {
+                tag: cstring = scrapbook_sort == .Manual ? "MOVE" : "SWITCH TO CUSTOM ORDER"
+                tag_size := ui_measure_text(.Data, tag, .17)
+                canvas2d.DrawRectangleRounded(
+                    {card.x + 8, card.y + 8, tag_size.x + 12, 18},
+                    .2,
+                    6,
+                    ui_theme_scrim(170),
+                )
+                ui_draw_text(.Data, tag, {card.x + 14, card.y + 13}, .17, {255, 247, 228, 255})
+            }
+        }
+    }
+    hint: cstring = "ARROWS SELECT  ·  ENTER VIEW  ·  Q/E SORT  ·  F FAVORITE  ·  M MANAGE  ·  ESC BACK"
+    if scrapbook_manage do hint = "LEFT/RIGHT REORDER  ·  BACKSPACE ARCHIVE  ·  F FAVORITE  ·  M DONE  ·  ESC BACK"
+    if controller_prompt_active(editor) {
+        hint =
+            scrapbook_manage ? "D-PAD MOVE  ·  X FAVORITE  ·  B ARCHIVE  ·  Y DONE" : "D-PAD SELECT  ·  A VIEW  ·  LB/RB SORT  ·  X FAVORITE  ·  Y MANAGE"
+    }
+    hint_size := ui_measure_text(.Data, hint, .2)
+    ui_draw_text(
+        .Data,
+        hint,
+        {panel.x + (panel.width - hint_size.x) * .5, panel.y + panel.height - 22},
+        .2,
+        ui_theme_text_muted(),
+    )
+}
+
+WORLD_MAP_HALF_EXTENT :: f32(terrain.WORLD_SIZE_METERS * .5)
+// Keep posterization in the palette, not the coastline geometry. Equal sample
+// counts preserve equal world-space resolution on the square orthographic map.
+WORLD_MAP_COLUMNS :: 256
+WORLD_MAP_ROWS :: 256
+
+world_map_project :: #force_inline proc(map_bounds: canvas2d.Rectangle, world_x, world_z: f32) -> canvas2d.Vector2 {
+    return {
+        map_bounds.x + (world_x / WORLD_MAP_HALF_EXTENT + 1) * .5 * map_bounds.width,
+        map_bounds.y + (world_z / WORLD_MAP_HALF_EXTENT + 1) * .5 * map_bounds.height,
+    }
+}
+
+world_map_unproject :: #force_inline proc(map_bounds: canvas2d.Rectangle, screen_x, screen_y: f32) -> (f32, f32) {
+    world_x := ((screen_x - map_bounds.x) / map_bounds.width * 2 - 1) * WORLD_MAP_HALF_EXTENT
+    world_z := ((screen_y - map_bounds.y) / map_bounds.height * 2 - 1) * WORLD_MAP_HALF_EXTENT
+    return world_x, world_z
+}
+
+world_map_ink :: #force_inline proc(editor: ^Editor, world_x, world_z: f32) -> canvas2d.Color {
+    height := terrain.sample_height(&editor.project, 0, world_x, world_z)
+    sea := editor.project.sea_level
+    if height <= sea + .04 do return {31, 82, 101, 255}
+    if height <= sea + .32 do return {197, 180, 119, 255}
+
+    material := terrain.sample_material(&editor.project, 0, world_x, world_z)
+    surface := terrain.classify_ground(material, height, sea)
+    elevation := height - sea
+    switch surface {
+    case .Sand:
+        return elevation < .85 ? canvas2d.Color{211, 194, 132, 255} : canvas2d.Color{190, 169, 108, 255}
+    case .Dirt:
+        return elevation < 2.4 ? canvas2d.Color{165, 145, 91, 255} : canvas2d.Color{142, 124, 78, 255}
+    case .Grass:
+        if elevation < 2.2 do return {111, 137, 91, 255}
+        if elevation < 4.8 do return {82, 113, 76, 255}
+        return {61, 88, 67, 255}
+    }
+    return {111, 137, 91, 255}
+}
+
+world_map_draw_orthographic :: proc(editor: ^Editor, map_bounds: canvas2d.Rectangle) {
+    cell_width := map_bounds.width / f32(WORLD_MAP_COLUMNS)
+    cell_height := map_bounds.height / f32(WORLD_MAP_ROWS)
+    for row in 0 ..< WORLD_MAP_ROWS {
+        for column in 0 ..< WORLD_MAP_COLUMNS {
+            x := map_bounds.x + f32(column) * cell_width
+            y := map_bounds.y + f32(row) * cell_height
+            world_x, world_z := world_map_unproject(map_bounds, x + cell_width * .5, y + cell_height * .5)
+            canvas2d.DrawRectangleRec({x, y, cell_width + 1, cell_height + 1}, world_map_ink(editor, world_x, world_z))
+        }
+    }
+
+    // Roads and buildings are simplified into the same limited chart ink as
+    // the terrain. Curves retain their authored control points.
+    graph := &editor.project.road_graph
+    route_ink := canvas2d.Color{235, 218, 165, 205}
+    for edge in graph.edges[:graph.edge_count] {
+        previous := graph.nodes[edge.from].position
+        for segment in 1 ..= 10 {
+            amount := f32(segment) / 10
+            current := roads.edge_point(graph, edge, amount)
+            canvas2d.DrawLineEx(
+                world_map_project(map_bounds, previous.x, previous.z),
+                world_map_project(map_bounds, current.x, current.z),
+                1.35,
+                route_ink,
+            )
+            previous = current
+        }
+    }
+    building_ink := canvas2d.Color{74, 67, 52, 220}
+    for structure in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind != .Architecture && structure.kind != .Ruins do continue
+        point := world_map_project(map_bounds, structure.center_x, structure.center_z)
+        size := clamp(max(structure.width, structure.depth) / 32, f32(1.4), f32(4))
+        canvas2d.DrawRectangleRec({point.x - size * .5, point.y - size * .5, size, size}, building_ink)
+    }
+
+    // The player's white-centered vermilion pin remains legible over every
+    // posterized terrain band.
+    player := world_map_project(map_bounds, editor.pilot.position.x, editor.pilot.position.z)
+    canvas2d.DrawCircleV(player, 7, canvas2d.Color{181, 70, 43, 255})
+    canvas2d.DrawCircleV(player, 2.5, canvas2d.Color{246, 235, 203, 255})
+}
+
+world_map_front_point :: #force_inline proc(
+    editor: ^Editor,
+    map_bounds: canvas2d.Rectangle,
+    lateral, band_offset: f32,
+    seconds_ago: f32 = 0,
+) -> canvas2d.Vector2 {
+    front := &editor.atmosphere.schedule.front
+    age := max(editor.atmosphere.schedule.elapsed_seconds - front.start_seconds - seconds_ago, f32(0))
+    center_x := front.origin[0] + front.direction[0] * front.speed * age
+    center_z := front.origin[1] + front.direction[1] * front.speed * age
+    distortion :=
+        f32(math.sin(f64(lateral / max(front.cell_scale, f32(1)) * 2.1 + front.cell_phase))) * front.width * .12
+    along := band_offset - distortion
+    world_x := center_x + front.direction[0] * along - front.direction[1] * lateral
+    world_z := center_z + front.direction[1] * along + front.direction[0] * lateral
+    return world_map_project(map_bounds, world_x, world_z)
+}
+
+world_map_draw_front_curve :: proc(
+    editor: ^Editor,
+    map_bounds: canvas2d.Rectangle,
+    band_offset, seconds_ago, thickness: f32,
+    ink: canvas2d.Color,
+    dashed: bool = false,
+) {
+    previous := world_map_front_point(editor, map_bounds, -7600, band_offset, seconds_ago)
+    for segment in 1 ..= 64 {
+        lateral := -7600 + f32(segment) / 64 * 15200
+        current := world_map_front_point(editor, map_bounds, lateral, band_offset, seconds_ago)
+        if !dashed || (segment / 3) % 2 == 0 {
+            canvas2d.DrawLineEx(previous, current, thickness, ink)
+        }
+        previous = current
+    }
+}
+
+world_map_draw_weather_key :: proc(map_bounds: canvas2d.Rectangle) {
+    key := canvas2d.Rectangle{map_bounds.x + map_bounds.width - 232, map_bounds.y + 10, 220, 78}
+    canvas2d.DrawRectangleRec(key, canvas2d.Color{22, 58, 71, 218})
+    ui_draw_text(.Data, "FRONT KEY", {key.x + 9, key.y + 7}, .15, canvas2d.Color{242, 237, 211, 245})
+    canvas2d.DrawLineEx({key.x + 10, key.y + 29}, {key.x + 35, key.y + 29}, 2.4, canvas2d.Color{184, 224, 231, 225})
+    ui_draw_text(.Data, "NOW: RAIN/GUSTS/HAZE", {key.x + 43, key.y + 24}, .105, canvas2d.Color{226, 239, 241, 235})
+    for dash in 0 ..< 3 {
+        x := key.x + 10 + f32(dash) * 9
+        canvas2d.DrawLineEx({x, key.y + 47}, {x + 5, key.y + 47}, 1.7, canvas2d.Color{159, 205, 215, 135})
+    }
+    ui_draw_text(.Data, "HISTORY: 1 / 2 MINUTES AGO", {key.x + 43, key.y + 42}, .105, canvas2d.Color{204, 224, 228, 220})
+    canvas2d.DrawLineEx({key.x + 10, key.y + 65}, {key.x + 35, key.y + 65}, 2.5, canvas2d.Color{242, 231, 190, 235})
+    canvas2d.DrawLineEx({key.x + 35, key.y + 65}, {key.x + 29, key.y + 61}, 2.5, canvas2d.Color{242, 231, 190, 235})
+    canvas2d.DrawLineEx({key.x + 35, key.y + 65}, {key.x + 29, key.y + 69}, 2.5, canvas2d.Color{242, 231, 190, 235})
+    ui_draw_text(.Data, "TRAVEL DIRECTION", {key.x + 43, key.y + 60}, .105, canvas2d.Color{225, 225, 205, 225})
+}
+
+world_map_draw_weather_front :: proc(editor: ^Editor, map_bounds: canvas2d.Rectangle) {
+    front := &editor.atmosphere.schedule.front
+    if editor.atmosphere.override != .Automatic || !front.active {
+        eta_minutes := int(atmosphere.front_seconds_until_next(&editor.atmosphere) / 60 + .5)
+        label := fmt.ctprintf("NO ACTIVE FRONT  /  NEXT WINDOW ~%d MIN", eta_minutes)
+        ui_draw_text(.Data, label, {map_bounds.x + 16, map_bounds.y + 14}, .19, canvas2d.Color{222, 235, 237, 220})
+        return
+    }
+
+    half_width := front.width * .5
+    age := editor.atmosphere.schedule.elapsed_seconds - front.start_seconds
+    // Weather-channel motion history: the same front boundaries at earlier
+    // simulation times, dashed and faded so the displacement reads instantly.
+    history_seconds := [2]f32{120, 60}
+    history_alpha := [2]u8{55, 105}
+    for history_index in 0 ..< len(history_seconds) {
+        seconds_ago := history_seconds[history_index]
+        if age < seconds_ago do continue
+        history_ink := canvas2d.Color{151, 203, 214, history_alpha[history_index]}
+        world_map_draw_front_curve(editor, map_bounds, -half_width, seconds_ago, 1.7, history_ink, true)
+        world_map_draw_front_curve(editor, map_bounds, half_width, seconds_ago, 1.7, history_ink, true)
+    }
+
+    // Parallel rain bands make intensity readable while the heavy outer
+    // isobars preserve the exact moving, cellular front boundary.
+    for band in 0 ..= 10 {
+        amount := f32(band) / 10
+        offset := -half_width + amount * front.width
+        center_weight := 1 - math.abs(amount * 2 - 1)
+        ink := canvas2d.Color{126, 195, 211, u8(38 + center_weight * 54 * front.intensity)}
+        world_map_draw_front_curve(editor, map_bounds, offset, 0, 2.2, ink)
+    }
+    boundary_ink := canvas2d.Color{184, 224, 231, 225}
+    boundaries := [2]f32{-half_width, half_width}
+    for side in boundaries {
+        world_map_draw_front_curve(editor, map_bounds, side, 0, 2.4, boundary_ink)
+    }
+
+    // One chart arrow communicates travel direction without covering either
+    // island with repeated symbols.
+    tail_world := world_map_front_point(editor, map_bounds, 0, 0)
+    head_world := world_map_front_point(editor, map_bounds, 0, 520)
+    canvas2d.DrawLineEx(tail_world, head_world, 3, canvas2d.Color{242, 231, 190, 235})
+    direction_x, direction_y := head_world.x - tail_world.x, head_world.y - tail_world.y
+    length := max(f32(math.sqrt(f64(direction_x * direction_x + direction_y * direction_y))), f32(1))
+    direction_x, direction_y = direction_x / length, direction_y / length
+    normal_x, normal_y := -direction_y, direction_x
+    canvas2d.DrawLineEx(
+        head_world,
+        {head_world.x - direction_x * 10 + normal_x * 6, head_world.y - direction_y * 10 + normal_y * 6},
+        3,
+        canvas2d.Color{242, 231, 190, 235},
+    )
+    canvas2d.DrawLineEx(
+        head_world,
+        {head_world.x - direction_x * 10 - normal_x * 6, head_world.y - direction_y * 10 - normal_y * 6},
+        3,
+        canvas2d.Color{242, 231, 190, 235},
+    )
+
+    progress := int(atmosphere.front_progress(&editor.atmosphere) * 100 + .5)
+    label := fmt.ctprintf("FRONT %d  /  %d%%  /  %.1f M/S", int(front.event_id), progress, front.speed)
+    ui_draw_text(.Data, label, {map_bounds.x + 16, map_bounds.y + 14}, .19, canvas2d.Color{238, 247, 248, 245})
+    world_map_draw_weather_key(map_bounds)
+}
+
 world_select_draw :: proc(editor: ^Editor, width, height: i32, in_game: bool) {
     panel := world_select_panel(width, height)
     canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(248))
@@ -1534,43 +2134,21 @@ world_select_draw :: proc(editor: ^Editor, width, height: i32, in_game: bool) {
         map_focused ? ui_theme_focus() : ui_theme_border_strong(),
     )
 
-    // A compact chart-like silhouette: two inhabited islands and their sea lane.
-    west := canvas2d.Rectangle {
-        map_bounds.x + map_bounds.width * .15,
-        map_bounds.y + map_bounds.height * .24,
-        map_bounds.width * .25,
-        map_bounds.height * .52,
-    }
-    east := canvas2d.Rectangle {
-        map_bounds.x + map_bounds.width * .61,
-        map_bounds.y + map_bounds.height * .17,
-        map_bounds.width * .22,
-        map_bounds.height * .58,
-    }
-    land := canvas2d.Color{207, 192, 132, 255}
-    canvas2d.DrawRectangleRounded(west, .48, 20, land)
-    canvas2d.DrawRectangleRounded(east, .48, 20, land)
-    canvas2d.DrawLineEx(
-        {west.x + west.width, west.y + west.height * .58},
-        {east.x, east.y + east.height * .53},
-        3,
-        canvas2d.Color{242, 226, 173, 190},
-    )
+    canvas2d.BeginScissorMode(map_bounds)
+    world_map_draw_orthographic(editor, map_bounds)
 
     if editor.world_select_weather {
-        rain := canvas2d.Color{158, 210, 225, 210}
-        for index in 0 ..< 9 {
-            x := map_bounds.x + 48 + f32(index) * (map_bounds.width - 96) / 8
-            y := map_bounds.y + 38 + f32((index * 37) % 83)
-            canvas2d.DrawCircleV({x, y}, 18 + f32(index % 3) * 5, canvas2d.Color{228, 235, 235, 105})
-            canvas2d.DrawLineEx({x - 9, y + 25}, {x - 15, y + 39}, 2, rain)
-            canvas2d.DrawLineEx({x + 7, y + 25}, {x + 1, y + 39}, 2, rain)
-        }
-        ui_draw_text(.Data, "LIVE WEATHER", {map_bounds.x + 16, map_bounds.y + 14}, .22, {245, 250, 250, 235})
+        world_map_draw_weather_front(editor, map_bounds)
     }
 
-    canvas2d.DrawCircleV({west.x + west.width * .58, west.y + west.height * .52}, 8, ui_theme_accent())
-    canvas2d.DrawCircleV({west.x + west.width * .58, west.y + west.height * .52}, 3, ui_theme_text_inverse())
+    canvas2d.EndScissorMode()
+    canvas2d.DrawRectangleRoundedLinesEx(
+        map_bounds,
+        .025,
+        12,
+        map_focused ? 3 : 1,
+        map_focused ? ui_theme_focus() : ui_theme_border_strong(),
+    )
     ui_draw_text(
         .Label,
         "ADRIATIC",
@@ -1673,6 +2251,10 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
         player_mail_draw(editor, width, height)
         return
     }
+    if editor.pause_screen == .Scrapbook {
+        scrapbook_draw(editor, width, height)
+        return
+    }
 
     options := editor.pause_screen == .Options
     panel := pause_menu_panel(width, height, options)
@@ -1695,8 +2277,9 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
     unread := player_mail.unread_count(&editor.player_mail)
     mail_label: cstring = unread > 0 ? fmt.ctprintf("LETTERS · %d NEW", unread) : "LETTERS"
     pause_menu_button(pause_menu_button_bounds(panel, 1), mail_label, false, editor.pause_focus == 1)
-    pause_menu_button(pause_menu_button_bounds(panel, 2), "PHOTO MODE", false, editor.pause_focus == 2)
-    pause_menu_button(pause_menu_button_bounds(panel, 3), "OPTIONS", false, editor.pause_focus == 3)
+    pause_menu_button(pause_menu_button_bounds(panel, 2), "SCRAPBOOK", false, editor.pause_focus == 2)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), "PHOTO MODE", false, editor.pause_focus == 3)
+    pause_menu_button(pause_menu_button_bounds(panel, 4), "OPTIONS", false, editor.pause_focus == 4)
     return_label: cstring = "RETURN TO EDITOR"
     if editor.vehicle_paint_scene {
         return_label = "SAVE AND EXIT"
@@ -1704,8 +2287,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
         return_label = "RETURN TO WRECK LAB"
     }
     quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
-    pause_menu_button(pause_menu_button_bounds(panel, 4), return_label, false, editor.pause_focus == 4)
-    pause_menu_button(pause_menu_button_bounds(panel, 5), quit_label, false, editor.pause_focus == 5)
+    pause_menu_button(pause_menu_button_bounds(panel, 5), return_label, false, editor.pause_focus == 5)
+    pause_menu_button(pause_menu_button_bounds(panel, 6), quit_label, false, editor.pause_focus == 6)
     hint: cstring
     if editor.controller_disconnect_notice {
         hint = "Reconnect the controller or continue with keyboard and mouse"

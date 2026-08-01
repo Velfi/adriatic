@@ -308,7 +308,7 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRounded(panel, .10, 8, {20, 28, 29, 230})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {196, 167, 106, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "EUROPEAN CAR GENERATOR", {38, 38}, 20, 1, {247, 226, 176, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "COMPACT CIVILIAN MOTORING / 1938–1949", {38, 65}, 12, 1, {171, 204, 198, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "BODY STYLE  /  1938–1949", {38, 65}, 12, 1, {171, 204, 198, 255})
     controls := fmt.ctprintf("G GALLERY   1–4 / W INSPECT   R NEXT SEED   #%d", car_generator_lab_seed)
     canvas2d.DrawTextEx(canvas2d.Font{}, controls, {38, 82}, 11, 1, {196, 167, 106, 255})
     for kind, index in CAR_GENERATOR_LAB_KINDS {

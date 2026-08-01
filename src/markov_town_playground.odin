@@ -9,6 +9,7 @@ import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
 
@@ -19,6 +20,37 @@ Settlement_Lab_Fixture :: enum {
     Default,
     Slope,
     Waterfront,
+}
+
+SETTLEMENT_LAB_CONTROL_COUNT :: 17
+
+Settlement_Lab_Controls :: struct {
+    initialized:       bool,
+    baseline_levels:   [terrain.CLIPMAP_LEVELS]terrain.Clipmap_Level,
+    baseline_sea:      f32,
+    profile:           Settlement_Profile,
+    region:            Settlement_Region,
+    fixture:           Settlement_Lab_Fixture,
+    vertical_map:      bool,
+    seed:              u32,
+    radius_scale:      f32,
+    selected:          int,
+    dirty:             bool,
+}
+
+settlement_lab_controls: Settlement_Lab_Controls
+
+settlement_planned_grove_radial_supported :: proc(
+    scale: Settlement_Scale,
+    center, point: [2]f32,
+    radius: f32,
+) -> bool {
+    if scale != .Town || radius <= 0 do return true
+    // Row-major Markov traversal otherwise promotes the first (usually most
+    // northerly) foliage cell into the town's principal park. Keep civic
+    // groves within the inhabited middle; peripheral foliage remains eligible
+    // for smaller decorative planting after buildings are laid out.
+    return linalg.length(point - center) <= radius * .48
 }
 
 settlement_lab_target_parse :: proc(
@@ -246,27 +278,54 @@ settlement_map_frame :: proc(
 }
 
 markov_city_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_CITY, .Adriatic)
+    return settlement_lab_begin(editor, target, SETTLEMENT_CITY, .Adriatic)
 }
 
 markov_town_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_TOWN, .Adriatic)
+    return settlement_lab_begin(editor, target, SETTLEMENT_TOWN, .Adriatic)
 }
 
 markov_village_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_VILLAGE, .Adriatic)
+    return settlement_lab_begin(editor, target, SETTLEMENT_VILLAGE, .Adriatic)
 }
 
 aegean_city_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_CITY, .Aegean)
+    return settlement_lab_begin(editor, target, SETTLEMENT_CITY, .Aegean)
 }
 
 aegean_town_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_TOWN, .Aegean)
+    return settlement_lab_begin(editor, target, SETTLEMENT_TOWN, .Aegean)
 }
 
 aegean_village_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
-    return settlement_lab_configure(editor, target, SETTLEMENT_VILLAGE, .Aegean)
+    return settlement_lab_begin(editor, target, SETTLEMENT_VILLAGE, .Aegean)
+}
+
+settlement_lab_begin :: proc(
+    editor: ^Editor,
+    target: string,
+    profile: Settlement_Profile,
+    region: Settlement_Region,
+) -> bool {
+    if editor == nil do return false
+    fixture, vertical_map, seed_target := settlement_lab_target_parse(target)
+    seed := u32(0x4d4a54)
+    if parsed, ok := strconv.parse_int(seed_target); ok && parsed >= 0 do seed = u32(parsed)
+    // This control block owns a full clipmap baseline. Constructing it as a
+    // struct literal places the multi-megabyte aggregate in the main-thread
+    // stack before the call reaches settlement generation. Initialize the
+    // stable global storage directly instead.
+    mem.zero(&settlement_lab_controls, size_of(Settlement_Lab_Controls))
+    settlement_lab_controls.initialized = true
+    settlement_lab_controls.baseline_levels = editor.project.levels
+    settlement_lab_controls.baseline_sea = editor.project.sea_level
+    settlement_lab_controls.profile = profile
+    settlement_lab_controls.region = region
+    settlement_lab_controls.fixture = fixture
+    settlement_lab_controls.vertical_map = vertical_map
+    settlement_lab_controls.seed = seed
+    settlement_lab_controls.radius_scale = 1
+    return settlement_lab_configure(editor, target, profile, region)
 }
 
 settlement_lab_configure :: proc(
@@ -277,6 +336,7 @@ settlement_lab_configure :: proc(
     island_sign: f32 = 1,
     configure_presentation: bool = true,
     append_city_plan: bool = false,
+    radius_scale: f32 = 1,
 ) -> bool {
     if editor == nil do return false
     if !append_city_plan do editor.settlement_plan.patio_count = 0
@@ -309,28 +369,39 @@ settlement_lab_configure :: proc(
     center, town_z := terrain.default_town_center_for_project(&editor.project, sign)
     if fixture == .Waterfront {
         marina_x, marina_z := terrain.default_marina_direction(sign)
-        center += marina_x * 75
-        town_z += marina_z * 75
+        // Put the lab envelope on the coastal shoulder rather than merely
+        // nudging an otherwise inland town toward the marina. Fourteen town
+        // cells leaves buildable backland for a compact core while forcing
+        // streets and parcels to respond to generated coast variants.
+        waterfront_offset := profile.world_cell * 14
+        center += marina_x * waterfront_offset
+        town_z += marina_z * waterfront_offset
     }
     if fixture == .Slope {
-        // Place the settlement on the shoulder of a deterministic broad ridge.
-        // Two feathered raises make the fixture steep enough to exercise route
-        // grade and contour logic without producing an isolated volcano.
-        terrain.apply_stroke_with_hardness(&editor.project, .Raise, center, town_z - sign * 115, 225, 24, 1, .18)
+        // Place the settlement across the shoulder of a deterministic broad
+        // coastal ridge. The former 24 m rise was almost completely absorbed
+        // by block smoothing and read as flat in an oblique capture. A taller,
+        // closer feathered ridge leaves several visible contour bands through
+        // the town without becoming an isolated cone.
+        terrain.apply_stroke_with_hardness(&editor.project, .Raise, center, town_z - sign * 90, 230, 31, 1, .17)
         terrain.apply_stroke_with_hardness(
             &editor.project,
             .Raise,
             center + sign * 55,
-            town_z - sign * 95,
-            155,
-            13,
+            town_z - sign * 66,
+            160,
+            16,
             1,
-            .24,
+            .22,
         )
     }
     scale := profile.world_cell / SETTLEMENT_CITY.world_cell
-    radius := 245 * scale
-    editor.settlement_plan = {}
+    radius := 245 * scale * clamp(radius_scale, f32(.35), f32(2.5))
+    // Settlement_Plan is fixture-backed and intentionally capacious. Clear it
+    // at its stable editor address; assigning `{}` materializes another full
+    // plan in this procedure's stack frame and can overflow the macOS main
+    // thread before deterministic capture generation begins.
+    mem.zero(&editor.settlement_plan, size_of(Settlement_Plan))
     editor.settlement_plan.request = {
         region = region,
         scale  = profile.scale,
@@ -630,9 +701,11 @@ settlement_lab_configure :: proc(
     landmark_target := 1
     switch profile.scale {
     case .City:
-        landmark_target = 3 + seed % 4
+        // The post office and clinic are generated below as purpose-built
+        // civic parcels and count toward the settlement landmark program.
+        landmark_target = 1 + seed % 4
     case .Town:
-        landmark_target = 2 + seed % 2
+        landmark_target = seed % 2
     case .Village:
         landmark_target = 1
     }
@@ -667,7 +740,14 @@ settlement_lab_configure :: proc(
             setback := route_width * .5 + route_shoulder + plaza_depth + landmark_depth * .5 + .8
             x = route_origin[0] + route_normal[0] * setback * side
             z = route_origin[1] + route_normal[1] * setback * side
-            if terrain.sample_height(&editor.project, 0, x, z) <= editor.project.sea_level + .6 {
+            if !settlement_structure_footprint_on_land(
+                &editor.project,
+                x,
+                z,
+                landmark_width,
+                landmark_depth,
+                rotation,
+            ) {
                 side = -side
                 x = route_origin[0] + route_normal[0] * setback * side
                 z = route_origin[1] + route_normal[1] * setback * side
@@ -675,6 +755,16 @@ settlement_lab_configure :: proc(
             plaza_x = route_origin[0] + route_normal[0] * (route_width * .5 + route_shoulder + plaza_depth * .5) * side
             plaza_z = route_origin[1] + route_normal[1] * (route_width * .5 + route_shoulder + plaza_depth * .5) * side
             rotation = f32(math.atan2(f64(route_tangent[1]), f64(route_tangent[0])))
+        }
+        if !settlement_structure_footprint_on_land(
+            &editor.project,
+            x,
+            z,
+            landmark_width,
+            landmark_depth,
+            rotation,
+        ) {
+            continue
         }
         previous_count := editor.project.structure_count
         markov_town_add_landmark(
@@ -732,6 +822,14 @@ settlement_lab_configure :: proc(
             if suitability <= .12 do continue
             if cell_kind == .Foliage {
                 if foliage_index < park_target {
+                    if !settlement_planned_grove_radial_supported(
+                        profile.scale,
+                        editor.settlement_plan.request.center,
+                        {x, z},
+                        editor.settlement_plan.request.radius,
+                    ) {
+                        continue
+                    }
                     grove_width := (12 + f32((foliage_index * 7) % 7)) * (.7 + .3 * scale) * grove_footprint_scale
                     grove_depth := (11 + f32((foliage_index * 5) % 6)) * (.7 + .3 * scale) * grove_footprint_scale
                     if !settlement_park_site_clear(&editor.project, x, z, grove_width, grove_depth) {
@@ -795,6 +893,11 @@ settlement_lab_configure :: proc(
             // Prefer the greener, later edge of the settlement so the
             // fallback reads as a grove or common rather than a vacant plaza.
             score := macro.age * .68 + macro.suitability * .32
+            if profile.scale == .Town {
+                radial := linalg.length(macro.center - editor.settlement_plan.request.center)
+                centrality := 1 - clamp(radial / max(editor.settlement_plan.request.radius, f32(1)), f32(0), f32(1))
+                score = centrality * .72 + macro.suitability * .28
+            }
             if score > best_score {
                 best_index, best_score = macro_index, score
             }
@@ -823,16 +926,24 @@ settlement_lab_configure :: proc(
     // Reserve generated civic anchors and parks before ordinary parcels are
     // planned so a dense city cannot consume their structure capacity.
     plan := settlement_plan_generate_buildings(&editor.settlement_plan, &editor.project, &settlement_rng)
-    settlement_plan_prepare_block_terrain(&editor.settlement_plan, &editor.project)
+    _ = settlement_ruin_add_access(&editor.settlement_plan, &editor.project, &plan)
     markov_town_reseat_park_groves(&editor.settlement_plan, &editor.project)
     settlement_plan_seat_project_architecture(&editor.project)
     settlement_plan_seat_city(&plan, &editor.project)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
+    _ = settlement_plan_commit_town_retaining_walls(&editor.settlement_plan, &editor.project, &plan)
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
     for &structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
         structure.base_y = terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
-        _ = terrain.add_structure(&editor.project, structure)
+        structure_index := terrain.add_structure(&editor.project, structure)
+        if structure_index >= 0 {
+            // add_structure assigns the authoritative stable ID to its copy.
+            // Mirror that identity into the presentation plan so decorative
+            // grove reservations can be recognized without fuzzy geometry
+            // matching during rendering.
+            structure = editor.project.structures[structure_index]
+        }
     }
     settlement_plan_import_city(&editor.settlement_plan, &plan, &editor.project)
     settlement_patios_generate(editor)
@@ -984,6 +1095,14 @@ settlement_lab_configure :: proc(
                 inward_x, inward_z := (inner[0] - outer[0]) / segment_length, (inner[1] - outer[1]) / segment_length
                 candidate_camera_x := look_x - inward_x * camera.distance
                 candidate_camera_z := look_z - inward_z * camera.distance
+                if !settlement_camera_site_clear(
+                    &editor.project,
+                    candidate_camera_x,
+                    candidate_camera_z,
+                    2,
+                ) {
+                    continue
+                }
                 obstruction := f32(0)
                 for structure in editor.project.structures[:editor.project.structure_count] {
                     if structure.kind != .Foliage && structure.kind != .Architecture do continue
@@ -1324,11 +1443,134 @@ settlement_lab_process_input :: proc(editor: ^Editor) {
         editor.settlement_diagnostic_layer =
             (editor.settlement_diagnostic_layer + 1) % len(SETTLEMENT_DIAGNOSTIC_LAYERS)
     }
+    if !settlement_lab_controls.initialized do return
+    if canvas2d.IsKeyPressed(.UP) {
+        settlement_lab_controls.selected =
+            (settlement_lab_controls.selected + SETTLEMENT_LAB_CONTROL_COUNT - 1) % SETTLEMENT_LAB_CONTROL_COUNT
+    }
+    if canvas2d.IsKeyPressed(.DOWN) {
+        settlement_lab_controls.selected =
+            (settlement_lab_controls.selected + 1) % SETTLEMENT_LAB_CONTROL_COUNT
+    }
+    direction := 0
+    if canvas2d.IsKeyPressed(.LEFT) do direction = -1
+    if canvas2d.IsKeyPressed(.RIGHT) do direction = 1
+    if direction != 0 {
+        controls := &settlement_lab_controls
+        profile := &controls.profile
+        switch controls.selected {
+        case 0:
+            if direction < 0 && controls.seed > 0 {
+                controls.seed -= 1
+            } else if direction > 0 {
+                controls.seed += 1
+            }
+        case 1:
+            scale_index := (int(profile.scale) + direction + 3) % 3
+            switch Settlement_Scale(scale_index) {
+            case .City:    profile^ = SETTLEMENT_CITY
+            case .Town:    profile^ = SETTLEMENT_TOWN
+            case .Village: profile^ = SETTLEMENT_VILLAGE
+            }
+        case 2:
+            controls.region = controls.region == .Adriatic ? .Aegean : .Adriatic
+        case 3:
+            controls.fixture = Settlement_Lab_Fixture((int(controls.fixture) + direction + 3) % 3)
+        case 4:
+            controls.vertical_map = !controls.vertical_map
+        case 5:
+            controls.radius_scale = clamp(controls.radius_scale + f32(direction) * .05, f32(.35), f32(2.5))
+        case 6:
+            profile.world_cell = clamp(profile.world_cell + f32(direction), f32(4), f32(40))
+        case 7:
+            profile.neighborhood_steps = clamp(profile.neighborhood_steps + direction, 0, 400)
+        case 8:
+            profile.density_growth_steps = clamp(profile.density_growth_steps + direction, 0, 400)
+        case 9:
+            profile.medium_steps = clamp(profile.medium_steps + direction, 0, 200)
+        case 10:
+            profile.high_steps = clamp(profile.high_steps + direction, 0, 100)
+        case 11:
+            profile.core_steps = clamp(profile.core_steps + direction, 0, 50)
+        case 12:
+            profile.landmark_steps = clamp(profile.landmark_steps + direction, 0, 50)
+        case 13:
+            profile.foliage_steps = clamp(profile.foliage_steps + direction, 0, 200)
+        case 14:
+            profile.density_floor = clamp(profile.density_floor + f32(direction) * .01, f32(0), profile.density_ceiling)
+        case 15:
+            profile.density_ceiling = clamp(profile.density_ceiling + f32(direction) * .01, profile.density_floor, f32(1))
+        case 16:
+            profile.max_slope = clamp(profile.max_slope + f32(direction) * .01, f32(.01), f32(1.5))
+        }
+        controls.dirty = true
+    }
+    apply := canvas2d.IsKeyPressed(.ENTER)
+    if canvas2d.IsKeyPressed(.R) {
+        settlement_lab_controls.seed += 1
+        settlement_lab_controls.dirty = true
+        apply = true
+    }
+    if apply && settlement_lab_controls.dirty {
+        controls := &settlement_lab_controls
+        editor.project.levels = controls.baseline_levels
+        editor.project.sea_level = controls.baseline_sea
+        lab_scene_reset_content(editor)
+        fixture_prefix := ""
+        switch controls.fixture {
+        case .Slope:      fixture_prefix = "slope-"
+        case .Waterfront: fixture_prefix = "waterfront-"
+        case .Default:
+        }
+        map_prefix := controls.vertical_map ? "map-" : ""
+        target := fmt.tprintf("%s%s%u", fixture_prefix, map_prefix, controls.seed)
+        if settlement_lab_configure(
+            editor,
+            target,
+            controls.profile,
+            controls.region,
+            1,
+            true,
+            false,
+            controls.radius_scale,
+        ) {
+            controls.dirty = false
+            editor.project.revision += 1
+        }
+    }
 }
 
-settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
+settlement_lab_control_text :: proc(index: int) -> cstring {
+    controls := &settlement_lab_controls
+    profile := &controls.profile
+    switch index {
+    case 0:  return fmt.ctprintf("SEED                          %u", controls.seed)
+    case 1:  return fmt.ctprintf("SCALE                         %v", profile.scale)
+    case 2:  return fmt.ctprintf("REGION                        %v", controls.region)
+    case 3:  return fmt.ctprintf("TERRAIN                       %v", controls.fixture)
+    case 4:  return fmt.ctprintf("CAMERA                        %s", controls.vertical_map ? "MAP" : "PERSPECTIVE")
+    case 5:  return fmt.ctprintf("RADIUS                        %.0f%%", controls.radius_scale * 100)
+    case 6:  return fmt.ctprintf("WORLD CELL                    %.1fm", profile.world_cell)
+    case 7:  return fmt.ctprintf("NEIGHBORHOOD GROWTH           %d", profile.neighborhood_steps)
+    case 8:  return fmt.ctprintf("DENSITY GROWTH                %d", profile.density_growth_steps)
+    case 9:  return fmt.ctprintf("MEDIUM PROMOTION              %d", profile.medium_steps)
+    case 10: return fmt.ctprintf("HIGH PROMOTION                %d", profile.high_steps)
+    case 11: return fmt.ctprintf("CORE PROMOTION                %d", profile.core_steps)
+    case 12: return fmt.ctprintf("LANDMARKS                     %d", profile.landmark_steps)
+    case 13: return fmt.ctprintf("FOLIAGE                       %d", profile.foliage_steps)
+    case 14: return fmt.ctprintf("DENSITY FLOOR                 %.2f", profile.density_floor)
+    case 15: return fmt.ctprintf("DENSITY CEILING               %.2f", profile.density_ceiling)
+    case 16: return fmt.ctprintf("MAXIMUM SLOPE                 %.2f", profile.max_slope)
+    }
+    return ""
+}
+
+settlement_lab_draw_ui :: proc(editor: ^Editor, width: i32, _: i32) {
     if editor == nil || editor.settlement_diagnostic_layer < 0 do return
     plan := &editor.settlement_plan
+    panel := canvas2d.Rectangle{24, 24, 410, 498}
+    canvas2d.DrawRectangleRounded(panel, .035, 8, {13, 24, 27, 242})
+    canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 8, 1, {75, 211, 239, 210})
     region := plan.request.region == .Adriatic ? "ADRIATIC" : "AEGEAN"
     canvas2d.DrawTextEx(
         canvas2d.Font{},
@@ -1346,13 +1588,38 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
             len(SETTLEMENT_DIAGNOSTIC_LAYERS),
             SETTLEMENT_DIAGNOSTIC_LAYERS[editor.settlement_diagnostic_layer],
         ),
-        {38, 70},
+        {38, 66},
         13,
         1,
         {211, 250, 242, 255},
     )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        settlement_lab_controls.dirty ? "UP/DOWN SELECT  LEFT/RIGHT EDIT  ENTER APPLY *" : "UP/DOWN SELECT  LEFT/RIGHT EDIT  ENTER APPLY",
+        {38, 90},
+        10,
+        1,
+        settlement_lab_controls.dirty ? canvas2d.Color{245, 190, 82, 255} : canvas2d.Color{164, 190, 190, 255},
+    )
+    if settlement_lab_controls.initialized {
+        for index in 0 ..< SETTLEMENT_LAB_CONTROL_COUNT {
+            y := f32(116 + index * 20)
+            selected := index == settlement_lab_controls.selected
+            if selected {
+                canvas2d.DrawRectangleRounded({34, y - 3, 390, 19}, .22, 4, {34, 67, 72, 235})
+            }
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                settlement_lab_control_text(index),
+                {42, y},
+                10,
+                1,
+                selected ? canvas2d.Color{236, 242, 235, 255} : canvas2d.Color{174, 198, 198, 255},
+            )
+        }
+    }
     report := settlement_plan_report(plan)
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", report), {38, 94}, 11, 1, {164, 190, 190, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", report), {454, 38}, 10, 1, {164, 190, 190, 255})
     canvas2d.DrawTextEx(
         canvas2d.Font{},
         fmt.ctprintf(
@@ -1365,13 +1632,13 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
             editor.project.road_graph.edge_count,
             roads.MAX_EDGES,
         ),
-        {38, 114},
+        {454, 58},
         11,
         1,
         plan.valid ? canvas2d.Color{164, 220, 180, 255} : canvas2d.Color{244, 130, 120, 255},
     )
     if plan.request.scale == .Village {
         village_report := settlement_village_program_report(plan)
-        canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", village_report), {38, 134}, 11, 1, {211, 220, 175, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", village_report), {454, 78}, 10, 1, {211, 220, 175, 255})
     }
 }

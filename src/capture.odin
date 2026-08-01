@@ -39,6 +39,7 @@ Capture_Kind :: enum {
     Plant_Generator_Lab,
     Leaf_Generator_Lab,
     Flower_Generator_Lab,
+    Window_Generator_Lab,
     Fountain_Generator_Lab,
     Cemetery_Generator_Lab,
     Estuary_Delta_Lab,
@@ -146,6 +147,9 @@ CAPTURE_FOLIAGE_LOW_KINDS :: bit_set[Capture_Kind] {
 CAPTURE_BUILDING_TARGETS := [?]string {
     "<ordinal>",
     "ground-<ordinal>",
+    "stoop-straight",
+    "stoop-left",
+    "stoop-right",
     "cypress",
     "mouse-town",
     "west-town-review",
@@ -206,9 +210,11 @@ CAPTURE_STORY_MEETING_TARGETS := [?]string {
 }
 CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray", "scurry"}
 CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
-CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "alternate"}
+CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "stone", "alternate"}
 CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
     "gallery",
+    "climbing-garden",
+    "succulent-garden",
     "olive",
     "olive-71",
     "olive-79",
@@ -249,6 +255,15 @@ CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
     "sage",
     "prickly-pear",
     "pelargonium",
+    "wisteria",
+    "climbing-rose",
+    "hydrangea-bush",
+    "hydrangea-bush-seed-<seed>",
+    "hydrangea-bush-medium",
+    "hydrangea-bush-far",
+    "hydrangea-tree",
+    "agapanthus",
+    "star-jasmine",
     "pelargonium-lifecycle-0",
     "pelargonium-lifecycle-1",
     "pelargonium-lifecycle-2",
@@ -291,6 +306,17 @@ CAPTURE_FLOWER_GENERATOR_TARGETS := [?]string {
     "immature",
     "ripening",
     "ripe",
+}
+CAPTURE_WINDOW_GENERATOR_TARGETS := [?]string {
+    "gallery",
+    "adriatic-solid",
+    "adriatic-louvered",
+    "adriatic-persiana",
+    "aegean-solid",
+    "aegean-louvered",
+    "closed",
+    "ajar",
+    "open",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
 CAPTURE_CEMETERY_GENERATOR_TARGETS := [?]string {
@@ -342,8 +368,8 @@ CAPTURE_HERO_BUILDING_TARGETS := [?]string {
     "clinic-compact",
     "clinic-grand",
 }
-CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout", "rock-tool"}
-CAPTURE_MAP_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout"}
+CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout", "rock-tool", "plant-stamp", "road-tool"}
+CAPTURE_MAP_TARGETS := [?]string{"world-map", "world-map-weather", "dunes", "dunes-west", "dunes-blowout"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
     "adriatic",
     "aegean",
@@ -379,6 +405,8 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_PLANT_GENERATOR_TARGETS[:]
     case .Flower_Generator_Lab:
         return CAPTURE_FLOWER_GENERATOR_TARGETS[:]
+    case .Window_Generator_Lab:
+        return CAPTURE_WINDOW_GENERATOR_TARGETS[:]
     case .Fountain_Generator_Lab:
         return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
     case .Cemetery_Generator_Lab:
@@ -481,6 +509,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Flower_Generator_Lab, true
     case "flower-generator-lab":
         return .Flower_Generator_Lab, true
+    case "window-generator", "window-generator-lab":
+        return .Window_Generator_Lab, true
     case "fountain-generator", "fountain-generator-lab":
         return .Fountain_Generator_Lab, true
     case "cemetery-generator", "cemetery-generator-lab", "graveyard-generator", "graveyard-generator-lab":

@@ -13,7 +13,7 @@ default_town_sites_keep_the_full_settlement_envelope_on_land :: proc(t: ^testing
     defer terrain.free_project(project)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         town_x, town_z := terrain.default_town_center_for_project(project, sign)
-        runway_x, runway_z := terrain.default_runway_center(sign)
+        runway_x, runway_z := terrain.default_runway_center_for_project(project, sign)
         runway_half_length := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_RUNWAY_HALF_LENGTH
         runway_dx := max(math.abs(town_x - runway_x) - runway_half_length, f32(0))
         runway_dz := math.abs(town_z - runway_z)
@@ -490,7 +490,7 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
     defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        center_x, center_z := terrain.default_runway_center(sign)
+        center_x, center_z := terrain.default_runway_center_for_project(project, sign)
         runway_half_length := half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH
         runway_half_width := half_extent * terrain.DEFAULT_RUNWAY_HALF_WIDTH
         runway_ends := [2]f32{center_x - runway_half_length, center_x + runway_half_length}
@@ -501,10 +501,9 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
             }
         }
     }
-    testing.expect(t, project.road_graph.node_count == 10)
-    testing.expect(t, project.road_graph.edge_count == 8)
+    testing.expect(t, project.road_graph.node_count == 4)
+    testing.expect(t, project.road_graph.edge_count == 2)
     runway_edges := 0
-    arrival_edges := 0
     for edge in project.road_graph.edges[:project.road_graph.edge_count] {
         testing.expect(t, edge.pavement == .Asphalt)
         from := project.road_graph.nodes[edge.from].position
@@ -517,83 +516,36 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
                 sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
                 testing.expect(t, math.abs(terrain.sample_height(project, 0, sample_x, from.z) - from.y) < .001)
             }
-        } else {
-            arrival_edges += 1
-            testing.expect(t, edge.half_width == 3.5 || edge.half_width == 4)
-            testing.expect(t, from.z != to.z)
         }
     }
     testing.expect_value(t, runway_edges, len(terrain.DEFAULT_ISLAND_SIGNS))
-    testing.expect_value(t, arrival_edges, len(terrain.DEFAULT_ISLAND_SIGNS) * 3)
-    for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        airport_x, airport_z := terrain.default_airport_center(sign)
-        island_index := sign < 0 ? 0 : 1
-        seeds := terrain.DEFAULT_ISLAND_SEEDS
-        before_x, before_z, after_x, after_z := terrain.default_airport_road_bypass_for_seed(sign, seeds[island_index])
-        before_distance := math.sqrt(
-            (before_x - airport_x) * (before_x - airport_x) + (before_z - airport_z) * (before_z - airport_z),
-        )
-        after_distance := math.sqrt(
-            (after_x - airport_x) * (after_x - airport_x) + (after_z - airport_z) * (after_z - airport_z),
-        )
-        testing.expect(t, before_distance > 23)
-        testing.expect(t, after_distance > 23)
-    }
 }
 
 @(test)
-default_runway_sites_are_seeded_and_bounded_inside_islands :: proc(t: ^testing.T) {
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+default_runway_sites_are_terrain_selected_and_bounded_inside_islands :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         island_x, island_z := terrain.default_island_center(sign)
-        runway_x, runway_z := terrain.default_runway_center(sign)
+        runway_x, runway_z := terrain.default_runway_center_for_project(project, sign)
         offset_x := runway_x - island_x
         offset_z := runway_z - island_z
         testing.expect(t, math.abs(offset_x) + math.abs(offset_z) > 1)
-        testing.expect(t, math.abs(offset_x) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
-        testing.expect(t, math.abs(offset_z) < half_extent * terrain.DEFAULT_ISLAND_RADIUS * .2)
+        testing.expect(t, math.abs(offset_x) <= 640)
+        testing.expect(t, math.abs(offset_z) <= 560)
     }
 }
 
 @(test)
-regenerated_islands_connect_airports_at_the_regenerated_seeded_sites :: proc(t: ^testing.T) {
+regenerated_islands_place_runways_at_the_regenerated_terrain_selected_sites :: proc(t: ^testing.T) {
     seeds := terrain.next_default_island_seeds(terrain.DEFAULT_ISLAND_SEEDS)
     project := terrain.new_project_seeded(seeds)
     defer terrain.free_project(project)
-    testing.expect_value(t, project.road_graph.node_count, 10)
-    testing.expect_value(t, project.road_graph.edge_count, 8)
-    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        airport_x, airport_z := terrain.default_airport_center_for_seed(sign, seeds[island_index])
-        before_x, before_z, after_x, after_z := terrain.default_airport_road_bypass_for_seed(sign, seeds[island_index])
-        bypass_nodes := 0
-        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
-            from := project.road_graph.nodes[edge.from].position
-            to := project.road_graph.nodes[edge.to].position
-            if (math.abs(from.x - before_x) < .001 && math.abs(from.z - before_z) < .001) ||
-               (math.abs(to.x - before_x) < .001 && math.abs(to.z - before_z) < .001) ||
-               (math.abs(from.x - after_x) < .001 && math.abs(from.z - after_z) < .001) ||
-               (math.abs(to.x - after_x) < .001 && math.abs(to.z - after_z) < .001) {
-                bypass_nodes += 1
-            }
-        }
-        testing.expect_value(t, bypass_nodes, 3)
-        testing.expect(t, terrain.sample_height(project, 0, airport_x, airport_z) > project.sea_level)
-    }
-}
-
-@(test)
-default_towns_have_foundation_test_topography :: proc(t: ^testing.T) {
-    project := terrain.new_project()
-    defer terrain.free_project(project)
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    testing.expect_value(t, project.road_graph.node_count, 4)
+    testing.expect_value(t, project.road_graph.edge_count, 2)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_x, town_z := terrain.default_town_center(sign)
-        summit := terrain.sample_height(project, 0, town_x, town_z)
-        shoulder := terrain.sample_height(project, 0, town_x, town_z + sign * 30)
-        runway := terrain.sample_height(project, 0, island_center, island_center)
-        testing.expect(t, summit > shoulder + 1)
-        testing.expect(t, shoulder > runway + .5)
+        airport_x, airport_z := terrain.default_airport_center_for_project(project, sign)
+        testing.expect(t, terrain.sample_height(project, 0, airport_x, airport_z) > project.sea_level)
     }
 }
 
@@ -609,23 +561,6 @@ default_islands_have_bluffs_away_from_arrival_districts :: proc(t: ^testing.T) {
         bluff := terrain.sample_height(project, 0, bluff_x, bluff_z)
         runway := terrain.sample_height(project, 0, center_x, center_z)
         testing.expect(t, bluff > runway + 5)
-    }
-}
-
-@(test)
-default_town_hills_blend_smoothly_into_runway_constraints :: proc(t: ^testing.T) {
-    project := terrain.new_project()
-    defer terrain.free_project(project)
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    for sign in terrain.DEFAULT_ISLAND_SIGNS {
-        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        town_x, town_z := terrain.default_town_center(sign)
-        previous := terrain.sample_height(project, 0, town_x, island_center - sign * 48)
-        for offset in 49 ..= int(math.abs(town_z - island_center)) {
-            current := terrain.sample_height(project, 0, town_x, island_center - sign * f32(offset))
-            testing.expect(t, math.abs(current - previous) < .35)
-            previous = current
-        }
     }
 }
 

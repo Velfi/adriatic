@@ -303,6 +303,23 @@ default_runway_center :: proc(sign: f32) -> (x, z: f32) {
     return default_runway_center_for_seed(sign, seeds[island_index])
 }
 
+// The runway edge is the authoritative record of the site selected while the
+// project was generated. Falling back keeps old and partially-built projects
+// readable.
+default_runway_center_for_project :: proc(project: ^Project, sign: f32) -> (x, z: f32) {
+    if project != nil {
+        runway_half_width := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_WIDTH
+        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+            if math.abs(edge.half_width - runway_half_width) > .001 do continue
+            from := project.road_graph.nodes[edge.from].position
+            to := project.road_graph.nodes[edge.to].position
+            center_x, center_z := (from.x + to.x) * .5, (from.z + to.z) * .5
+            if center_x * sign > 0 do return center_x, center_z
+        }
+    }
+    return default_runway_center(sign)
+}
+
 // Keep the island's three arrival anchors in one compact, walkable district.
 // Towns sit inland from the channel-facing marina while the runway crosses the
 // same district at the island center.
@@ -324,7 +341,7 @@ default_town_center_for_project :: proc(
     nominal_x, nominal_z := default_town_center(sign)
     if project == nil do return nominal_x, nominal_z
     island_x, island_z := default_island_center(sign)
-    runway_x, runway_z := default_runway_center(sign)
+    runway_x, runway_z := default_runway_center_for_project(project, sign)
     runway_half_length := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_LENGTH
     best_x, best_z, best_score := nominal_x, nominal_z, f32(-1e30)
     step := f32(36)
@@ -400,25 +417,34 @@ default_airport_center :: proc(sign: f32) -> (x, z: f32) {
     return default_airport_center_for_seed(sign, seeds[island_index])
 }
 
-// Carry the town approach past the airport rather than through its open
-// arcade. Two parallel-offset waypoints form a short bypass with enough
-// clearance for the terminal footprint, road shoulder, and planted apron.
-default_airport_road_bypass_for_seed :: proc(sign: f32, seed: u32) -> (before_x, before_z, after_x, after_z: f32) {
-    center_x, center_z := default_runway_center_for_seed(sign, seed)
+default_airport_center_for_project :: proc(project: ^Project, sign: f32) -> (x, z: f32) {
+    center_x, center_z := default_runway_center_for_project(project, sign)
     half_extent := f32(WORLD_SIZE_METERS * .5)
-    threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
+    runway_threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
     town_x, town_z := default_town_center(sign)
-    airport_x, airport_z := default_airport_center_for_seed(sign, seed)
-    direction := linalg.normalize0([2]f32{town_x - threshold_x, town_z - center_z})
-    normal := [2]f32{-direction[1], direction[0]}
-    // Keep both islands' bypasses on the same visual side of their mirrored
-    // terminals instead of allowing route direction to flip the offset.
-    if normal[1] * sign < 0 do normal = -normal
-    along := f32(27)
-    clearance := f32(23)
-    before := [2]f32{airport_x, airport_z} - direction * along + normal * clearance
-    after := [2]f32{airport_x, airport_z} + direction * along + normal * clearance
-    return before[0], before[1], after[0], after[1]
+    approach_amount := f32(.18)
+    nominal_x := runway_threshold_x + (town_x - runway_threshold_x) * approach_amount
+    nominal_z := center_z + (town_z - center_z) * approach_amount
+    if project != nil {
+        best_x, best_z, best_distance := nominal_x, nominal_z, f32(1e30)
+        runway_width := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_WIDTH
+        for edge in project.road_graph.edges[:project.road_graph.edge_count] {
+            if math.abs(edge.half_width - runway_width) < .001 do continue
+            for sample_index in 0 ..= 24 {
+                point := roads.edge_point(&project.road_graph, edge, f32(sample_index) / 24)
+                dx, dz := point.x - nominal_x, point.z - nominal_z
+                distance := dx * dx + dz * dz
+                if distance < best_distance do best_x, best_z, best_distance = point.x, point.z, distance
+            }
+        }
+        // Only an authored forecourt/access edge may refine the terminal
+        // position. Settlement streets are discovered later and can be much
+        // closer than the runway threshold; without a local bound they pull
+        // the procedural airport into the town that it is meant to serve.
+        airport_road_snap_radius := f32(32)
+        if best_distance <= airport_road_snap_radius * airport_road_snap_radius do return best_x, best_z
+    }
+    return nominal_x, nominal_z
 }
 
 default_marina_direction :: #force_inline proc(sign: f32) -> (x, z: f32) {
@@ -1056,10 +1082,77 @@ load_project :: proc(project: ^Project, filename: string) -> bool {
     return project_migrate_v3(project, cast(^Project_V3)raw_data(data[header_size:]))
 }
 
+default_runway_natural_site :: proc(project: ^Project, sign: f32, seed: u32) -> (x, z, target, cost: f32) {
+    fallback_x, fallback_z := default_runway_center_for_seed(sign, seed)
+    if project == nil do return fallback_x, fallback_z, DEFAULT_ISLAND_HEIGHT, 0
+    island_x, island_z := default_island_center(sign)
+    half_length := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_LENGTH + DEFAULT_RUNWAY_SHOULDER
+    half_width := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_WIDTH + DEFAULT_RUNWAY_SHOULDER
+    best_x, best_z, best_target, best_score := fallback_x, fallback_z, f32(DEFAULT_ISLAND_HEIGHT), f32(1e30)
+    // Search broad natural benches. A small deterministic seed bias breaks
+    // near-ties without outweighing the actual cut/fill estimate.
+    for offset_z := f32(-560); offset_z <= 560; offset_z += 32 {
+        for offset_x := f32(-640); offset_x <= 640; offset_x += 32 {
+            candidate_x, candidate_z := island_x + offset_x, island_z + offset_z
+            heights: [45]f32
+            count := 0
+            valid := true
+            sum := f32(0)
+            for sample_z in 0 ..< 5 {
+                for sample_x in 0 ..< 9 {
+                    px := candidate_x + (f32(sample_x) / 8 * 2 - 1) * half_length
+                    pz := candidate_z + (f32(sample_z) / 4 * 2 - 1) * half_width
+                    height := sample_height(project, 0, px, pz)
+                    if height <= project.sea_level + .8 {
+                        valid = false
+                        break
+                    }
+                    heights[count] = height
+                    count += 1
+                    sum += height
+                }
+                if !valid do break
+            }
+            if !valid do continue
+            candidate_target := sum / f32(count)
+            candidate_cost := f32(0)
+            for height in heights[:count] do candidate_cost += math.abs(height - candidate_target)
+            distance_bias := linalg.length([2]f32{offset_x, offset_z}) * .015
+            tie := f32(islands.hash(seed ~ u32(int(offset_x) * 31 + int(offset_z))) & 0xffff) / 65535
+            score := candidate_cost + distance_bias + tie * .01
+            if score < best_score {
+                best_x, best_z, best_target, best_score = candidate_x, candidate_z, candidate_target, score
+            }
+        }
+    }
+    return best_x, best_z, best_target, best_score
+}
+
+default_level_runway_grade :: proc(data: ^Clipmap_Level, center_x, center_z, target: f32) {
+    if data == nil do return
+    half_length := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_LENGTH + DEFAULT_RUNWAY_SHOULDER
+    half_width := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_WIDTH + DEFAULT_RUNWAY_SHOULDER
+    for z in 0 ..< TERRAIN_RESOLUTION {
+        world_z := data.origin_z + f32(z) * data.cell_size
+        dz := max(math.abs(world_z - center_z) - half_width, f32(0))
+        if dz >= DEFAULT_RUNWAY_TERRAIN_FEATHER do continue
+        for x in 0 ..< TERRAIN_RESOLUTION {
+            world_x := data.origin_x + f32(x) * data.cell_size
+            dx := max(math.abs(world_x - center_x) - half_length, f32(0))
+            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            if distance >= DEFAULT_RUNWAY_TERRAIN_FEATHER do continue
+            weight := terrain_smooth_weight(1 - distance / DEFAULT_RUNWAY_TERRAIN_FEATHER)
+            index := sample_index(x, z)
+            data.heights[index] += (target - data.heights[index]) * weight
+            data.material[index] *= 1 - weight
+        }
+    }
+}
+
 add_default_runways_seeded :: proc(project: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) -> bool {
     if project == nil ||
-       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 5 > roads.MAX_NODES ||
-       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) * 4 > roads.MAX_EDGES {
+       project.road_graph.node_count + len(DEFAULT_ISLAND_SIGNS) * 2 > roads.MAX_NODES ||
+       project.road_graph.edge_count + len(DEFAULT_ISLAND_SIGNS) > roads.MAX_EDGES {
         return false
     }
     half_extent := f32(WORLD_SIZE_METERS * .5)
@@ -1067,30 +1160,14 @@ add_default_runways_seeded :: proc(project: ^Project, seeds: [len(DEFAULT_ISLAND
     runway_width := half_extent * DEFAULT_RUNWAY_HALF_WIDTH * 2
     for sign, island_index in DEFAULT_ISLAND_SIGNS {
         seed := seeds[island_index]
-        center_x, center_z := default_runway_center_for_seed(sign, seed)
+        center_x, center_z, runway_target, _ := default_runway_natural_site(project, sign, seed)
+        for &level in project.levels do default_level_runway_grade(&level, center_x, center_z, runway_target)
         runway_height := sample_height(project, 0, center_x, center_z)
         from := roads.add_node(&project.road_graph, {center_x - runway_half_length, runway_height, center_z}, 0)
         to := roads.add_node(&project.road_graph, {center_x + runway_half_length, runway_height, center_z}, 0)
         if from < 0 ||
            to < 0 ||
            roads.add_straight_edge(&project.road_graph, from, to, runway_width, 2, .Asphalt) < 0 {
-            return false
-        }
-        town_x, town_z := default_town_center_for_project(project, sign)
-        town_y := sample_height(project, 0, town_x, town_z)
-        town := roads.add_node(&project.road_graph, {town_x, town_y, town_z}, 7)
-        before_x, before_z, after_x, after_z := default_airport_road_bypass_for_seed(sign, seed)
-        before_y := sample_height(project, 0, before_x, before_z)
-        after_y := sample_height(project, 0, after_x, after_z)
-        before := roads.add_node(&project.road_graph, {before_x, before_y, before_z}, 8)
-        after := roads.add_node(&project.road_graph, {after_x, after_y, after_z}, 8)
-        inward_threshold := sign < 0 ? to : from
-        if town < 0 ||
-           before < 0 ||
-           after < 0 ||
-           roads.add_straight_edge(&project.road_graph, inward_threshold, before, 8, 2, .Asphalt, .85) < 0 ||
-           roads.add_straight_edge(&project.road_graph, before, after, 8, 2, .Asphalt, .85) < 0 ||
-           roads.add_straight_edge(&project.road_graph, after, town, 7, 1.5, .Asphalt, .85) < 0 {
             return false
         }
     }
@@ -1101,14 +1178,12 @@ add_default_runways :: proc(project: ^Project) -> bool {
     return add_default_runways_seeded(project, DEFAULT_ISLAND_SEEDS)
 }
 
-terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_extent: f32, iterations: int = 2) {
+terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, _: f32, iterations: int = 2) {
     if data == nil || len(scratch) < SAMPLES_PER_LEVEL || iterations <= 0 do return
-    constraints := default_terrain_constraints(half_extent)
     talus := .32 + data.cell_size * .035
     for _ in 0 ..< iterations {
         copy(scratch, data.heights[:])
         for z in 1 ..< TERRAIN_RESOLUTION - 1 {
-            world_z := data.origin_z + f32(z) * data.cell_size
             for x in 1 ..< TERRAIN_RESOLUTION - 1 {
                 index := sample_index(x, z)
                 height := scratch[index]
@@ -1126,12 +1201,7 @@ terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, half_e
                 delta := neighbor_average - height
                 excess := math.abs(delta) - talus
                 if excess <= 0 do continue
-                world_x := data.origin_x + f32(x) * data.cell_size
-                runway_protection := max(
-                    terrain_constraint_weight(constraints[10], world_x, world_z),
-                    terrain_constraint_weight(constraints[11], world_x, world_z),
-                )
-                erosion_strength := .18 * (1 - runway_protection)
+                erosion_strength := f32(.18)
                 adjustment := clamp(excess * erosion_strength, 0, 1.1)
                 if delta < 0 do adjustment = -adjustment
                 eroded := max(height + adjustment, f32(0))
@@ -2060,54 +2130,12 @@ default_generated_height :: proc(
             height, material = default_apply_island_hydrology(&hydrology, world_x, world_z, height, material)
         }
     }
-    // Settlement parcels need a predictable construction datum before their
-    // generated hill and the still-higher-priority runway are composed.
     infrastructure_weight := f32(0)
-    for sign in DEFAULT_ISLAND_SIGNS {
-        town_x, town_z := default_town_center(sign)
-        foundation := Terrain_Constraint {
-            mode     = .Set,
-            shape    = .Ellipse,
-            curve    = .Smooth,
-            priority = 5,
-            center_x = town_x,
-            center_z = town_z,
-            // A compact terrace, not a replacement landscape: the generated
-            // island remains visible between parcels and immediately beyond
-            // the civic core.
-            half_x   = DEFAULT_TOWN_HILL_RADIUS_X + 5,
-            half_z   = DEFAULT_TOWN_HILL_RADIUS_Z + 11,
-            feather  = 50,
-            target   = DEFAULT_ISLAND_HEIGHT,
-        }
-        foundation_weight := min(terrain_constraint_weight(foundation, world_x, world_z), f32(.72))
-        infrastructure_weight = max(infrastructure_weight, foundation_weight)
-        height = height * (1 - foundation_weight) + foundation.target * foundation_weight
-        _, center_z := default_island_center(sign)
-        access := Terrain_Constraint {
-            mode     = .Set,
-            shape    = .Rectangle,
-            curve    = .Smooth,
-            priority = 6,
-            center_x = town_x,
-            center_z = (center_z + town_z) * .5,
-            half_x   = 25,
-            half_z   = math.abs(town_z - center_z) * .5,
-            feather  = 42,
-            target   = DEFAULT_ISLAND_HEIGHT,
-        }
-        infrastructure_weight = max(infrastructure_weight, terrain_constraint_weight(access, world_x, world_z))
-        height = terrain_apply_constraint(height, access, world_x, world_z)
-    }
     constraints := default_terrain_constraints(half_extent)
-    infrastructure_weight = max(
-        infrastructure_weight,
-        max(
-            terrain_constraint_weight(constraints[10], world_x, world_z),
-            terrain_constraint_weight(constraints[11], world_x, world_z),
-        ),
-    )
-    height = terrain_compose_constraints(height, constraints[6:], world_x, world_z)
+    // Preserve seeded ridgelines, but leave town sites and access routes on the
+    // natural generated surface. Runway grading happens only after a cut/fill
+    // search has selected the least expensive viable site.
+    height = terrain_compose_constraints(height, constraints[8:10], world_x, world_z)
     material *= 1 - infrastructure_weight
     return
 }
@@ -2290,6 +2318,14 @@ sample_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) 
         return sample_level_material(data, x, z)
     }
     return 0
+}
+
+// Generated inland channels use values below the natural/coastal material
+// floor of -1. Keep this semantic test beside material sampling so settlement
+// and circulation code do not each invent a slightly different river mask.
+@(no_instrumentation)
+active_waterway_at :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> bool {
+    return sample_material(project, level, x, z) < -1.001
 }
 
 @(no_instrumentation)

@@ -40,6 +40,8 @@ Tweak_Page :: enum {
 
 tweak_selected_page := Tweak_Page.Terrain
 tweak_filter: im.TextFilter
+tweak_selected_note_index := -1
+tweak_note_delete_index := -1
 
 Terrain_Tweak :: struct {
     tool:      terrain.Tool,
@@ -616,7 +618,11 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
         }
     }
     if tweak_section("Project file") {
-        im.Text("File: %s", EDITOR_MAP_ARTIFACT_PATH)
+        if project_path, project_path_ok := map_artifact_save_path(context.temp_allocator); project_path_ok {
+            im.Text("File: %s", project_path)
+        } else {
+            im.TextDisabled("File: unavailable")
+        }
         if im.Button("Save project") do terrain_project_save(editor)
         im.SameLine()
         if im.Button("Load project") {
@@ -652,12 +658,14 @@ tweak_draw_atmosphere :: proc(editor: ^Editor) {
     im.SameLine()
     if im.RadioButton("Storm", a.override == .Storm) do a.override = .Storm
     im.SeparatorText("Adriatic climate")
-    im.TextUnformatted(fmt.ctprintf(
-        "Current %s  next %s  season %.1f%%",
-        atmosphere.regime_name(a.climate.current),
-        atmosphere.regime_name(a.climate.next),
-        atmosphere.season_phase(a) * 100,
-    ))
+    im.TextUnformatted(
+        fmt.ctprintf(
+            "Current %s  next %s  season %.1f%%",
+            atmosphere.regime_name(a.climate.current),
+            atmosphere.regime_name(a.climate.next),
+            atmosphere.season_phase(a) * 100,
+        ),
+    )
     if im.RadioButton("Maestral", a.climate.current == .Maestral) do atmosphere.set_climate_regime(a, .Maestral)
     im.SameLine()
     if im.RadioButton("Bura clear", a.climate.current == .Bura_Clear) do atmosphere.set_climate_regime(a, .Bura_Clear)
@@ -1256,6 +1264,122 @@ tweak_draw_navigation :: proc() {
 }
 
 tweak_draw_developer :: proc(editor: ^Editor) {
+    if tweak_section("Fixture notes", true) {
+        im.Checkbox("Show notes in game", &editor.notes_visible)
+        im.SameLine()
+        im.TextDisabled("%d / %d", editor.note_count, FIXTURE_NOTE_CAPACITY)
+        im.SameLine()
+        if fixture_notes_save_failed {
+            im.TextUnformatted("Autosave failed · retrying")
+        } else if fixture_notes_dirty {
+            im.TextDisabled("Saving…")
+        } else {
+            im.TextDisabled("Saved")
+        }
+        im.TextDisabled("Autosaved to %s · visibility is session-only", FIXTURE_EDITOR_PATH)
+        selected_structure :=
+            editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count
+        at_capacity := editor.note_count >= FIXTURE_NOTE_CAPACITY
+        im.BeginDisabled(at_capacity)
+        if im.Button("+ Scene note") {
+            if fixture_note_add(editor, .Scene) != nil do tweak_selected_note_index = editor.note_count - 1
+        }
+        im.SameLine()
+        im.BeginDisabled(!selected_structure)
+        if im.Button("+ Note on selected formation") {
+            if fixture_note_add(editor, .Structure) != nil do tweak_selected_note_index = editor.note_count - 1
+        }
+        im.EndDisabled()
+        im.EndDisabled()
+        if at_capacity do im.TextDisabled("Capacity reached — delete a note before adding another.")
+
+        if editor.note_count <= 0 {
+            tweak_selected_note_index = -1
+            im.Spacing()
+            im.TextDisabled("No notes yet. Add a scene note at the current camera focus,")
+            im.TextDisabled("or select a formation and attach a note to it.")
+        } else {
+            if tweak_selected_note_index < 0 || tweak_selected_note_index >= editor.note_count {
+                tweak_selected_note_index = 0
+            }
+            im.Spacing()
+            if im.BeginChild("##fixture_note_list", {190, 190}, {.Borders}) {
+                for index in 0 ..< min(editor.note_count, FIXTURE_NOTE_CAPACITY) {
+                    note := &editor.notes[index]
+                    target_label: cstring = note.target == .Structure ? "Formation" : "Scene"
+                    preview: cstring = note.text[0] == 0 ? "Untitled note" : cstring(&note.text[0])
+                    if im.Selectable(
+                        fmt.ctprintf("%02d  %s · %.22s", index + 1, target_label, preview),
+                        tweak_selected_note_index == index,
+                    ) {
+                        if fixture_note_placement_active() do fixture_note_placement_cancel(editor)
+                        tweak_selected_note_index = index
+                    }
+                }
+            }
+            im.EndChild()
+            im.SameLine()
+            if im.BeginChild("##fixture_note_editor", {0, 190}, {.Borders}) {
+                note := &editor.notes[tweak_selected_note_index]
+                placing_this_note := fixture_note_placement_index == tweak_selected_note_index
+                if note.target == .Structure && note.target_id != 0 {
+                    im.Text("Note %d · Formation %llu", tweak_selected_note_index + 1, note.target_id)
+                } else {
+                    im.Text("Note %d · Scene", tweak_selected_note_index + 1)
+                }
+                im.SetNextItemWidth(-1)
+                if im.InputTextMultiline(
+                    "##fixture_note_text",
+                    cstring(&note.text[0]),
+                    FIXTURE_NOTE_TEXT_CAPACITY,
+                    {0, 82},
+                ) {
+                    fixture_notes_mark_dirty()
+                }
+                im.BeginDisabled(placing_this_note)
+                if im.Button("Focus in viewport") {
+                    fixture_note_focus(editor, note)
+                    tweak_sync_from_editor(editor)
+                }
+                im.EndDisabled()
+                im.SameLine()
+                if placing_this_note {
+                    if im.Button("Cancel placement") do fixture_note_placement_cancel(editor)
+                } else {
+                    if im.Button("Place in viewport") do _ = fixture_note_placement_begin(editor, tweak_selected_note_index)
+                }
+                im.SetItemTooltip("Preview over terrain; left-click to place, right-click or Escape to cancel")
+                im.BeginDisabled(!selected_structure || placing_this_note)
+                if im.Button("Attach to selected formation") do _ = fixture_note_retarget(editor, note, .Structure)
+                im.EndDisabled()
+                im.SetItemTooltip("Follow the currently selected formation")
+                im.SameLine()
+                if im.Button("Delete…") {
+                    if placing_this_note do fixture_note_placement_cancel(editor)
+                    tweak_note_delete_index = tweak_selected_note_index
+                    im.OpenPopup("Delete fixture note?")
+                }
+            }
+            im.EndChild()
+
+            if im.BeginPopupModal("Delete fixture note?", nil, {.AlwaysAutoResize}) {
+                im.Text("Delete note %d?", tweak_note_delete_index + 1)
+                im.TextDisabled("This action cannot be undone.")
+                if im.Button("Delete note") {
+                    fixture_note_remove(editor, tweak_note_delete_index)
+                    tweak_selected_note_index = min(tweak_note_delete_index, editor.note_count - 1)
+                    tweak_note_delete_index = -1
+                    im.CloseCurrentPopup()
+                }
+                im.SameLine()
+                if im.Button("Cancel") {
+                    tweak_note_delete_index = -1
+                    im.CloseCurrentPopup()
+                }
+                im.EndPopup()
+            }
+        }
+    }
     if tweak_section("Labs", true) do tweak_draw_lab_switcher(editor)
     if tweak_section("Default map generation") {
         im.TextWrapped("Replaces both islands, towns, roads, and marinas.")

@@ -7,9 +7,74 @@ import lsystem "../lsystem"
 import "core:math"
 import "core:math/linalg"
 
+when ODIN_OS == .Windows {
+    foreign import adriatic_mesh "system:adriatic_mesh.lib"
+} else {
+    foreign import adriatic_mesh "system:adriatic_mesh"
+}
+
+foreign adriatic_mesh {
+    adriatic_generate_uv_atlas :: proc(
+        positions: ^f32,
+        vertex_count: u32,
+        indices: ^u32,
+        index_count: u32,
+        source_by_atlas_vertex: ^u32,
+        uv_by_atlas_vertex: ^f32,
+        atlas_indices: ^u32,
+        output_vertex_capacity: u32,
+    ) -> u32 ---
+}
+
 Vertex :: struct {
     position: [3]f32,
     normal:   [3]f32,
+    uv:       [2]f32,
+    // Continuous cylindrical coordinates authored from the generating
+    // spline. Unlike the xatlas UV above, this follows branch direction and
+    // survives chart duplication for procedural bark sampling.
+    bark_uv:  [2]f32,
+}
+
+generate_uv_atlas :: proc(mesh: ^Mesh) {
+    if mesh == nil || len(mesh.vertices) == 0 || len(mesh.indices) == 0 do return
+    capacity := len(mesh.indices)
+    sources := make([]u32, capacity)
+    uvs := make([]f32, capacity * 2)
+    indices := make([]u32, len(mesh.indices))
+    positions := make([][3]f32, len(mesh.vertices))
+    defer delete(sources)
+    defer delete(uvs)
+    defer delete(indices)
+    defer delete(positions)
+    for vertex, index in mesh.vertices do positions[index] = vertex.position
+    atlas_vertex_count := int(
+        adriatic_generate_uv_atlas(
+            &positions[0][0],
+            u32(len(mesh.vertices)),
+            raw_data(mesh.indices),
+            u32(len(mesh.indices)),
+            raw_data(sources),
+            raw_data(uvs),
+            raw_data(indices),
+            u32(capacity),
+        ),
+    )
+    if atlas_vertex_count <= 0 do return
+    for atlas_index in 0 ..< atlas_vertex_count {
+        if int(sources[atlas_index]) >= len(mesh.vertices) do return
+    }
+    vertices := make([dynamic]Vertex, atlas_vertex_count)
+    for atlas_index in 0 ..< atlas_vertex_count {
+        source_index := int(sources[atlas_index])
+        vertices[atlas_index] = mesh.vertices[source_index]
+        vertices[atlas_index].uv = {uvs[atlas_index * 2], uvs[atlas_index * 2 + 1]}
+    }
+    delete(mesh.vertices)
+    delete(mesh.indices)
+    mesh.vertices = vertices
+    mesh.indices = make([dynamic]u32, len(indices))
+    copy(mesh.indices[:], indices[:])
 }
 
 Mesh :: struct {
@@ -50,6 +115,7 @@ append_ring :: proc(
     radial_segments: int,
     previous_right: ^lsystem.Vec3,
     config: Config,
+    along: f32,
 ) -> u32 {
     unit_tangent := linalg.normalize0(tangent)
     reference := math.abs(unit_tangent[1]) > .88 ? lsystem.Vec3{1, 0, 0} : lsystem.Vec3{0, 1, 0}
@@ -67,7 +133,14 @@ append_ring :: proc(
         normal := linalg.normalize0(right * math.cos(angle) + up * math.sin(angle))
         lobing := math.sin(angle * 3 + phase) * .68 + math.sin(angle * 5 - phase * .73) * .32
         local_radius := radius * (1 + irregularity * lobing)
-        append(&mesh.vertices, Vertex{position = center + normal * local_radius, normal = normal})
+        append(
+            &mesh.vertices,
+            Vertex {
+                position = center + normal * local_radius,
+                normal   = normal,
+                bark_uv  = {f32(side) / f32(radial_segments), along},
+            },
+        )
     }
     return first
 }
@@ -90,6 +163,9 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
     previous_right: lsystem.Vec3
     previous_ring := u32(0)
     ring_count := 0
+    along: f32
+    previous_center: lsystem.Vec3
+    has_previous_center := false
     for segment_index in 0 ..< len(points) - 1 {
         a := segment_index > 0 ? points[segment_index - 1] : points[segment_index]
         b := points[segment_index]
@@ -103,7 +179,13 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
             after := catmull_rom(a, b, c, d, min(t + .015, f32(1)))
             tangent := after - before
             radius := radii[segment_index] + (radii[segment_index + 1] - radii[segment_index]) * t
-            ring := append_ring(mesh, center, tangent, radius, radial, &previous_right, config)
+            if has_previous_center {
+                delta := center - previous_center
+                along += math.sqrt(linalg.dot(delta, delta))
+            }
+            ring := append_ring(mesh, center, tangent, radius, radial, &previous_right, config, along)
+            previous_center = center
+            has_previous_center = true
             if ring_count > 0 {
                 for side in 0 ..< radial {
                     next := (side + 1) % radial
@@ -123,14 +205,20 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
         }
     }
     last_tangent := points[len(points) - 1] - points[len(points) - 2]
+    final_center := points[len(points) - 1]
+    if has_previous_center {
+        delta := final_center - previous_center
+        along += math.sqrt(linalg.dot(delta, delta))
+    }
     final_ring := append_ring(
         mesh,
-        points[len(points) - 1],
+        final_center,
         last_tangent,
         radii[len(radii) - 1],
         radial,
         &previous_right,
         config,
+        along,
     )
     if ring_count > 0 {
         for side in 0 ..< radial {
@@ -149,7 +237,7 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
 
     start_center := u32(len(mesh.vertices))
     start_tangent := linalg.normalize0(points[1] - points[0])
-    append(&mesh.vertices, Vertex{position = points[0], normal = -start_tangent})
+    append(&mesh.vertices, Vertex{position = points[0], normal = -start_tangent, bark_uv = {.5, 0}})
     first_ring := start_center - u32(radial)
     // The first ring is at vertex zero only for the first chain; recover it
     // from the number of rings appended by this chain.
@@ -160,7 +248,14 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
         append(&mesh.indices, start_center, first_ring + u32(next), first_ring + u32(side))
     }
     finish_center := u32(len(mesh.vertices))
-    append(&mesh.vertices, Vertex{position = points[len(points) - 1], normal = linalg.normalize0(last_tangent)})
+    append(
+        &mesh.vertices,
+        Vertex {
+            position = points[len(points) - 1],
+            normal   = linalg.normalize0(last_tangent),
+            bark_uv  = {.5, along},
+        },
+    )
     for side in 0 ..< radial {
         next := (side + 1) % radial
         append(&mesh.indices, finish_center, final_ring + u32(side), final_ring + u32(next))
@@ -214,5 +309,6 @@ generate :: proc(segments: []lsystem.Segment, config: Config) -> Mesh {
         vertex.normal = linalg.normalize0(vertex.normal)
         if linalg.dot(vertex.normal, vertex.normal) < .001 do vertex.normal = {0, 1, 0}
     }
+    generate_uv_atlas(&mesh)
     return mesh
 }

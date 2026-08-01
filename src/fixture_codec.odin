@@ -10,6 +10,8 @@ Fixture_Codec_Error_Kind :: enum {
     Portable_Encode,
     Container_Encode,
     Container_Decode,
+    Sectioned_Container_Encode,
+    Sectioned_Container_Decode,
     Schema_Mismatch,
     Migration,
 }
@@ -18,6 +20,7 @@ Fixture_Codec_Error :: struct {
     kind:      Fixture_Codec_Error_Kind,
     portable:  hs.Portable_Error,
     container: fixture_file.Fixture_Container_Error,
+    sectioned: fixture_file.Sectioned_Container_Error,
     migration: Fixture_Migration_Error,
 }
 
@@ -32,6 +35,7 @@ fixture_codec_error_dispose :: proc(error: ^Fixture_Codec_Error) {
     error.kind = .None
     error.portable = {}
     error.container = {}
+    error.sectioned = {}
     error.migration = {}
 }
 
@@ -74,13 +78,16 @@ fixture_codec_encode :: proc(
     }
     defer delete(portable, alloc)
 
-    container_data, container_error, container_ok := fixture_file.fixture_container_encode(
-        portable,
+    sections := []fixture_file.Section_Input{{key = {kind = .Core}, bytes = portable}}
+    container_data, sectioned_error, container_ok := fixture_file.sectioned_container_encode(
+        .Fixture,
         u32(FIXTURE_SCHEMA_VERSION),
-        alloc = alloc,
+        0,
+        sections,
+        alloc,
     )
     if !container_ok {
-        return nil, {kind = .Container_Encode, container = container_error}, false
+        return nil, {kind = .Sectioned_Container_Encode, sectioned = sectioned_error}, false
     }
     return container_data, {}, true
 }
@@ -97,6 +104,51 @@ fixture_codec_decode :: proc(
 ) {
     if alloc.procedure == nil {
         return {}, {kind = .Invalid_Argument}, false
+    }
+    sectioned_magic := fixture_file.Sectioned_Container_Magic
+    sectioned := len(data) >= len(sectioned_magic)
+    if sectioned {
+        for value, index in sectioned_magic {
+            if data[index] != value {
+                sectioned = false
+                break
+            }
+        }
+    }
+    if sectioned {
+        if len(data) < fixture_file.Sectioned_Container_Header_Size {
+            return {}, {kind = .Sectioned_Container_Decode, sectioned = {kind = .Truncated, offset = len(data)}}, false
+        }
+        section_count, count_error, count_ok := fixture_file.sectioned_container_directory_count(data)
+        if !count_ok {
+            return {}, {kind = .Sectioned_Container_Decode, sectioned = count_error}, false
+        }
+        entries := make([]fixture_file.Section_Entry, section_count, context.temp_allocator)
+        view, sectioned_error, container_ok := fixture_file.sectioned_container_decode(data, entries)
+        if !container_ok {
+            return {}, {kind = .Sectioned_Container_Decode, sectioned = sectioned_error}, false
+        }
+        if view.artifact_kind != .Fixture {
+            return {}, {kind = .Sectioned_Container_Decode, sectioned = {kind = .Invalid_Artifact, offset = 10}}, false
+        }
+        payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
+        if !found {
+            return {}, {kind = .Sectioned_Container_Decode, sectioned = {kind = .Invalid_Directory, offset = 24}}, false
+        }
+        if view.schema_version < 1 || view.schema_version > u32(FIXTURE_SCHEMA_VERSION) {
+            return {}, {kind = .Schema_Mismatch}, false
+        }
+        migration_result, migration_error, migration_ok := fixture_migration_run(
+            payload,
+            int(view.schema_version),
+            FIXTURE_SCHEMA_VERSION,
+            alloc,
+        )
+        if !migration_ok {
+            if !fixture_migration_result_empty(&migration_result) do fixture_migration_result_dispose(&migration_result)
+            return {}, {kind = .Migration, migration = migration_error}, false
+        }
+        return migration_result, {}, true
     }
     view, container_error, container_ok := fixture_file.fixture_container_decode(data)
     if !container_ok {

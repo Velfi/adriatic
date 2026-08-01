@@ -22,6 +22,12 @@ Arrangement :: enum u8 {
     Spiral,
 }
 
+Cluster_Form :: enum u8 {
+    Single,
+    Dome,
+    Ball,
+}
+
 Lifecycle_Stage :: enum u8 {
     Bud,
     Opening,
@@ -76,6 +82,23 @@ Lifecycle_Config :: struct {
     fruit:  Fruit_Config,
 }
 
+Cluster_Config :: struct {
+    form:            Cluster_Form,
+    flower_count:    int,
+    radius:          f32,
+    height:          f32,
+    floret_scale:    f32,
+    scale_variation: f32,
+    phase:           f32,
+}
+
+Cluster_Instance :: struct {
+    position: [3]f32,
+    normal:   [3]f32,
+    rotation: f32,
+    scale:    f32,
+}
+
 Vertex :: struct {
     position: [3]f32,
     normal:   [3]f32,
@@ -86,6 +109,10 @@ MAX_PETALS :: 24
 MAX_WHORLS :: 2
 MAX_SEGMENTS :: 24
 MAX_CENTER_SEGMENTS :: 32
+// Dense mopheads routinely need more surface samples than a simple umbel.
+// Keep this fixed-capacity and allocation-free, but leave enough headroom for
+// small overlapping florets rather than forcing consumers to inflate them.
+MAX_CLUSTER_FLOWERS :: 96
 MAX_VERTICES :: MAX_PETALS * MAX_WHORLS * (MAX_SEGMENTS + 1) * 3 + MAX_CENTER_SEGMENTS + 1
 MAX_INDICES :: MAX_PETALS * MAX_WHORLS * MAX_SEGMENTS * 12 + MAX_CENTER_SEGMENTS * 3
 
@@ -94,6 +121,11 @@ Mesh :: struct {
     vertex_count: int,
     indices:      [MAX_INDICES]u16,
     index_count:  int,
+}
+
+Cluster :: struct {
+    instances: [MAX_CLUSTER_FLOWERS]Cluster_Instance,
+    count:     int,
 }
 
 defaults :: proc() -> Config {
@@ -146,6 +178,101 @@ fruit_defaults :: proc(shape: Fruit_Shape = .Berry) -> Fruit_Config {
         result.ridges = 5
         result.ridge_depth = .045
         result.tip = -.04
+    }
+    return result
+}
+
+cluster_defaults :: proc(form: Cluster_Form = .Dome) -> Cluster_Config {
+    result := Cluster_Config {
+        form            = form,
+        flower_count    = 19,
+        radius          = 1,
+        height          = .52,
+        floret_scale    = .18,
+        scale_variation = .12,
+        phase           = 0,
+    }
+    switch form {
+    case .Single:
+        result.flower_count = 1
+        result.radius = 0
+        result.height = 0
+        result.floret_scale = 1
+        result.scale_variation = 0
+    case .Dome:
+    case .Ball:
+        result.flower_count = 24
+        result.height = 1
+        result.floret_scale = .16
+    }
+    return result
+}
+
+generate_cluster :: proc(config: Cluster_Config) -> Cluster {
+    result: Cluster
+    if int(config.form) < 0 || int(config.form) > int(Cluster_Form.Ball) do return result
+    result.count = clamp(config.flower_count, 1, MAX_CLUSTER_FLOWERS)
+    radius := max(config.radius, f32(0))
+    height := max(config.height, f32(0))
+    base_scale := max(config.floret_scale, f32(.01))
+    variation := clamp(config.scale_variation, f32(0), f32(.8))
+    golden_angle := f32(math.PI * (3 - math.sqrt(f32(5))))
+    tau := f32(2 * math.PI)
+
+    if config.form == .Single {
+        result.instances[0] = {normal = {0, 0, 1}, scale = base_scale}
+        result.count = 1
+        return result
+    }
+
+    for index in 0 ..< result.count {
+        angle := config.phase + f32(index) * golden_angle
+        scale_wave := math.sin(angle * 1.71 + f32(index) * .83)
+        instance_scale := base_scale * (1 + variation * scale_wave)
+        if config.form == .Dome {
+            if index == 0 {
+                result.instances[index] = {
+                    position = {0, 0, height},
+                    normal = {0, 0, 1},
+                    rotation = angle - math.floor(angle / tau) * tau,
+                    scale = instance_scale,
+                }
+                continue
+            }
+            t := f32(index) / f32(max(result.count - 1, 1))
+            ring := radius * math.sqrt(t)
+            normalized_ring := radius > 1e-6 ? clamp(ring / radius, f32(0), f32(1)) : f32(0)
+            z := height * math.sqrt(max(1 - normalized_ring * normalized_ring, f32(0)))
+            normal := normalize3({math.cos(angle) * normalized_ring, math.sin(angle) * normalized_ring, max(z / max(height, f32(.001)), f32(.12))})
+            result.instances[index] = {
+                position = {math.cos(angle) * ring, math.sin(angle) * ring, z},
+                normal = normal,
+                rotation = angle - math.floor(angle / tau) * tau,
+                scale = instance_scale,
+            }
+        } else {
+            t := (f32(index) + .5) / f32(result.count)
+            z_unit := 1 - 2 * t
+            ring_unit := math.sqrt(max(1 - z_unit * z_unit, f32(0)))
+            sphere_normal := [3]f32{math.cos(angle) * ring_unit, math.sin(angle) * ring_unit, z_unit}
+            // Positions lie on an ellipsoid, whose gradient—not the radial
+            // vector—is perpendicular to the surface. This distinction is
+            // visible on oblate mopheads: the upper florets should turn
+            // upward sooner than they would on a sphere.
+            surface_normal := normalize3(
+                {
+                    radius > 1e-6 ? sphere_normal[0] / radius : sphere_normal[0],
+                    radius > 1e-6 ? sphere_normal[1] / radius : sphere_normal[1],
+                    height > 1e-6 ? sphere_normal[2] / height : sphere_normal[2],
+                },
+            )
+            result.instances[index] = {
+                position = {sphere_normal[0] * radius, sphere_normal[1] * radius, sphere_normal[2] * height},
+                normal = surface_normal,
+                rotation = angle - math.floor(angle / tau) * tau,
+                scale = instance_scale,
+            }
+        }
     }
     return result
 }

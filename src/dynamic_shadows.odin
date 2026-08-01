@@ -24,20 +24,20 @@ Dynamic_Shadow_Cascade_Uniform :: struct {
 }
 
 Dynamic_Shadow_Uniform :: struct {
-    cascades: [DYNAMIC_SHADOW_CASCADE_COUNT]Dynamic_Shadow_Cascade_Uniform,
+    cascades:       [DYNAMIC_SHADOW_CASCADE_COUNT]Dynamic_Shadow_Cascade_Uniform,
     // Cascade selection distances from origin, final shadow strength.
-    settings: [4]f32,
+    settings:       [4]f32,
     // Authoritative world-space origin shared by caster culling and receivers.
-    origin:   [4]f32,
+    origin:         [4]f32,
     // Shared scene-atmosphere data. Keeping this in the existing per-frame
     // scene uniform avoids growing the already-full 128-byte push block.
-    fog_bank_a:          [fog_field.MAX_BANKS][4]f32,
-    fog_bank_b:          [fog_field.MAX_BANKS][4]f32,
-    fog_bank_c:          [fog_field.MAX_BANKS][4]f32,
-    fog_previous_a:      [fog_field.MAX_BANKS][4]f32,
-    fog_previous_b:      [fog_field.MAX_BANKS][4]f32,
-    fog_previous_c:      [fog_field.MAX_BANKS][4]f32,
-    fog_settings:        [4]f32,
+    fog_bank_a:     [fog_field.MAX_BANKS][4]f32,
+    fog_bank_b:     [fog_field.MAX_BANKS][4]f32,
+    fog_bank_c:     [fog_field.MAX_BANKS][4]f32,
+    fog_previous_a: [fog_field.MAX_BANKS][4]f32,
+    fog_previous_b: [fog_field.MAX_BANKS][4]f32,
+    fog_previous_c: [fog_field.MAX_BANKS][4]f32,
+    fog_settings:   [4]f32,
 }
 
 Dynamic_Shadow_Push :: struct {
@@ -414,6 +414,165 @@ shadow_append_box :: proc(structure: terrain.Structure) {
     for face in faces do shadow_append_triangle(p[face[0]], p[face[1]], p[face[2]])
 }
 
+shadow_append_indexed :: proc(vertices: []World_Vertex, indices: []u32) -> bool {
+    if len(vertices) == 0 || len(indices) < 3 do return false
+    appended := false
+    for triangle := 0; triangle + 2 < len(indices); triangle += 3 {
+        a, b, c := int(indices[triangle]), int(indices[triangle + 1]), int(indices[triangle + 2])
+        if a < 0 || b < 0 || c < 0 || a >= len(vertices) || b >= len(vertices) || c >= len(vertices) {
+            continue
+        }
+        if !dynamic_shadow_material_casts(vertices[a].kind) ||
+           !dynamic_shadow_material_casts(vertices[b].kind) ||
+           !dynamic_shadow_material_casts(vertices[c].kind) {
+            continue
+        }
+        append(
+            &world_renderer.shadow_vertices,
+            vertices[a],
+            vertices[b],
+            vertices[c],
+        )
+        appended = true
+    }
+    return appended
+}
+
+shadow_instance_position :: #force_inline proc(vertex: World_Vertex, instance: World_Mesh_Instance) -> [3]f32 {
+    return {
+        instance.basis_x_translation_x[0] * vertex.position[0] +
+            instance.basis_y_translation_y[0] * vertex.position[1] +
+            instance.basis_z_translation_z[0] * vertex.position[2] +
+            instance.basis_x_translation_x[3],
+        instance.basis_x_translation_x[1] * vertex.position[0] +
+            instance.basis_y_translation_y[1] * vertex.position[1] +
+            instance.basis_z_translation_z[1] * vertex.position[2] +
+            instance.basis_y_translation_y[3],
+        instance.basis_x_translation_x[2] * vertex.position[0] +
+            instance.basis_y_translation_y[2] * vertex.position[1] +
+            instance.basis_z_translation_z[2] * vertex.position[2] +
+            instance.basis_z_translation_z[3],
+    }
+}
+
+shadow_append_instances :: proc() {
+    for &mesh in world_renderer.instance_meshes {
+        vertex_first := int(mesh.first_vertex)
+        index_first := int(mesh.first_index)
+        index_count := int(mesh.index_count)
+        if vertex_first < 0 || index_first < 0 || index_count < 3 ||
+           index_first + index_count > len(world_renderer.instance_indices) {
+            continue
+        }
+        for instance in mesh.instances {
+            for triangle := index_first; triangle + 2 < index_first + index_count; triangle += 3 {
+                a := vertex_first + int(world_renderer.instance_indices[triangle])
+                b := vertex_first + int(world_renderer.instance_indices[triangle + 1])
+                c := vertex_first + int(world_renderer.instance_indices[triangle + 2])
+                if a < vertex_first || b < vertex_first || c < vertex_first ||
+                   a >= len(world_renderer.instance_vertices) ||
+                   b >= len(world_renderer.instance_vertices) ||
+                   c >= len(world_renderer.instance_vertices) {
+                    continue
+                }
+                pa := shadow_instance_position(world_renderer.instance_vertices[a], instance)
+                pb := shadow_instance_position(world_renderer.instance_vertices[b], instance)
+                pc := shadow_instance_position(world_renderer.instance_vertices[c], instance)
+                shadow_append_triangle(
+                    {pa[0], pa[1], pa[2]},
+                    {pb[0], pb[1], pb[2]},
+                    {pc[0], pc[1], pc[2]},
+                )
+            }
+        }
+    }
+}
+
+shadow_append_raised_roads :: proc(editor: ^Editor) {
+    vertices := world_renderer.road_geometry_cache[:]
+    for triangle := 0; triangle + 2 < len(vertices); triangle += 3 {
+        a, b, c := vertices[triangle], vertices[triangle + 1], vertices[triangle + 2]
+        center_x := (a.position[0] + b.position[0] + c.position[0]) / 3
+        center_z := (a.position[2] + b.position[2] + c.position[2]) / 3
+        dx := center_x - world_renderer.dynamic_shadow.anchor.x
+        dz := center_z - world_renderer.dynamic_shadow.anchor.z
+        if dx * dx + dz * dz > DYNAMIC_SHADOW_PROXY_RADIUS * DYNAMIC_SHADOW_PROXY_RADIUS do continue
+        terrain_a := terrain.sample_height(&editor.project, 0, a.position[0], a.position[2])
+        terrain_b := terrain.sample_height(&editor.project, 0, b.position[0], b.position[2])
+        terrain_c := terrain.sample_height(&editor.project, 0, c.position[0], c.position[2])
+        clearance := max(
+            a.position[1] - terrain_a,
+            max(b.position[1] - terrain_b, c.position[1] - terrain_c),
+        )
+        vertical_span := max(a.position[1], max(b.position[1], c.position[1])) -
+            min(a.position[1], min(b.position[1], c.position[1]))
+        // Ordinary pavement hugs the receiver and would only introduce acne.
+        // Elevated decks, curbs, retaining faces, and bridge details clear
+        // this threshold and cast their actual cached triangles.
+        if clearance <= .045 && vertical_span <= .08 do continue
+        append(&world_renderer.shadow_vertices, a, b, c)
+    }
+}
+
+shadow_append_terrain :: proc(editor: ^Editor) {
+    // One sun-space terrain mesh is shared by all cascades. A five-metre grid
+    // resolves the large landforms that produce meaningful cast shadows while
+    // avoiding a second full clipmap build in the CPU submission path.
+    GRID_CELLS :: 64
+    coverage := DYNAMIC_SHADOW_COVERAGES[DYNAMIC_SHADOW_CASCADE_COUNT - 1]
+    step := coverage / GRID_CELLS
+    start_x := math.floor((world_renderer.dynamic_shadow.anchor.x - coverage * .5) / step) * step
+    start_z := math.floor((world_renderer.dynamic_shadow.anchor.z - coverage * .5) / step) * step
+    heights: [GRID_CELLS + 1][GRID_CELLS + 1]f32
+    for z in 0 ..= GRID_CELLS {
+        for x in 0 ..= GRID_CELLS {
+            world_x := start_x + f32(x) * step
+            world_z := start_z + f32(z) * step
+            heights[z][x] = terrain.sample_height(&editor.project, 0, world_x, world_z)
+        }
+    }
+    for z in 0 ..< GRID_CELLS {
+        for x in 0 ..< GRID_CELLS {
+            x0, x1 := start_x + f32(x) * step, start_x + f32(x + 1) * step
+            z0, z1 := start_z + f32(z) * step, start_z + f32(z + 1) * step
+            a := third_person.Vec3{x0, heights[z][x], z0}
+            b := third_person.Vec3{x1, heights[z][x + 1], z0}
+            c := third_person.Vec3{x1, heights[z + 1][x + 1], z1}
+            d := third_person.Vec3{x0, heights[z + 1][x], z1}
+            shadow_append_triangle(a, c, b)
+            shadow_append_triangle(a, d, c)
+        }
+    }
+}
+
+shadow_append_grass_cards :: proc(
+    editor: ^Editor,
+    instances: []Grass_Instance,
+    radius, density: f32,
+) {
+    sky := atmosphere_sky(editor)
+    sun_x, sun_z := sky.sun_direction[0], sky.sun_direction[2]
+    horizontal := f32(math.sqrt(f64(sun_x * sun_x + sun_z * sun_z)))
+    right := third_person.Vec3{1, 0, 0}
+    if horizontal > .001 do right = {-sun_z / horizontal, 0, sun_x / horizontal}
+    radius_squared := radius * radius
+    for instance in instances {
+        dx := instance.center[0] - world_renderer.dynamic_shadow.anchor.x
+        dz := instance.center[2] - world_renderer.dynamic_shadow.anchor.z
+        if dx * dx + dz * dz > radius_squared do continue
+        if instance.cull_params[0] > density do continue
+        half_width := max(instance.size[0] * .16, f32(.015))
+        height := max(instance.size[1] * .88, f32(.04))
+        base := third_person.Vec3{instance.center[0], instance.center[1] - instance.size[1] * .5, instance.center[2]}
+        a, b := base - right * half_width, base + right * half_width
+        c, d := b + third_person.Vec3{0, height, 0}, a + third_person.Vec3{0, height, 0}
+        shadow_append_triangle(a, c, b)
+        shadow_append_triangle(a, d, c)
+        shadow_append_triangle(b, c, a)
+        shadow_append_triangle(c, d, a)
+    }
+}
+
 dynamic_shadow_resolve_anchor :: proc(editor: ^Editor) -> third_person.Vec3 {
     if lab_scene_is_active(editor, "boat") {
         // The inspection camera is outside the fleet. Keep shadow allocation,
@@ -425,23 +584,91 @@ dynamic_shadow_resolve_anchor :: proc(editor: ^Editor) -> third_person.Vec3 {
     return anchor
 }
 
+dynamic_shadow_range_is_covered :: #force_inline proc(candidate, covering: World_Shadow_Caster_Range) -> bool {
+    return(
+        candidate.count > 0 &&
+        candidate.first >= covering.first &&
+        candidate.first + candidate.count <= covering.first + covering.count \
+    )
+}
+
+world_register_shadow_caster :: #force_inline proc(first: int) {
+    count := len(world_renderer.vertices) - first
+    if first < 0 || count <= 0 do return
+    candidate := World_Shadow_Caster_Range{first = first, count = count}
+    for &existing in world_renderer.explicit_shadow_caster_ranges {
+        if dynamic_shadow_range_is_covered(candidate, existing) do return
+        if dynamic_shadow_range_is_covered(existing, candidate) {
+            existing = candidate
+            return
+        }
+    }
+    append(&world_renderer.explicit_shadow_caster_ranges, candidate)
+}
+
+dynamic_shadow_material_casts :: #force_inline proc(kind: World_Material_Kind) -> bool {
+    #partial switch kind {
+    case .Unshaded,
+         .Water,
+         .Emissive,
+         .Emissive_Pool,
+         .Glass,
+         .Emissive_Halo,
+         .Lighthouse_Glitter,
+         .Fountain_Water,
+         .Fog_Shell:
+        return false
+    }
+    return true
+}
+
+shadow_append_world_range :: proc(first, count: int) {
+    if first < 0 || count < 3 || first + count > len(world_renderer.vertices) do return
+    end := first + count
+    for triangle := first; triangle + 2 < end; triangle += 3 {
+        a, b, c := world_renderer.vertices[triangle], world_renderer.vertices[triangle + 1], world_renderer.vertices[triangle + 2]
+        if !dynamic_shadow_material_casts(a.kind) ||
+           !dynamic_shadow_material_casts(b.kind) ||
+           !dynamic_shadow_material_casts(c.kind) {
+            continue
+        }
+        append(&world_renderer.shadow_vertices, a, b, c)
+    }
+}
+
 dynamic_shadow_build_casters :: proc(editor: ^Editor) {
     clear(&world_renderer.shadow_vertices)
     first := world_renderer.dynamic_caster_first
     count := world_renderer.dynamic_caster_count
-    if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
-        append(&world_renderer.shadow_vertices, ..world_renderer.vertices[first:first + count])
+    dynamic_range := World_Shadow_Caster_Range {
+        first = first,
+        count = count,
     }
-    sky := atmosphere_sky(editor)
-    inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))
-    for structure in editor.project.structures[:editor.project.structure_count] {
-        if structure.kind != .Architecture &&
-           structure.kind != .Foliage &&
-           structure.kind != .Box &&
-           structure.kind != .Rock &&
-           structure.kind != .Spire {
+    if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
+        shadow_append_world_range(first, count)
+    }
+    // Generated plants and foliage register exact ranges because they can be
+    // submitted outside the broad gameplay caster span. Avoid submitting a
+    // range twice when gameplay already covers it completely.
+    for caster_range in world_renderer.explicit_shadow_caster_ranges {
+        if dynamic_shadow_range_is_covered(caster_range, dynamic_range) do continue
+        if caster_range.first < 0 ||
+           caster_range.count <= 0 ||
+           caster_range.first + caster_range.count > len(world_renderer.vertices) {
             continue
         }
+        shadow_append_world_range(caster_range.first, caster_range.count)
+    }
+    shadow_append_instances()
+    shadow_append_raised_roads(editor)
+    shadow_append_terrain(editor)
+    shadow_append_grass_cards(editor, world_renderer.grass_instances[:], 36, .34)
+    shadow_append_grass_cards(editor, world_renderer.wildflower_instances[:], 58, .68)
+    shadow_append_grass_cards(editor, world_renderer.marsh_instances[:], 92, 1)
+    sky := atmosphere_sky(editor)
+    inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))
+    for structure, structure_index in editor.project.structures[:editor.project.structure_count] {
+        if structure.kind == .Foliage do continue
         // Bound the complete ground-projected shadow segment, not merely the
         // caster center. At low sun angles an off-map building can still cast
         // well into the far receiver cascade.
@@ -456,13 +683,17 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
         dx := shadow_mid_x - world_renderer.dynamic_shadow.anchor.x
         dz := shadow_mid_z - world_renderer.dynamic_shadow.anchor.z
         if dx * dx + dz * dz > conservative_radius * conservative_radius do continue
-        proxy := structure
-        if proxy.kind == .Foliage {
-            proxy.width *= .72
-            proxy.depth *= .72
-            proxy.height *= .82
+        exact := false
+        if structure_index >= 0 && structure_index < len(world_renderer.static_geometry_cache) {
+            entry := &world_renderer.static_geometry_cache[structure_index]
+            if entry.valid && entry.structure == structure {
+                exact = shadow_append_indexed(entry.world_vertices[:], entry.world_indices[:])
+            }
         }
-        shadow_append_box(proxy)
+        // Off-camera structures may not have a retained mesh yet. Keep a
+        // conservative proxy until their exact cache becomes available so a
+        // low sun cannot reveal a missing caster at the cascade edge.
+        if !exact do shadow_append_box(structure)
     }
 }
 
