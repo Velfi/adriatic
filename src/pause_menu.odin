@@ -1105,9 +1105,9 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     style := options_menu_row_bounds(panel, 7, scroll_y)
     style_gap := f32(6)
-    style_segment_width := (style.width - style_gap * 2) / 3
+    style_segment_width := (style.width - style_gap * f32(VISUAL_STYLE_COUNT - 1)) / f32(VISUAL_STYLE_COUNT)
     if content_hovered && pressed {
-        for index in 0 ..< 3 {
+        for index in 0 ..< VISUAL_STYLE_COUNT {
             segment := canvas2d.Rectangle {
                 style.x + f32(index) * (style_segment_width + style_gap),
                 style.y + 28,
@@ -1777,8 +1777,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     }
     ui_draw_text(.Label, "RENDER STYLE", {style.x, style.y + 2}, .4, ui_theme_text())
     style_gap := f32(6)
-    style_segment_width := (style.width - style_gap * 2) / 3
-    for index in 0 ..< 3 {
+    style_segment_width := (style.width - style_gap * f32(VISUAL_STYLE_COUNT - 1)) / f32(VISUAL_STYLE_COUNT)
+    for index in 0 ..< VISUAL_STYLE_COUNT {
         value := Visual_Style(index)
         pause_menu_button(
             {style.x + f32(index) * (style_segment_width + style_gap), style.y + 28, style_segment_width, 30},

@@ -24,6 +24,8 @@ Visual_Style :: enum {
     Dither,
 }
 
+VISUAL_STYLE_COUNT :: int(Visual_Style.Dither) + 1
+
 Photo_Filter_Mode :: enum i32 {
     Off,
     Oil,
