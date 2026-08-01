@@ -836,7 +836,6 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
 }
 
 TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 4
-TOWN_MOUSE_GEOMETRY_ANIMATION_HZ :: f32(12)
 TOWN_MOUSE_PORTRAIT_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
@@ -1107,6 +1106,9 @@ World_Renderer :: struct {
     town_mouse_geometry_cache:                    [TOWN_MOUSE_CACHE_COUNT]Town_Mouse_Geometry_Cache_Entry,
     dialogue_portrait_geometry_cache:             [2]Town_Mouse_Geometry_Cache_Entry,
     libellula_geometry_cache:                     Libellula_Geometry_Cache_Entry,
+    postale_pose_mesh:                            ^vehicles.Aircraft_Mesh,
+    trailer_pose_mesh:                            ^vehicles.Aircraft_Mesh,
+    trailer_baked_meshes:                         [3]^vehicles.Aircraft_Mesh,
     marina_geometry_cache:                        [MARINA_GEOMETRY_CACHE_CAPACITY]Marina_Geometry_Cache_Entry,
     structure_lod_counts:                         [3]int,
     structure_lod_cache_rebuilds:                 u64,
@@ -18524,8 +18526,10 @@ world_aircraft :: proc(editor: ^Editor) {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
         postale_transform := world_aircraft_transform(editor.postale.body, POSTALE_PRESENTATION_SCALE)
-        mesh := new(vehicles.Aircraft_Mesh)
-        defer free(mesh)
+        if world_renderer.postale_pose_mesh == nil {
+            world_renderer.postale_pose_mesh = new(vehicles.Aircraft_Mesh)
+        }
+        mesh := world_renderer.postale_pose_mesh
         mesh^ = editor.postale_base_mesh^
         vehicles.animate_postale_mesh(
             mesh,
@@ -21785,12 +21789,24 @@ world_car :: proc(editor: ^Editor) {
     trailer_speed_squared :=
         editor.car_trailer.velocity.x * editor.car_trailer.velocity.x +
         editor.car_trailer.velocity.z * editor.car_trailer.velocity.z
-    trailer := vehicles.simple_car_trailer_mesh(
-        !editor.car_trailer_attached,
-        editor.car_trailer_attached,
-        !editor.car_trailer_attached && trailer_speed_squared < .25,
-    )
-    defer free(trailer)
+    trailer_variant := 0
+    if editor.car_trailer_attached {
+        trailer_variant = 1
+    } else if trailer_speed_squared < .25 {
+        trailer_variant = 2
+    }
+    if world_renderer.trailer_baked_meshes[trailer_variant] == nil {
+        world_renderer.trailer_baked_meshes[trailer_variant] = vehicles.simple_car_trailer_mesh(
+            !editor.car_trailer_attached,
+            editor.car_trailer_attached,
+            !editor.car_trailer_attached && trailer_speed_squared < .25,
+        )
+    }
+    if world_renderer.trailer_pose_mesh == nil {
+        world_renderer.trailer_pose_mesh = new(vehicles.Aircraft_Mesh)
+    }
+    trailer := world_renderer.trailer_pose_mesh
+    trailer^ = world_renderer.trailer_baked_meshes[trailer_variant]^
     vehicles.animate_trailer_wheels(trailer, editor.car_trailer.wheel_rotation)
     car_transform := world_car_transform(editor)
     trailer_transform := world_trailer_transform(editor)
@@ -23498,22 +23514,10 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
         return
     }
     entry := &world_renderer.town_mouse_geometry_cache[cache_index]
-    phase := f32(cache_index) / TOWN_MOUSE_CACHE_COUNT
-    // The world behind dialogue is dimmed and input-locked while the two
-    // foreground portraits have their own live geometry caches. Freeze only
-    // these background residents for the conversation so fourteen procedural
-    // idle meshes do not keep regenerating beneath the dialogue presentation.
-    animation_time := editor.attendant_dialogue_open ? f32(0) : editor.map_time
-    // Background residents are rebuilt procedural meshes, not skinned models.
-    // Updating all visible meshes at display rate consumed several milliseconds
-    // per frame. Stagger lower-rate rebuilds across cache entries; foreground
-    // dialogue portraits retain their separate 30 Hz animation cadence.
-    animation_bucket := i64(math.floor(f64(animation_time * TOWN_MOUSE_GEOMETRY_ANIMATION_HZ + phase)))
     wind := model.scarf_enabled ? editor.atmosphere.weather.wind : [2]f32{}
     if entry.valid &&
        entry.model == model &&
        entry.scale == scale &&
-       entry.animation_bucket == animation_bucket &&
        entry.wind == wind &&
        entry.project_revision == editor.project.revision &&
        entry.terrain_revision == editor.terrain_revision {
@@ -23555,7 +23559,11 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     entry.valid = true
     entry.model = model
     entry.scale = scale
-    entry.animation_bucket = animation_bucket
+    // Background residents use their first generated pose as a baked mesh.
+    // Their foreground dialogue portraits own the animated 30 Hz path. Keeping
+    // map time out of this cache key prevents procedural mesh generation from
+    // returning to the frame builder as frame rate falls.
+    entry.animation_bucket = 0
     entry.wind = wind
     entry.project_revision = editor.project.revision
     entry.terrain_revision = editor.terrain_revision
@@ -29926,6 +29934,11 @@ world_renderer_destroy :: proc() {
         delete(entry.vertices)
     }
     delete(world_renderer.libellula_geometry_cache.vertices)
+    if world_renderer.postale_pose_mesh != nil do free(world_renderer.postale_pose_mesh)
+    if world_renderer.trailer_pose_mesh != nil do free(world_renderer.trailer_pose_mesh)
+    for mesh in world_renderer.trailer_baked_meshes {
+        if mesh != nil do free(mesh)
+    }
     for &entry in world_renderer.marina_geometry_cache {
         delete(entry.world_vertices)
     }

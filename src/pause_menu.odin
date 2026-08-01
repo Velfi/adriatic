@@ -315,7 +315,8 @@ photo_mode_close :: proc(editor: ^Editor) {
     set_pointer_locked(false)
 }
 
-SCRAPBOOK_PHOTO_COUNT :: 12
+SCRAPBOOK_PHOTO_COUNT :: 128
+SCRAPBOOK_PAGE_SIZE :: 12
 SCRAPBOOK_COLUMNS :: 4
 
 Scrapbook_Sort :: enum {
@@ -505,8 +506,11 @@ scrapbook_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     if mouse_active && !scrapbook_viewing {
         panel := canvas2d.Rectangle{32, 26, f32(width) - 64, f32(height) - 52}
-        for visible_index in 0 ..< count {
-            if canvas2d.CheckCollisionPointRec(mouse, scrapbook_card_bounds(panel, visible_index)) {
+        page_start := (scrapbook_focus / SCRAPBOOK_PAGE_SIZE) * SCRAPBOOK_PAGE_SIZE
+        page_end := min(page_start + SCRAPBOOK_PAGE_SIZE, count)
+        for visible_index in page_start ..< page_end {
+            page_index := visible_index - page_start
+            if canvas2d.CheckCollisionPointRec(mouse, scrapbook_card_bounds(panel, page_index)) {
                 if canvas2d.IsMouseButtonPressed(.LEFT) && scrapbook_focus == visible_index && !scrapbook_manage {
                     scrapbook_viewing = true
                     return
@@ -1817,7 +1821,16 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
     ui_draw_text(.Data, "BECK'S COLLECTION", {panel.x + 44, panel.y + 24}, .35, ui_theme_accent())
     title: cstring = scrapbook_manage ? "ARRANGE SCRAPBOOK" : "SCRAPBOOK"
     ui_draw_text(.Display, title, {panel.x + 44, panel.y + 48}, .54, ui_theme_text())
-    sort_label := fmt.ctprintf("%s  ·  %d PHOTOS", scrapbook_sort_label(), scrapbook_visible_count())
+    visible_count := scrapbook_visible_count()
+    page := scrapbook_focus / SCRAPBOOK_PAGE_SIZE
+    page_count := max((visible_count + SCRAPBOOK_PAGE_SIZE - 1) / SCRAPBOOK_PAGE_SIZE, 1)
+    sort_label := fmt.ctprintf(
+        "%s  ·  %d PHOTOS  ·  PAGE %d/%d",
+        scrapbook_sort_label(),
+        visible_count,
+        page + 1,
+        page_count,
+    )
     sort_size := ui_measure_text(.Data, sort_label, .22)
     ui_draw_text(
         .Data,
@@ -1833,7 +1846,7 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
         ui_theme_border(),
     )
 
-    count := scrapbook_visible_count()
+    count := visible_count
     if count == 0 {
         empty: cstring = "NO PHOTOS IN THIS SCRAPBOOK"
         size := ui_measure_text(.Label, empty, .5)
@@ -1869,9 +1882,11 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
         ui_draw_text(.Label, label, {preview.x + 8, preview.y + preview.height + 19}, .38, ui_theme_text())
         if scrapbook_favorites[photo] do ui_draw_text(.Data, "FAVORITE", {preview.x + preview.width - 76, preview.y + 12}, .2, {255, 247, 228, 255})
     } else {
-        for visible_index in 0 ..< count {
+        page_start := page * SCRAPBOOK_PAGE_SIZE
+        page_end := min(page_start + SCRAPBOOK_PAGE_SIZE, count)
+        for visible_index in page_start ..< page_end {
             photo := scrapbook_photo_at(visible_index)
-            card := scrapbook_card_bounds(panel, visible_index)
+            card := scrapbook_card_bounds(panel, visible_index - page_start)
             focused := visible_index == scrapbook_focus
             canvas2d.DrawRectangleRounded(card, .035, 7, focused ? ui_theme_surface_elevated() : ui_theme_control())
             canvas2d.DrawRectangleRoundedLinesEx(
