@@ -33,6 +33,7 @@ import quest "../packages/quest"
 import road_designer "../packages/road_designer"
 import road_planner "../packages/road_planner"
 import roads "../packages/roads"
+import scene_stack "../packages/scene_stack"
 import rondine_game "../packages/rondine"
 import spray_audio "../packages/spray_audio"
 import story "../packages/story"
@@ -553,7 +554,6 @@ Fixture :: struct {
     default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,
     default_map_regeneration_stage:                 Default_Map_Regeneration_Stage `hs:"-" fixture:"-"`,
     default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-"`,
-    pause_screen:                                   Pause_Screen `fixture:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
     mouse_fur:                                      Mouse_Fur,
     mouse_pattern:                                  Mouse_Fur_Pattern,
@@ -581,6 +581,7 @@ FIXTURE_SCHEMA_VERSION :: 18
 
 Editor :: struct {
     using fixture:                      Fixture,
+    menu_scene_stack:                   scene_stack.Stack `fixture:"-"`,
     road_construction_mode:             Road_Construction_Mode,
     road_construction_phase:            Road_Construction_Phase,
     road_preview_graph:                 roads.Graph,
@@ -10349,8 +10350,8 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // The depth-tested world pass has already drawn the game/editor scene.
     // Canvas commands from here onward are deliberately UI-only.
     canvas2d.ClearBackground({r = 104, g = 154, b = 181, a = 255})
-    if editor.pause_screen == .Customization do return
-    if editor.pause_screen == .Photo do return
+    if menu_scene_current(editor) == .Customization do return
+    if menu_scene_current(editor) == .Photo do return
     // Queue fixture notes with the rest of the Canvas UI, after whichever
     // scene-specific path below finishes building its overlay.
     defer fixture_notes_draw(editor, width, height)
@@ -11414,7 +11415,12 @@ adriatic_run :: proc(
         draw_startup_loading_screen(initial_width, initial_height, .20, "Tuning the sea and wind...", postcard)
     }
     editor := new(Editor)
+    editor.menu_scene_stack = scene_stack.new(
+        scene_stack.Context{data = rawptr(editor)},
+        scene_stack.default_transition(0),
+    )
     defer free(editor)
+    defer scene_stack.destroy(&editor.menu_scene_stack)
     defer fixture_notes_flush_autosave(editor)
     cliff_rock_assets_init()
     defer cliff_rock_assets_destroy()
@@ -13343,15 +13349,15 @@ adriatic_run :: proc(
             third_person.camera_set_active(&editor.cameras, .Inspection)
             editor.camera_pose = grass_pose
         }
-        if capture_target == "pause" do editor.pause_screen = .Pause
+        if capture_target == "pause" do menu_scene_set(editor, .Pause)
         if capture_target == "scrapbook" {
-            editor.pause_screen = .Scrapbook
+            menu_scene_set(editor, .Scrapbook)
             scrapbook_init()
             scrapbook_focus = 1
         }
-        if capture_target == "world-map" do editor.pause_screen = .World_Map
+        if capture_target == "world-map" do menu_scene_set(editor, .World_Map)
         if capture_target == "world-map-weather" {
-            editor.pause_screen = .World_Map
+            menu_scene_set(editor, .World_Map)
             editor.world_select_weather = true
             atmosphere.set_weather_override(&editor.atmosphere, .Automatic)
             atmosphere.trigger_front(&editor.atmosphere)
@@ -13359,9 +13365,9 @@ adriatic_run :: proc(
             editor.atmosphere.schedule.elapsed_seconds =
                 front.start_seconds + (front.end_seconds - front.start_seconds) * .5
         }
-        if capture_target == "options" do editor.pause_screen = .Options
+        if capture_target == "options" do menu_scene_set(editor, .Options)
         if capture_target == "options-dark" {
-            editor.pause_screen = .Options
+            menu_scene_set(editor, .Options)
             editor.options_focus = 8
             editor.options_scroll_y = 370
             editor.gameplay_options.theme_mode = .Dark
@@ -13375,24 +13381,24 @@ adriatic_run :: proc(
             _ = story.begin_delivery(&editor.story_state)
             _ = story.complete_delivery(&editor.story_state, .Iva)
             quest_tracking_refresh(editor)
-            editor.pause_screen = .Journal
+            menu_scene_set(editor, .Journal)
             editor.quest_log_tab = .Active
             editor.quest_log_focus = 0
             editor.quest_log_scroll = 0
         }
         if capture_target == "options-hdr" {
-            editor.pause_screen = .Options
+            menu_scene_set(editor, .Options)
             editor.options_focus = 7
             editor.options_scroll_y = 300
         }
         if capture_target == "customization" {
-            editor.pause_screen = .Customization
+            menu_scene_set(editor, .Customization)
             editor.mouse_fur = .Russet
             editor.mouse_pattern = .Piebald
             editor.mouse_headgear = .Acorn_Cap
         }
         if capture_target == "options-240" {
-            editor.pause_screen = .Options
+            menu_scene_set(editor, .Options)
             editor.gameplay_options.crunchiness = .P240
             crunchiness_apply(editor.gameplay_options.crunchiness)
         }
@@ -13651,7 +13657,7 @@ adriatic_run :: proc(
         draw_startup_loading_screen(initial_width, initial_height, 1, "Welcome to Adriatic", postcard)
         editor.main_menu_active = true
         editor.main_menu_focus = 0
-        editor.pause_screen = .Closed
+        menu_scene_set(editor, .Closed)
         set_pointer_locked(false)
     }
     startup_timings.ready_ms = startup_checkpoint(&startup_timings)
@@ -13732,6 +13738,7 @@ adriatic_run :: proc(
             editor.tweak_panel_visible = !editor.tweak_panel_visible
         }
         pause_menu_process_input(editor, width, height, frame_delta)
+        scene_stack.update(&editor.menu_scene_stack, frame_delta)
         runtime_pointer_sync(editor)
         attendant_dialogue_process_input(editor, width, height, frame_delta)
         simulation_delta := was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
@@ -15153,7 +15160,7 @@ adriatic_run :: proc(
                     editor.gameplay_options.sound_fx_level,
                     sound_fx_muted(editor),
                     editor.main_menu_active,
-                    editor.pause_screen,
+                    menu_scene_current(editor),
                     editor.console.open,
                     editor.in_map,
                 )

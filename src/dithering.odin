@@ -438,7 +438,7 @@ photo_filter_pass_count :: proc(mode: Photo_Filter_Mode) -> int {
 // Keep the renderer's transient pass plan synchronized with the active preset.
 photo_filter_apply_pass_plan :: proc(editor: ^Editor) {
     count := 1
-    if editor != nil && (editor.pause_screen == .Photo || photo_filter_capture_enabled) {
+    if editor != nil && (menu_scene_current(editor) == .Photo || photo_filter_capture_enabled) {
         count = photo_filter_pass_count(editor.photo_filter.mode)
     }
     requests: [canvas2d.WORLD_POST_MAX_PASSES]canvas2d.World_Post_Pass_Request
@@ -509,7 +509,7 @@ dither_update_tracking :: proc(
     viewport_width, viewport_height: int,
 ) {
     state := &editor.dither_state
-    customization := editor.pause_screen == .Customization
+    customization := menu_scene_current(editor) == .Customization
     yaw, pitch := dither_camera_angles(pose)
     yaw_delta := dither_wrap_angle(yaw - state.previous_yaw)
     pitch_delta := pitch - state.previous_pitch
@@ -546,7 +546,7 @@ dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Pos
     if editor != nil {
         style := editor.gameplay_options.visual_style
         mode := style == .Dither ? editor.gameplay_options.dither_mode : Dither_Mode.Off
-        render_pose := editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
+        render_pose := menu_scene_current(editor) == .Customization ? customization_preview_camera_pose() : editor.camera_pose
         focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
         focal_length = max(focal_length, f32(.1))
         field_of_view := f32(2 * math.atan(1 / f64(focal_length)))
@@ -573,7 +573,7 @@ dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Pos
         exposure, glare := sun_exposure_update(editor, render_pose)
         // Depth presets reconstruct view distance from the active projection.
         push.hatch_tone = {exposure, glare, world_camera_near_clip(editor), WORLD_FAR_CLIP}
-        if (editor.pause_screen == .Photo || photo_filter_capture_enabled) && editor.photo_filter.initialized {
+        if (menu_scene_current(editor) == .Photo || photo_filter_capture_enabled) && editor.photo_filter.initialized {
             filter := editor.photo_filter
             push.hatch_offset = {f32(filter.mode), filter.intensity, filter.radius, filter.detail}
             push.hatch_angles = {filter.saturation, filter.contrast, filter.brightness, filter.grain}

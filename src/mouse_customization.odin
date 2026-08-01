@@ -261,7 +261,7 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         if component == 0 && next > 1 do next -= 1
         customization_set_scarf_component(editor, component, next)
     } else if focus == CUSTOMIZATION_BACK_FOCUS {
-        editor.pause_screen = .Options
+        menu_scene_set(editor, .Options)
         changed = false
     } else {
         changed = false

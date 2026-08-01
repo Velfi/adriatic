@@ -156,7 +156,7 @@ quest_log_toggle_tracking :: proc(editor: ^Editor, id: quest.Node_ID) {
 quest_log_open :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || editor.attendant_dialogue_open do return
     quest_tracking_refresh(editor)
-    editor.pause_screen = .Journal
+    menu_scene_push(editor, .Journal)
     editor.quest_log_tab = .Active
     editor.quest_log_focus = 0
     editor.quest_log_scroll = 0

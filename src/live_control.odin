@@ -290,7 +290,7 @@ live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) 
         device_id = sdl.GetAudioStreamDevice(stream)
     }
     return fmt.aprintf(
-        `{{"ok":true,"id":"%s","stream":%v,"device":%d,"queued_bytes":%d,"volume":%.3f,"muted":%v,"main_menu":%v,"pause_screen":"%v","console":%v,"in_map":%v}}`,
+        `{{"ok":true,"id":"%s","stream":%v,"device":%d,"queued_bytes":%d,"volume":%.3f,"muted":%v,"main_menu":%v,"scene":"%v","console":%v,"in_map":%v}}`,
         request_id,
         stream != nil,
         device_id,
@@ -298,7 +298,7 @@ live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) 
         editor.gameplay_options.sound_fx_level,
         sound_fx_muted(editor),
         editor.main_menu_active,
-        editor.pause_screen,
+        menu_scene_current(editor),
         editor.console.open,
         editor.in_map,
     )
@@ -408,7 +408,7 @@ live_control_poll :: proc(editor: ^Editor) {
     response: string
     if command == "gameplay" {
         editor.main_menu_active = false
-        editor.pause_screen = .Closed
+        menu_scene_set(editor, .Closed)
         editor_spawn_into_world(editor)
         response = fmt.aprintf(
             `{{"ok":true,"id":"%s","in_map":%v,"message":"Entered gameplay"}}`,

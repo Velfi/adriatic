@@ -4,6 +4,7 @@ import atmosphere "../packages/atmosphere"
 import game_input "../packages/game_input"
 import player_mail "../packages/player_mail"
 import roads "../packages/roads"
+import scene_stack "../packages/scene_stack"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
@@ -17,6 +18,7 @@ Pause_Screen :: enum {
     Closed,
     World_Select,
     World_Map,
+    Game,
     Pause,
     Journal,
     Mail,
@@ -27,7 +29,78 @@ Pause_Screen :: enum {
 }
 
 pause_menu_pointer_enabled := true
-PAUSE_MENU_BUTTON_COUNT :: 7
+GAME_MENU_BUTTON_COUNT :: 4
+PAUSE_MENU_BUTTON_COUNT :: 5
+
+menu_scene_load :: proc(instance: ^scene_stack.Scene_Instance, ctx: ^scene_stack.Context) -> scene_stack.Load_State {
+    return .Ready
+}
+
+menu_scene_definitions: [11]scene_stack.Definition = {
+    {id = "closed", load = menu_scene_load},
+    {id = "world-select", load = menu_scene_load},
+    {id = "world-map", load = menu_scene_load},
+    {id = "game", load = menu_scene_load},
+    {id = "pause", load = menu_scene_load},
+    {id = "journal", load = menu_scene_load},
+    {id = "mail", load = menu_scene_load},
+    {id = "options", load = menu_scene_load},
+    {id = "customization", load = menu_scene_load},
+    {id = "scrapbook", load = menu_scene_load},
+    {id = "photo", load = menu_scene_load},
+}
+
+menu_scene_definition :: proc(screen: Pause_Screen) -> ^scene_stack.Definition {
+    index := int(screen)
+    if index < 0 || index >= len(menu_scene_definitions) do return nil
+    return &menu_scene_definitions[index]
+}
+
+menu_scene_current :: proc(editor: ^Editor) -> Pause_Screen {
+    if editor == nil do return .Closed
+    current := scene_stack.top(&editor.menu_scene_stack)
+    if current == nil || current.definition == nil do return .Closed
+    for index in 0 ..< len(menu_scene_definitions) {
+        if current.definition == &menu_scene_definitions[index] do return Pause_Screen(index)
+    }
+    return .Closed
+}
+
+menu_scene_update_now :: proc(editor: ^Editor) {
+    scene_stack.update(&editor.menu_scene_stack, 0)
+}
+
+menu_scene_clear :: proc(editor: ^Editor) {
+    for scene_stack.depth(&editor.menu_scene_stack) > 0 {
+        if !scene_stack.request_pop(&editor.menu_scene_stack) do break
+        menu_scene_update_now(editor)
+    }
+}
+
+menu_scene_set :: proc(editor: ^Editor, screen: Pause_Screen) {
+    if editor == nil do return
+    if screen == .Closed {
+        menu_scene_clear(editor)
+        return
+    }
+    definition := menu_scene_definition(screen)
+    if definition == nil do return
+    if scene_stack.depth(&editor.menu_scene_stack) == 0 {
+        if scene_stack.request_push(&editor.menu_scene_stack, definition) do menu_scene_update_now(editor)
+    } else if scene_stack.request_swap(&editor.menu_scene_stack, definition) {
+        menu_scene_update_now(editor)
+    }
+}
+
+menu_scene_push :: proc(editor: ^Editor, screen: Pause_Screen) {
+    if editor == nil do return
+    definition := menu_scene_definition(screen)
+    if definition != nil && scene_stack.request_push(&editor.menu_scene_stack, definition) do menu_scene_update_now(editor)
+}
+
+menu_scene_pop :: proc(editor: ^Editor) {
+    if editor != nil && scene_stack.request_pop(&editor.menu_scene_stack) do menu_scene_update_now(editor)
+}
 
 Gameplay_Options :: struct {
     look_sensitivity:    f32,
@@ -105,7 +178,7 @@ crunchiness_apply :: proc(value: Crunchiness) {
 
 @(no_instrumentation)
 pause_menu_is_open :: #force_inline proc(editor: ^Editor) -> bool {
-    return editor != nil && (editor.console.open || editor.main_menu_active || editor.pause_screen != .Closed)
+    return editor != nil && (editor.console.open || editor.main_menu_active || menu_scene_current(editor) != .Closed)
 }
 
 // Keep audio live while Options is visible so changes to the sound-effects
@@ -113,14 +186,18 @@ pause_menu_is_open :: #force_inline proc(editor: ^Editor) -> bool {
 @(no_instrumentation)
 sound_fx_muted :: #force_inline proc(editor: ^Editor) -> bool {
     if editor == nil do return true
-    if editor.pause_screen == .Options do return false
+    if menu_scene_current(editor) == .Options do return false
     return pause_menu_is_open(editor)
 }
 
 @(no_instrumentation)
-pause_menu_panel :: #force_inline proc(width, height: i32, options: bool) -> canvas2d.Rectangle {
+pause_menu_panel :: #force_inline proc(
+    width, height: i32,
+    options: bool,
+    button_count := PAUSE_MENU_BUTTON_COUNT,
+) -> canvas2d.Rectangle {
     panel_width := min(f32(500), f32(width) - 40)
-    panel_height := options ? f32(560) : f32(546)
+    panel_height := options ? f32(560) : f32(140 + button_count * 58)
     panel_height = min(panel_height, f32(height) - 32)
     return {(f32(width) - panel_width) * .5, (f32(height) - panel_height) * .5, panel_width, panel_height}
 }
@@ -264,7 +341,15 @@ pause_menu_button :: proc(bounds: canvas2d.Rectangle, label: cstring, accent: bo
 
 pause_menu_open :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map do return
-    editor.pause_screen = .Pause
+    menu_scene_set(editor, .Pause)
+    editor.pause_focus = 0
+    editor.map_time = f32(canvas2d.GetTime())
+    set_pointer_locked(false)
+}
+
+game_menu_open :: proc(editor: ^Editor) {
+    if editor == nil || !editor.in_map do return
+    menu_scene_set(editor, .Game)
     editor.pause_focus = 0
     editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(false)
@@ -272,7 +357,7 @@ pause_menu_open :: proc(editor: ^Editor) {
 
 pause_menu_resume :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.pause_screen = .Closed
+    menu_scene_set(editor, .Closed)
     editor.controller_disconnect_notice = false
     editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(editor.in_map)
@@ -293,7 +378,7 @@ photo_mode_open :: proc(editor: ^Editor) {
     }
     editor.photo_yaw = f32(math.atan2(f64(-direction.x), f64(-direction.z)))
     editor.photo_pitch = f32(math.asin(f64(clamp(direction.y, -1, 1))))
-    editor.pause_screen = .Photo
+    menu_scene_push(editor, .Photo)
     photo_filter_apply_pass_plan(editor)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -308,7 +393,7 @@ photo_mode_close :: proc(editor: ^Editor) {
         third_person.camera_set_pose(&editor.cameras, editor.photo_restore_slot, editor.photo_restore_pose)
     }
     third_person.camera_set_active(&editor.cameras, editor.photo_restore_slot)
-    editor.pause_screen = .Pause
+    menu_scene_set(editor, .Pause)
     photo_filter_apply_pass_plan(editor)
     editor.pause_focus = 0
     editor.photo_capture_pending = false
@@ -463,7 +548,7 @@ scrapbook_open :: proc(editor: ^Editor) {
     scrapbook_focus = clamp(scrapbook_focus, 0, max(scrapbook_visible_count() - 1, 0))
     scrapbook_manage = false
     scrapbook_viewing = false
-    editor.pause_screen = .Scrapbook
+    menu_scene_push(editor, .Scrapbook)
 }
 
 scrapbook_move_manual :: proc(direction: int) {
@@ -488,14 +573,14 @@ scrapbook_move_manual :: proc(direction: int) {
 
 scrapbook_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil do return
-    if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
+    if input_action_pressed(.Menu_Cancel) {
         if scrapbook_viewing {
             scrapbook_viewing = false
         } else if scrapbook_manage {
             scrapbook_manage = false
         } else {
-            editor.pause_screen = .Pause
-            editor.pause_focus = 2
+            menu_scene_pop(editor)
+            editor.pause_focus = 3
         }
         return
     }
@@ -730,7 +815,7 @@ photo_mode_capture_pending :: proc(editor: ^Editor) {
 
 pause_menu_return_to_editor :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.pause_screen = .Closed
+    menu_scene_set(editor, .Closed)
     editor.in_map = false
     game_state_reset(editor)
     third_person.camera_set_active(&editor.cameras, .Player)
@@ -877,10 +962,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             dither_apply(editor)
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
         case 11:
-            editor.pause_screen = .Customization
+            menu_scene_push(editor, .Customization)
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
-            editor.pause_screen = editor.main_menu_active ? .Closed : .Pause
+            menu_scene_set(editor, editor.main_menu_active ? .Closed : .Pause)
             editor.options_scroll_dragging = false
         }
         if editor.options_focus != 0 &&
@@ -1075,34 +1160,34 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
        pressed &&
        canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 11, scroll_y)) {
         editor.options_focus = 11
-        editor.pause_screen = .Customization
+        menu_scene_push(editor, .Customization)
         editor.customization_focus = 0
         return
     }
     if pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
-        editor.pause_screen = editor.main_menu_active ? .Closed : .Pause
+            menu_scene_set(editor, editor.main_menu_active ? .Closed : .Pause)
         editor.options_scroll_dragging = false
     }
 }
 
 main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil || !editor.main_menu_active do return
-    if editor.pause_screen == .World_Select {
+    if menu_scene_current(editor) == .World_Select {
         world_select_process_input(editor, width, height, delta_seconds)
         return
     }
-    if editor.pause_screen == .Customization {
+    if menu_scene_current(editor) == .Customization {
         if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-            editor.pause_screen = .Options
+            menu_scene_set(editor, .Options)
             return
         }
         customization_scene_process_input(editor, width, height, delta_seconds)
         return
     }
-    if editor.pause_screen == .Options {
+    if menu_scene_current(editor) == .Options {
         if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-            editor.pause_screen = .Closed
+            menu_scene_set(editor, .Closed)
             editor.options_scroll_dragging = false
             return
         }
@@ -1145,10 +1230,10 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     }
     switch activated {
     case 0:
-        editor.pause_screen = .World_Select
+        menu_scene_set(editor, .World_Select)
         editor.world_select_focus = WORLD_SELECT_MAP_FOCUS
     case 1:
-        editor.pause_screen = .Options
+        menu_scene_set(editor, .Options)
         editor.options_focus = 0
         editor.options_scroll_y = 0
     case 2:
@@ -1159,7 +1244,7 @@ main_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
 world_select_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     if editor == nil do return
     if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-        editor.pause_screen = .Closed
+        menu_scene_set(editor, .Closed)
         editor.main_menu_focus = 0
         return
     }
@@ -1204,14 +1289,14 @@ world_select_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         editor.world_select_weather = !editor.world_select_weather
     } else if editor.world_select_focus == WORLD_SELECT_START_FOCUS {
         editor.main_menu_active = false
-        editor.pause_screen = .Closed
+        menu_scene_set(editor, .Closed)
         editor_spawn_into_world(editor)
     }
 }
 
 world_map_open :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map do return
-    editor.pause_screen = .World_Map
+    menu_scene_push(editor, .World_Map)
     editor.world_select_focus = WORLD_SELECT_MAP_FOCUS
     editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(false)
@@ -1219,7 +1304,7 @@ world_map_open :: proc(editor: ^Editor) {
 
 world_map_close :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.pause_screen = .Closed
+    menu_scene_set(editor, .Closed)
     editor.map_time = f32(canvas2d.GetTime())
     set_pointer_locked(true)
 }
@@ -1230,8 +1315,12 @@ world_map_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
         quest_log_open(editor)
         return
     }
-    if gamepad_pressed(.Back) || input_action_pressed(.Menu_Cancel) {
-        world_map_close(editor)
+    if gamepad_pressed(.Back) {
+        pause_menu_resume(editor)
+        return
+    }
+    if input_action_pressed(.Menu_Cancel) {
+        menu_scene_pop(editor)
         return
     }
 
@@ -1287,9 +1376,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     if !editor.in_map do return
     if canvas2d.GamepadAvailable() do editor.controller_disconnect_notice = false
 
-    if editor.pause_screen == .Closed {
+    if menu_scene_current(editor) == .Closed {
         if gamepad_pressed(.Back) {
-            world_map_open(editor)
+            game_menu_open(editor)
             return
         }
         if input_action_pressed(.Journal) {
@@ -1302,62 +1391,102 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
         return
     }
 
+    // Start and Select remain authoritative even while browsing the opposite
+    // menu: Start opens system actions, while Select closes player information.
+    if menu_scene_current(editor) == .Game {
+        if gamepad_pressed(.Back) {
+            pause_menu_resume(editor)
+            return
+        }
+        if gamepad_pressed(.Start) {
+            pause_menu_open(editor)
+            return
+        }
+    } else if menu_scene_current(editor) == .World_Map ||
+              menu_scene_current(editor) == .Journal ||
+              menu_scene_current(editor) == .Mail ||
+              menu_scene_current(editor) == .Scrapbook {
+        if gamepad_pressed(.Back) {
+            pause_menu_resume(editor)
+            return
+        }
+        if gamepad_pressed(.Start) {
+            pause_menu_open(editor)
+            return
+        }
+    } else if (menu_scene_current(editor) == .Pause ||
+               menu_scene_current(editor) == .Options ||
+               menu_scene_current(editor) == .Customization) && gamepad_pressed(.Back) {
+        game_menu_open(editor)
+        return
+    } else if menu_scene_current(editor) == .Photo && gamepad_pressed(.Back) {
+        photo_mode_close(editor)
+        game_menu_open(editor)
+        return
+    }
 
-    if editor.pause_screen == .World_Map {
+
+    if menu_scene_current(editor) == .World_Map {
         world_map_process_input(editor, width, height, delta_seconds)
         return
     }
 
-    if editor.pause_screen == .Journal {
+    if menu_scene_current(editor) == .Journal {
         if gamepad_pressed(.Left_Shoulder) || gamepad_pressed(.Right_Shoulder) {
             world_map_open(editor)
             return
         }
-        if input_action_pressed(.Journal) || input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-            quest_log_close(editor)
+        if input_action_pressed(.Journal) {
+            pause_menu_resume(editor)
+            return
+        }
+        if input_action_pressed(.Menu_Cancel) {
+            menu_scene_pop(editor)
             return
         }
         quest_log_process_input(editor, width, height, delta_seconds)
         return
     }
-    if editor.pause_screen == .Mail {
-        if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-            editor.pause_screen = .Pause
+    if menu_scene_current(editor) == .Mail {
+        if input_action_pressed(.Menu_Cancel) {
+            menu_scene_pop(editor)
             return
         }
         player_mail_process_input(editor, delta_seconds)
         return
     }
-    if editor.pause_screen == .Scrapbook {
+    if menu_scene_current(editor) == .Scrapbook {
         scrapbook_process_input(editor, width, height, delta_seconds)
         return
     }
-    if editor.pause_screen == .Photo {
+    if menu_scene_current(editor) == .Photo {
         photo_mode_process_input(editor, delta_seconds)
         return
     }
 
     if input_action_pressed(.Menu_Cancel) || gamepad_pressed(.Start) {
-        if editor.pause_screen == .Customization {
-            editor.pause_screen = .Options
-        } else if editor.pause_screen == .Options {
-            editor.pause_screen = .Pause
+        if menu_scene_current(editor) == .Customization {
+            menu_scene_pop(editor)
+        } else if menu_scene_current(editor) == .Options {
+            menu_scene_pop(editor)
         } else {
             pause_menu_resume(editor)
         }
         return
     }
 
-    if editor.pause_screen == .Options {
+    if menu_scene_current(editor) == .Options {
         options_menu_process_input(editor, width, height, delta_seconds)
         return
     }
-    if editor.pause_screen == .Customization {
+    if menu_scene_current(editor) == .Customization {
         customization_scene_process_input(editor, width, height, delta_seconds)
         return
     }
 
-    panel := pause_menu_panel(width, height, false)
+    game_menu := menu_scene_current(editor) == .Game
+    button_count := game_menu ? GAME_MENU_BUTTON_COUNT : PAUSE_MENU_BUTTON_COUNT
+    panel := pause_menu_panel(width, height, false, button_count)
     mouse := canvas2d.GetMousePosition()
     mouse_delta := canvas2d.GetMouseDelta()
     mouse_active :=
@@ -1373,10 +1502,10 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do focus_direction += 1
     if focus_direction == 0 do focus_direction = stick_y
     if focus_direction != 0 {
-        editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, PAUSE_MENU_BUTTON_COUNT - 1)
+        editor.pause_focus = clamp(editor.pause_focus + focus_direction, 0, button_count - 1)
     }
     if mouse_active {
-        for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
+        for index in 0 ..< button_count {
             if canvas2d.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) {
                 editor.pause_focus = index
             }
@@ -1385,34 +1514,43 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
     activated := -1
     if input_action_pressed(.Menu_Accept) do activated = editor.pause_focus
     if canvas2d.IsMouseButtonPressed(.LEFT) {
-        for index in 0 ..< PAUSE_MENU_BUTTON_COUNT {
+        for index in 0 ..< button_count {
             if canvas2d.CheckCollisionPointRec(mouse, pause_menu_button_bounds(panel, index)) do activated = index
         }
+    }
+    if game_menu {
+        switch activated {
+        case 0:
+            world_map_open(editor)
+        case 1:
+            quest_log_open(editor)
+        case 2:
+            player_mail_open(editor)
+        case 3:
+            scrapbook_open(editor)
+        }
+        return
     }
     switch activated {
     case 0:
         pause_menu_resume(editor)
     case 1:
-        player_mail_open(editor)
-    case 2:
-        scrapbook_open(editor)
-    case 3:
         photo_mode_open(editor)
-    case 4:
-        editor.pause_screen = .Options
+    case 2:
+        menu_scene_push(editor, .Options)
         editor.options_focus = 0
-    case 5:
+    case 3:
         if editor.vehicle_paint_scene {
-            if vehicle_paint_close(editor) do editor.pause_screen = .Closed
+            if vehicle_paint_close(editor) do menu_scene_set(editor, .Closed)
         } else if markov_wreck_return_from_flight(editor) {
             // The wreck lab owns this flight session, so return to its
             // inspection view instead of the ordinary terrain editor.
         } else {
             pause_menu_return_to_editor(editor)
         }
-    case 6:
+    case 4:
         if editor.vehicle_paint_scene {
-            if vehicle_paint_discard(editor) do editor.pause_screen = .Closed
+            if vehicle_paint_discard(editor) do menu_scene_set(editor, .Closed)
         } else {
             editor.quit_requested = true
         }
@@ -1733,28 +1871,28 @@ main_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.T
     canvas2d.DrawRectangle(0, 0, frame_width, height, frame_color)
     canvas2d.DrawRectangle(width - frame_width, 0, frame_width, height, frame_color)
 
-    if editor.pause_screen == .Customization {
+    if menu_scene_current(editor) == .Customization {
         customization_scene_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Journal {
+    if menu_scene_current(editor) == .Journal {
         quest_log_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Mail {
+    if menu_scene_current(editor) == .Mail {
         player_mail_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Scrapbook {
+    if menu_scene_current(editor) == .Scrapbook {
         scrapbook_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .World_Select {
+    if menu_scene_current(editor) == .World_Select {
         world_select_draw(editor, width, height, false)
         return
     }
 
-    options := editor.pause_screen == .Options
+    options := menu_scene_current(editor) == .Options
     panel := options ? pause_menu_panel(width, height, true) : main_menu_panel(width, height)
     canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface(245))
     canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border_strong(220))
@@ -2235,13 +2373,13 @@ world_select_draw :: proc(editor: ^Editor, width, height: i32, in_game: bool) {
 }
 
 pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.Texture = {}) {
-    if editor == nil || (!editor.main_menu_active && editor.pause_screen == .Closed) do return
+    if editor == nil || (!editor.main_menu_active && menu_scene_current(editor) == .Closed) do return
     if editor.main_menu_active {
         main_menu_draw(editor, width, height, postcard)
         return
     }
     pause_menu_pointer_enabled = !controller_prompt_active(editor)
-    if editor.pause_screen == .Photo {
+    if menu_scene_current(editor) == .Photo {
         if editor.photo_capture_pending do return
         photo_filter_draw(editor)
         hint: cstring = "WASD MOVE  |  MOUSE LOOK  |  TAB FILTERS  |  F CAPTURE  |  ESC BACK"
@@ -2260,38 +2398,50 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
         ui_draw_text(.Data, hint, {(f32(width) - size.x) * .5, f32(height) - 40}, .25, {255, 255, 255, 255})
         return
     }
-    overlay_alpha: u8 = editor.pause_screen == .Customization ? 58 : 190
+    overlay_alpha: u8 = menu_scene_current(editor) == .Customization ? 58 : 190
     canvas2d.DrawRectangle(0, 0, width, height, ui_theme_scrim(overlay_alpha))
 
-    if editor.pause_screen == .World_Map {
+    if menu_scene_current(editor) == .World_Map {
         world_select_draw(editor, width, height, true)
         return
     }
 
-    if editor.pause_screen == .Customization {
+    if menu_scene_current(editor) == .Customization {
         customization_scene_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Journal {
+    if menu_scene_current(editor) == .Journal {
         quest_log_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Mail {
+    if menu_scene_current(editor) == .Mail {
         player_mail_draw(editor, width, height)
         return
     }
-    if editor.pause_screen == .Scrapbook {
+    if menu_scene_current(editor) == .Scrapbook {
         scrapbook_draw(editor, width, height)
         return
     }
 
-    options := editor.pause_screen == .Options
-    panel := pause_menu_panel(width, height, options)
+    options := menu_scene_current(editor) == .Options
+    button_count := menu_scene_current(editor) == .Game ? GAME_MENU_BUTTON_COUNT : PAUSE_MENU_BUTTON_COUNT
+    panel := pause_menu_panel(width, height, options, button_count)
     canvas2d.DrawRectangleRounded(panel, .035, 12, ui_theme_surface())
     canvas2d.DrawRectangleRoundedLinesEx(panel, .035, 12, 1, ui_theme_border())
 
     if options {
         options_menu_draw(editor, panel)
+        return
+    }
+
+    if menu_scene_current(editor) == .Game {
+        pause_menu_draw_header(panel, "", "TRAVEL")
+        pause_menu_button(pause_menu_button_bounds(panel, 0), "MAP", true, editor.pause_focus == 0)
+        pause_menu_button(pause_menu_button_bounds(panel, 1), "ERRANDS", false, editor.pause_focus == 1)
+        unread := player_mail.unread_count(&editor.player_mail)
+        mail_label: cstring = unread > 0 ? fmt.ctprintf("LETTERS · %d NEW", unread) : "LETTERS"
+        pause_menu_button(pause_menu_button_bounds(panel, 2), mail_label, false, editor.pause_focus == 2)
+        pause_menu_button(pause_menu_button_bounds(panel, 3), "SCRAPBOOK", false, editor.pause_focus == 3)
         return
     }
 
@@ -2303,12 +2453,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
         pause_menu_draw_header(panel, "", "PAUSED")
     }
     pause_menu_button(pause_menu_button_bounds(panel, 0), "RESUME", true, editor.pause_focus == 0)
-    unread := player_mail.unread_count(&editor.player_mail)
-    mail_label: cstring = unread > 0 ? fmt.ctprintf("LETTERS · %d NEW", unread) : "LETTERS"
-    pause_menu_button(pause_menu_button_bounds(panel, 1), mail_label, false, editor.pause_focus == 1)
-    pause_menu_button(pause_menu_button_bounds(panel, 2), "SCRAPBOOK", false, editor.pause_focus == 2)
-    pause_menu_button(pause_menu_button_bounds(panel, 3), "PHOTO MODE", false, editor.pause_focus == 3)
-    pause_menu_button(pause_menu_button_bounds(panel, 4), "OPTIONS", false, editor.pause_focus == 4)
+    pause_menu_button(pause_menu_button_bounds(panel, 1), "PHOTO MODE", false, editor.pause_focus == 1)
+    pause_menu_button(pause_menu_button_bounds(panel, 2), "OPTIONS", false, editor.pause_focus == 2)
     return_label: cstring = "RETURN TO EDITOR"
     if editor.vehicle_paint_scene {
         return_label = "SAVE AND EXIT"
@@ -2316,8 +2462,8 @@ pause_menu_draw :: proc(editor: ^Editor, width, height: i32, postcard: canvas2d.
         return_label = "RETURN TO WRECK LAB"
     }
     quit_label: cstring = editor.vehicle_paint_scene ? "DISCARD AND EXIT" : "QUIT TO DESKTOP"
-    pause_menu_button(pause_menu_button_bounds(panel, 5), return_label, false, editor.pause_focus == 5)
-    pause_menu_button(pause_menu_button_bounds(panel, 6), quit_label, false, editor.pause_focus == 6)
+    pause_menu_button(pause_menu_button_bounds(panel, 3), return_label, false, editor.pause_focus == 3)
+    pause_menu_button(pause_menu_button_bounds(panel, 4), quit_label, false, editor.pause_focus == 4)
     hint: cstring
     if editor.controller_disconnect_notice {
         hint = "Reconnect the controller or continue with keyboard and mouse"

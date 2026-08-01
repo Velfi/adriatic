@@ -286,7 +286,7 @@ render_graph_foliage :: proc(user_data: rawptr) {
 render_graph_terrain :: proc(user_data: rawptr) {
     ctx := cast(^Render_Graph_Context)user_data
     if world_renderer.editor != nil &&
-       (world_renderer.editor.pause_screen == .Customization ||
+       (menu_scene_current(world_renderer.editor) == .Customization ||
                world_renderer.editor.vehicle_showcase_scene ||
                world_renderer.editor.wildflower_lab_scene ||
                lab_scene_replaces_world(world_renderer.editor)) {

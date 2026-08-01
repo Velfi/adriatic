@@ -680,7 +680,7 @@ markov_wreck_return_from_flight :: proc(editor: ^Editor) -> bool {
     }
     editor.postale_visible = false
     editor.in_map = false
-    editor.pause_screen = .Closed
+    menu_scene_set(editor, .Closed)
     editor.capture_world_only = true
     editor.camera_pose = third_person.camera_look_at({170, 82, 185}, {0, 24, 0})
     editor.editor_focus = {0, 24, 0}

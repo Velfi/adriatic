@@ -54,7 +54,7 @@ player_mail_notice_draw :: proc(editor: ^Editor, width: i32) {
 
 player_mail_open :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.pause_screen = .Mail
+    menu_scene_push(editor, .Mail)
     editor.player_mail_focus = 0
     ids: [player_mail.LETTER_COUNT]player_mail.Letter_ID
     if player_mail_received_ids(editor, &ids) > 0 do _ = player_mail.mark_read(&editor.player_mail, ids[0])

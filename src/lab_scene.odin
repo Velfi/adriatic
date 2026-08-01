@@ -667,7 +667,7 @@ lab_scene_exit_to_main_menu :: proc(editor: ^Editor) {
     editor.wildflower_lab_scene = false
     editor.capture_world_only = false
     editor.in_map = false
-    editor.pause_screen = .Closed
+    menu_scene_set(editor, .Closed)
     editor.main_menu_active = true
     editor.main_menu_focus = 0
     third_person.camera_set_active(&editor.cameras, .Player)

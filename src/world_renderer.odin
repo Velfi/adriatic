@@ -27127,7 +27127,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_renderer.late_transparent_first = 0
     world_renderer.late_transparent_count = 0
     world_renderer.scene_daylight = atmosphere_sky(editor).daylight
-    if editor.pause_screen == .Customization {
+    if menu_scene_current(editor) == .Customization {
         // The customization screen gets a purpose-built miniature world pass.
         // It uses the exact gameplay model and materials, rather than maintaining
         // a second approximation of the mouse in the UI layer.
@@ -27262,7 +27262,7 @@ world_retained_visibility_begin :: proc(editor: ^Editor) {
     clear(&world_renderer.retained_static_draws)
     clear(&world_renderer.road_draw_commands)
     if editor == nil ||
-       editor.pause_screen == .Customization ||
+       menu_scene_current(editor) == .Customization ||
        editor.vehicle_showcase_scene ||
        lab_scene_replaces_world(editor) {
         return
@@ -29715,7 +29715,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     render_camera_pose :=
-        editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
+        menu_scene_current(editor) == .Customization ? customization_preview_camera_pose() : editor.camera_pose
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere_sky(editor)
     sky_front := atmosphere.sky_front_field(
