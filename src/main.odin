@@ -10508,8 +10508,6 @@ draw_startup_loading_screen :: proc(
     ui_scale := max(scale, f32(.85))
     animation_time := f32(canvas2d.GetTime())
     normalized_progress := clamp(progress, 0, 1)
-    horizon := h * .52
-    sun := canvas2d.Vector2{center.x + 178 * scale, horizon - 112 * scale}
     title: cstring = "ADRIATIC"
     greeting: cstring = "GREETINGS FROM"
     title_font_size := max(48 * scale, f32(32))
@@ -10606,14 +10604,6 @@ draw_startup_loading_screen :: proc(
             7 * scale,
             {248, 239, 203, 255},
         )
-        canvas2d.DrawTextEx(
-            canvas2d.Font{},
-            message,
-            {center.x - message_size.x * .5, track.y - 29 * ui_scale},
-            message_font_size,
-            1,
-            {226, 226, 204, 255},
-        )
         canvas2d.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 220})
         if normalized_progress > 0 {
             fill := track
@@ -10630,6 +10620,14 @@ draw_startup_loading_screen :: proc(
                 )
             }
         }
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            message,
+            {center.x - message_size.x * .5, track.y + track.height + 12 * ui_scale},
+            message_font_size,
+            1,
+            {226, 226, 204, 255},
+        )
 
         frame_width := max(10 * scale, f32(8))
         frame_color := canvas2d.Color{238, 221, 181, 255}
@@ -10648,360 +10646,6 @@ draw_startup_loading_screen :: proc(
         canvas2d.EndDrawing()
         return
     }
-
-    canvas2d.BeginDrawing()
-
-    // A painted dawn built only from first-frame-safe primitives.
-    sky_colors := [8]canvas2d.Color {
-        {8, 27, 43, 255},
-        {10, 37, 54, 255},
-        {15, 49, 64, 255},
-        {25, 65, 76, 255},
-        {53, 89, 91, 255},
-        {104, 121, 105, 255},
-        {166, 145, 112, 255},
-        {218, 174, 123, 255},
-    }
-    sky_band_height := horizon / f32(len(sky_colors))
-    for color, band in sky_colors {
-        canvas2d.DrawRectangle(0, i32(f32(band) * sky_band_height), width, i32(sky_band_height + 2), color)
-    }
-
-    sun_pulse := 1 + math.sin(animation_time * 1.4) * .035
-    canvas2d.DrawCircleV(sun, 52 * scale * sun_pulse, {239, 174, 93, 24})
-    canvas2d.DrawCircleV(sun, 37 * scale * sun_pulse, {245, 188, 99, 45})
-    canvas2d.DrawCircleV(sun, 21 * scale, {255, 213, 135, 255})
-
-    cloud_color := canvas2d.Color{227, 214, 184, 72}
-    canvas2d.DrawCircleV({center.x - 310 * scale, horizon - 176 * scale}, 18 * scale, cloud_color)
-    canvas2d.DrawCircleV({center.x - 286 * scale, horizon - 181 * scale}, 25 * scale, cloud_color)
-    canvas2d.DrawCircleV({center.x - 257 * scale, horizon - 174 * scale}, 17 * scale, cloud_color)
-    canvas2d.DrawRectangle(
-        i32(center.x - 326 * scale),
-        i32(horizon - 180 * scale),
-        i32(88 * scale),
-        i32(20 * scale),
-        cloud_color,
-    )
-    bird_color := canvas2d.Color{12, 43, 56, 150}
-    for bird in 0 ..< 3 {
-        bx := center.x - 58 * scale + f32(bird) * 37 * scale
-        by := horizon - (142 + f32(bird % 2) * 11) * scale + math.sin(animation_time * 1.1 + f32(bird)) * 2.5 * scale
-        canvas2d.DrawLineEx({bx - 7 * scale, by}, {bx, by + 3 * scale}, 1.4 * scale, bird_color)
-        canvas2d.DrawLineEx({bx, by + 3 * scale}, {bx + 7 * scale, by - scale}, 1.4 * scale, bird_color)
-    }
-
-    // Distant land is drawn before the sea, leaving only its soft ridgeline.
-    distant_island := canvas2d.Color{29, 68, 70, 255}
-    canvas2d.DrawCircleV({center.x - 350 * scale, horizon + 34 * scale}, 92 * scale, distant_island)
-    canvas2d.DrawCircleV({center.x - 245 * scale, horizon + 55 * scale}, 118 * scale, distant_island)
-    canvas2d.DrawCircleV({center.x + 410 * scale, horizon + 43 * scale}, 104 * scale, distant_island)
-    canvas2d.DrawCircleV({center.x + 512 * scale, horizon + 62 * scale}, 128 * scale, distant_island)
-
-    sea_colors := [5]canvas2d.Color {
-        {25, 88, 96, 255},
-        {20, 78, 89, 255},
-        {15, 65, 80, 255},
-        {11, 52, 70, 255},
-        {8, 40, 58, 255},
-    }
-    sea_band_height := (h - horizon) / f32(len(sea_colors))
-    for color, band in sea_colors {
-        canvas2d.DrawRectangle(0, i32(horizon + f32(band) * sea_band_height), width, i32(sea_band_height + 2), color)
-    }
-    for reflection in 0 ..< 8 {
-        reflection_width := (18 + f32(reflection) * 7) * scale
-        reflection_y := horizon + (12 + f32(reflection) * 17) * scale
-        reflection_drift := math.sin(animation_time * 1.8 + f32(reflection) * .8) * 5 * scale
-        canvas2d.DrawLineEx(
-            {sun.x - reflection_width * .5 + f32(reflection % 2) * 8 * scale + reflection_drift, reflection_y},
-            {sun.x + reflection_width * .5 + reflection_drift, reflection_y},
-            max(1, 1.8 * scale),
-            {246, 192, 111, u8(150 - reflection * 12)},
-        )
-    }
-    for wave in 0 ..< 9 {
-        wave_y := horizon + (34 + f32(wave) * 21) * scale
-        wave_x :=
-            center.x -
-            530 * scale +
-            f32((wave * 137) % 780) * scale +
-            math.sin(animation_time * .9 + f32(wave)) * 8 * scale
-        canvas2d.DrawLineEx(
-            {wave_x, wave_y},
-            {wave_x + (28 + f32(wave % 3) * 12) * scale, wave_y},
-            max(1, scale),
-            {132, 190, 181, 80},
-        )
-    }
-
-    // A close island village gives the screen a recognizable coastal identity.
-    island_y := horizon + 52 * scale
-    island_color := canvas2d.Color{12, 45, 52, 255}
-    canvas2d.DrawCircleV({center.x - 118 * scale, island_y + 70 * scale}, 124 * scale, island_color)
-    canvas2d.DrawCircleV({center.x + 12 * scale, island_y + 83 * scale}, 148 * scale, island_color)
-    canvas2d.DrawCircleV({center.x + 148 * scale, island_y + 76 * scale}, 130 * scale, island_color)
-
-    // Sparse terrace marks break the foreground into cultivated slopes while
-    // retaining the bold silhouette of the screen-print layer.
-    terrace_color := canvas2d.Color{45, 91, 76, 175}
-    terrace_specs := [5][3]f32{{-154, 32, 86}, {-86, 66, 128}, {48, 40, 104}, {72, 82, 142}, {-36, 112, 92}}
-    for terrace in terrace_specs {
-        terrace_x := center.x + terrace[0] * scale
-        terrace_y := island_y + terrace[1] * scale
-        terrace_width := terrace[2] * scale
-        canvas2d.DrawLineEx(
-            {terrace_x - terrace_width * .5, terrace_y},
-            {terrace_x + terrace_width * .5, terrace_y},
-            max(1, 1.4 * scale),
-            terrace_color,
-        )
-    }
-
-    house_color := canvas2d.Color{229, 212, 171, 255}
-    roof_color := canvas2d.Color{168, 74, 54, 255}
-    window_dark := canvas2d.Color{22, 62, 67, 255}
-
-    // Cypress spires break up the roofline and make the settlement read as
-    // Mediterranean at postcard scale.
-    cypress_color := canvas2d.Color{18, 63, 58, 255}
-    cypress_positions := [5]f32{-172, -70, 44, 132, 202}
-    for offset, tree in cypress_positions {
-        tree_x := center.x + offset * scale
-        tree_base_y := island_y - (2 + f32(tree % 3) * 6) * scale
-        tree_height := (28 + f32((tree * 7) % 13)) * scale
-        canvas2d.DrawLineEx({tree_x, tree_base_y}, {tree_x, tree_base_y - tree_height}, 7 * scale, cypress_color)
-        canvas2d.DrawLineEx(
-            {tree_x, tree_base_y - tree_height * .72},
-            {tree_x, tree_base_y - tree_height},
-            3 * scale,
-            {26, 78, 66, 255},
-        )
-    }
-
-    // Two compact bougainvillea clusters introduce the saturated postcard ink
-    // accent without turning the quiet village into visual noise.
-    bougainvillea_centers := [2]canvas2d.Vector2 {
-        {center.x - 185 * scale, island_y - 28 * scale},
-        {center.x + 129 * scale, island_y - 47 * scale},
-    }
-    for cluster, cluster_index in bougainvillea_centers {
-        sway := math.sin(animation_time * 1.3 + f32(cluster_index) * 1.7) * 1.2 * scale
-        canvas2d.DrawLineEx(
-            {cluster.x, cluster.y + 18 * scale},
-            {cluster.x + sway, cluster.y - 8 * scale},
-            2 * scale,
-            {47, 91, 65, 210},
-        )
-        for blossom in 0 ..< 11 {
-            blossom_x := cluster.x + (f32((blossom * 11) % 27) - 13) * scale + sway * f32(blossom % 2)
-            blossom_y := cluster.y + (f32((blossom * 7) % 25) - 12) * scale
-            blossom_color := blossom % 3 == 0 ? canvas2d.Color{232, 87, 112, 245} : canvas2d.Color{190, 52, 91, 235}
-            canvas2d.DrawCircleV({blossom_x, blossom_y}, (3.5 + f32(blossom % 2) * 1.2) * scale, blossom_color)
-        }
-    }
-
-    for house in 0 ..< 7 {
-        house_x := center.x - 210 * scale + f32(house) * 63 * scale
-        rise := f32((house * 17) % 38) * scale
-        house_y := island_y - (12 * scale + rise)
-        house_width := (34 + f32(house % 3) * 5) * scale
-        house_height := (32 + f32((house + 1) % 3) * 8) * scale
-        canvas2d.DrawRectangle(
-            i32(house_x),
-            i32(house_y - house_height),
-            i32(house_width),
-            i32(house_height),
-            house_color,
-        )
-        canvas2d.DrawLineEx(
-            {house_x - 3 * scale, house_y - house_height},
-            {house_x + house_width * .5, house_y - house_height - 10 * scale},
-            5 * scale,
-            roof_color,
-        )
-        canvas2d.DrawLineEx(
-            {house_x + house_width * .5, house_y - house_height - 10 * scale},
-            {house_x + house_width + 3 * scale, house_y - house_height},
-            5 * scale,
-            roof_color,
-        )
-        window_color := normalized_progress >= f32(house + 1) / 8 ? canvas2d.Color{246, 190, 91, 255} : window_dark
-        canvas2d.DrawRectangle(
-            i32(house_x + house_width * .5 - 3 * scale),
-            i32(house_y - house_height * .55),
-            i32(6 * scale),
-            i32(8 * scale),
-            window_color,
-        )
-    }
-
-    // A small campanile adds a vertical village landmark distinct from the
-    // harbor lighthouse.
-    campanile_x := center.x + 54 * scale
-    campanile_base_y := island_y - 28 * scale
-    canvas2d.DrawRectangle(
-        i32(campanile_x),
-        i32(campanile_base_y - 55 * scale),
-        i32(22 * scale),
-        i32(55 * scale),
-        {220, 202, 161, 255},
-    )
-    canvas2d.DrawLineEx(
-        {campanile_x - 3 * scale, campanile_base_y - 55 * scale},
-        {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
-        5 * scale,
-        roof_color,
-    )
-    canvas2d.DrawLineEx(
-        {campanile_x + 11 * scale, campanile_base_y - 67 * scale},
-        {campanile_x + 25 * scale, campanile_base_y - 55 * scale},
-        5 * scale,
-        roof_color,
-    )
-    canvas2d.DrawCircleV({campanile_x + 11 * scale, campanile_base_y - 43 * scale}, 4 * scale, window_dark)
-
-    lighthouse_x := center.x + 223 * scale
-    lighthouse_base_y := island_y - 22 * scale
-    canvas2d.DrawRectangle(
-        i32(lighthouse_x),
-        i32(lighthouse_base_y - 69 * scale),
-        i32(18 * scale),
-        i32(69 * scale),
-        {236, 220, 181, 255},
-    )
-    canvas2d.DrawRectangle(
-        i32(lighthouse_x - 4 * scale),
-        i32(lighthouse_base_y - 75 * scale),
-        i32(26 * scale),
-        i32(8 * scale),
-        roof_color,
-    )
-    canvas2d.DrawCircleV({lighthouse_x + 9 * scale, lighthouse_base_y - 71 * scale}, 4 * scale, {255, 211, 116, 255})
-    beam_alpha := u8(18 + (math.sin(animation_time * 1.2) * .5 + .5) * 18)
-    canvas2d.DrawLineEx(
-        {lighthouse_x + 12 * scale, lighthouse_base_y - 71 * scale},
-        {lighthouse_x + 116 * scale, lighthouse_base_y - 88 * scale},
-        9 * scale,
-        {255, 221, 145, beam_alpha},
-    )
-
-    // The boat crosses the bay as work completes; the picture itself progresses.
-    boat_x := center.x - 390 * scale + normalized_progress * 245 * scale
-    boat_y := horizon + 88 * scale + math.sin(animation_time * 1.7) * 2.5 * scale
-    canvas2d.DrawLineEx({boat_x, boat_y - 42 * scale}, {boat_x, boat_y + 2 * scale}, 2 * scale, {66, 49, 40, 255})
-    for sail_row in 0 ..< 9 {
-        sail_y := boat_y - (38 - f32(sail_row) * 4) * scale
-        sail_width := (2 + f32(sail_row) * 2.1) * scale
-        canvas2d.DrawLineEx(
-            {boat_x + 2 * scale, sail_y},
-            {boat_x + 2 * scale + sail_width, sail_y},
-            3.5 * scale,
-            {241, 229, 201, 240},
-        )
-    }
-    canvas2d.DrawLineEx(
-        {boat_x - 16 * scale, boat_y + 4 * scale},
-        {boat_x + 22 * scale, boat_y + 4 * scale},
-        7 * scale,
-        {117, 55, 43, 255},
-    )
-    for wake in 0 ..< 3 {
-        wake_y := boat_y + (11 + f32(wake) * 6) * scale
-        wake_half_width := (16 + f32(wake) * 9) * scale
-        canvas2d.DrawLineEx(
-            {boat_x - wake_half_width, wake_y},
-            {boat_x + wake_half_width, wake_y},
-            max(1, scale),
-            {184, 213, 193, u8(100 - wake * 22)},
-        )
-    }
-
-    // A tiny quay visually ties the boat to the village instead of leaving it
-    // floating against an abstract silhouette.
-    quay_x := center.x - 246 * scale
-    quay_y := horizon + 111 * scale
-    canvas2d.DrawLineEx({quay_x, quay_y}, {quay_x + 78 * scale, quay_y}, 7 * scale, {101, 70, 53, 255})
-    for post in 0 ..< 3 {
-        post_x := quay_x + f32(post) * 37 * scale
-        canvas2d.DrawLineEx({post_x, quay_y - 4 * scale}, {post_x, quay_y + 13 * scale}, 3 * scale, {76, 55, 46, 255})
-    }
-
-    // Sparse, fixed flecks soften the digital bands into a lightly weathered
-    // screen-print surface without introducing an asset-loading dependency.
-    for fleck in 0 ..< 72 {
-        fleck_x := f32((fleck * 197 + 83) % max(int(width) - 28, 1) + 14)
-        fleck_y := f32((fleck * 109 + 47) % max(int(height) - 28, 1) + 14)
-        fleck_color := fleck % 3 == 0 ? canvas2d.Color{244, 224, 184, 16} : canvas2d.Color{5, 29, 38, 12}
-        canvas2d.DrawCircleV({fleck_x, fleck_y}, max(.55, scale * .7), fleck_color)
-    }
-
-    // Slightly offset ink layers mimic imperfect registration on a vintage
-    // postcard, while the cream frame keeps the image feeling printed.
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        greeting,
-        {center.x - greeting_size.x * .5, 55 * ui_scale},
-        greeting_font_size,
-        3 * scale,
-        {246, 222, 172, 230},
-    )
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        title,
-        {center.x - title_size.x * .5 + 2 * scale, 77 * ui_scale + 2 * scale},
-        title_font_size,
-        7 * scale,
-        {154, 58, 49, 210},
-    )
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        title,
-        {center.x - title_size.x * .5, 76 * ui_scale},
-        title_font_size,
-        7 * scale,
-        {248, 239, 203, 255},
-    )
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        message,
-        {center.x - message_size.x * .5, track.y - 29 * ui_scale},
-        message_font_size,
-        1,
-        {194, 221, 215, 255},
-    )
-    canvas2d.DrawRectangleRounded(track, 1, 8, {5, 24, 34, 210})
-    if normalized_progress > 0 {
-        fill := track
-        fill.width *= normalized_progress
-        canvas2d.DrawRectangleRounded(fill, 1, 8, {241, 188, 93, 255})
-        if fill.width > 24 * scale {
-            glint_phase := math.sin(animation_time * 1.1) * .5 + .5
-            glint_x := fill.x + 8 * scale + (fill.width - 16 * scale) * glint_phase
-            canvas2d.DrawLineEx(
-                {glint_x, fill.y + scale},
-                {glint_x, fill.y + fill.height - scale},
-                2 * scale,
-                {255, 238, 177, 180},
-            )
-        }
-    }
-
-    frame_width := max(10 * scale, f32(8))
-    frame_color := canvas2d.Color{238, 221, 181, 255}
-    canvas2d.DrawRectangle(0, 0, width, i32(frame_width), frame_color)
-    canvas2d.DrawRectangle(0, height - i32(frame_width), width, i32(frame_width), frame_color)
-    canvas2d.DrawRectangle(0, 0, i32(frame_width), height, frame_color)
-    canvas2d.DrawRectangle(width - i32(frame_width), 0, i32(frame_width), height, frame_color)
-    canvas2d.DrawRectangleRoundedLinesEx(
-        {frame_width, frame_width, w - frame_width * 2, h - frame_width * 2},
-        .01,
-        2,
-        max(1, 2 * scale),
-        {104, 59, 49, 180},
-    )
-    live_capture_poll()
-    canvas2d.EndDrawing()
 }
 
 Hot_State_File_Header :: struct {
@@ -11363,7 +11007,8 @@ adriatic_run :: proc(
     startup_timings.window_ms = startup_checkpoint(&startup_timings)
     show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
     postcard: canvas2d.Texture
-    if loading_lab_mode || loading_preview_mode || show_loading_screen {
+    needs_postcard := loading_lab_mode || loading_preview_mode || (!capture_mode && !benchmark_mode)
+    if needs_postcard {
         postcard_period := loading_postcard_period_for_hour(loading_postcard_local_hour())
         period_override := ""
         if loading_lab_mode && len(args) >= 4 do period_override = args[3]
@@ -11378,9 +11023,12 @@ adriatic_run :: proc(
                 )
             }
         }
-        draw_startup_loading_screen(initial_width, initial_height, .02, "Opening the harbor...")
         postcard = canvas2d.LoadTexture(loading_postcard_path(postcard_period))
-        if !postcard.ready do fmt.eprintln("loading postcard texture failed; using procedural fallback")
+        if !postcard.ready {
+            fmt.eprintln("loading postcard texture failed")
+            startup_failed = true
+            return .Quit
+        }
     }
     if loading_lab_mode {
         defer canvas2d.CloseWindow()
