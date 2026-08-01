@@ -25215,9 +25215,15 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         tail_points: [mouse_tail.POINT_COUNT]third_person.Vec3
         tail_radii: [mouse_tail.POINT_COUNT]f32
         tail_colors: [mouse_tail.POINT_COUNT]canvas2d.Color
+        // Simulation consumes the attachment evaluated by the preceding
+        // render, so its chain is one presentation frame behind the body.
+        // Move the complete solved shape by the current socket delta before
+        // drawing it. This preserves the tail's relative lag and curvature
+        // while keeping its root welded to the rump during locomotion.
+        attachment_delta := editor.player_tail.evaluated_attachment - editor.player_tail.points[0].position
         for point, tail_index in editor.player_tail.points {
             weight := f32(tail_index) / f32(len(editor.player_tail.points) - 1)
-            tail_points[tail_index] = point.position
+            tail_points[tail_index] = point.position + attachment_delta
             tail_pose_weight := clamp(emote_pose.tail.weight, 0, 1)
             local_side := emote_pose.tail.curl * math.sin(weight * math.PI) * tail_pose_weight
             tail_points[tail_index].x += math.cos(rotation) * local_side * weight
@@ -25269,6 +25275,10 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
                 }
             }
         }
+        // Surface clearance may raise the first span. The socket itself is
+        // authoritative; never let presentation-only clearance open a seam
+        // between the rump and the first tail ring.
+        tail_points[0] = editor.player_tail.evaluated_attachment
         world_mouse_limb_hull(tail_points[:], tail_radii[:], tail_colors[:], model_forward)
     } else if !model.hide_tail {
         tail_points: [9]third_person.Vec3
