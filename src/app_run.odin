@@ -630,7 +630,7 @@ adriatic_run :: proc(
         case .Missing:
         }
     }
-    if state_loaded &&
+    if state_loaded && editor.lab.kind != .Dunes &&
        !capture_mode &&
        !interactive_lab_mode &&
        (!benchmark_mode ||

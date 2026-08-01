@@ -336,4 +336,5 @@ dunes_lab_exit :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.lab = {}
     editor.dunes_lab_runtime = {}
+    if editor.active_lab_scene == "dunes" do editor.active_lab_scene = ""
 }

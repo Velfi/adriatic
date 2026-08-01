@@ -273,6 +273,45 @@ when ODIN_TEST {
     }
 
     @(test)
+    dunes_lab_fixture_preflight_precedes_stage_allocation :: proc(t: ^testing.T) {
+        source := fixture_editor_test_source()
+        defer fixture_editor_test_source_destroy(source)
+        source.lab = {
+            kind  = .Dunes,
+            dunes = {wind_angle = math.nan_f32(), vegetation = .5},
+        }
+        data, encode_error, encoded := fixture_codec_encode(source, context.allocator)
+        testing.expect(t, encoded && encode_error.kind == .None)
+        fixture_codec_error_dispose(&encode_error)
+        if !encoded do return
+        defer delete(data)
+
+        candidate, decode_error, decoded := fixture_codec_decode(data, context.allocator)
+        testing.expect(t, decoded && decode_error.kind == .None)
+        fixture_codec_error_dispose(&decode_error)
+        if !decoded do return
+        defer fixture_migration_result_dispose(&candidate)
+
+        editor := fixture_editor_test_editor(t)
+        defer fixture_editor_test_destroy(editor)
+        state := fixture_migration_test_allocator_state {
+            base    = context.allocator,
+            fail_at = 0,
+        }
+        load_error, loaded := fixture_editor_load_decoded(
+            editor,
+            &candidate,
+            nil,
+            fixture_migration_test_allocator(&state),
+        )
+        testing.expect(t, !loaded && load_error.kind == .Invalid_State)
+        testing.expect(t, load_error.path == "lab.dunes.wind_angle")
+        testing.expect_value(t, state.allocation_calls, 0)
+        testing.expect_value(t, state.outstanding, 0)
+        fixture_editor_load_error_dispose(&load_error)
+    }
+
+    @(test)
     dunes_lab_hot_state_rehydrates_without_mutating_terrain :: proc(t: ^testing.T) {
         directory, directory_error := os.make_directory_temp("", "adriatic-dunes-hot-*", context.allocator)
         testing.expect(t, directory_error == nil)

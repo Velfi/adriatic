@@ -843,7 +843,7 @@ fixture-dunes-lab-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/liba
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.dunes_lab_fixture_load_rehydrates_without_mutating_terrain,main.dunes_lab_fixture_exit_and_ordinary_load_clear_runtime,main.dunes_lab_hot_state_rehydrates_without_mutating_terrain -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 fixture-dunes-lab-preflight-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
-	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.dunes_lab_fixture_lab_preflight_paths -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.dunes_lab_fixture_lab_preflight_paths,main.dunes_lab_fixture_hostile_lab_state_is_atomic,main.dunes_lab_fixture_preflight_precedes_stage_allocation -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

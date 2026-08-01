@@ -253,6 +253,7 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
 
     identical := hs.deserialize(editor, payload, {.Dynamics}, context.allocator)
     _ = identical // hs already used mem.copy for every identical subtree.
+    if lab_fixture_preflight(editor.lab) != "" do return .Invalid
     lifecycle_error := fixture_lifecycle_bind(&editor.fixture)
     if lifecycle_error.kind != .None do return .Invalid
 

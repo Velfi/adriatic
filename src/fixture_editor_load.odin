@@ -547,6 +547,9 @@ fixture_editor_load_decoded :: proc(
     if editor == nil || candidate == nil || candidate.fixture == nil || alloc.procedure == nil {
         return {kind = .Invalid_Argument}, false
     }
+    if path := lab_fixture_preflight(candidate.fixture.lab); path != "" {
+        return {kind = .Invalid_State, path = path}, false
+    }
 
     stage_bytes, allocation_error := mem.alloc_bytes(size_of(Editor), align_of(Editor), alloc)
     if allocation_error != nil || stage_bytes == nil {
