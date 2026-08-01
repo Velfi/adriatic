@@ -153,7 +153,7 @@ when ODIN_TEST {
     }
 
     @(test)
-    editor_clipmap_detail_follows_projected_vertex_spacing :: proc(t: ^testing.T) {
+    clipmap_detail_follows_projected_vertex_spacing_in_editor_and_gameplay :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
         terrain.init_project(&editor.project)
@@ -163,7 +163,10 @@ when ODIN_TEST {
         editor.camera_pose = third_person.camera_look_at({0, 3000, 0}, {0, 0, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
         editor.in_map = true
+        editor.camera_pose = third_person.camera_look_at({0, 8, 12}, {0, 1, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
+        editor.camera_pose = third_person.camera_look_at({0, 3008, 12}, {0, 3000, 0})
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
     }
 
     @(test)

@@ -206,7 +206,7 @@ CLIPMAP_INNER_GRID_RESOLUTION :: terrain.TERRAIN_RESOLUTION + 1
 CLIPMAP_INNER_VERTEX_COUNT :: CLIPMAP_INNER_GRID_RESOLUTION * CLIPMAP_INNER_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_INNER_GRID_RESOLUTION - 1) * (CLIPMAP_INNER_GRID_RESOLUTION - 1) * 6
 CLIPMAP_TRANSITION_WIDTH :: 4
-CLIPMAP_EDITOR_MIN_VERTEX_SPACING_PIXELS :: f32(1)
+CLIPMAP_MIN_VERTEX_SPACING_PIXELS :: f32(1)
 
 // Keep the world pass useful beyond the immediate flight envelope. The
 // clipmap already provides this coverage; these values prevent the camera
@@ -3159,19 +3159,26 @@ clipmap_grid_resolution :: #force_inline proc(level: int) -> int {
     return level == 0 ? CLIPMAP_INNER_GRID_RESOLUTION : CLIPMAP_GRID_RESOLUTION
 }
 
-// Editor views do not need sub-pixel terrain tessellation. Select the first
-// clipmap whose vertex spacing is visible at the current camera distance; that
-// level becomes the solid center and coarser levels remain rings around it.
-// Gameplay keeps the finest level so near-ground movement is unchanged.
-clipmap_first_render_level :: proc(editor: ^Editor, viewport_height: i32) -> int {
-    if editor == nil || editor.in_map || viewport_height <= 0 do return 0
-    delta := editor.camera_pose.position - editor.camera_pose.target
+// World views do not need sub-pixel terrain tessellation. Select the first
+// clipmap whose vertex spacing is visible at the camera's distance from the
+// terrain beneath its focus; that level becomes the solid center and coarser
+// levels remain rings around it. Camera-to-focus distance alone is insufficient
+// for aircraft because both points remain close together high above the land.
+clipmap_first_render_level :: proc(editor: ^Editor, viewport_height: i32, focal_length: f32 = 1.35) -> int {
+    if editor == nil || viewport_height <= 0 do return 0
+    terrain_y := terrain.sample_height(
+        &editor.project,
+        0,
+        editor.camera_pose.target.x,
+        editor.camera_pose.target.z,
+    )
+    terrain_focus := third_person.Vec3{editor.camera_pose.target.x, terrain_y, editor.camera_pose.target.z}
+    delta := editor.camera_pose.position - terrain_focus
     distance := f32(math.sqrt(f64(linalg.dot(delta, delta))))
     if distance <= .001 do return 0
-    focal_length := perspective_camera(editor.camera_pose).focal_length
     pixels_per_meter := focal_length * f32(viewport_height) * .5 / distance
     for level in 0 ..< terrain.CLIPMAP_LEVELS - 1 {
-        if clipmap_grid_cell(editor, level) * pixels_per_meter >= CLIPMAP_EDITOR_MIN_VERTEX_SPACING_PIXELS {
+        if clipmap_grid_cell(editor, level) * pixels_per_meter >= CLIPMAP_MIN_VERTEX_SPACING_PIXELS {
             return level
         }
     }
@@ -3453,7 +3460,7 @@ world_structure_storage_ensure :: proc(count: int) {
     reserve(&world_renderer.structure_candidates, capacity)
 }
 
-clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32) {
+clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32, focal_length: f32) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_update")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     cache_revision_changed := world_renderer.clipmap_cache_revision != editor.terrain_revision
@@ -3461,7 +3468,7 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32) 
     localized_revision :=
         cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     target := [2]f32{editor.camera_pose.target.x, editor.camera_pose.target.z}
-    first_level := clipmap_first_render_level(editor, viewport_height)
+    first_level := clipmap_first_render_level(editor, viewport_height, focal_length)
     world_renderer.clipmap_first_level = first_level
     // Skipped caches do not receive terrain revisions. Invalidate them so a
     // later zoom-in regenerates and uploads current terrain instead of
@@ -29502,6 +29509,16 @@ dialogue_portrait_render :: proc(
     resize(&world_renderer.vertices, main_count)
 }
 
+world_camera_focal_length :: proc(editor: ^Editor) -> f32 {
+    if editor == nil do return 1.35
+    focal_length :=
+        editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
+    if editor.cinematic_playback.script != nil || editor.active_lab_scene == "mouse-theater" {
+        focal_length = max(editor.cinematic_focal_length, f32(.01))
+    }
+    return focal_length
+}
+
 world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized do return
     editor := world_renderer.editor
@@ -29510,8 +29527,14 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         world_prepare(editor, pass.frame.command_buffer, int(pass.frame.frame_index))
     }
     world_renderer.dynamic_shadow.frame_prepared = false
+    focal_length := world_camera_focal_length(editor)
     if !editor.vehicle_showcase_scene && !lab_scene_replaces_world(editor) {
-        clipmap_update(editor, int(pass.frame.frame_index), i32(pass.framebuffer_extent.height))
+        clipmap_update(
+            editor,
+            int(pass.frame.frame_index),
+            i32(pass.framebuffer_extent.height),
+            focal_length,
+        )
     }
     frame_index := int(pass.frame.frame_index)
     world_instances_flatten()
@@ -29693,13 +29716,6 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
     render_camera_pose :=
         editor.pause_screen == .Customization ? customization_preview_camera_pose() : editor.camera_pose
-    focal_length :=
-        editor.vehicle_showcase_scene ? VEHICLE_SHOWCASE_FOCAL_LENGTH : (editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35)
-    if editor.cinematic_playback.script != nil {
-        focal_length = max(editor.cinematic_focal_length, f32(.01))
-    } else if editor.active_lab_scene == "mouse-theater" {
-        focal_length = max(editor.cinematic_focal_length, f32(.01))
-    }
     camera := perspective_camera(render_camera_pose, focal_length)
     sky := atmosphere_sky(editor)
     sky_front := atmosphere.sky_front_field(
