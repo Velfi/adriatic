@@ -182,6 +182,7 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         world_overlay = world_dunes_lab,
         process_input = dunes_lab_process_input,
         draw_ui = dunes_lab_draw_ui,
+        exit = dunes_lab_exit,
         isolate_content = true,
         enter_gameplay = false,
         replace_world = false,

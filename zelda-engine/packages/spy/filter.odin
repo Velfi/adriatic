@@ -316,8 +316,8 @@ package_filter_matches :: proc(data: ^Package_Exclude_Filter_Data, loc: runtime.
         return false
     }
 
-    package_name, ok := source_package_name(loc.file_path)
-    if !ok || package_name == "" {
+    package_name := loc.package_name
+    if package_name == "" {
         return false
     }
 
@@ -435,35 +435,4 @@ scope_chain_has_segment_name :: proc(scope_label, denied: string) -> bool {
     }
 
     return false
-}
-
-// #+vet redundancy public-api
-source_package_name :: proc(path: string) -> (name: string, ok: bool) {
-    if path == "" {
-        return "", false
-    }
-
-    end := -1
-    for i := len(path) - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            end = i
-            break
-        }
-    }
-    if end <= 0 {
-        return "", false
-    }
-
-    start := 0
-    for i := end - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            start = i + 1
-            break
-        }
-    }
-
-    if end <= start {
-        return "", false
-    }
-    return path[start:end], true
 }

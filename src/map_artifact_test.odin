@@ -2,6 +2,7 @@ package main
 
 import terrain "../packages/terrain"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -31,6 +32,180 @@ when ODIN_TEST {
         }
         artifact.default_marina_count = 0
         return artifact
+    }
+
+    map_artifact_fixture_test_destroy :: proc(fixture: ^Fixture) {
+        if fixture == nil do return
+        fixture_storage_destroy(fixture)
+        free(fixture)
+    }
+
+    map_artifact_fixture_test_source :: proc() -> ^Fixture {
+        fixture := new(Fixture)
+        fixture.project.revision = 17
+        fixture.project.sea_level = f32(2.5)
+        fixture.project.next_structure_id = 8
+        fixture.project.structures = make([dynamic]terrain.Structure, 1)
+        fixture.project.structure_count = 1
+        fixture.project.structures[0] = {
+            id       = 7,
+            center_x = 12,
+            center_z = -18,
+            width    = 4,
+            depth    = 5,
+            height   = 6,
+            kind     = .Rock,
+        }
+        fixture.project.city_density[11] = 12
+        fixture.project.climbing_leaf_density[13] = 14
+        for &level, index in fixture.project.levels {
+            level.cell_size = terrain.FINE_CELL_SIZE * f32(u32(1) << u32(index))
+            level.origin_x = -100
+            level.origin_z = -100
+        }
+        fixture.project.levels[0].heights[9] = f32(3.75)
+
+        fixture.settlement_plan.valid = true
+        fixture.settlement_plan.neighborhood_count = 2
+        fixture.settlement_plan.route_count = 3
+
+        fixture.marina_authored = true
+        fixture.marina_authored_plan.seed = 0x4d415249
+        fixture.marina_authored_plan.layout_seed = 0x13579bdf
+        fixture.marina_authored_plan.valid = true
+        fixture.harbor_authored_plan.seed = 0x48415242
+        fixture.harbor_authored_plan.generation_version = 2
+        fixture.harbor_authored_plan.valid = true
+        fixture.harbor_authored_intervention.seed = 0x494e5445
+        fixture.harbor_authored_intervention.valid = true
+
+        fixture.farms[0] = {
+            origin_x = 101,
+            origin_z = -202,
+            yaw      = .35,
+            scale_x  = 1.25,
+            scale_z  = .8,
+        }
+        fixture.farms[0].plan.width = 25
+        fixture.farms[0].plan.height = 19
+        fixture.farms[0].plan.tradition = .Ancient_Enclosure
+        fixture.farm_count = 1
+        fixture.wrecks[0].seed = 0x57524543
+        fixture.wrecks[0].origin_x = 29
+        fixture.wrecks[0].scale = 1.5
+        fixture.wreck_count = 1
+
+        fixture.default_marinas[0].seed = 0x4d415249
+        fixture.default_marinas[0].valid = true
+        fixture.default_harbors[0].seed = 0x48415242
+        fixture.default_harbors[0].valid = true
+        fixture.default_harbor_interventions[0].seed = 0x494e5445
+        fixture.default_harbor_interventions[0].valid = true
+        fixture.default_marina_islands[0] = .East
+        fixture.default_marina_count = 1
+
+        fixture.greek_placements[0] = {
+            asset_index = 3,
+            x           = 41,
+            z           = -42,
+            base_y      = 4,
+            rotation    = .5,
+            scale       = 1.75,
+        }
+        fixture.greek_placement_count = 1
+        return fixture
+    }
+
+    @(test)
+    map_artifact_sidecar_descriptor_contract :: proc(t: ^testing.T) {
+        encoded := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x01, 0x02, 0x03}
+        sidecar, derived := fixture_map_sidecar_derive(encoded)
+        testing.expect(t, derived)
+        testing.expect(t, fixture_map_sidecar_valid(sidecar))
+        testing.expect(t, sidecar.basename_count == FIXTURE_MAP_SIDECAR_BASENAME_LENGTH)
+        testing.expect(t, sidecar.basename_count == 81)
+        testing.expect(
+            t,
+            sidecar.basename[0] == 'm' &&
+            sidecar.basename[1] == 'a' &&
+            sidecar.basename[2] == 'p' &&
+            sidecar.basename[3] == '-',
+        )
+        testing.expect(t, sidecar.basename[sidecar.basename_count - 13] == '.')
+
+        repeated, repeated_ok := fixture_map_sidecar_derive(encoded)
+        testing.expect(t, repeated_ok)
+        testing.expect(t, sidecar.encoded_sha256 == repeated.encoded_sha256)
+        testing.expect(
+            t,
+            slice.equal(sidecar.basename[:sidecar.basename_count], repeated.basename[:repeated.basename_count]),
+        )
+        testing.expect(t, fixture_map_sidecar_matches_encoded(sidecar, encoded))
+
+        mismatched := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x01, 0x02, 0x04}
+        testing.expect(t, !fixture_map_sidecar_matches_encoded(sidecar, mismatched))
+
+        empty, empty_ok := fixture_map_sidecar_derive(nil)
+        testing.expect(t, !empty_ok && empty == {})
+
+        inline_bytes := make([dynamic]u8, len(encoded))
+        defer delete(inline_bytes)
+        copy(inline_bytes[:], encoded)
+        source := Fixture_Map_Source {
+            kind         = .Inline,
+            inline_bytes = inline_bytes,
+        }
+        testing.expect(t, fixture_map_source_valid(source))
+        source = {
+            kind    = .Sidecar,
+            sidecar = sidecar,
+        }
+        testing.expect(t, fixture_map_source_valid(source))
+        source.inline_bytes = inline_bytes
+        testing.expect(t, !fixture_map_source_valid(source))
+    }
+
+    @(test)
+    map_artifact_sidecar_rejects_noncanonical_names_and_resolves_only_siblings :: proc(t: ^testing.T) {
+        encoded := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x11}
+        sidecar, derived := fixture_map_sidecar_derive(encoded)
+        testing.expect(t, derived)
+        if !derived do return
+
+        malformed := sidecar
+        malformed.basename_count = 0
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+        malformed = sidecar
+        malformed.basename[0] = '/'
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+        rejected, rejected_ok := fixture_map_sidecar_resolve("/fixture-playground/scene.fixture", malformed)
+        testing.expect(t, !rejected_ok && len(rejected) == 0)
+        malformed = sidecar
+        malformed.basename[0] = '.'
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+        malformed = sidecar
+        malformed.basename[4] = 'A'
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+        malformed = sidecar
+        malformed.format_version += 1
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+        malformed = sidecar
+        malformed.encoded_sha256 = {}
+        fixture_map_sidecar_set_basename(&malformed)
+        testing.expect(t, !fixture_map_sidecar_valid(malformed))
+
+        fixture_path := "/fixture-playground/scene.fixture"
+        resolved, resolved_ok := fixture_map_sidecar_resolve(fixture_path, sidecar)
+        testing.expect(t, resolved_ok)
+        if !resolved_ok do return
+        defer delete(resolved)
+        expected, expected_error := filepath.join(
+            []string{os.dir(fixture_path), string(sidecar.basename[:sidecar.basename_count])},
+            context.temp_allocator,
+        )
+        testing.expect(t, expected_error == nil)
+        testing.expect(t, resolved == expected)
+        testing.expect(t, strings.has_prefix(resolved, os.dir(fixture_path)))
     }
 
     @(test)
@@ -120,8 +295,88 @@ when ODIN_TEST {
         defer map_artifact_error_dispose(&error)
         testing.expect(t, applied)
         testing.expect(t, editor.project.structures[0].id == 1)
-        testing.expect(t, artifact.project.structures == nil)
+        testing.expect(t, len(artifact.project.structures) == 0)
+        testing.expect(t, cap(artifact.project.structures) == 0)
         testing.expect(t, editor.gameplay_options.sound_fx_level == .37)
         testing.expect(t, editor.terrain_revision == 42)
+    }
+
+    @(test)
+    map_artifact_fixture_helpers_round_trip_map_state :: proc(t: ^testing.T) {
+        source := map_artifact_fixture_test_source()
+        defer map_artifact_fixture_test_destroy(source)
+        seeds := terrain.DEFAULT_ISLAND_SEEDS
+        seeds[0] = 0x10203040
+        seeds[1] = 0x50607080
+        artifact, capture_error, captured := map_artifact_capture_fixture(source, seeds)
+        defer map_artifact_error_dispose(&capture_error)
+        testing.expect(t, captured)
+        if !captured do return
+        defer map_artifact_destroy(artifact)
+        source.project.structures[0].id = 99
+
+        encoded, encode_error, encoded_ok := map_artifact_encode(artifact)
+        defer delete(encoded)
+        defer map_artifact_error_dispose(&encode_error)
+        testing.expect(t, encoded_ok)
+        if !encoded_ok do return
+        decoded, decode_error, decoded_ok := map_artifact_decode(encoded)
+        defer map_artifact_error_dispose(&decode_error)
+        testing.expect(t, decoded_ok)
+        if !decoded_ok do return
+        defer map_artifact_destroy(decoded)
+
+        target := new(Fixture)
+        defer map_artifact_fixture_test_destroy(target)
+        target.project.structures = make([dynamic]terrain.Structure, 1)
+        target.project.structure_count = 1
+        target.project.structures[0].id = 99
+        target.camera.yaw_radians = .99
+        target.camera.distance = 77
+        apply_error, applied := map_artifact_apply_fixture(target, decoded)
+        defer map_artifact_error_dispose(&apply_error)
+        testing.expect(t, applied)
+        if !applied do return
+
+        testing.expect(t, len(decoded.project.structures) == 0)
+        testing.expect(t, cap(decoded.project.structures) == 0)
+        testing.expect(t, target.project.structure_count == 1)
+        testing.expect(t, target.project.structures[0].id == 7)
+        testing.expect(t, target.project.levels[0].heights[9] == f32(3.75))
+        testing.expect(t, target.project.city_density[11] == 12)
+        testing.expect(t, target.project.climbing_leaf_density[13] == 14)
+        testing.expect(t, target.settlement_plan.valid)
+        testing.expect(t, target.settlement_plan.neighborhood_count == 2)
+        testing.expect(t, target.settlement_plan.route_count == 3)
+        testing.expect(t, target.marina_authored && target.marina_authored_plan.seed == 0x4d415249)
+        testing.expect(t, target.harbor_authored_plan.seed == 0x48415242)
+        testing.expect(t, target.harbor_authored_intervention.seed == 0x494e5445)
+        testing.expect(t, target.farm_count == 1 && target.farms[0].plan.width == 25)
+        testing.expect(t, target.wreck_count == 1 && target.wrecks[0].seed == 0x57524543)
+        testing.expect(t, target.default_marina_count == 1)
+        testing.expect(t, target.default_marinas[0].seed == 0x4d415249)
+        testing.expect(t, target.default_harbors[0].seed == 0x48415242)
+        testing.expect(t, target.default_harbor_interventions[0].seed == 0x494e5445)
+        testing.expect(t, target.default_marina_islands[0] == .East)
+        testing.expect(t, target.greek_placement_count == 1 && target.greek_placements[0].asset_index == 3)
+        testing.expect(t, target.camera.yaw_radians == .99 && target.camera.distance == 77)
+    }
+
+    @(test)
+    map_artifact_fixture_apply_rejects_invalid_without_mutation :: proc(t: ^testing.T) {
+        fixture := map_artifact_fixture_test_source()
+        defer map_artifact_fixture_test_destroy(fixture)
+        fixture.project.structures[0].id = 99
+        fixture.camera.yaw_radians = .99
+        artifact := map_artifact_test_source()
+        defer map_artifact_destroy(artifact)
+        artifact.project.levels[0].cell_size = 0
+        error, applied := map_artifact_apply_fixture(fixture, artifact)
+        defer map_artifact_error_dispose(&error)
+        testing.expect(t, !applied && error.kind == .Invalid_State)
+        testing.expect(t, fixture.project.structures[0].id == 99)
+        testing.expect(t, fixture.settlement_plan.neighborhood_count == 2)
+        testing.expect(t, fixture.camera.yaw_radians == .99)
+        testing.expect(t, artifact.project.structures != nil)
     }
 }

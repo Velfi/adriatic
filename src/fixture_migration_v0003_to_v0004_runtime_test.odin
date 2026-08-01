@@ -176,7 +176,7 @@ when ODIN_TEST {
         portable_error, portable_ok := hs.portable_decode(
             fixture_codec_value(tentative),
             payload,
-            fixture_codec_portable_config(),
+            fixture_codec_migration_portable_config(),
             transaction_allocator,
         )
         testing.expect(t, portable_ok && portable_error.kind == .None)
@@ -277,7 +277,7 @@ when ODIN_TEST {
                 fixture.pilot.mode == .Driving &&
                 fixture.structure_selected == 204 &&
                 fixture.vehicle_showcase_target == "runtime-v2-target" &&
-                fixture.active_lab_scene == "runtime-v2-lab",
+                fixture.lab.kind == .None,
             )
         } else {
             testing.expect(
@@ -285,7 +285,7 @@ when ODIN_TEST {
                 fixture.pilot.mode == .Driving &&
                 fixture.structure_selected == 304 &&
                 fixture.vehicle_showcase_target == "runtime-v3-target" &&
-                fixture.active_lab_scene == "runtime-v3-lab",
+                fixture.lab.kind == .None,
             )
         }
         project_raw := cast(^runtime.Raw_Dynamic_Array)&fixture.project.structures

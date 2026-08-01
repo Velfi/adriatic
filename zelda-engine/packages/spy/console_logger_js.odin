@@ -166,22 +166,14 @@ format_logger_line_widget :: proc(
         )
     }
 
-    start, end, has_path := module_bounds(loc.file_path)
-    if has_path || has_scope_label {
-        if has_path {
-            hash: u64 = 1469598103934665603
+    package_name := loc.package_name
+    has_package := package_name != ""
+    if has_package || has_scope_label {
+        if has_package {
+            hash := module_hash(package_name)
             module_start := len(out.buf)
             strings.write_byte(out, '[')
-            for i := start; i < end; i += 1 {
-                c := loc.file_path[i]
-                if c == '/' || c == '\\' {
-                    hash = module_hash_byte(module_hash_byte(hash, ':'), ':')
-                    strings.write_string(out, "::")
-                    continue
-                }
-                hash = module_hash_byte(hash, c)
-                strings.write_byte(out, c)
-            }
+            strings.write_string(out, package_name)
             if has_scope_label {
                 strings.write_byte(out, ':')
             } else {
@@ -253,7 +245,7 @@ build_log_line :: proc(
 ) -> string {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     scope_label, message_text, has_scope_label := split_log_scope_metadata(text)
-    line_cap := len(message_text) + len(ident) + len(location.file_path) + 128
+    line_cap := len(message_text) + len(ident) + len(location.package_name) + len(location.file_path) + 128
     if line_cap < 256 {
         line_cap = 256
     }
@@ -283,7 +275,7 @@ console_logger_proc :: proc(
     prefix := strings.builder_make_len_cap(0, 64, context.temp_allocator)
     do_time_header(options, &prefix, time.now())
 
-    module_cap := len(loc.file_path) + len(scope_label) + 64
+    module_cap := len(loc.package_name) + len(scope_label) + 64
     if module_cap < 128 {
         module_cap = 128
     }
@@ -313,7 +305,7 @@ console_logger_proc :: proc(
         prefix_len,
         module_ptr,
         module_len,
-        module_color_index(loc.file_path),
+        module_color_index(loc.package_name),
         suffix_ptr,
         suffix_len,
         message_ptr,
@@ -351,22 +343,22 @@ js_string_parts :: #force_inline proc(s: string) -> (ptr: ^u8, count: u32) {
 }
 
 // #+vet redundancy public-api
-module_color_index :: proc(path: string) -> int {
-    start, end, ok := module_bounds(path)
-    if !ok {
+module_color_index :: proc(package_name: string) -> int {
+    if package_name == "" {
         return -1
     }
 
-    hash: u64 = 1469598103934665603
-    for i := start; i < end; i += 1 {
-        c := path[i]
-        if c == '/' || c == '\\' {
-            hash = module_hash_byte(module_hash_byte(hash, ':'), ':')
-            continue
-        }
-        hash = module_hash_byte(hash, c)
-    }
+    hash := module_hash(package_name)
     return int(hash % u64(JS_MODULE_COLOR_COUNT))
+}
+
+@(private)
+module_hash :: proc(s: string) -> u64 {
+    hash: u64 = 1469598103934665603
+    for i := 0; i < len(s); i += 1 {
+        hash = module_hash_byte(hash, s[i])
+    }
+    return hash
 }
 
 module_hash_byte :: #force_inline proc(hash: u64, b: byte) -> u64 {
@@ -426,73 +418,32 @@ do_module_header :: proc(
     scope_override: string,
     has_scope_override: bool,
 ) {
-    start, end, ok := module_bounds(location.file_path)
+    package_name := location.package_name
+    has_package := package_name != ""
     scope_count := 0
     if !has_scope_override {
         scope_count = active_span_count()
     }
-    if !ok && !has_scope_override && scope_count == 0 {
+    if !has_package && !has_scope_override && scope_count == 0 {
         return
     }
 
     strings.write_byte(buf, '[')
-    if ok {
-        for i := start; i < end; i += 1 {
-            c := location.file_path[i]
-            if c == '/' || c == '\\' {
-                strings.write_string(buf, "::")
-                continue
-            }
-            strings.write_byte(buf, c)
-        }
+    if has_package {
+        strings.write_string(buf, package_name)
     }
     if has_scope_override {
-        if ok {
+        if has_package {
             strings.write_byte(buf, ':')
         }
         do_scope_label_text(buf, scope_override)
     } else if scope_count > 0 {
-        if ok {
+        if has_package {
             strings.write_byte(buf, ':')
         }
         do_scope_label_parts(buf)
     }
     strings.write_string(buf, "] ")
-}
-
-module_bounds :: proc(path: string) -> (start: int, end: int, ok: bool) {
-    if path == "" {
-        return
-    }
-
-    end = -1
-    for i := len(path) - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            end = i
-            break
-        }
-    }
-    if end <= 0 {
-        return
-    }
-
-    start = 0
-    parent_sep := -1
-    for i := end - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            parent_sep = i
-            break
-        }
-    }
-    if parent_sep < 0 {
-        return
-    }
-    start = parent_sep + 1
-
-    if end <= start {
-        return
-    }
-    return start, end, true
 }
 
 do_location_header :: proc(opts: Options, buf: ^strings.Builder, loc := #caller_location) {

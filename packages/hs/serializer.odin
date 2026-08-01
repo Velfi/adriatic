@@ -799,6 +799,10 @@ Munch_Frame :: struct {
     type:  ^rt.Type_Info,
 }
 
+munch_static_leaf_array :: #force_inline proc(elem: ^rt.Type_Info) -> bool {
+    return elem != nil && (elem.id == typeid_of(u8) || elem.id == typeid_of(f32))
+}
+
 // #+vet redundancy public-api
 munch :: proc(bytes: ^[dynamic]byte, bytes_start, index: int, type: ^rt.Type_Info) {
     frames := make([dynamic]Munch_Frame, context.temp_allocator)
@@ -831,12 +835,14 @@ munch :: proc(bytes: ^[dynamic]byte, bytes_start, index: int, type: ^rt.Type_Inf
             append(bytes, ..string_data[:string_len])
 
         case rt.Type_Info_Enumerated_Array:
+            if munch_static_leaf_array(info.elem) do continue
             i := info.count - 1
             for i >= 0 {
                 append(&frames, Munch_Frame{index = frame.index + i * info.elem_size, type = info.elem})
                 i -= 1
             }
         case rt.Type_Info_Array:
+            if munch_static_leaf_array(info.elem) do continue
             i := info.count - 1
             for i >= 0 {
                 append(&frames, Munch_Frame{index = frame.index + i * info.elem_size, type = info.elem})

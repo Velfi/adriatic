@@ -6,9 +6,12 @@ import farmland "../packages/farmland"
 import road_designer "../packages/road_designer"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
+import "core:c"
 import "core:fmt"
 import "core:math"
+import "core:sync"
 import canvas2d "zelda_engine:canvas2d"
+import sdl "vendor:sdl3"
 
 Authoring_Tool :: enum {
     Sculpt,
@@ -25,6 +28,7 @@ Authoring_Tool :: enum {
     ClimbingLeaves,
     Roads,
     GreekAssets,
+    Obstacles,
 }
 
 Plant_Stamp_Mode :: enum u8 {
@@ -60,6 +64,26 @@ EDITOR_UI_BUTTON_TEXT_Y_OFFSET :: f32(3)
 EDITOR_UI_TOOL_COLUMNS :: 3
 EDITOR_UI_TOOL_BUTTON_SIZE :: f32(48)
 EDITOR_UI_TOOL_BUTTON_GAP :: f32(6)
+
+FIXTURE_FILE_PATH_CAPACITY :: 1024
+
+Fixture_File_Dialog_Mode :: enum {
+    Closed,
+    Save,
+    Load,
+}
+
+Fixture_File_Dialog_State :: struct {
+    finished:     u32,
+    pending:      bool,
+    mode:         Fixture_File_Dialog_Mode,
+    path:         [FIXTURE_FILE_PATH_CAPACITY]u8,
+    path_length:  int,
+}
+
+FIXTURE_FILE_FILTERS: [1]sdl.DialogFileFilter = {
+    {"Fixture", "fixture"},
+}
 
 Editor_UI_State :: struct {
     left_collapsed:      bool,
@@ -110,6 +134,8 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "ROADS"
     case .GreekAssets:
         return "RUIN STAMP"
+    case .Obstacles:
+        return "OBSTACLES"
     }
     return "TOOL"
 }
@@ -145,6 +171,8 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "M"
     case .GreekAssets:
         return "G"
+    case .Obstacles:
+        return ""
     }
     return ""
 }
@@ -225,6 +253,8 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.tool = .Structure
         editor.greek_placement_mode = true
         editor.structure_selected = -1
+    case .Obstacles:
+        editor.tool = .Structure
     }
     editor.tweak.terrain.tool = editor.tool
     curve_reset(editor)
@@ -238,6 +268,109 @@ authoring_select_rock_tool :: proc(editor: ^Editor) {
     editor.rock_placement_mode = true
     editor.structure_auto_kind = false
     editor.structure_kind = .Rock
+}
+
+fixture_file_path_copy :: proc(destination: []u8, source: string) -> int {
+    count := min(len(destination), len(source))
+    if count > 0 do copy(destination[:count], transmute([]u8)source[:count])
+    return count
+}
+
+fixture_editor_current_path :: proc(editor: ^Editor) -> string {
+    if editor == nil || editor.fixture_path_length <= 0 do return ""
+    return string(editor.fixture_path[:editor.fixture_path_length])
+}
+
+fixture_editor_set_path :: proc(editor: ^Editor, path: string) {
+    if editor == nil do return
+    editor.fixture_path = {}
+    editor.fixture_path_length = fixture_file_path_copy(editor.fixture_path[:], path)
+}
+
+fixture_editor_file_dialog_is_open :: proc(editor: ^Editor) -> bool {
+    return editor != nil && editor.fixture_file_dialog.pending
+}
+
+fixture_editor_file_dialog_close :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if !editor.fixture_file_dialog.pending do return
+    editor.fixture_file_dialog = {}
+}
+
+fixture_file_dialog_callback :: proc "c" (userdata: rawptr, filelist: [^]cstring, _filter: c.int) {
+    dialog := cast(^Fixture_File_Dialog_State)userdata
+    if dialog == nil do return
+    dialog.path_length = 0
+    if filelist != nil && filelist[0] != nil {
+        selected := string(filelist[0])
+        dialog.path_length = min(len(selected), FIXTURE_FILE_PATH_CAPACITY - 1)
+        if dialog.path_length > 0 {
+            copy(dialog.path[:dialog.path_length], transmute([]u8)selected[:dialog.path_length])
+        }
+    }
+    sync.atomic_store_explicit(&dialog.finished, u32(1), .Release)
+}
+
+fixture_file_dialog_default_location :: proc(editor: ^Editor) -> cstring {
+    if editor == nil do return ""
+    current_path := fixture_editor_current_path(editor)
+    if current_path != "" do return fmt.ctprintf("%s", current_path)
+
+    default_path, path_error, path_ok := fixture_editor_store_default_path(context.temp_allocator)
+    defer fixture_editor_store_error_dispose(&path_error)
+    if !path_ok do return ""
+    defer delete(default_path, context.temp_allocator)
+    return fmt.ctprintf("%s", default_path)
+}
+
+fixture_editor_file_dialog_open :: proc(editor: ^Editor, mode: Fixture_File_Dialog_Mode) {
+    if editor == nil || fixture_editor_file_dialog_is_open(editor) do return
+    state := &editor.fixture_file_dialog
+    state^ = {
+        pending = true,
+        mode = mode,
+    }
+    sync.atomic_store_explicit(&state.finished, u32(0), .Release)
+
+    window := sdl.GetKeyboardFocus()
+    filters := raw_data(FIXTURE_FILE_FILTERS[:])
+    default_location := fixture_file_dialog_default_location(editor)
+    if mode == .Save {
+        sdl.ShowSaveFileDialog(
+            fixture_file_dialog_callback,
+            state,
+            window,
+            filters,
+            c.int(len(FIXTURE_FILE_FILTERS)),
+            default_location,
+        )
+    } else {
+        sdl.ShowOpenFileDialog(
+            fixture_file_dialog_callback,
+            state,
+            window,
+            filters,
+            c.int(len(FIXTURE_FILE_FILTERS)),
+            default_location,
+            false,
+        )
+    }
+}
+
+fixture_file_dialog_poll :: proc(editor: ^Editor) {
+    if editor == nil || !fixture_editor_file_dialog_is_open(editor) do return
+    state := &editor.fixture_file_dialog
+    if sync.atomic_load_explicit(&state.finished, .Acquire) == 0 do return
+
+    path := string(state.path[:state.path_length])
+    if path == "" {
+        terrain_file_feedback(editor, "FIXTURE CANCELLED")
+    } else if state.mode == .Save {
+        _ = fixture_editor_save_path(editor, path)
+    } else {
+        _ = fixture_editor_load_path(editor, path)
+    }
+    fixture_editor_file_dialog_close(editor)
 }
 
 editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layout {
@@ -277,7 +410,7 @@ editor_ui_tool_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int
     row := index / EDITOR_UI_TOOL_COLUMNS
     return {
         layout.left.x + 10 + f32(column) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
-        layout.left.y + 50 + f32(row) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
+        layout.left.y + 88 + f32(row) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
         EDITOR_UI_TOOL_BUTTON_SIZE,
         EDITOR_UI_TOOL_BUTTON_SIZE,
     }
@@ -314,6 +447,13 @@ editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool)
     canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
     canvas2d.DrawRectangleRoundedLinesEx(tooltip, .14, 5, 1, {89, 101, 114, 255})
     ui_draw_text(.Label, label, {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
+}
+
+@(no_instrumentation)
+editor_ui_fixture_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
+    gap := f32(6)
+    width := (layout.left.width - 26 - gap) * .5
+    return {layout.left.x + 10 + f32(index) * (width + gap), layout.left.y + 45, width, 30}
 }
 
 @(no_instrumentation)
@@ -540,7 +680,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Roads:
         return "Click terrain to add spline nodes; drag nodes or handles to reshape roads and steps."
     case .GreekAssets:
-        return "Left places the procedural ruin; right generates a new seed."
+        return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
+    case .Obstacles:
+        return ""
     }
     return ""
 }
@@ -554,6 +696,8 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     canvas2d.DrawRectangleRoundedLinesEx(layout.left, .025, 6, 1, {62, 69, 78, 255})
     ui_draw_text(.Heading, "TOOLS", {layout.left.x + 12, layout.left.y + 14}, .5, {235, 239, 243, 255})
     editor_ui_panel_button({layout.left.x + layout.left.width - 39, layout.left.y + 10, 29, 28}, "<<")
+    editor_ui_panel_button(editor_ui_fixture_action_bounds(layout, 0), "SAVE", false, true)
+    editor_ui_panel_button(editor_ui_fixture_action_bounds(layout, 1), "LOAD", false, true)
     hovered_tool := -1
     for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
         bounds := editor_ui_tool_bounds(layout, index)
@@ -1049,6 +1193,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             2,
         )
         row += 1
+    case .Obstacles:
+        row += 0
     case .Roads:
         top_bounds := editor_ui_slider_bounds(layout, row)
         editor_ui_panel_button(
@@ -1239,6 +1385,9 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     layout := editor_ui_layout(editor, width, height)
     canvas2d.DrawRectangle(0, 0, width, i32(EDITOR_UI_TOP_HEIGHT), {22, 25, 29, 248})
     canvas2d.DrawLineEx({0, EDITOR_UI_TOP_HEIGHT - 1}, {f32(width), EDITOR_UI_TOP_HEIGHT - 1}, 1, {65, 72, 81, 255})
+    fixture_path := fixture_editor_current_path(editor)
+    fixture_label: cstring = fixture_path != "" ? fmt.ctprintf("FIXTURE  %s", fixture_path) : "FIXTURE  UNSAVED"
+    ui_draw_text(.Data, fixture_label, {16, 18}, .4, {209, 215, 222, 255})
     project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
     if editor.terrain_file_status != nil && f32(canvas2d.GetTime()) < editor.terrain_file_status_until {
         project_state = editor.terrain_file_status
@@ -1256,7 +1405,9 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
 }
 
 editor_ui_hit :: proc(editor: ^Editor, position: canvas2d.Vector2, width, height: i32) -> bool {
-    if editor == nil || editor.in_map do return imgui_captures_mouse()
+    if editor == nil do return imgui_captures_mouse()
+    if fixture_editor_file_dialog_is_open(editor) do return true
+    if editor.in_map do return imgui_captures_mouse()
     layout := editor_ui_layout(editor, width, height)
     if canvas2d.CheckCollisionPointRec(position, layout.top) do return true
     if layout.left_visible && canvas2d.CheckCollisionPointRec(position, layout.left) do return true
@@ -1269,6 +1420,10 @@ editor_ui_hit :: proc(editor: ^Editor, position: canvas2d.Vector2, width, height
 
 editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil || editor.in_map do return
+    if fixture_editor_file_dialog_is_open(editor) {
+        fixture_file_dialog_poll(editor)
+        return
+    }
     layout := editor_ui_layout(editor, width, height)
     mouse := canvas2d.GetMousePosition()
     pressed := canvas2d.IsMouseButtonPressed(.LEFT)
@@ -1278,6 +1433,13 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             collapse := canvas2d.Rectangle{layout.left.x + layout.left.width - 39, layout.left.y + 10, 29, 28}
             if canvas2d.CheckCollisionPointRec(mouse, collapse) {
                 editor.editor_ui.left_collapsed = true
+                return
+            }
+            if canvas2d.CheckCollisionPointRec(mouse, editor_ui_fixture_action_bounds(layout, 0)) {
+                fixture_editor_save(editor)
+                return
+            } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_fixture_action_bounds(layout, 1)) {
+                fixture_editor_restore(editor)
                 return
             }
             for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
@@ -1702,6 +1864,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.ruin_stamp_preview_valid = false
         }
         row += 2
+    case .Obstacles:
+        row += 0
     }
 
     world_y := min(

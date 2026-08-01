@@ -146,7 +146,7 @@ when ODIN_TEST {
 
     fixture_migration_story_test_container :: proc(test_case: Fixture_Migration_Story_Test_Case) -> ([]byte, bool) {
         historical := new(fixture_v0001.Fixture)
-        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
+        fixture_migration_v0004_runtime_seed_legacy(historical, 1)
         historical.project.structure_count = 1
         historical.project.structures[0].id = 0x101
         historical.architecture_city_plan.count = 1
@@ -406,10 +406,9 @@ when ODIN_TEST {
             base    = runtime.default_allocator(),
             fail_at = -1,
         }
-        result, error, ok := fixture_migration_run(
+        result, error, ok := fixture_migration_test_run_through_v0005(
             view.payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             fixture_migration_test_allocator(&state),
         )
         testing.expect(t, !ok && error.kind == .Step_Failure)
@@ -443,10 +442,9 @@ when ODIN_TEST {
                 view, view_ok := fixture_migration_story_test_decode(container)
                 testing.expect(t, view_ok)
                 if view_ok {
-                    result, error, ok := fixture_migration_run(
+                    result, error, ok := fixture_migration_test_run_through_v0005(
                         view.payload,
                         1,
-                        FIXTURE_SCHEMA_VERSION,
                         runtime.default_allocator(),
                     )
                     testing.expect(t, ok && error.kind == .None)
@@ -525,10 +523,9 @@ when ODIN_TEST {
             view, view_ok := fixture_migration_story_test_decode(container)
             testing.expect(t, view_ok)
             if view_ok {
-                result, error, ok := fixture_migration_run(
+                result, error, ok := fixture_migration_test_run_through_v0005(
                     view.payload,
                     1,
-                    FIXTURE_SCHEMA_VERSION,
                     runtime.default_allocator(),
                 )
                 testing.expect(t, ok && error.kind == .None)
@@ -602,10 +599,9 @@ when ODIN_TEST {
             stale_view, stale_view_ok := fixture_migration_story_test_decode(stale_container)
             testing.expect(t, stale_view_ok)
             if stale_view_ok {
-                stale_result, stale_error, stale_run_ok := fixture_migration_run(
+                stale_result, stale_error, stale_run_ok := fixture_migration_test_run_through_v0005(
                     stale_view.payload,
                     1,
-                    FIXTURE_SCHEMA_VERSION,
                     runtime.default_allocator(),
                 )
                 testing.expect(t, stale_run_ok && stale_error.kind == .None)
@@ -848,16 +844,14 @@ when ODIN_TEST {
             second_view, second_view_ok := fixture_migration_story_test_decode(second_container)
             testing.expect(t, first_view_ok && second_view_ok)
             if first_view_ok && second_view_ok {
-                first_result, first_error, first_ok := fixture_migration_run(
+                first_result, first_error, first_ok := fixture_migration_test_run_through_v0005(
                     first_view.payload,
                     1,
-                    FIXTURE_SCHEMA_VERSION,
                     runtime.default_allocator(),
                 )
-                second_result, second_error, second_ok := fixture_migration_run(
+                second_result, second_error, second_ok := fixture_migration_test_run_through_v0005(
                     second_view.payload,
                     1,
-                    FIXTURE_SCHEMA_VERSION,
                     runtime.default_allocator(),
                 )
                 testing.expect(t, first_ok && second_ok && first_error.kind == .None && second_error.kind == .None)

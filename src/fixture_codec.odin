@@ -51,6 +51,14 @@ fixture_codec_historical_portable_config :: proc() -> hs.Portable_Config {
     return config
 }
 
+fixture_codec_migration_portable_config :: proc() -> hs.Portable_Config {
+    config := fixture_codec_portable_config()
+    config.retain_tag = "fixture_map"
+    return config
+}
+
+// Old migration projections retain map fields until v16→17. They omit only
+// v17's ADRMAP descriptor because no frozen schema knows that field.
 fixture_codec_value :: proc(fixture: ^Fixture) -> any {
     return any{data = rawptr(fixture), id = typeid_of(Fixture)}
 }

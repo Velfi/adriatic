@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:sync"
 
-import "../spy"
+import "zelda_engine:spy"
 import "base:intrinsics"
 import "base:runtime"
 import "dates"

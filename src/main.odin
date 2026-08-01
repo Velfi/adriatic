@@ -225,8 +225,67 @@ Fixture_Note :: struct {
     fallback_position: third_person.Vec3,
 }
 
+SDF_OBSTACLE_CAPACITY :: 64
+
+SDF_Torus_Obstacle :: struct {
+    position:     flight.Vec3,
+    rotation:     quaternion128,
+    scale:        flight.Vec3,
+    major_radius: f32,
+    tube_radius:  f32,
+    color:        [4]u8,
+}
+
+SDF_Obstacle_Gizmo_Mode :: enum {
+    None,
+    Translate,
+    Rotate,
+    Scale,
+}
+
+SDF_Obstacle_Axis :: enum {
+    None,
+    X,
+    Y,
+    Z,
+}
+
+SDF_Obstacle_Interaction :: struct {
+    hovered:                  int,
+    gizmo_mode:               SDF_Obstacle_Gizmo_Mode,
+    constrained_axis:         SDF_Obstacle_Axis,
+    drag_anchor_world:        flight.Vec3,
+    drag_anchor_screen:       [2]f32,
+    transform_snapshot:       SDF_Torus_Obstacle,
+    transform_snapshot_valid: bool,
+    inspector_euler:          flight.Vec3,
+    inspector_euler_valid:    bool,
+}
+
+FIXTURE_MAP_SIDECAR_BASENAME_CAPACITY :: 128
+
+Fixture_Map_Source_Kind :: enum u8 {
+    Inline,
+    Sidecar,
+}
+
+Fixture_Map_Sidecar :: struct {
+    basename:          [FIXTURE_MAP_SIDECAR_BASENAME_CAPACITY]byte,
+    basename_count:    int,
+    container_version: u16,
+    format_version:    u32,
+    generator_version: u64,
+    encoded_sha256:    [32]byte,
+}
+
+Fixture_Map_Source :: struct {
+    kind:         Fixture_Map_Source_Kind,
+    inline_bytes: [dynamic]u8,
+    sidecar:      Fixture_Map_Sidecar,
+}
+
 Fixture :: struct {
-    project:                                        terrain.Project,
+    project:                                        terrain.Project `fixture:"-" fixture_map:"-"`,
     terrain_revision:                               u64 `fixture:"-"`,
     circulation_plan:                               circulation.Plan `fixture:"-"`,
     circulation_revision:                           u64 `fixture:"-"`,
@@ -235,6 +294,10 @@ Fixture :: struct {
     circulation_structure_count:                    int `fixture:"-"`,
     authoring_tool:                                 Authoring_Tool,
     editor_ui:                                      Editor_UI_State,
+    sdf_obstacles:                                  [SDF_OBSTACLE_CAPACITY]SDF_Torus_Obstacle,
+    sdf_obstacle_count:                             int,
+    sdf_obstacle_selected:                          int,
+    sdf_obstacle_interaction:                       SDF_Obstacle_Interaction `fixture:"-"`,
     tool:                                           terrain.Tool,
     radius:                                         f32,
     strength:                                       f32,
@@ -283,12 +346,12 @@ Fixture :: struct {
     airport_preview_x, airport_preview_z:           f32 `fixture:"-"`,
     airport_stamp_yaw:                              f32 `fixture:"-"`,
     marina_paint_mode:                              bool,
-    marina_authored:                                bool,
-    marina_authored_plan:                           marina.Plan,
+    marina_authored:                                bool `fixture:"-" fixture_map:"-"`,
+    marina_authored_plan:                           marina.Plan `fixture:"-" fixture_map:"-"`,
     marina_preview_plan:                            marina.Plan `fixture:"-"`,
-    harbor_authored_plan:                           harbor.Harbor_Plan,
+    harbor_authored_plan:                           harbor.Harbor_Plan `fixture:"-" fixture_map:"-"`,
     harbor_preview_plan:                            harbor.Harbor_Plan `fixture:"-"`,
-    harbor_authored_intervention:                   harbor.Harbor_Intervention,
+    harbor_authored_intervention:                   harbor.Harbor_Intervention `fixture:"-" fixture_map:"-"`,
     harbor_preview_intervention:                    harbor.Harbor_Intervention `fixture:"-"`,
     marina_preview_valid:                           bool `fixture:"-"`,
     marina_preview_x, marina_preview_z:             f32 `fixture:"-"`,
@@ -299,8 +362,8 @@ Fixture :: struct {
     marina_brush_attempts:                          int `fixture:"-"`,
     farm_paint_mode:                                bool,
     farm_brush_radius:                              f32,
-    farms:                                          [FARM_INSTANCE_CAPACITY]Farm_Instance,
-    farm_count:                                     int,
+    farms:                                          [FARM_INSTANCE_CAPACITY]Farm_Instance `fixture:"-" fixture_map:"-"`,
+    farm_count:                                     int `fixture:"-" fixture_map:"-"`,
     farm_preview:                                   Farm_Instance `fixture:"-"`,
     farm_preview_valid:                             bool `fixture:"-"`,
     farm_preview_score:                             f32 `fixture:"-"`,
@@ -314,20 +377,20 @@ Fixture :: struct {
     wreck_paint_mode:                               bool,
     wreck_brush_size:                               f32,
     wreck_brush_yaw:                                f32,
-    wrecks:                                         [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
-    wreck_count:                                    int,
+    wrecks:                                         [WRECK_INSTANCE_CAPACITY]Wreck_Instance `fixture:"-" fixture_map:"-"`,
+    wreck_count:                                    int `fixture:"-" fixture_map:"-"`,
     wreck_preview:                                  Wreck_Instance `fixture:"-"`,
     wreck_preview_valid:                            bool `fixture:"-"`,
     wreck_preview_x, wreck_preview_z:               f32 `fixture:"-"`,
     wreck_preview_revision:                         u64 `fixture:"-"`,
     wreck_preview_seed_offset:                      u32 `fixture:"-"`,
-    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-"`,
-    default_harbors:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan `hs:"-"`,
+    default_marinas:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan `hs:"-" fixture:"-" fixture_map:"-"`,
+    default_harbors:                                [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan `hs:"-" fixture:"-" fixture_map:"-"`,
     default_harbor_interventions:                   [len(
         terrain.DEFAULT_ISLAND_SIGNS,
-    )]harbor.Harbor_Intervention `hs:"-" fixture:"-"`,
-    default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-"`,
-    default_marina_count:                           int `hs:"-"`,
+    )]harbor.Harbor_Intervention `hs:"-" fixture:"-" fixture_map:"-"`,
+    default_marina_islands:                         [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island `hs:"-" fixture:"-" fixture_map:"-"`,
+    default_marina_count:                           int `hs:"-" fixture:"-" fixture_map:"-"`,
     climbing_leaf_paint_mode:                       bool,
     climbing_leaf_painting:                         bool `fixture:"-"`,
     climbing_leaf_last_x, climbing_leaf_last_z:     f32 `fixture:"-"`,
@@ -337,8 +400,8 @@ Fixture :: struct {
     greek_asset_selected:                           int,
     greek_asset_rotation:                           f32,
     greek_asset_scale:                              f32,
-    greek_placements:                               [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
-    greek_placement_count:                          int,
+    greek_placements:                               [GREEK_PLACEMENT_CAPACITY]Greek_Placement `fixture:"-" fixture_map:"-"`,
+    greek_placement_count:                          int `fixture:"-" fixture_map:"-"`,
     greek_placement_selected:                       int,
     greek_placement_mode:                           bool,
     curve_points:                                   [CURVE_POINT_CAPACITY]Curve_Point,
@@ -432,9 +495,9 @@ Fixture :: struct {
     wildflower_lab_scene:                           bool,
     vehicle_showcase_target:                        string,
     shadow_lab_scene:                               bool,
-    active_lab_scene:                               string,
+    lab:                                            Lab_Fixture_State,
     settlement_vertical_map:                        bool,
-    settlement_plan:                                Settlement_Plan,
+    settlement_plan:                                Settlement_Plan `fixture:"-" fixture_map:"-"`,
     settlement_diagnostic_layer:                    int,
     shadow_lab_collection:                          int,
     shadow_lab_lighting:                            int,
@@ -507,7 +570,6 @@ Fixture :: struct {
     vehicle_paint_hover_uv:                         [2]f32 `fixture:"-"`,
     vehicle_paint_history_capturing:                bool `fixture:"-"`,
     vehicle_paint_open_pixels:                      []u8 `fixture:"-"`,
-    vehicle_paint_layers:                           [VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
     vehicle_paint_preview_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8 `fixture:"-"`,
     vehicle_paint_history_pixels:                   [VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8 `fixture:"-"`,
     vehicle_paint_undo:                             [VEHICLE_PAINT_AIRCRAFT_COUNT][dynamic]Vehicle_Paint_History_Entry `fixture:"-"`,
@@ -553,7 +615,7 @@ Fixture :: struct {
     default_map_regeneration_active:                bool `hs:"-" fixture:"-"`,
     default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,
     default_map_regeneration_stage:                 Default_Map_Regeneration_Stage `hs:"-" fixture:"-"`,
-    default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-"`,
+    default_map_regeneration_seeds:                 [len(terrain.DEFAULT_ISLAND_SEEDS)]u32 `hs:"-" fixture:"-" fixture_map:"-"`,
     dither_state:                                   Dither_State `fixture:"-"`,
     mouse_fur:                                      Mouse_Fur,
     mouse_pattern:                                  Mouse_Fur_Pattern,
@@ -575,9 +637,10 @@ Fixture :: struct {
     customization_preview_yaw:                      f32 `fixture:"-"`,
     notes:                                          [FIXTURE_NOTE_CAPACITY]Fixture_Note,
     note_count:                                     int,
+    map_source:                                     Fixture_Map_Source,
 }
 
-FIXTURE_SCHEMA_VERSION :: 18
+FIXTURE_SCHEMA_VERSION :: 19
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -627,6 +690,7 @@ Editor :: struct {
     road_snap_angles:                   bool,
     road_snap_tangents:                 bool,
     road_snap_perpendiculars:           bool,
+    vehicle_paint_layers:               [VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
     surface_weather:                    surface_weather.Field,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
     mouse_emote:                        Mouse_Emote_State,
@@ -635,7 +699,12 @@ Editor :: struct {
     ruin_stamp_seed_offset:             u32,
     ruin_stamp_aegean:                  bool,
     ruin_stamp_complex:                 bool,
+    active_lab_scene:                   string `fixture:"-"`,
+    dunes_lab_runtime:                  Dunes_Lab_Runtime `hs:"-" fixture:"-"`,
     ocean_traffic:                      boats.Ocean_Traffic,
+    fixture_path:                       [FIXTURE_FILE_PATH_CAPACITY]u8 `fixture:"-"`,
+    fixture_path_length:                int `fixture:"-"`,
+    fixture_file_dialog:                Fixture_File_Dialog_State `fixture:"-"`,
     main_menu_active:                   bool,
     main_menu_focus:                    int,
     world_select_focus:                 int,
@@ -13519,6 +13588,7 @@ adriatic_run :: proc(
                 editor.plant_stamp_mode = .Climbing
                 authoring_select_tool(editor, .Foliage)
             }
+            if !fixture_editor_file_dialog_is_open(editor) {
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
                 if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
@@ -13599,6 +13669,7 @@ adriatic_run :: proc(
             }
             if !imgui_captures_keyboard() && editor.road_mode && canvas2d.IsKeyPressed(.K) {
                 road_cycle_pavement(editor)
+            }
             }
             viewport_ui_hit := editor_ui_hit(editor, canvas2d.GetMousePosition(), width, height)
             update_editor_camera(editor, min(frame_delta, f32(.05)))

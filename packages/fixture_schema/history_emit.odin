@@ -3,7 +3,6 @@ package fixture_schema
 import "core:crypto/sha2"
 import "core:fmt"
 import "core:mem"
-import "core:slice"
 import "core:strings"
 
 HISTORY_MAX_EMITTED_BYTES :: 16 * 1024 * 1024
@@ -47,7 +46,15 @@ history_sorted_records :: proc(
             return nil, false
         }
     }
-    slice.sort_by(sorted[:], proc(a, b: ^History_Record) -> bool { return a.id < b.id })
+    for index := 1; index < len(sorted); index += 1 {
+        record := sorted[index]
+        cursor := index
+        for cursor > 0 && strings.compare(record.id, sorted[cursor - 1].id) < 0 {
+            sorted[cursor] = sorted[cursor - 1]
+            cursor -= 1
+        }
+        sorted[cursor] = record
+    }
     return sorted, true
 }
 

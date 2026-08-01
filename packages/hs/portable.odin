@@ -22,6 +22,7 @@ Portable_Limits :: struct {
 
 Portable_Config :: struct {
     exclusion_tag: string,
+    retain_tag:    string,
     exact_schema:  bool,
     limits:        Portable_Limits,
 }
@@ -344,10 +345,46 @@ portable_runtime_enumerated_array_info :: proc(
     return index, min_value, true
 }
 
+portable_fixed_array_bulk_width :: proc(
+    types: []Portable_Type,
+    array: Portable_Type,
+    runtime_array: rt.Type_Info_Array,
+) -> (
+    width: int,
+    ok: bool,
+) {
+    if runtime_array.elem == nil ||
+       runtime_array.count < array.count ||
+       !portable_handle_valid(array.elem, len(types)) {
+        return 0, false
+    }
+    element := types[array.elem - 1]
+    if runtime_array.elem.id == typeid_of(u8) &&
+       runtime_array.elem_size == 1 &&
+       element.kind == .Unsigned &&
+       element.width == 1 &&
+       !element.signed {
+        return 1, true
+    }
+    when ODIN_ENDIAN == .Little {
+        if runtime_array.elem.id == typeid_of(f32) &&
+           runtime_array.elem_size == 4 &&
+           element.kind == .Float &&
+           element.width == 4 &&
+           !element.signed {
+            return 4, true
+        }
+    }
+    return 0, false
+}
+
 portable_field_excluded :: proc(field: reflect.Struct_Field, config: Portable_Config) -> bool {
     if config.exclusion_tag == "" do return false
     value, ok := reflect.struct_tag_lookup(field.tag, config.exclusion_tag)
-    return ok && value == "-"
+    if !ok || value != "-" do return false
+    if config.retain_tag == "" do return true
+    retained, retained_ok := reflect.struct_tag_lookup(field.tag, config.retain_tag)
+    return !retained_ok || retained != "-"
 }
 
 Portable_Discovery :: struct {
@@ -614,6 +651,10 @@ portable_encode_value :: proc(
         if !ok || array_info.count != type.count {
             portable_discovery_error(ctx, .Type_Mismatch, path, "array metadata changed during encoding")
             return false
+        }
+        bulk_width, bulk_ok := portable_fixed_array_bulk_width(ctx.types[:], type^, array_info)
+        if bulk_ok {
+            return portable_write_bytes(w, mem.byte_slice(value.data, type.count * bulk_width))
         }
         for i in 0 ..< type.count {
             field := any {
@@ -969,6 +1010,31 @@ portable_read_bytes :: proc(r: ^Portable_Reader, count: int, path: string) -> (v
     if !portable_reader_need(r, count, path) do return nil, false
     value = r.data[r.cursor:r.cursor + count]
     r.cursor += count
+    return value, true
+}
+
+// Read a scalar-array body without changing the recursive decoder's truncated-input cursor.
+portable_read_fixed_array_bytes :: proc(
+    r: ^Portable_Reader,
+    count, element_width: int,
+    path: string,
+) -> (
+    value: []byte,
+    ok: bool,
+) {
+    if count < 0 || element_width <= 0 {
+        portable_reader_fail(r, .Invalid_Metadata, path, "fixed array byte count is invalid")
+        return nil, false
+    }
+    available := len(r.data) - r.cursor
+    complete := min(count, available)
+    complete -= complete % element_width
+    value = r.data[r.cursor:r.cursor + complete]
+    r.cursor += complete
+    if complete != count {
+        portable_reader_fail(r, .Truncated, path, "payload ends before requested bytes")
+        return value, false
+    }
     return value, true
 }
 
@@ -1718,6 +1784,13 @@ portable_decode_value :: proc(
         }
         decode_count := saved.count
         if decode_count > array_info.count do decode_count = array_info.count
+        bulk_width, bulk_ok := portable_fixed_array_bulk_width(ctx.types, saved, array_info)
+        if bulk_ok && decode_count == saved.count {
+            bytes, bytes_ok := portable_read_fixed_array_bytes(&ctx.reader, saved.count * bulk_width, bulk_width, path)
+            copy(mem.byte_slice(destination.data, len(bytes)), bytes)
+            if !bytes_ok do return
+            return
+        }
         for i in 0 ..< decode_count {
             field := any {
                 data = rawptr(uintptr(destination.data) + uintptr(i * array_info.elem_size)),

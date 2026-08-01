@@ -854,7 +854,7 @@ migration_scaffold_parse :: proc(
     previous_id := ""
     for element, index in literal.elems {
         change_id, kind, pos, entry_ok := migration_scaffold_resolution_entry(element)
-        if !entry_ok || (index > 0 && change_id <= previous_id) {
+        if !entry_ok || (index > 0 && strings.compare(change_id, previous_id) <= 0) {
             migration_scaffold_fail(
                 &error,
                 .Invalid_Input,
@@ -985,7 +985,7 @@ migration_scaffold_validate :: proc(
             )
             return error, false
         }
-        if resolution.change_id <= previous_id || resolution.change_id != change.id {
+        if strings.compare(resolution.change_id, previous_id) <= 0 || resolution.change_id != change.id {
             migration_scaffold_fail(
                 &error,
                 .Invalid_Input,

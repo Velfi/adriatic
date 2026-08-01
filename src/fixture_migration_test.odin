@@ -33,6 +33,23 @@ when ODIN_TEST {
         testing.expect_value(t, fixture.structure_selected, 1)
     }
 
+    fixture_migration_test_run_through_v0005 :: proc(
+        payload: []byte,
+        source_version: int,
+        allocator: mem.Allocator,
+    ) -> (
+        Fixture_Migration_Result,
+        Fixture_Migration_Error,
+        bool,
+    ) {
+        return fixture_migration_run_with_registry(
+            payload,
+            source_version,
+            5,
+            fixture_migration_v0004_runtime_registry(),
+            allocator,
+        )
+    }
     fixture_migration_test_current_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         source := fixture_codec_test_source()
         defer fixture_codec_test_destroy_source(source)
@@ -48,7 +65,7 @@ when ODIN_TEST {
 
     fixture_migration_test_historical_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         historical := new(fixture_v0001.Fixture)
-        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
+        fixture_migration_v0004_runtime_seed_legacy(historical, 1)
         historical.project.sea_level = f32(12.75)
         historical.project.revision = 77
         historical.project.structures[0].id = 0x1111
@@ -309,9 +326,9 @@ when ODIN_TEST {
            transaction_arena.block_allocator.procedure == nil {
             return false
         }
-        tentative_structures := cast(^runtime.Raw_Dynamic_Array)(&step_context.tentative.project.structures)
-        if tentative_structures.allocator.procedure != mem.dynamic_arena_allocator_proc ||
-           tentative_structures.allocator.data != rawptr(transaction_arena) {
+        tentative_city_structures := cast(^runtime.Raw_Dynamic_Array)(&step_context.tentative.architecture_city_plan.structures)
+        if tentative_city_structures.allocator.procedure != mem.dynamic_arena_allocator_proc ||
+           tentative_city_structures.allocator.data != rawptr(transaction_arena) {
             return false
         }
         if state != nil {
@@ -437,7 +454,7 @@ when ODIN_TEST {
             testing.expect(t, ordered_result.fixture.strength == f32(.73))
             testing.expect(t, ordered_result.fixture.farm_count == 1)
             testing.expect(t, ordered_result.fixture.vehicle_showcase_target == "historical-target")
-            testing.expect(t, ordered_result.fixture.active_lab_scene == "historical-lab")
+            testing.expect(t, ordered_result.fixture.lab.kind == .None)
             project_structures := cast(^runtime.Raw_Dynamic_Array)(&ordered_result.fixture.project.structures)
             city_structures := cast(^runtime.Raw_Dynamic_Array)(&ordered_result.fixture.architecture_city_plan.structures)
             city_parcels := cast(^runtime.Raw_Dynamic_Array)(&ordered_result.fixture.architecture_city_plan.parcels)
@@ -487,10 +504,9 @@ when ODIN_TEST {
         fixture_migration_result_dispose(&direct_v2_result)
         testing.expect(t, direct_v2_state.outstanding == 0)
 
-        migrated_result, migrated_error, migrated_ok := fixture_migration_run(
+        migrated_result, migrated_error, migrated_ok := fixture_migration_test_run_through_v0005(
             historical_payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             runtime.default_allocator(),
         )
         testing.expect(t, migrated_ok && migrated_error.kind == .None)
@@ -767,10 +783,9 @@ when ODIN_TEST {
             base    = runtime.default_allocator(),
             fail_at = -1,
         }
-        historical_result, historical_error, historical_run_ok := fixture_migration_run(
+        historical_result, historical_error, historical_run_ok := fixture_migration_test_run_through_v0005(
             historical_payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             fixture_migration_test_allocator(&historical_state),
         )
         testing.expect(t, historical_run_ok && historical_error.kind == .None)
@@ -784,10 +799,9 @@ when ODIN_TEST {
                 base    = runtime.default_allocator(),
                 fail_at = fail_at,
             }
-            result, error, ok := fixture_migration_run(
+            result, error, ok := fixture_migration_test_run_through_v0005(
                 historical_payload,
                 1,
-                FIXTURE_SCHEMA_VERSION,
                 fixture_migration_test_allocator(&state),
             )
             testing.expect(t, !ok && error.kind == .Out_Of_Memory)

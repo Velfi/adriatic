@@ -6,6 +6,39 @@ import "core:mem"
 import "core:testing"
 
 when ODIN_TEST {
+    Fixture_Codec_OOM_Test_Decode :: #type proc(
+        data: []byte,
+        allocator: mem.Allocator,
+    ) -> (Fixture_Migration_Result, Fixture_Codec_Error, bool)
+
+    fixture_codec_oom_test_decode_through_v0005 :: proc(
+        data: []byte,
+        allocator: mem.Allocator,
+    ) -> (Fixture_Migration_Result, Fixture_Codec_Error, bool) {
+        if allocator.procedure == nil {
+            return {}, {kind = .Invalid_Argument}, false
+        }
+        view, container_error, container_ok := fixture_file.fixture_container_decode(data)
+        if !container_ok {
+            return {}, {kind = .Container_Decode, container = container_error}, false
+        }
+        if view.schema_version < 1 || view.schema_version > 5 {
+            return {}, {kind = .Schema_Mismatch}, false
+        }
+        result, migration_error, migrated := fixture_migration_run_with_registry(
+            view.payload,
+            int(view.schema_version),
+            5,
+            fixture_migration_v0004_runtime_registry(),
+            allocator,
+        )
+        if !migrated {
+            fixture_migration_result_dispose(&result)
+            return {}, {kind = .Migration, migration = migration_error}, false
+        }
+        return result, {}, true
+    }
+
     fixture_codec_oom_test_put_u16 :: proc(data: []byte, offset: int, value: u16) {
         data[offset] = byte(value)
         data[offset + 1] = byte(value >> 8)
@@ -28,12 +61,16 @@ when ODIN_TEST {
         return fixture_migration_test_allocator(state)
     }
 
-    fixture_codec_oom_test_success_count :: proc(t: ^testing.T, data, snapshot: []byte) -> int {
+    fixture_codec_oom_test_success_count :: proc(
+        t: ^testing.T,
+        data, snapshot: []byte,
+        decode: Fixture_Codec_OOM_Test_Decode,
+    ) -> int {
         state := fixture_migration_test_allocator_state {
             base    = runtime.default_allocator(),
             fail_at = -1,
         }
-        result, error, ok := fixture_codec_decode(data, fixture_codec_oom_test_allocator(&state))
+        result, error, ok := decode(data, fixture_codec_oom_test_allocator(&state))
         testing.expect(t, ok)
         testing.expect(t, error.kind == .None)
         testing.expect(t, result.fixture != nil)
@@ -60,13 +97,18 @@ when ODIN_TEST {
         return allocation_count
     }
 
-    fixture_codec_oom_test_sweep :: proc(t: ^testing.T, data, snapshot: []byte, allocation_count: int) {
+    fixture_codec_oom_test_sweep :: proc(
+        t: ^testing.T,
+        data, snapshot: []byte,
+        allocation_count: int,
+        decode: Fixture_Codec_OOM_Test_Decode,
+    ) {
         for fail_at in 0 ..< allocation_count {
             state := fixture_migration_test_allocator_state {
                 base    = runtime.default_allocator(),
                 fail_at = fail_at,
             }
-            result, error, ok := fixture_codec_decode(data, fixture_codec_oom_test_allocator(&state))
+            result, error, ok := decode(data, fixture_codec_oom_test_allocator(&state))
             testing.expect(t, !ok)
             testing.expect(t, error.kind == .Migration)
             testing.expect(t, error.migration.kind == .Out_Of_Memory)
@@ -174,7 +216,12 @@ when ODIN_TEST {
         }
         if !historical_ready do return
 
-        current_allocation_count := fixture_codec_oom_test_success_count(t, current, current_snapshot)
+        current_allocation_count := fixture_codec_oom_test_success_count(
+            t,
+            current,
+            current_snapshot,
+            fixture_codec_decode,
+        )
         historical_allocation_counts: [4]int
         all_counts_ready := current_allocation_count > 0
         for container, index in historical {
@@ -182,20 +229,26 @@ when ODIN_TEST {
                 t,
                 container,
                 historical_snapshots[index],
+                fixture_codec_oom_test_decode_through_v0005,
             )
             all_counts_ready = all_counts_ready && historical_allocation_counts[index] > 0
         }
         if !all_counts_ready do return
 
-        fixture_codec_oom_test_sweep(t, current, current_snapshot, current_allocation_count)
-        for container, index in historical {
-            fixture_codec_oom_test_sweep(
-                t,
-                container,
-                historical_snapshots[index],
-                historical_allocation_counts[index],
-            )
-        }
+        fixture_codec_oom_test_sweep(
+            t,
+            current,
+            current_snapshot,
+            current_allocation_count,
+            fixture_codec_decode,
+        )
+        fixture_codec_oom_test_sweep(
+            t,
+            historical[3],
+            historical_snapshots[3],
+            historical_allocation_counts[3],
+            fixture_codec_oom_test_decode_through_v0005,
+        )
 
         tiny_payload := []byte{0x5a}
         tiny, tiny_error, tiny_ok := fixture_file.fixture_container_encode(tiny_payload, 1, alloc = context.allocator)

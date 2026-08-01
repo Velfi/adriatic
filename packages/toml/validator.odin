@@ -2,7 +2,7 @@ package toml
 
 import "core:strings"
 
-import "../spy"
+import "zelda_engine:spy"
 import "dates"
 
 ErrorType :: enum {

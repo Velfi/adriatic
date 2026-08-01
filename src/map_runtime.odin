@@ -1,75 +1,297 @@
 package main
 
 import terrain "../packages/terrain"
+import "core:crypto/sha2"
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:path/filepath"
+
+FIXTURE_MAP_SIDECAR_BASENAME_PREFIX :: "map-"
+FIXTURE_MAP_SIDECAR_BASENAME_SUFFIX :: ".adriatic-map"
+FIXTURE_MAP_SIDECAR_BASENAME_LENGTH ::
+    len(FIXTURE_MAP_SIDECAR_BASENAME_PREFIX) + 2 * sha2.DIGEST_SIZE_256 + len(FIXTURE_MAP_SIDECAR_BASENAME_SUFFIX)
+
+fixture_map_sidecar_hex_digit :: proc(value: byte) -> byte {
+    if value < 10 do return '0' + value
+    return 'a' + value - 10
+}
+
+fixture_map_sidecar_set_basename :: proc(sidecar: ^Fixture_Map_Sidecar) {
+    if sidecar == nil do return
+    sidecar.basename_count = FIXTURE_MAP_SIDECAR_BASENAME_LENGTH
+    copy(sidecar.basename[:len(FIXTURE_MAP_SIDECAR_BASENAME_PREFIX)], FIXTURE_MAP_SIDECAR_BASENAME_PREFIX)
+    offset := len(FIXTURE_MAP_SIDECAR_BASENAME_PREFIX)
+    for value in sidecar.encoded_sha256 {
+        sidecar.basename[offset] = fixture_map_sidecar_hex_digit(value >> 4)
+        sidecar.basename[offset + 1] = fixture_map_sidecar_hex_digit(value & 0x0f)
+        offset += 2
+    }
+    copy(
+        sidecar.basename[offset:offset + len(FIXTURE_MAP_SIDECAR_BASENAME_SUFFIX)],
+        FIXTURE_MAP_SIDECAR_BASENAME_SUFFIX,
+    )
+}
+
+fixture_map_sidecar_canonical_basename :: proc(sidecar: Fixture_Map_Sidecar) -> bool {
+    if sidecar.basename_count != FIXTURE_MAP_SIDECAR_BASENAME_LENGTH do return false
+    expected := sidecar
+    expected.basename = {}
+    fixture_map_sidecar_set_basename(&expected)
+    for index in 0 ..< FIXTURE_MAP_SIDECAR_BASENAME_LENGTH {
+        if sidecar.basename[index] != expected.basename[index] do return false
+    }
+    for index in FIXTURE_MAP_SIDECAR_BASENAME_LENGTH ..< len(sidecar.basename) {
+        if sidecar.basename[index] != 0 do return false
+    }
+    return true
+}
+
+fixture_map_sidecar_derive :: proc(encoded_adrmap: []byte) -> (Fixture_Map_Sidecar, bool) {
+    if len(encoded_adrmap) == 0 do return {}, false
+    sidecar := Fixture_Map_Sidecar {
+        container_version = MAP_ARTIFACT_CONTAINER_VERSION,
+        format_version    = MAP_ARTIFACT_FORMAT_VERSION,
+        generator_version = MAP_ARTIFACT_GENERATOR_VERSION,
+    }
+    ctx: sha2.Context_256
+    sha2.init_256(&ctx)
+    sha2.update(&ctx, encoded_adrmap)
+    sha2.final(&ctx, sidecar.encoded_sha256[:])
+    fixture_map_sidecar_set_basename(&sidecar)
+    return sidecar, true
+}
+
+fixture_map_sidecar_matches_encoded :: proc(sidecar: Fixture_Map_Sidecar, encoded_adrmap: []byte) -> bool {
+    if !fixture_map_sidecar_valid(sidecar) || len(encoded_adrmap) == 0 do return false
+    derived, derived_ok := fixture_map_sidecar_derive(encoded_adrmap)
+    if !derived_ok do return false
+    for index in 0 ..< len(sidecar.encoded_sha256) {
+        if sidecar.encoded_sha256[index] != derived.encoded_sha256[index] do return false
+    }
+    return true
+}
+
+fixture_map_sidecar_resolve :: proc(
+    fixture_path: string,
+    sidecar: Fixture_Map_Sidecar,
+    alloc := context.allocator,
+) -> (
+    string,
+    bool,
+) {
+    if len(fixture_path) == 0 || !fixture_map_sidecar_valid(sidecar) || alloc.procedure == nil do return "", false
+    local_sidecar := sidecar
+    basename := string(local_sidecar.basename[:local_sidecar.basename_count])
+    path, path_error := filepath.join([]string{os.dir(fixture_path), basename}, alloc)
+    if path_error != nil || len(path) == 0 {
+        if len(path) > 0 do delete(path, alloc)
+        return "", false
+    }
+    return path, true
+}
+
+map_artifact_capture_fixture :: proc(
+    fixture: ^Fixture,
+    seeds := terrain.DEFAULT_ISLAND_SEEDS,
+    alloc := context.allocator,
+) -> (
+    ^Map_Artifact,
+    Map_Artifact_Error,
+    bool,
+) {
+    if fixture == nil || alloc.procedure == nil do return nil, {kind = .Invalid_Argument}, false
+    if fixture.project.structure_count < 0 || fixture.project.structure_count > len(fixture.project.structures) {
+        return nil, {kind = .Invalid_State, message = "project structure count is invalid"}, false
+    }
+    artifact, allocated := map_artifact_allocate(alloc)
+    if !allocated do return nil, map_artifact_allocation_error(), false
+    artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+    artifact.seeds = seeds
+    artifact.project = fixture.project
+    artifact.project.structures = nil
+    if fixture.project.structure_count > 0 {
+        structures, allocation_error := make([dynamic]terrain.Structure, fixture.project.structure_count, alloc)
+        if allocation_error != nil {
+            map_artifact_destroy(artifact, alloc)
+            return nil, map_artifact_allocation_error(), false
+        }
+        copy(structures[:], fixture.project.structures[:fixture.project.structure_count])
+        artifact.project.structures = structures
+    }
+    artifact.settlement_plan = fixture.settlement_plan
+    artifact.marina_authored = fixture.marina_authored
+    artifact.marina_authored_plan = fixture.marina_authored_plan
+    artifact.harbor_authored_plan = fixture.harbor_authored_plan
+    artifact.harbor_authored_intervention = fixture.harbor_authored_intervention
+    artifact.farms = fixture.farms
+    artifact.farm_count = fixture.farm_count
+    artifact.wrecks = fixture.wrecks
+    artifact.wreck_count = fixture.wreck_count
+    artifact.default_marinas = fixture.default_marinas
+    artifact.default_harbors = fixture.default_harbors
+    artifact.default_harbor_interventions = fixture.default_harbor_interventions
+    artifact.default_marina_islands = fixture.default_marina_islands
+    artifact.default_marina_count = fixture.default_marina_count
+    artifact.greek_placements = fixture.greek_placements
+    artifact.greek_placement_count = fixture.greek_placement_count
+    return artifact, {}, true
+}
 
 map_artifact_capture :: proc(
     editor: ^Editor,
     seeds := terrain.DEFAULT_ISLAND_SEEDS,
     alloc := context.allocator,
-) -> (^Map_Artifact, Map_Artifact_Error, bool) {
-    if editor == nil || alloc.procedure == nil do return nil, {kind = .Invalid_Argument}, false
-    artifact := new(Map_Artifact, alloc)
-    if artifact == nil do return nil, {kind = .Limit_Exceeded}, false
-    artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
-    artifact.seeds = seeds
-    artifact.project = editor.project
-    artifact.project.structures = nil
-    if editor.project.structure_count > 0 {
-        structures, allocation_error := make([dynamic]terrain.Structure, editor.project.structure_count, alloc)
-        if allocation_error != nil {
-            map_artifact_destroy(artifact, alloc)
-            return nil, {kind = .Limit_Exceeded}, false
-        }
-        copy(structures[:], editor.project.structures[:editor.project.structure_count])
-        artifact.project.structures = structures
-    }
-    artifact.settlement_plan = editor.settlement_plan
-    artifact.marina_authored = editor.marina_authored
-    artifact.marina_authored_plan = editor.marina_authored_plan
-    artifact.harbor_authored_plan = editor.harbor_authored_plan
-    artifact.harbor_authored_intervention = editor.harbor_authored_intervention
-    artifact.farms = editor.farms
-    artifact.farm_count = editor.farm_count
-    artifact.wrecks = editor.wrecks
-    artifact.wreck_count = editor.wreck_count
-    artifact.default_marinas = editor.default_marinas
-    artifact.default_harbors = editor.default_harbors
-    artifact.default_harbor_interventions = editor.default_harbor_interventions
-    artifact.default_marina_islands = editor.default_marina_islands
-    artifact.default_marina_count = editor.default_marina_count
-    artifact.greek_placements = editor.greek_placements
-    artifact.greek_placement_count = editor.greek_placement_count
-    return artifact, {}, true
+) -> (
+    ^Map_Artifact,
+    Map_Artifact_Error,
+    bool,
+) {
+    if editor == nil do return nil, {kind = .Invalid_Argument}, false
+    return map_artifact_capture_fixture(&editor.fixture, seeds, alloc)
 }
 
-map_artifact_apply :: proc(editor: ^Editor, artifact: ^Map_Artifact) -> (Map_Artifact_Error, bool) {
-    if editor == nil || artifact == nil do return {kind = .Invalid_Argument}, false
+map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -> (Map_Artifact_Error, bool) {
+    if fixture == nil || artifact == nil do return {kind = .Invalid_Argument}, false
     if message, valid := map_artifact_valid(artifact); !valid {
         return {kind = .Invalid_State, message = message}, false
     }
-    terrain.destroy_project(&editor.project)
-    editor.project = artifact.project
+    terrain.destroy_project(&fixture.project)
+    fixture.project = artifact.project
     artifact.project.structures = nil
-    editor.settlement_plan = artifact.settlement_plan
-    editor.marina_authored = artifact.marina_authored
-    editor.marina_authored_plan = artifact.marina_authored_plan
-    editor.harbor_authored_plan = artifact.harbor_authored_plan
-    editor.harbor_authored_intervention = artifact.harbor_authored_intervention
-    editor.farms = artifact.farms
-    editor.farm_count = artifact.farm_count
-    editor.wrecks = artifact.wrecks
-    editor.wreck_count = artifact.wreck_count
-    editor.default_marinas = artifact.default_marinas
-    editor.default_harbors = artifact.default_harbors
-    editor.default_harbor_interventions = artifact.default_harbor_interventions
-    editor.default_marina_islands = artifact.default_marina_islands
-    editor.default_marina_count = artifact.default_marina_count
-    editor.greek_placements = artifact.greek_placements
-    editor.greek_placement_count = artifact.greek_placement_count
-    editor.default_map_regeneration_seeds = artifact.seeds
+    fixture.settlement_plan = artifact.settlement_plan
+    fixture.marina_authored = artifact.marina_authored
+    fixture.marina_authored_plan = artifact.marina_authored_plan
+    fixture.harbor_authored_plan = artifact.harbor_authored_plan
+    fixture.harbor_authored_intervention = artifact.harbor_authored_intervention
+    fixture.farms = artifact.farms
+    fixture.farm_count = artifact.farm_count
+    fixture.wrecks = artifact.wrecks
+    fixture.wreck_count = artifact.wreck_count
+    fixture.default_marinas = artifact.default_marinas
+    fixture.default_harbors = artifact.default_harbors
+    fixture.default_harbor_interventions = artifact.default_harbor_interventions
+    fixture.default_marina_islands = artifact.default_marina_islands
+    fixture.default_marina_count = artifact.default_marina_count
+    fixture.default_map_regeneration_seeds = artifact.seeds
+    fixture.greek_placements = artifact.greek_placements
+    fixture.greek_placement_count = artifact.greek_placement_count
+    return {}, true
+}
+
+fixture_map_sidecar_valid :: proc(sidecar: Fixture_Map_Sidecar) -> bool {
+    if sidecar.container_version != MAP_ARTIFACT_CONTAINER_VERSION ||
+       sidecar.format_version != MAP_ARTIFACT_FORMAT_VERSION ||
+       sidecar.generator_version != MAP_ARTIFACT_GENERATOR_VERSION {
+        return false
+    }
+    if !fixture_map_sidecar_canonical_basename(sidecar) do return false
+    for value in sidecar.encoded_sha256 {
+        if value != 0 do return true
+    }
+    return false
+}
+
+fixture_map_source_valid :: proc(source: Fixture_Map_Source) -> bool {
+    switch source.kind {
+    case .Inline:
+        return len(source.inline_bytes) > 0 && source.sidecar == {}
+    case .Sidecar:
+        return len(source.inline_bytes) == 0 && fixture_map_sidecar_valid(source.sidecar)
+    }
+    return false
+}
+
+fixture_map_source_capture_inline :: proc(
+    fixture: ^Fixture,
+    alloc := context.allocator,
+) -> (
+    Fixture_Map_Source,
+    Map_Artifact_Error,
+    bool,
+) {
+    if fixture == nil || alloc.procedure == nil do return {}, {kind = .Invalid_Argument}, false
+    seeds := fixture.default_map_regeneration_seeds
+    defaults := terrain.DEFAULT_ISLAND_SEEDS
+    for &seed, index in seeds do if seed == 0 do seed = defaults[index]
+    artifact, capture_error, captured := map_artifact_capture_fixture(fixture, seeds, alloc)
+    if !captured do return {}, capture_error, false
+    defer map_artifact_destroy(artifact, alloc)
+    encoded_bytes, encode_error, encoded := map_artifact_encode(artifact, alloc)
+    if !encoded do return {}, encode_error, false
+    defer delete(encoded_bytes, alloc)
+    inline_bytes, allocation_error := make([dynamic]u8, len(encoded_bytes), alloc)
+    if allocation_error != nil do return {}, map_artifact_allocation_error(), false
+    copy(inline_bytes[:], encoded_bytes)
+    return {kind = .Inline, inline_bytes = inline_bytes}, {}, true
+}
+
+fixture_map_source_clear_excluded :: proc(fixture: ^Fixture) {
+    if fixture == nil do return
+    fixture.project = {}
+    fixture.marina_authored = false
+    fixture.marina_authored_plan = {}
+    fixture.harbor_authored_plan = {}
+    fixture.harbor_authored_intervention = {}
+    fixture.farms = {}
+    fixture.farm_count = 0
+    fixture.wrecks = {}
+    fixture.wreck_count = 0
+    fixture.default_marinas = {}
+    fixture.default_harbors = {}
+    fixture.default_harbor_interventions = {}
+    fixture.default_marina_islands = {}
+    fixture.default_marina_count = 0
+    fixture.greek_placements = {}
+    fixture.greek_placement_count = 0
+    fixture.settlement_plan = {}
+    fixture.default_map_regeneration_seeds = {}
+}
+
+fixture_map_source_apply_bytes :: proc(
+    fixture: ^Fixture,
+    encoded_adrmap: []byte,
+    alloc := context.allocator,
+) -> (Map_Artifact_Error, bool) {
+    if fixture == nil || alloc.procedure == nil do return {kind = .Invalid_Argument}, false
+    artifact, decode_error, decoded := map_artifact_decode(encoded_adrmap, alloc)
+    if !decoded do return decode_error, false
+    defer map_artifact_destroy(artifact, alloc)
+    return map_artifact_apply_fixture(fixture, artifact)
+}
+
+fixture_map_source_apply_inline :: proc(fixture: ^Fixture, alloc := context.allocator) -> (Map_Artifact_Error, bool) {
+    if fixture == nil || alloc.procedure == nil do return {kind = .Invalid_Argument}, false
+    source := fixture.map_source
+    if !fixture_map_source_valid(source) {
+        return {kind = .Invalid_State, message = "map source is invalid"}, false
+    }
+    if source.kind == .Sidecar {
+        return {kind = .Invalid_State, message = "map source sidecar requires a file resolver"}, false
+    }
+    return fixture_map_source_apply_bytes(fixture, source.inline_bytes[:], alloc)
+}
+
+fixture_map_source_apply_sidecar :: proc(
+    fixture: ^Fixture,
+    encoded_adrmap: []byte,
+    alloc := context.allocator,
+) -> (Map_Artifact_Error, bool) {
+    if fixture == nil || alloc.procedure == nil do return {kind = .Invalid_Argument}, false
+    source := fixture.map_source
+    if !fixture_map_source_valid(source) || source.kind != .Sidecar {
+        return {kind = .Invalid_State, message = "map source sidecar is invalid"}, false
+    }
+    if !fixture_map_sidecar_matches_encoded(source.sidecar, encoded_adrmap) {
+        return {kind = .Invalid_State, message = "map source sidecar digest does not match"}, false
+    }
+    return fixture_map_source_apply_bytes(fixture, encoded_adrmap, alloc)
+}
+
+map_artifact_apply :: proc(editor: ^Editor, artifact: ^Map_Artifact) -> (Map_Artifact_Error, bool) {
+    if editor == nil do return {kind = .Invalid_Argument}, false
+    error, applied := map_artifact_apply_fixture(&editor.fixture, artifact)
+    if !applied do return error, false
     editor.terrain_revision += 1
     if editor.terrain_revision == 0 do editor.terrain_revision = 1
     editor.project.revision = max(editor.project.revision, u64(1))
@@ -88,7 +310,11 @@ map_artifact_apply :: proc(editor: ^Editor, artifact: ^Map_Artifact) -> (Map_Art
 map_artifact_generate :: proc(
     seeds := terrain.DEFAULT_ISLAND_SEEDS,
     alloc := context.allocator,
-) -> (^Map_Artifact, Map_Artifact_Error, bool) {
+) -> (
+    ^Map_Artifact,
+    Map_Artifact_Error,
+    bool,
+) {
     editor := new(Editor, alloc)
     if editor == nil do return nil, {kind = .Limit_Exceeded}, false
     defer {

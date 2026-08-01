@@ -19,6 +19,7 @@ import "core:time"
 when ODIN_TEST {
     fixture_codec_test_destroy_source :: proc(source: ^Fixture) {
         if source == nil do return
+        delete(source.map_source.inline_bytes)
         architecture.city_plan_destroy(&source.architecture_city_plan)
         architecture.city_plan_destroy(&source.architecture_preview_plan)
         terrain.destroy_project(&source.project)
@@ -61,6 +62,11 @@ when ODIN_TEST {
             kind     = .Rock,
             seed     = 0x11223344,
         }
+        for &level, index in source.project.levels {
+            level.cell_size = terrain.FINE_CELL_SIZE * f32(u32(1) << u32(index))
+            level.origin_x = -f32(terrain.RING_RESOLUTION / 2) * level.cell_size
+            level.origin_z = level.origin_x
+        }
         source.project.levels[len(source.project.levels) - 1].heights[len(source.project.levels[0].heights) - 1] = f32(
             91.5,
         )
@@ -68,6 +74,20 @@ when ODIN_TEST {
 
         source.authoring_tool = .Marina
         source.editor_ui.left_collapsed = true
+        source.sdf_obstacles[0] = {
+            position     = {13, 21, -34},
+            scale        = {1.5, .75, 2},
+            major_radius = 8,
+            tube_radius  = 2,
+            color        = {31, 127, 223, 255},
+        }
+        source.sdf_obstacles[0].rotation.w = 1
+        source.sdf_obstacles[0].rotation.x = 0
+        source.sdf_obstacles[0].rotation.y = 0
+        source.sdf_obstacles[0].rotation.z = 0
+        source.sdf_obstacle_count = 1
+        source.sdf_obstacle_selected = 0
+        source.sdf_obstacle_interaction.hovered = 7
         source.tool = .Paint
         source.radius = f32(6.25)
         source.strength = f32(.73)
@@ -199,7 +219,10 @@ when ODIN_TEST {
             available = true,
         }
         source.vehicle_showcase_target = "showcase-target-marker"
-        source.active_lab_scene = "active-lab-marker"
+        source.lab = {
+            kind = .Dunes,
+            dunes = {seed = 0x44554e45, wind_angle = .08, vegetation = .76},
+        }
 
         source.settlement_plan.valid = true
         source.settlement_plan.neighborhood_count = 1
@@ -262,8 +285,6 @@ when ODIN_TEST {
         source.vehicle_paint_tool = .Pattern
         source.vehicle_paint_brush_radius = 13
         source.vehicle_paint_brush_strength = f32(.81)
-        source.vehicle_paint_layers[0][0] = 17
-        source.vehicle_paint_layers[2][VEHICLE_PAINT_TEXTURE_BYTE_COUNT - 1] = 231
         source.vehicle_paint_components = {true, false, true, true, false}
 
         source.circulation_plan_valid = true
@@ -318,6 +339,13 @@ when ODIN_TEST {
         source.pilot.vehicle = &source.car
         source.car.driver = &source.pilot
         source.aircraft.slots[0].vehicle = &source.car
+        map_source, map_error, captured := fixture_map_source_capture_inline(source)
+        map_artifact_error_dispose(&map_error)
+        if !captured {
+            fixture_codec_test_destroy_source(source)
+            return nil
+        }
+        source.map_source = map_source
         return source
     }
 
@@ -330,11 +358,26 @@ when ODIN_TEST {
         )
         testing.expect(
             t,
-            decoded.postale.body.orientation == source.postale.body.orientation &&
-            decoded.libellula.body.orientation == source.libellula.body.orientation &&
-            decoded.rondine.body.orientation == source.rondine.body.orientation &&
-            decoded.postale.spawn_orientation == source.postale.spawn_orientation &&
-            decoded.libellula.spawn_orientation == source.libellula.spawn_orientation,
+            decoded.postale.body.orientation.x == source.postale.body.orientation.x &&
+                decoded.postale.body.orientation.y == source.postale.body.orientation.y &&
+                decoded.postale.body.orientation.z == source.postale.body.orientation.z &&
+                decoded.postale.body.orientation.w == source.postale.body.orientation.w &&
+                decoded.libellula.body.orientation.x == source.libellula.body.orientation.x &&
+                decoded.libellula.body.orientation.y == source.libellula.body.orientation.y &&
+                decoded.libellula.body.orientation.z == source.libellula.body.orientation.z &&
+                decoded.libellula.body.orientation.w == source.libellula.body.orientation.w &&
+                decoded.rondine.body.orientation.x == source.rondine.body.orientation.x &&
+                decoded.rondine.body.orientation.y == source.rondine.body.orientation.y &&
+                decoded.rondine.body.orientation.z == source.rondine.body.orientation.z &&
+                decoded.rondine.body.orientation.w == source.rondine.body.orientation.w &&
+                decoded.postale.spawn_orientation.x == source.postale.spawn_orientation.x &&
+                decoded.postale.spawn_orientation.y == source.postale.spawn_orientation.y &&
+                decoded.postale.spawn_orientation.z == source.postale.spawn_orientation.z &&
+                decoded.postale.spawn_orientation.w == source.postale.spawn_orientation.w &&
+                decoded.libellula.spawn_orientation.x == source.libellula.spawn_orientation.x &&
+                decoded.libellula.spawn_orientation.y == source.libellula.spawn_orientation.y &&
+                decoded.libellula.spawn_orientation.z == source.libellula.spawn_orientation.z &&
+                decoded.libellula.spawn_orientation.w == source.libellula.spawn_orientation.w,
         )
         testing.expect(
             t,
@@ -360,6 +403,19 @@ when ODIN_TEST {
             if left[index] != right[index] do return false
         }
         return true
+    }
+
+    fixture_codec_test_decode_inline_map_source :: proc(
+        t: ^testing.T,
+        source: Fixture_Map_Source,
+    ) -> ^Map_Artifact {
+        testing.expect(t, source.kind == .Inline && len(source.inline_bytes) > 0 && source.sidecar == {})
+        if source.kind != .Inline || len(source.inline_bytes) == 0 || source.sidecar != {} do return nil
+        artifact, error, decoded := map_artifact_decode(source.inline_bytes[:])
+        testing.expect(t, decoded && error.kind == .None)
+        map_artifact_error_dispose(&error)
+        if !decoded do return nil
+        return artifact
     }
 
     fixture_codec_test_expect_empty :: proc(
@@ -632,17 +688,70 @@ when ODIN_TEST {
         testing.expect(t, decoded != nil)
         if decode_ok {
             fixture_codec_test_expect_current_v5(t, source, decoded)
-            testing.expect(t, decoded.project.sea_level == source.project.sea_level)
-            testing.expect(t, decoded.project.revision == source.project.revision)
-            testing.expect(t, decoded.project.structures[0].id == source.project.structures[0].id)
-            testing.expect(t, len(decoded.project.structures) == 1)
+            artifact := fixture_codec_test_decode_inline_map_source(t, decoded.map_source)
+            defer map_artifact_destroy(artifact)
+            if artifact != nil {
+                testing.expect(t, artifact.project.sea_level == source.project.sea_level)
+                testing.expect(t, artifact.project.revision == source.project.revision)
+                testing.expect(t, artifact.project.structures[0].id == source.project.structures[0].id)
+                testing.expect(t, len(artifact.project.structures) == 1)
+                testing.expect(
+                    t,
+                    artifact.project.levels[len(artifact.project.levels) - 1].heights[
+                        len(artifact.project.levels[0].heights) - 1
+                    ] == f32(91.5),
+                )
+                testing.expect(t, artifact.project.city_density[len(artifact.project.city_density) - 1] == 0xa5)
+                testing.expect(t, artifact.marina_authored_plan.seed == source.marina_authored_plan.seed)
+                testing.expect_value(t, artifact.seeds, source.default_map_regeneration_seeds)
+                testing.expect(t, artifact.default_marina_count == 1)
+                testing.expect(t, artifact.default_marina_islands[0] == story.Island.East)
+                testing.expect(t, artifact.default_marinas[0].seed == source.default_marinas[0].seed)
+                testing.expect(t, artifact.default_marinas[0].layout_seed == source.default_marinas[0].layout_seed)
+                testing.expect(t, artifact.default_marinas[0].valid)
+                testing.expect(t, artifact.default_harbors[0].seed == source.default_harbors[0].seed)
+                testing.expect(t, artifact.default_harbors[0].generation_version == 2)
+                testing.expect(t, artifact.default_harbors[0].valid)
+                testing.expect(t, artifact.farm_count == 1)
+                testing.expect(t, artifact.farms[0].origin_x == source.farms[0].origin_x)
+                testing.expect(t, artifact.farms[0].scale_x == source.farms[0].scale_x)
+                testing.expect(t, artifact.farms[0].scale_z == source.farms[0].scale_z)
+                testing.expect(t, artifact.farms[0].plan.width == source.farms[0].plan.width)
+                testing.expect(t, artifact.farms[0].plan.height == source.farms[0].plan.height)
+                testing.expect(t, artifact.farms[0].plan.tradition == source.farms[0].plan.tradition)
+                testing.expect(t, artifact.settlement_plan.valid)
+                testing.expect(t, artifact.settlement_plan.neighborhood_count == 1)
+            }
+            testing.expect(t, decoded.authoring_tool == .Marina)
+            testing.expect(t, decoded.sdf_obstacle_count == 1)
+            testing.expect(t, decoded.sdf_obstacle_selected == 0)
             testing.expect(
                 t,
-                decoded.project.levels[len(decoded.project.levels) - 1].heights[len(decoded.project.levels[0].heights) - 1] ==
-                f32(91.5),
+                decoded.sdf_obstacles[0].position.x == source.sdf_obstacles[0].position.x &&
+                    decoded.sdf_obstacles[0].position.y == source.sdf_obstacles[0].position.y &&
+                    decoded.sdf_obstacles[0].position.z == source.sdf_obstacles[0].position.z &&
+                    decoded.sdf_obstacles[0].rotation.x == source.sdf_obstacles[0].rotation.x &&
+                    decoded.sdf_obstacles[0].rotation.y == source.sdf_obstacles[0].rotation.y &&
+                    decoded.sdf_obstacles[0].rotation.z == source.sdf_obstacles[0].rotation.z &&
+                    decoded.sdf_obstacles[0].rotation.w == source.sdf_obstacles[0].rotation.w &&
+                    decoded.sdf_obstacles[0].scale.x == source.sdf_obstacles[0].scale.x &&
+                    decoded.sdf_obstacles[0].scale.y == source.sdf_obstacles[0].scale.y &&
+                    decoded.sdf_obstacles[0].scale.z == source.sdf_obstacles[0].scale.z &&
+                    decoded.sdf_obstacles[0].major_radius == source.sdf_obstacles[0].major_radius &&
+                    decoded.sdf_obstacles[0].tube_radius == source.sdf_obstacles[0].tube_radius &&
+                    decoded.sdf_obstacles[0].color[0] == source.sdf_obstacles[0].color[0] &&
+                    decoded.sdf_obstacles[0].color[1] == source.sdf_obstacles[0].color[1] &&
+                    decoded.sdf_obstacles[0].color[2] == source.sdf_obstacles[0].color[2] &&
+                    decoded.sdf_obstacles[0].color[3] == source.sdf_obstacles[0].color[3],
             )
-            testing.expect(t, decoded.project.city_density[len(decoded.project.city_density) - 1] == 0xa5)
-            testing.expect(t, decoded.authoring_tool == .Marina)
+            testing.expect(
+                t,
+                decoded.sdf_obstacle_interaction.hovered == 0 &&
+                    decoded.sdf_obstacle_interaction.gizmo_mode == .None &&
+                    decoded.sdf_obstacle_interaction.constrained_axis == .None &&
+                    !decoded.sdf_obstacle_interaction.transform_snapshot_valid &&
+                    !decoded.sdf_obstacle_interaction.inspector_euler_valid,
+            )
             testing.expect(t, decoded.radius == source.radius)
             testing.expect(t, decoded.architecture_city_plan.count == 1)
             testing.expect(t, len(decoded.architecture_city_plan.structures) == 1)
@@ -659,23 +768,6 @@ when ODIN_TEST {
             testing.expect(t, decoded.architecture_city_plan.lamps[0].yaw == f32(.6))
             testing.expect(t, decoded.architecture_brush_shape == source.architecture_brush_shape)
             testing.expect(t, decoded.architecture_brush_preset == source.architecture_brush_preset)
-            testing.expect(t, decoded.marina_authored_plan.seed == source.marina_authored_plan.seed)
-            testing.expect_value(t, decoded.default_map_regeneration_seeds, source.default_map_regeneration_seeds)
-            testing.expect(t, decoded.default_marina_count == 1)
-            testing.expect(t, decoded.default_marina_islands[0] == story.Island.East)
-            testing.expect(t, decoded.default_marinas[0].seed == source.default_marinas[0].seed)
-            testing.expect(t, decoded.default_marinas[0].layout_seed == source.default_marinas[0].layout_seed)
-            testing.expect(t, decoded.default_marinas[0].valid)
-            testing.expect(t, decoded.default_harbors[0].seed == source.default_harbors[0].seed)
-            testing.expect(t, decoded.default_harbors[0].generation_version == 2)
-            testing.expect(t, decoded.default_harbors[0].valid)
-            testing.expect(t, decoded.farm_count == 1)
-            testing.expect(t, decoded.farms[0].origin_x == source.farms[0].origin_x)
-            testing.expect(t, decoded.farms[0].scale_x == source.farms[0].scale_x)
-            testing.expect(t, decoded.farms[0].scale_z == source.farms[0].scale_z)
-            testing.expect(t, decoded.farms[0].plan.width == source.farms[0].plan.width)
-            testing.expect(t, decoded.farms[0].plan.height == source.farms[0].plan.height)
-            testing.expect(t, decoded.farms[0].plan.tradition == source.farms[0].plan.tradition)
             testing.expect(t, decoded.player.position == source.player.position)
             testing.expect(t, decoded.camera.distance == source.camera.distance)
             testing.expect(t, decoded.flight_camera.focal_length == source.flight_camera.focal_length)
@@ -685,9 +777,7 @@ when ODIN_TEST {
             testing.expect(t, decoded.aircraft.slots[0].name == "postale-slot-marker")
             testing.expect(t, decoded.aircraft.slots[0].available)
             testing.expect(t, decoded.vehicle_showcase_target == "showcase-target-marker")
-            testing.expect(t, decoded.active_lab_scene == "active-lab-marker")
-            testing.expect(t, decoded.settlement_plan.valid)
-            testing.expect(t, decoded.settlement_plan.neighborhood_count == 1)
+            testing.expect(t, decoded.lab == source.lab)
             testing.expect(t, decoded.story_state.delivery.subject == "delivery-subject-marker")
             testing.expect(t, decoded.story_state.resident_action_seen == source.story_state.resident_action_seen)
             testing.expect(t, decoded.atmosphere.world_minutes == source.atmosphere.world_minutes)
@@ -696,9 +786,6 @@ when ODIN_TEST {
             testing.expect(t, decoded.tweak.atmosphere.world_minutes == source.tweak.atmosphere.world_minutes)
             testing.expect(t, decoded.mouse_fur == .Silver)
             testing.expect(t, decoded.mouse_pattern == .Dorsal_Stripe)
-            testing.expect(t, decoded.vehicle_paint_layers[0][0] == 17)
-            testing.expect(t, decoded.vehicle_paint_layers[2][VEHICLE_PAINT_TEXTURE_BYTE_COUNT - 1] == 231)
-
             testing.expect(t, !decoded.circulation_plan_valid)
             testing.expect(t, decoded.circulation_revision == 0)
             testing.expect(t, len(decoded.circulation_structures) == 0)
@@ -757,20 +844,26 @@ when ODIN_TEST {
         testing.expect(t, !nil_ok && nil_error.kind == .Invalid_Argument)
         fixture_codec_test_expect_empty(t, &nil_result, &nil_error)
 
-        for length in 0 ..< fixture_file.Fixture_Container_Header_Size {
+        for length in 0 ..< fixture_file.Sectioned_Container_Header_Size {
             truncated_result, truncated_error, truncated_ok := fixture_codec_decode(first[:length], context.allocator)
             testing.expect(t, !truncated_ok)
-            testing.expect(t, truncated_error.kind == .Container_Decode)
-            testing.expect(t, truncated_error.container.kind == .Truncated)
+            if length < len(fixture_file.Sectioned_Container_Magic) {
+                testing.expect(t, truncated_error.kind == .Container_Decode)
+                testing.expect(t, truncated_error.container.kind == .Truncated)
+            } else {
+                testing.expect(t, truncated_error.kind == .Sectioned_Container_Decode)
+                testing.expect(t, truncated_error.sectioned.kind == .Truncated)
+            }
             fixture_codec_test_expect_empty(t, &truncated_result, &truncated_error)
         }
 
         corrupt := fixture_codec_test_copy(first)
-        corrupt[fixture_file.Fixture_Container_Header_Size] = corrupt[fixture_file.Fixture_Container_Header_Size] ~ 1
+        corrupt[fixture_file.Sectioned_Container_Header_Size + fixture_file.Sectioned_Container_Entry_Size] =
+            corrupt[fixture_file.Sectioned_Container_Header_Size + fixture_file.Sectioned_Container_Entry_Size] ~ 1
         corrupt_result, corrupt_error, corrupt_ok := fixture_codec_decode(corrupt, context.allocator)
         testing.expect(t, !corrupt_ok)
-        testing.expect(t, corrupt_error.kind == .Container_Decode)
-        testing.expect(t, corrupt_error.container.kind == .Checksum_Mismatch)
+        testing.expect(t, corrupt_error.kind == .Sectioned_Container_Decode)
+        testing.expect(t, corrupt_error.sectioned.kind == .Checksum_Mismatch)
         fixture_codec_test_expect_empty(t, &corrupt_result, &corrupt_error)
         delete(corrupt)
 

@@ -36,10 +36,16 @@ when ODIN_TEST {
         testing.expect(t, migrated && migration_error.kind == .None)
         if !migrated do return
 
-        testing.expect_value(t, result.fixture.default_map_regeneration_seeds, terrain.DEFAULT_ISLAND_SEEDS)
-        testing.expect(t, result.fixture.default_marina_count == 0)
-        testing.expect(t, !result.fixture.default_marinas[0].valid)
-        testing.expect(t, !result.fixture.default_harbors[0].valid)
+        artifact, map_error, decoded := map_artifact_decode(result.fixture.map_source.inline_bytes[:])
+        defer map_artifact_error_dispose(&map_error)
+        defer map_artifact_destroy(artifact)
+        testing.expect(t, result.fixture.map_source.kind == .Inline && decoded)
+        if decoded {
+            testing.expect_value(t, artifact.seeds, terrain.DEFAULT_ISLAND_SEEDS)
+            testing.expect(t, artifact.default_marina_count == 0)
+            testing.expect(t, !artifact.default_marinas[0].valid)
+            testing.expect(t, !artifact.default_harbors[0].valid)
+        }
 
         registry := fixture_migration_production_registry()
         testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)

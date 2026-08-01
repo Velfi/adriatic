@@ -80,7 +80,7 @@ gpu_profiler_init :: proc(ctx: ^Vk_Context) -> bool {
     }
 
     if !gpu_profiler_env_enabled() {
-        log_info("gpu_profiler_init: disabled; set ZELDA_ENGINE_GPU_PROFILER=1")
+        log_debug("gpu_profiler_init: disabled; set ZELDA_ENGINE_GPU_PROFILER=1")
         ctx.gpu_profiler.supported = false
         ctx.gpu_profiler.enabled = false
         ctx.gpu_profiler.last_sample.supported = false

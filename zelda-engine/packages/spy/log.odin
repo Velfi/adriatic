@@ -196,10 +196,15 @@ remove_global_subscriber_layer :: proc(index: int) -> bool {
         return false
     }
 
-    for i := index; i + 1 < len(subscriber_registry_layers); i += 1 {
-        subscriber_registry_layers[i] = subscriber_registry_layers[i + 1]
+    if len(subscriber_registry_layers) == 1 {
+        delete(subscriber_registry_layers)
+        subscriber_registry_layers = nil
+    } else {
+        for i := index; i + 1 < len(subscriber_registry_layers); i += 1 {
+            subscriber_registry_layers[i] = subscriber_registry_layers[i + 1]
+        }
+        resize(&subscriber_registry_layers, len(subscriber_registry_layers) - 1)
     }
-    resize(&subscriber_registry_layers, len(subscriber_registry_layers) - 1)
     subscriber_registry_refresh_locked()
     return true
 }
@@ -216,10 +221,15 @@ remove_global_subscriber_layer_by_id :: proc(id: Subscriber_Layer_Id) -> bool {
         if layer.id != id {
             continue
         }
-        for j := i; j + 1 < len(subscriber_registry_layers); j += 1 {
-            subscriber_registry_layers[j] = subscriber_registry_layers[j + 1]
+        if len(subscriber_registry_layers) == 1 {
+            delete(subscriber_registry_layers)
+            subscriber_registry_layers = nil
+        } else {
+            for j := i; j + 1 < len(subscriber_registry_layers); j += 1 {
+                subscriber_registry_layers[j] = subscriber_registry_layers[j + 1]
+            }
+            resize(&subscriber_registry_layers, len(subscriber_registry_layers) - 1)
         }
-        resize(&subscriber_registry_layers, len(subscriber_registry_layers) - 1)
         subscriber_registry_refresh_locked()
         return true
     }
@@ -238,10 +248,8 @@ global_subscriber_layer_count :: proc() -> int {
 clear_global_subscriber_layers :: proc() {
     sync.lock(&subscriber_registry_lock)
     defer sync.unlock(&subscriber_registry_lock)
-    if len(subscriber_registry_layers) > 0 {
-        delete(subscriber_registry_layers)
-        subscriber_registry_layers = nil
-    }
+    delete(subscriber_registry_layers)
+    subscriber_registry_layers = nil
     subscriber_registry_refresh_locked()
 }
 
@@ -442,6 +450,20 @@ ensuref :: proc(condition: bool, fmt_str: string, args: ..any, loc := #caller_lo
     }
 }
 
+
+// log_prechecked emits after a caller has already applied its own severity
+// policy. It deliberately bypasses the resolved logger's lowest-level gate.
+log_prechecked :: proc(level: Level, args: ..any, sep := " ", loc := #caller_location) -> bool {
+    logger, ok := resolve_logger()
+    if !ok {
+        return false
+    }
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    str := fmt.tprint(..args, sep = sep)
+    str = annotate_log_text_with_active_scope(str)
+    logger.procedure(logger.data, level, str, logger.options, loc)
+    return true
+}
 
 log :: proc(level: Level, args: ..any, sep := " ", loc := #caller_location) {
     logger, ok := resolve_logger()

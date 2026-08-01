@@ -71,6 +71,10 @@ when ODIN_TEST {
         fixture_migration_v0004_runtime_set_vec3(&destination.right, source.right)
     }
 
+    fixture_migration_v0004_runtime_orientation_equal :: proc(left, right: quaternion128) -> bool {
+        return left.x == right.x && left.y == right.y && left.z == right.z && left.w == right.w
+    }
+
     fixture_migration_v0004_runtime_seed_legacy_flight :: proc(source: ^$T, source_version: int) {
         base := f32(source_version * 10)
         fixture_migration_v0004_runtime_set_vec3(&source.postale.body.angular_velocity, {base + 1, base + 2, base + 3})
@@ -221,6 +225,9 @@ when ODIN_TEST {
         expected_body := fixture.postale.body
         expected_runtime := flight.default_ace_runtime(expected_body, expected_tuning)
         base := f32(source_version * 10)
+        expected_structure_selected := source_version * 100 + 14
+        // v13→14 sanitizes this deliberately out-of-range selection in the final chain.
+        if len(fixture.map_source.inline_bytes) > 0 do expected_structure_selected = -1
 
         testing.expect(
             t,
@@ -232,11 +239,26 @@ when ODIN_TEST {
         )
         testing.expect(
             t,
-            fixture.postale.body.orientation == expected_postale_orientation &&
-            fixture.libellula.body.orientation == expected_libellula_orientation &&
-            fixture.rondine.body.orientation == expected_rondine_orientation &&
-            fixture.libellula.spawn_orientation == expected_libellula_spawn &&
-            fixture.postale.spawn_orientation == expected_postale_spawn,
+            fixture_migration_v0004_runtime_orientation_equal(
+                fixture.postale.body.orientation,
+                expected_postale_orientation,
+            ) &&
+                fixture_migration_v0004_runtime_orientation_equal(
+                    fixture.libellula.body.orientation,
+                    expected_libellula_orientation,
+                ) &&
+                fixture_migration_v0004_runtime_orientation_equal(
+                    fixture.rondine.body.orientation,
+                    expected_rondine_orientation,
+                ) &&
+                fixture_migration_v0004_runtime_orientation_equal(
+                    fixture.libellula.spawn_orientation,
+                    expected_libellula_spawn,
+                ) &&
+                fixture_migration_v0004_runtime_orientation_equal(
+                    fixture.postale.spawn_orientation,
+                    expected_postale_spawn,
+                ),
         )
         testing.expect(
             t,
@@ -252,9 +274,9 @@ when ODIN_TEST {
             fixture.postale.body.position == flight.Vec3{base + 7, base + 8, base + 9} &&
             fixture.postale.body.velocity == flight.Vec3{base + 10, base + 11, base + 12} &&
             fixture.architecture_brush_strength == base + 13 &&
-            fixture.structure_selected == source_version * 100 + 14 &&
+            fixture.structure_selected == expected_structure_selected &&
             fixture.vehicle_showcase_target == "v4-runtime-target" &&
-            fixture.active_lab_scene == "v4-runtime-lab",
+            fixture.lab.kind == .None,
         )
         if source_version < 4 {
             testing.expect(
@@ -274,24 +296,16 @@ when ODIN_TEST {
             )
         }
         if source_version == 1 {
-            project_raw := cast(^runtime.Raw_Dynamic_Array)&fixture.project.structures
+            // v19 keeps map state only in the owned ADRMAP payload.
+            source_raw := cast(^runtime.Raw_Dynamic_Array)&fixture.map_source.inline_bytes
             testing.expect(
                 t,
-                len(fixture.project.structures) == 1 &&
-                fixture.project.structures[0].id == 101 &&
-                project_raw.allocator.data == rawptr(result.arena),
+                fixture.project.structure_count == 0 &&
+                len(fixture.project.structures) == 0 &&
+                fixture.map_source.kind == .Inline &&
+                len(fixture.map_source.inline_bytes) > 0 &&
+                source_raw.allocator.data == rawptr(result.arena),
             )
-            if len(fixture.project.structures) == 1 {
-                previous_length := len(fixture.project.structures)
-                appended, append_error := append_elem(&fixture.project.structures, fixture.project.structures[0])
-                testing.expect(
-                    t,
-                    appended == 1 &&
-                    append_error == nil &&
-                    len(fixture.project.structures) == previous_length + 1 &&
-                    project_raw.allocator.data == rawptr(result.arena),
-                )
-            }
         }
     }
 
@@ -321,7 +335,7 @@ when ODIN_TEST {
         portable_error, portable_ok := hs.portable_decode(
             fixture_codec_value(tentative),
             payload,
-            fixture_codec_portable_config(),
+            fixture_codec_migration_portable_config(),
             transaction_allocator,
         )
         testing.expect(t, portable_ok && portable_error.kind == .None)
@@ -478,7 +492,7 @@ when ODIN_TEST {
                 portable_error, portable_ok := hs.portable_decode(
                     fixture_codec_value(split_tentative),
                     v4,
-                    fixture_codec_portable_config(),
+                    fixture_codec_migration_portable_config(),
                     split_allocator,
                 )
                 testing.expect(t, portable_ok && portable_error.kind == .None)
@@ -515,7 +529,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 18 &&
+            FIXTURE_SCHEMA_VERSION == 19 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
@@ -536,7 +550,11 @@ when ODIN_TEST {
             production.steps[4].from_version == 5 &&
             production.steps[4].to_version == 6 &&
             production.steps[4].wrapper == fixture_migration_step_v0005_to_v0006 &&
-            production.steps[4].change_id == "field-type:adriatic:packages/terrain.Clipmap_Level.heights",
+            production.steps[4].change_id == "field-type:adriatic:packages/terrain.Clipmap_Level.heights" &&
+            production.steps[17].from_version == 18 &&
+            production.steps[17].to_version == 19 &&
+            production.steps[17].wrapper == fixture_migration_step_v0018_to_v0019 &&
+            production.steps[17].change_id == "field-add:adriatic:src.Fixture.map_source",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(

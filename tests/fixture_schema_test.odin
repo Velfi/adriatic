@@ -54,7 +54,7 @@ write_synthetic_file :: proc(t: ^testing.T, repo: Synthetic_Repo, relative, sour
 
 fixture_source :: proc(fields, editor_fields: string) -> string {
     return fmt.tprintf(
-        "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {{\n%s\n}}\n\nEditor :: struct {{\n%s\n}}\n",
+        "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {{\n%s\n}}\n\nEditor :: struct {{\n%s\n}}\n",
         fields,
         editor_fields,
     )
@@ -66,7 +66,66 @@ build_synthetic :: proc(repo: Synthetic_Repo) -> (manifest, diagnostics: string,
 }
 
 @(test)
-fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
+fixture_schema_honors_file_build_tags :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    repo, repo_ok := make_synthetic_repo(t)
+    testing.expect(t, repo_ok)
+    if !repo_ok do return
+    defer destroy_synthetic_repo(repo)
+
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/tagged/native.odin",
+        "#+build !js\npackage tagged\n\nValue :: struct {\n    native: u8,\n}\n",
+    )
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/tagged/web.odin",
+        "#+build js\npackage tagged\n\nValue :: struct {\n    web: u8,\n}\n",
+    )
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/tagged/ignored.odin",
+        "#+ignore ignored fixture-schema tag\npackage tagged\n\nValue :: struct {\n    ignored: u8,\n}\n",
+    )
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/docs_tagged/native.odin",
+        "// +build !js\npackage docs_tagged\n\nValue :: struct {\n    native: u8,\n}\n",
+    )
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/docs_tagged/web.odin",
+        "// +build js\npackage docs_tagged\n\nValue :: struct {\n    web: u8,\n}\n",
+    )
+    write_synthetic_file(
+        t,
+        repo,
+        "packages/unknown_tagged/main.odin",
+        "#+build unknown\npackage unknown_tagged\n\nValue :: struct {\n    unknown: u8,\n}\n",
+    )
+    source := "package adriatic\n\nimport tagged \"../packages/tagged\"\nimport docs_tagged \"../packages/docs_tagged\"\nimport unknown_tagged \"../packages/unknown_tagged\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: tagged.Value,\n    docs_value: docs_tagged.Value,\n    unknown_value: unknown_tagged.Value,\n}\n"
+    write_synthetic_file(t, repo, "src/main.odin", source)
+
+    manifest, diagnostics, ok := build_synthetic(repo)
+    testing.expect(t, ok)
+    testing.expect(t, diagnostics == "")
+    testing.expect(t, strings.contains(manifest, "field=adriatic:packages/tagged.Value|name=native|"))
+    testing.expect(t, !strings.contains(manifest, "field=adriatic:packages/tagged.Value|name=web|"))
+    testing.expect(t, !strings.contains(manifest, "field=adriatic:packages/tagged.Value|name=ignored|"))
+    testing.expect(t, strings.contains(manifest, "field=adriatic:packages/docs_tagged.Value|name=native|"))
+    testing.expect(t, !strings.contains(manifest, "field=adriatic:packages/docs_tagged.Value|name=web|"))
+    testing.expect(t, strings.contains(manifest, "field=adriatic:packages/unknown_tagged.Value|name=unknown|"))
+}
+
+@(test)
+fixture_schema_production_graph_matches_frozen_v7 :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     repo_root, repo_err := os.get_working_directory(context.allocator)
@@ -79,8 +138,8 @@ fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 6)
-    stored_path := fixture_schema.manifest_path(repo_root, 6)
+    testing.expect(t, version == 7)
+    stored_path := fixture_schema.manifest_path(repo_root, 7)
     stored, read_err := os.read_entire_file(stored_path, context.allocator)
     testing.expect(t, read_err == nil)
     if read_err != nil do return
@@ -92,6 +151,7 @@ fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
     testing.expect(t, strings.contains(generated, "array[192]<adriatic:packages/particles.Particle>"))
     testing.expect(t, strings.contains(generated, "array[8388608]<builtin:u8>"))
     testing.expect(t, strings.contains(generated, "zelda_engine:canvas2d.Color"))
+    testing.expect(t, strings.contains(generated, "type=adriatic:src.SDF_Torus_Obstacle|kind=struct|"))
     testing.expect(
         t,
         strings.contains(
@@ -130,6 +190,9 @@ fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
         "wreck_count",
         "rondine",
         "rondine_visible",
+        "sdf_obstacles",
+        "sdf_obstacle_count",
+        "sdf_obstacle_selected",
     }
     for name in retained_names {
         testing.expect(t, strings.contains(generated, fmt.tprintf("field=adriatic:src.Fixture|name=%s|", name)))
@@ -207,6 +270,7 @@ fixture_schema_production_graph_matches_frozen_v6 :: proc(t: ^testing.T) {
         "customization_preview_drag_x",
         "customization_preview_yaw",
         "map_time",
+        "sdf_obstacle_interaction",
     }
     for name in excluded_names {
         testing.expect(t, !strings.contains(generated, fmt.tprintf("field=adriatic:src.Fixture|name=%s|", name)))
@@ -234,7 +298,7 @@ fixture_schema_production_policy_excludes_only_derived_session_state :: proc(t: 
     )
     testing.expect(t, generated_ok)
     testing.expect(t, diagnostics == "")
-    testing.expect(t, version == 6)
+    testing.expect(t, version == 7)
     if !generated_ok do return
 
     excluded_fields := [?]string {
@@ -294,11 +358,11 @@ fixture_schema_synthetic_failures_fail_closed :: proc(t: ^testing.T) {
         },
         {source = fixture_source("    callback: proc()", "    runtime: int"), expected = "Fixture.callback"},
         {
-            source = "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nCOUNT :: OTHER\nOTHER :: COUNT\n\nFixture :: struct {\n    values: [COUNT]int\n}\n",
+            source = "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nCOUNT :: OTHER\nOTHER :: COUNT\n\nFixture :: struct {\n    values: [COUNT]int\n}\n",
             expected = "constant cycle",
         },
         {
-            source = "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nAlias_A :: Alias_B\nAlias_B :: Alias_A\n\nFixture :: struct {\n    value: Alias_A\n}\n",
+            source = "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nAlias_A :: Alias_B\nAlias_B :: Alias_A\n\nFixture :: struct {\n    value: Alias_A\n}\n",
             expected = "type alias cycle",
         },
     }
@@ -385,14 +449,14 @@ fixture_schema_constants_enums_and_declared_imports_resolve :: proc(t: ^testing.
     defer destroy_synthetic_repo(repo)
 
     write_synthetic_file(t, repo, "packages/constants/main.odin", "package constants\n\nBASE, WIDTH :: 2, 4\n")
-    source := "package src\n\nimport constants \"../packages/constants\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    values: [constants.WIDTH + constants.BASE]int\n}\n"
+    source := "package adriatic\n\nimport constants \"../packages/constants\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    values: [constants.WIDTH + constants.BASE]int\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", source)
     manifest, diagnostics, ok := build_synthetic(repo)
     testing.expect(t, ok)
     testing.expect(t, diagnostics == "")
     testing.expect(t, strings.contains(manifest, "array[6]<builtin:int>"))
 
-    enum_source := "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nState :: enum u8 {\n    Zero,\n    Explicit = 3,\n    Next,\n}\n\nFixture :: struct {\n    state: State\n}\n"
+    enum_source := "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nState :: enum u8 {\n    Zero,\n    Explicit = 3,\n    Next,\n}\n\nFixture :: struct {\n    state: State\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", enum_source)
     enum_manifest, enum_diagnostics, enum_ok := build_synthetic(repo)
     testing.expect(t, enum_ok)
@@ -413,7 +477,7 @@ fixture_schema_constants_enums_and_declared_imports_resolve :: proc(t: ^testing.
         "packages/canvas_dir/main.odin",
         "package canvas2d\n\nimport \"../render_dir\"\n\nColor :: render2d.Color\n",
     )
-    alias_source := "package src\n\nimport \"../packages/canvas_dir\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    color: canvas2d.Color\n}\n"
+    alias_source := "package adriatic\n\nimport \"../packages/canvas_dir\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    color: canvas2d.Color\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", alias_source)
     alias_manifest, alias_diagnostics, alias_ok := build_synthetic(repo)
     testing.expect(t, alias_ok)
@@ -437,7 +501,7 @@ fixture_schema_enumerated_arrays_are_deterministic_and_fail_closed :: proc(t: ^t
         "packages/indexes/main.odin",
         "package indexes\n\nResident :: enum i8 {\n    West = -1,\n    East,\n    Harbor,\n}\n",
     )
-    source := "package src\n\nimport indexes \"../packages/indexes\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nCamera_Slot :: enum {\n    Player,\n    Cutaway,\n    Count,\n}\n\nFixture :: struct {\n    seen: [indexes.Resident]u64\n    poses: [Camera_Slot.Count]u8\n}\n"
+    source := "package adriatic\n\nimport indexes \"../packages/indexes\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nCamera_Slot :: enum {\n    Player,\n    Cutaway,\n    Count,\n}\n\nFixture :: struct {\n    seen: [indexes.Resident]u64\n    poses: [Camera_Slot.Count]u8\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", source)
     first, first_diagnostics, first_ok := build_synthetic(repo)
     testing.expect(t, first_ok)
@@ -452,7 +516,7 @@ fixture_schema_enumerated_arrays_are_deterministic_and_fail_closed :: proc(t: ^t
     testing.expect(t, second_diagnostics == "")
     testing.expect(t, first == second)
 
-    hostile := "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nResident :: enum {\n    West,\n    East = 2,\n}\n\nFixture :: struct {\n    seen: [Resident]u64\n}\n"
+    hostile := "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nResident :: enum {\n    West,\n    East = 2,\n}\n\nFixture :: struct {\n    seen: [Resident]u64\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", hostile)
     hostile_manifest, hostile_diagnostics, hostile_ok := build_synthetic(repo)
     testing.expect(t, !hostile_ok)
@@ -472,7 +536,7 @@ fixture_schema_duplicate_imports_and_paths_are_checked :: proc(t: ^testing.T) {
 
     write_synthetic_file(t, repo, "packages/one/main.odin", "package one\n\nValue :: struct {\n    value: int\n}\n")
     write_synthetic_file(t, repo, "packages/two/main.odin", "package two\n\nValue :: struct {\n    value: int\n}\n")
-    duplicate_source := "package src\n\nimport one \"../packages/one\"\nimport one \"../packages/two\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
+    duplicate_source := "package adriatic\n\nimport one \"../packages/one\"\nimport one \"../packages/two\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", duplicate_source)
     duplicate_manifest, duplicate_diagnostics, duplicate_ok := build_synthetic(repo)
     testing.expect(t, !duplicate_ok)
@@ -491,7 +555,7 @@ fixture_schema_duplicate_imports_and_paths_are_checked :: proc(t: ^testing.T) {
         "packages/two/main.odin",
         "package two\n\nimport \"../one\"\n\nValue :: struct {\n    value: int\n}\n",
     )
-    cycle_source := "package src\n\nimport \"../packages/one\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
+    cycle_source := "package adriatic\n\nimport \"../packages/one\"\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", cycle_source)
     cycle_manifest, cycle_diagnostics, cycle_ok := build_synthetic(repo)
     testing.expect(t, !cycle_ok)
@@ -500,8 +564,8 @@ fixture_schema_duplicate_imports_and_paths_are_checked :: proc(t: ^testing.T) {
 
     write_synthetic_file(t, repo, "packages/one/main.odin", "package one\n\nValue :: struct {\n    value: int\n}\n")
     write_synthetic_file(t, repo, "packages/two/main.odin", "package two\n\nValue :: struct {\n    value: int\n}\n")
-    write_synthetic_file(t, repo, "src/imports.odin", "package src\n\nimport one \"../packages/one\"\n")
-    scope_source := "package src\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
+    write_synthetic_file(t, repo, "src/imports.odin", "package adriatic\n\nimport one \"../packages/one\"\n")
+    scope_source := "package adriatic\n\nFIXTURE_SCHEMA_VERSION :: 1\n\nFixture :: struct {\n    value: one.Value\n}\n"
     write_synthetic_file(t, repo, "src/main.odin", scope_source)
     scope_manifest, scope_diagnostics, scope_ok := build_synthetic(repo)
     testing.expect(t, !scope_ok)

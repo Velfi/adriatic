@@ -4,6 +4,8 @@ import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0003 "../packages/fixture_history/v0003"
 import fixture_v0004 "../packages/fixture_history/v0004"
 import fixture_v0005 "../packages/fixture_history/v0005"
+import fixture_v0006 "../packages/fixture_history/v0006"
+import fixture_v0007 "../packages/fixture_history/v0007"
 import fixture_schema "../packages/fixture_schema"
 import "base:runtime"
 import "core:fmt"
@@ -43,6 +45,12 @@ import "core:testing"
 #assert(int(fixture_v0005.History_Type_0109.Libellula) == 3)
 #assert(int(fixture_v0005.History_Type_0109.Libellula_Mk2) == 4)
 #assert(int(fixture_v0005.History_Type_0109.Rondine) == 5)
+#assert(fixture_v0006.FIXTURE_SCHEMA_VERSION == 6)
+#assert(fixture_v0007.FIXTURE_SCHEMA_VERSION == 7)
+#assert(offset_of(fixture_v0007.Fixture, sdf_obstacles) >= 0)
+#assert(offset_of(fixture_v0007.Fixture, sdf_obstacle_count) >= 0)
+#assert(offset_of(fixture_v0007.Fixture, sdf_obstacle_selected) >= 0)
+#assert(size_of(fixture_v0007.History_Type_0160) > 0)
 #assert(size_of(quaternion64) == 8)
 #assert(size_of(quaternion128) == 16)
 
@@ -1346,6 +1354,166 @@ fixture_history_supports_later_schema_versions :: proc(t: ^testing.T) {
     )
     if !real_v5_history_sha_ok do return
     defer delete(real_v5_history_sha)
+
+    real_v6_data, real_v6_read_error := os.read_entire_file("fixtures/schema/v0006.fixture-schema", context.allocator)
+    testing.expect(t, real_v6_read_error == nil)
+    if real_v6_read_error != nil do return
+    defer delete(real_v6_data)
+    real_v6_manifest, real_v6_error, real_v6_ok := fixture_schema.history_parse_manifest(
+        real_v6_data,
+        context.allocator,
+    )
+    testing.expect(t, real_v6_ok && real_v6_error.kind == .None)
+    if !real_v6_ok {
+        fixture_schema.history_error_dispose(&real_v6_error)
+        return
+    }
+    defer fixture_schema.history_manifest_dispose(&real_v6_manifest)
+    testing.expect(t, real_v6_manifest.schema_version == 6 && len(real_v6_manifest.records) == 202)
+    v6_root_fields := 0
+    v6_sdf_state_found := false
+    for record in real_v6_manifest.records {
+        switch record.id {
+        case real_v6_manifest.root:
+            v6_root_fields = len(record.fields)
+            for field in record.fields {
+                switch field.name {
+                case "sdf_obstacles", "sdf_obstacle_count", "sdf_obstacle_selected":
+                    v6_sdf_state_found = true
+                }
+            }
+        case "adriatic:src.SDF_Torus_Obstacle":
+            v6_sdf_state_found = true
+        }
+    }
+    testing.expect(t, v6_root_fields == 155 && !v6_sdf_state_found)
+    real_v6_sha, real_v6_sha_ok := fixture_schema.history_manifest_sha256_hex(real_v6_data, context.allocator)
+    testing.expect(
+        t,
+        real_v6_sha_ok && real_v6_sha == "6285a9a9004efb848f46863801bb934f6251f3b0aeef9c87a0dab82ab25d57f0",
+    )
+    if !real_v6_sha_ok do return
+    defer delete(real_v6_sha)
+    real_v6_generated, real_v6_generated_ok := fixture_schema.history_emit_package(
+        &real_v6_manifest,
+        real_v6_sha,
+        context.allocator,
+    )
+    testing.expect(t, real_v6_generated_ok)
+    if !real_v6_generated_ok do return
+    defer delete(real_v6_generated)
+    real_v6_expected, real_v6_expected_error := os.read_entire_file(
+        "packages/fixture_history/v0006/schema.generated.odin",
+        context.allocator,
+    )
+    testing.expect(t, real_v6_expected_error == nil)
+    if real_v6_expected_error != nil do return
+    defer delete(real_v6_expected)
+    testing.expect(t, string(real_v6_expected) == real_v6_generated)
+    testing.expect(t, strings.count(string(real_v6_expected), "\n") == 2545)
+    testing.expect(t, strings.count(string(real_v6_expected), "// fixture-history-id: ") == 202)
+    real_v6_history_sha, real_v6_history_sha_ok := fixture_schema.history_manifest_sha256_hex(
+        real_v6_expected,
+        context.allocator,
+    )
+    testing.expect(
+        t,
+        real_v6_history_sha_ok &&
+        real_v6_history_sha == "7979165b6e44f5f7ac2c610a1d46f6bf6cd937799b395512252b947c5baa59e7",
+    )
+    if !real_v6_history_sha_ok do return
+    defer delete(real_v6_history_sha)
+
+    real_v7_data, real_v7_read_error := os.read_entire_file("fixtures/schema/v0007.fixture-schema", context.allocator)
+    testing.expect(t, real_v7_read_error == nil)
+    if real_v7_read_error != nil do return
+    defer delete(real_v7_data)
+    real_v7_manifest, real_v7_error, real_v7_ok := fixture_schema.history_parse_manifest(
+        real_v7_data,
+        context.allocator,
+    )
+    testing.expect(t, real_v7_ok && real_v7_error.kind == .None)
+    if !real_v7_ok {
+        fixture_schema.history_error_dispose(&real_v7_error)
+        return
+    }
+    defer fixture_schema.history_manifest_dispose(&real_v7_manifest)
+    testing.expect(t, real_v7_manifest.schema_version == 7 && len(real_v7_manifest.records) == 203)
+    v7_root_fields := 0
+    v7_obstacles_found := false
+    v7_obstacle_count_found := false
+    v7_obstacle_selected_found := false
+    v7_torus_found := false
+    for record in real_v7_manifest.records {
+        switch record.id {
+        case real_v7_manifest.root:
+            v7_root_fields = len(record.fields)
+            for field in record.fields {
+                switch field.name {
+                case "sdf_obstacles":
+                    v7_obstacles_found = field.type == "array[64]<adriatic:src.SDF_Torus_Obstacle>" && field.tag == ""
+                case "sdf_obstacle_count":
+                    v7_obstacle_count_found = field.type == "builtin:int" && field.tag == ""
+                case "sdf_obstacle_selected":
+                    v7_obstacle_selected_found = field.type == "builtin:int" && field.tag == ""
+                }
+            }
+        case "adriatic:src.SDF_Torus_Obstacle":
+            v7_torus_found =
+                record.kind == "struct" &&
+                len(record.fields) == 6 &&
+                record.fields[0].name == "position" &&
+                record.fields[1].name == "rotation" &&
+                record.fields[2].name == "scale" &&
+                record.fields[3].name == "major_radius" &&
+                record.fields[4].name == "tube_radius" &&
+                record.fields[5].name == "color"
+        }
+    }
+    testing.expect(
+        t,
+        v7_root_fields == 158 &&
+        v7_obstacles_found &&
+        v7_obstacle_count_found &&
+        v7_obstacle_selected_found &&
+        v7_torus_found,
+    )
+    real_v7_sha, real_v7_sha_ok := fixture_schema.history_manifest_sha256_hex(real_v7_data, context.allocator)
+    testing.expect(
+        t,
+        real_v7_sha_ok && real_v7_sha == "adb3ca76b334cba6fbd631ec59b28428dd4b1a629ac38ae5a5ee3400a6b05c3c",
+    )
+    if !real_v7_sha_ok do return
+    defer delete(real_v7_sha)
+    real_v7_generated, real_v7_generated_ok := fixture_schema.history_emit_package(
+        &real_v7_manifest,
+        real_v7_sha,
+        context.allocator,
+    )
+    testing.expect(t, real_v7_generated_ok)
+    if !real_v7_generated_ok do return
+    defer delete(real_v7_generated)
+    real_v7_expected, real_v7_expected_error := os.read_entire_file(
+        "packages/fixture_history/v0007/schema.generated.odin",
+        context.allocator,
+    )
+    testing.expect(t, real_v7_expected_error == nil)
+    if real_v7_expected_error != nil do return
+    defer delete(real_v7_expected)
+    testing.expect(t, string(real_v7_expected) == real_v7_generated)
+    testing.expect(t, strings.count(string(real_v7_expected), "\n") == 2559)
+    testing.expect(t, strings.count(string(real_v7_expected), "// fixture-history-id: ") == 203)
+    real_v7_history_sha, real_v7_history_sha_ok := fixture_schema.history_manifest_sha256_hex(
+        real_v7_expected,
+        context.allocator,
+    )
+    testing.expect(
+        t,
+        real_v7_history_sha_ok &&
+        real_v7_history_sha == "d59d3d0d103ba139c4a38ddb3fc55ac45a993cc42300704d5e4f6748e2ede8ef",
+    )
+    if !real_v7_history_sha_ok do return
+    defer delete(real_v7_history_sha)
 
     invalid_versions := [?]string{"0", "-1", "+1", "01", "1 ", "1x", "10000", "9223372036854775808"}
     for version in invalid_versions {

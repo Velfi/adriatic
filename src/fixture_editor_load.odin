@@ -1,17 +1,18 @@
 package main
 
+import terrain "../packages/terrain"
+import canvas2d "zelda_engine:canvas2d"
 import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
+import harbor "../packages/harbor"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"
-import tarot "../packages/tarot"
-import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"
-import canvas2d "zelda_engine:canvas2d"
+import tarot "../packages/tarot"
 
 Fixture_Editor_Load_Error_Kind :: enum {
     None,
@@ -28,11 +29,13 @@ Fixture_Editor_Load_Error :: struct {
     path:      string,
     codec:     Fixture_Codec_Error,
     lifecycle: Fixture_Lifecycle_Error,
+    map_error: Map_Artifact_Error,
 }
 
 fixture_editor_load_error_dispose :: proc(error: ^Fixture_Editor_Load_Error) {
     if error == nil do return
     fixture_codec_error_dispose(&error.codec)
+    map_artifact_error_dispose(&error.map_error)
     error^ = {}
 }
 
@@ -84,9 +87,63 @@ fixture_editor_basis_finite :: #force_inline proc(basis: flight.Basis) -> bool {
     )
 }
 
+fixture_editor_sdf_obstacle_valid :: #force_inline proc(obstacle: SDF_Torus_Obstacle) -> bool {
+    return(
+        fixture_editor_vec3_finite(obstacle.position) &&
+        fixture_editor_orientation_valid(obstacle.rotation) &&
+        fixture_editor_vec3_finite(obstacle.scale) &&
+        obstacle.scale.x > 0 &&
+        obstacle.scale.y > 0 &&
+        obstacle.scale.z > 0 &&
+        fixture_editor_scalar_finite(obstacle.major_radius) &&
+        fixture_editor_scalar_finite(obstacle.tube_radius) &&
+        obstacle.major_radius > 0 &&
+        obstacle.tube_radius > 0 \
+    )
+}
+
+fixture_editor_harbor_plan_valid :: proc(plan: ^harbor.Harbor_Plan) -> bool {
+    if plan == nil ||
+       !fixture_editor_count_valid(plan.shoreline.count, len(plan.shoreline.points)) ||
+       !fixture_editor_count_valid(plan.navigable_water.count, len(plan.navigable_water.points)) ||
+       !fixture_editor_count_valid(plan.fairway.count, len(plan.fairway.points)) ||
+       !fixture_editor_count_valid(plan.turning_basin.count, len(plan.turning_basin.points)) ||
+       !fixture_editor_count_valid(plan.structure_count, len(plan.structures)) ||
+       !fixture_editor_count_valid(plan.berth_count, len(plan.berths)) ||
+       !fixture_editor_count_valid(plan.route_count, len(plan.routes)) ||
+       !fixture_editor_count_valid(plan.terrain_edit_count, len(plan.terrain_edits)) {
+        return false
+    }
+    for structure in plan.structures[:plan.structure_count] {
+        if !fixture_editor_count_valid(structure.count, len(structure.points)) do return false
+    }
+    for route in plan.routes[:plan.route_count] {
+        if !fixture_editor_count_valid(route.count, len(route.points)) do return false
+    }
+    return true
+}
+
+fixture_editor_harbor_intervention_valid :: proc(intervention: ^harbor.Harbor_Intervention) -> bool {
+    return(
+        intervention != nil &&
+        fixture_editor_count_valid(intervention.phase_count, len(intervention.phases)) &&
+        fixture_editor_count_valid(intervention.waterfront_count, len(intervention.waterfront_zones)) &&
+        fixture_editor_harbor_plan_valid(&intervention.runtime_plan) \
+    )
+}
+
 fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
     if fixture == nil do return "fixture"
-    if fixture.active_lab_scene != "" do return "active_lab_scene"
+    if path := lab_fixture_preflight(fixture.lab); path != "" do return path
+    if !fixture_editor_count_valid(fixture.sdf_obstacle_count, len(fixture.sdf_obstacles)) {
+        return "sdf_obstacle_count"
+    }
+    if fixture.sdf_obstacle_selected < -1 || fixture.sdf_obstacle_selected >= fixture.sdf_obstacle_count {
+        return "sdf_obstacle_selected"
+    }
+    for obstacle in fixture.sdf_obstacles[:fixture.sdf_obstacle_count] {
+        if !fixture_editor_sdf_obstacle_valid(obstacle) do return "sdf_obstacles"
+    }
     if !fixture_editor_count_valid(fixture.note_count, len(fixture.notes)) do return "note_count"
     for &note in fixture.notes[:fixture.note_count] {
         if !fixture_editor_vec3_finite(note.fallback_position) do return "notes.fallback_position"
@@ -287,6 +344,12 @@ fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
             return "marina_authored_plan.route.count"
         }
     }
+    if !fixture_editor_harbor_plan_valid(&fixture.harbor_authored_plan) {
+        return "harbor_authored_plan.count"
+    }
+    if !fixture_editor_harbor_intervention_valid(&fixture.harbor_authored_intervention) {
+        return "harbor_authored_intervention.count"
+    }
     if !fixture_editor_count_valid(fixture.vehicle_effects.dust_count, len(fixture.vehicle_effects.dust)) {
         return "vehicle_effects.dust_count"
     }
@@ -337,8 +400,11 @@ fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
         {settlement.neighborhood_count, len(settlement.neighborhoods), "settlement_plan.neighborhood_count"},
         {settlement.macro_cell_count, len(settlement.macro_cells), "settlement_plan.macro_cell_count"},
         {settlement.route_count, len(settlement.routes), "settlement_plan.route_count"},
+        {settlement.growth_event_count, len(settlement.growth_events), "settlement_plan.growth_event_count"},
         {settlement.block_count, len(settlement.blocks), "settlement_plan.block_count"},
         {settlement.site_count, len(settlement.sites), "settlement_plan.site_count"},
+        {settlement.garden_count, len(settlement.gardens), "settlement_plan.garden_count"},
+        {settlement.patio_count, len(settlement.patios), "settlement_plan.patio_count"},
         {settlement.rejected_site_count, len(settlement.rejected_sites), "settlement_plan.rejected_site_count"},
         {
             settlement.decorative_foliage_count,
@@ -397,6 +463,8 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     editor.architecture_painting = false
     editor.climbing_leaf_painting = false
     editor.curve_drawing = false
+    editor.sdf_obstacle_interaction = {}
+    editor.sdf_obstacle_interaction.hovered = -1
     editor.road_drag_edge = -1
     editor.road_drag_handle = -1
     editor.road_hover_edge = -1
@@ -466,31 +534,17 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     editor.car_physics_terrain_revision = editor.terrain_revision
 }
 
-fixture_editor_load :: proc(
+fixture_editor_load_decoded :: proc(
     editor: ^Editor,
-    data: []byte,
+    candidate: ^Fixture_Migration_Result,
+    sidecar_bytes: []byte,
     alloc := context.allocator,
 ) -> (
     error: Fixture_Editor_Load_Error,
     ok: bool,
 ) {
-    if editor == nil || len(data) == 0 || alloc.procedure == nil {
+    if editor == nil || candidate == nil || candidate.fixture == nil || alloc.procedure == nil {
         return {kind = .Invalid_Argument}, false
-    }
-
-    candidate, codec_error, decoded := fixture_codec_decode(data, alloc)
-    if !decoded {
-        return {kind = .Decode, codec = codec_error}, false
-    }
-    candidate_owned := true
-    defer if candidate_owned do fixture_migration_result_dispose(&candidate)
-
-    if path := fixture_editor_load_preflight(candidate.fixture); path != "" {
-        return {kind = .Invalid_State, path = path}, false
-    }
-    bind_plan: Fixture_Lifecycle_Bind_Plan
-    if lifecycle_error := fixture_lifecycle_prepare(candidate.fixture, &bind_plan); lifecycle_error.kind != .None {
-        return {kind = .Lifecycle, lifecycle = lifecycle_error}, false
     }
 
     stage_bytes, allocation_error := mem.alloc_bytes(size_of(Editor), align_of(Editor), alloc)
@@ -500,11 +554,38 @@ fixture_editor_load :: proc(
     stage := cast(^Editor)raw_data(stage_bytes)
     stage^ = {}
     stage.fixture = candidate.fixture^
+    stage.fixture.project = {}
     stage.terrain_revision = fixture_editor_next_terrain_revision(editor.terrain_revision)
     stage_live := true
+    stage_map_project_owned := false
     defer {
         if stage_live do fixture_editor_stage_destroy(stage, alloc)
+        if stage_live && stage_map_project_owned do terrain.destroy_project(&stage.fixture.project)
         _ = mem.free(rawptr(stage), alloc)
+    }
+
+    map_error: Map_Artifact_Error
+    map_applied := false
+    if stage.fixture.map_source.kind == .Sidecar {
+        map_error, map_applied = fixture_map_source_apply_sidecar(&stage.fixture, sidecar_bytes, alloc)
+    } else {
+        map_error, map_applied = fixture_map_source_apply_inline(&stage.fixture, alloc)
+    }
+    defer map_artifact_error_dispose(&map_error)
+    if !map_applied {
+        if map_artifact_error_is_allocation_failure(map_error) do return {kind = .Out_Of_Memory, path = "map_source"}, false
+        error = {kind = .Invalid_State, path = "map_source", map_error = map_error}
+        map_error = {}
+        return error, false
+    }
+    stage_map_project_owned = true
+
+    if path := fixture_editor_load_preflight(&stage.fixture); path != "" {
+        return {kind = .Invalid_State, path = path}, false
+    }
+    bind_plan: Fixture_Lifecycle_Bind_Plan
+    if lifecycle_error := fixture_lifecycle_prepare(&stage.fixture, &bind_plan); lifecycle_error.kind != .None {
+        return {kind = .Lifecycle, lifecycle = lifecycle_error}, false
     }
 
     if !vehicle_paint_history_try_init(stage, alloc) {
@@ -516,6 +597,11 @@ fixture_editor_load :: proc(
     car_physics_create(stage)
     if stage.car_physics_world == nil || stage.car_physics_vehicle == nil {
         return {kind = .Runtime_Stage, path = "car_physics"}, false
+    }
+    if stage.lab.kind != .Dunes {
+        loaded_project_revision := stage.project.revision
+        seed_default_island_marinas(stage)
+        stage.project.revision = loaded_project_revision
     }
     fixture_notes_before_fixture_replace(editor)
     old_owner := editor.fixture_owner
@@ -532,10 +618,9 @@ fixture_editor_load :: proc(
     structure_history_storage_destroy(editor)
 
     editor.fixture = stage.fixture
-    editor.fixture_owner = candidate
+    editor.fixture_owner = candidate^
     editor.fixture_owner.fixture = &editor.fixture
-    candidate = {}
-    candidate_owned = false
+    candidate^ = {}
     fixture_lifecycle_apply(&editor.fixture, &bind_plan)
     fixture_notes_after_fixture_replace()
 
@@ -554,9 +639,30 @@ fixture_editor_load :: proc(
     stage.vehicle_paint_tool_drag_mirror_texels = nil
     stage.vehicle_paint_undo = {}
     stage.vehicle_paint_redo = {}
+    stage_map_project_owned = false
     stage_live = false
 
     fixture_migration_result_dispose(&old_owner)
     fixture_editor_reset_runtime(editor)
     return {}, true
+}
+
+fixture_editor_load :: proc(
+    editor: ^Editor,
+    data: []byte,
+    alloc := context.allocator,
+) -> (
+    error: Fixture_Editor_Load_Error,
+    ok: bool,
+) {
+    if editor == nil || len(data) == 0 || alloc.procedure == nil {
+        return {kind = .Invalid_Argument}, false
+    }
+
+    candidate, codec_error, decoded := fixture_codec_decode(data, alloc)
+    if !decoded {
+        return {kind = .Decode, codec = codec_error}, false
+    }
+    defer fixture_migration_result_dispose(&candidate)
+    return fixture_editor_load_decoded(editor, &candidate, nil, alloc)
 }

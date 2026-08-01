@@ -102,13 +102,22 @@ when ODIN_TEST {
             dry_error.kind == .None &&
             dry_result.source_version == 1 &&
             dry_result.target_version == FIXTURE_SCHEMA_VERSION &&
+            dry_result.schema_migrated &&
+            dry_result.externalized_map &&
             dry_result.changed,
         )
         fixture_upgrade_error_dispose(&dry_error)
         fixture_upgrade_test_expect_file(t, historical_path, historical_snapshot)
 
         migrated_result, migrated_error, migrated_ok := fixture_upgrade_file(historical_path, false)
-        testing.expect(t, migrated_ok && migrated_error.kind == .None && migrated_result.changed)
+        testing.expect(
+            t,
+            migrated_ok &&
+                migrated_error.kind == .None &&
+                migrated_result.schema_migrated &&
+                migrated_result.externalized_map &&
+                migrated_result.changed,
+        )
         fixture_upgrade_error_dispose(&migrated_error)
         if !migrated_ok do return
 
@@ -131,12 +140,36 @@ when ODIN_TEST {
             testing.expect(
                 t,
                 decoded.fixture.occupant == .On_Foot &&
-                decoded.fixture.project.structures[0].id == 0x1111 &&
+                decoded.fixture.map_source.kind == .Sidecar &&
+                len(decoded.fixture.map_source.inline_bytes) == 0 &&
                 decoded.fixture.story_state.quest.definition_id == "two-island-story" &&
                 decoded.fixture.story_state.quest.node_count == 13 &&
                 decoded.fixture.story_state.quest.statuses[11] == .Available &&
                 decoded.fixture.story_state.quest.revision == 1,
             )
+            sidecar_path, resolved := fixture_map_sidecar_resolve(
+                historical_path,
+                decoded.fixture.map_source.sidecar,
+                context.allocator,
+            )
+            testing.expect(t, resolved)
+            if resolved {
+                defer delete(sidecar_path)
+                sidecar_bytes, sidecar_read := fixture_upgrade_test_read(t, sidecar_path)
+                if sidecar_read {
+                    defer delete(sidecar_bytes)
+                    artifact, map_error, map_ok := map_artifact_decode(sidecar_bytes)
+                    testing.expect(t, map_ok && map_error.kind == .None)
+                    map_artifact_error_dispose(&map_error)
+                    if map_ok {
+                        testing.expect(
+                            t,
+                            artifact.project.structure_count == 1 && artifact.project.structures[0].id == 0x1111,
+                        )
+                        map_artifact_destroy(artifact)
+                    }
+                }
+            }
         }
         fixture_migration_result_dispose(&decoded)
 
@@ -148,21 +181,112 @@ when ODIN_TEST {
             repeat_ok &&
             repeat_error.kind == .None &&
             repeat_result.source_version == FIXTURE_SCHEMA_VERSION &&
+            !repeat_result.schema_migrated &&
+            !repeat_result.externalized_map &&
             !repeat_result.changed,
         )
         fixture_upgrade_error_dispose(&repeat_error)
         fixture_upgrade_test_expect_file(t, historical_path, migrated_snapshot)
 
+        current_dry_result, current_dry_error, current_dry_ok := fixture_upgrade_file(current_path, true)
+        testing.expect(
+            t,
+            current_dry_ok &&
+                current_dry_error.kind == .None &&
+                current_dry_result.source_version == FIXTURE_SCHEMA_VERSION &&
+                !current_dry_result.schema_migrated &&
+                current_dry_result.externalized_map &&
+                current_dry_result.changed,
+        )
+        fixture_upgrade_error_dispose(&current_dry_error)
+        fixture_upgrade_test_expect_file(t, current_path, current_snapshot)
+
+        current_inline, current_inline_error, current_inline_ok := fixture_codec_decode(current)
+        testing.expect(t, current_inline_ok && current_inline_error.kind == .None)
+        fixture_codec_error_dispose(&current_inline_error)
+        if !current_inline_ok do return
+        defer fixture_migration_result_dispose(&current_inline)
+        expected_sidecar, expected_sidecar_derived := fixture_map_sidecar_derive(
+            current_inline.fixture.map_source.inline_bytes[:],
+        )
+        testing.expect(
+            t,
+            current_inline.fixture.map_source.kind == .Inline &&
+                expected_sidecar_derived &&
+                fixture_map_sidecar_valid(expected_sidecar),
+        )
+        expected_sidecar_path, expected_sidecar_resolved := fixture_map_sidecar_resolve(
+            current_path,
+            expected_sidecar,
+            context.allocator,
+        )
+        testing.expect(t, expected_sidecar_resolved)
+        if !expected_sidecar_resolved do return
+        defer delete(expected_sidecar_path)
+        testing.expect(t, !os.exists(expected_sidecar_path))
+
         current_result, current_error, current_ok := fixture_upgrade_file(current_path, false)
         testing.expect(
             t,
             current_ok &&
-            current_error.kind == .None &&
-            current_result.source_version == FIXTURE_SCHEMA_VERSION &&
-            !current_result.changed,
+                current_error.kind == .None &&
+                !current_result.schema_migrated &&
+                current_result.externalized_map &&
+                current_result.changed,
         )
         fixture_upgrade_error_dispose(&current_error)
-        fixture_upgrade_test_expect_file(t, current_path, current_snapshot)
+        if !current_ok do return
+
+        current_externalized, current_read_ok := fixture_upgrade_test_read(t, current_path)
+        if !current_read_ok do return
+        defer delete(current_externalized)
+        current_decoded, current_decode_error, current_decoded_ok := fixture_codec_decode(current_externalized)
+        testing.expect(t, current_decoded_ok && current_decode_error.kind == .None)
+        fixture_codec_error_dispose(&current_decode_error)
+        if !current_decoded_ok do return
+        defer fixture_migration_result_dispose(&current_decoded)
+        current_sidecar := current_decoded.fixture.map_source.sidecar
+        testing.expect(
+            t,
+            current_decoded.fixture.map_source.kind == .Sidecar &&
+                len(current_decoded.fixture.map_source.inline_bytes) == 0 &&
+                current_sidecar == expected_sidecar &&
+                fixture_map_sidecar_valid(current_sidecar),
+        )
+        current_sidecar_path, current_sidecar_resolved := fixture_map_sidecar_resolve(
+            current_path,
+            current_sidecar,
+            context.allocator,
+        )
+        testing.expect(t, current_sidecar_resolved)
+        if !current_sidecar_resolved do return
+        defer delete(current_sidecar_path)
+        testing.expect(t, current_sidecar_path == expected_sidecar_path)
+        current_sidecar_bytes, current_sidecar_read := fixture_upgrade_test_read(t, current_sidecar_path)
+        if !current_sidecar_read do return
+        defer delete(current_sidecar_bytes)
+        testing.expect(t, fixture_map_sidecar_matches_encoded(current_sidecar, current_sidecar_bytes))
+
+        editor := fixture_editor_test_editor(t)
+        defer fixture_editor_test_destroy(editor)
+        load_error, loaded := fixture_editor_load_from_path(editor, current_path)
+        testing.expect(t, loaded && load_error.kind == .None)
+        fixture_editor_store_error_dispose(&load_error)
+        if loaded do testing.expect(t, editor.project.structure_count == 1 && editor.project.structures[0].id == 81)
+
+        current_externalized_snapshot := fixture_codec_test_copy(current_externalized)
+        defer delete(current_externalized_snapshot)
+        current_repeat_result, current_repeat_error, current_repeat_ok := fixture_upgrade_file(current_path, false)
+        testing.expect(
+            t,
+            current_repeat_ok &&
+                current_repeat_error.kind == .None &&
+                !current_repeat_result.schema_migrated &&
+                !current_repeat_result.externalized_map &&
+                !current_repeat_result.changed,
+        )
+        fixture_upgrade_error_dispose(&current_repeat_error)
+        fixture_upgrade_test_expect_file(t, current_path, current_externalized_snapshot)
     }
 
     @(test)
@@ -226,8 +350,8 @@ when ODIN_TEST {
             dry_ok &&
             dry_error.kind == .None &&
             dry_summary.total == 3 &&
-            dry_summary.changed == 2 &&
-            dry_summary.current == 1 &&
+            dry_summary.changed == 3 &&
+            dry_summary.current == 0 &&
             len(dry_report.paths) == 3 &&
             len(dry_report.results) == 3,
         )
@@ -239,6 +363,7 @@ when ODIN_TEST {
                 strings.has_suffix(dry_report.paths[1], "/a/nested/m.fixture") &&
                 strings.has_suffix(dry_report.paths[2], "/z.fixture") &&
                 dry_report.results[0].source_version == FIXTURE_SCHEMA_VERSION &&
+                dry_report.results[0].externalized_map &&
                 dry_report.results[1].source_version == 4 &&
                 dry_report.results[2].source_version == 1,
             )
@@ -261,12 +386,11 @@ when ODIN_TEST {
             real_ok &&
             real_error.kind == .None &&
             real_summary.total == 3 &&
-            real_summary.changed == 2 &&
-            real_summary.current == 1 &&
+            real_summary.changed == 3 &&
+            real_summary.current == 0 &&
             len(real_report.paths) == 3,
         )
         fixture_upgrade_error_dispose(&real_error)
-        fixture_upgrade_test_expect_file(t, current_path, current_snapshot)
         fixture_upgrade_test_expect_file(t, unrelated_path, unrelated)
 
         rerun_summary, rerun_error, rerun_ok := fixture_upgrade_path(directory, false)
@@ -311,10 +435,10 @@ when ODIN_TEST {
 
         failures := [?]Fixture_Editor_Store_Test_Failure{.Partial_Then_Write, .Zero_Write, .Sync, .Close, .Rename}
         store_kinds := [?]Fixture_Editor_Store_Error_Kind {
-            .Write_Temporary,
-            .Write_Temporary,
-            .Sync_Temporary,
-            .Close_Temporary,
+            .Write_Sidecar_Temporary,
+            .Write_Sidecar_Temporary,
+            .Sync_Sidecar_Temporary,
+            .Close_Sidecar_Temporary,
             .Rename_Target,
         }
         for failure, index in failures {

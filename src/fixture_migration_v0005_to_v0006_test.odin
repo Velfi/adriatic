@@ -71,19 +71,25 @@ when ODIN_TEST {
         if !migrated do return
 
         fixture := result.fixture
-        testing.expect(t, fixture.project.road_graph.edges[0].use_intensity == 1)
-        testing.expect(t, fixture.project.city_density[17] == 201)
-        testing.expect(t, fixture.project.climbing_leaf_density[29] == 177)
-        testing.expect(t, fixture.project.city_density[terrain.LEGACY_TERRAIN_SAMPLES] == 0)
-        testing.expect(t, fixture.farms[0].plan.garden_span == 3)
-        testing.expect(t, fixture.farms[0].plan.garden_x >= 1)
-        testing.expect(t, fixture.farms[0].plan.garden_z >= 1)
-        testing.expect(t, fixture.settlement_plan.sites[0].kind == .Rejected)
-        testing.expect(t, fixture.settlement_plan.rejected_sites[0].kind == .Rejected)
-        testing.expect(t, fixture.settlement_plan.acceptance_failure == .Building_Access)
-        testing.expect(t, fixture.settlement_plan.growth_event_count == 0)
-        testing.expect(t, fixture.settlement_plan.garden_count == 0)
-        testing.expect(t, fixture.settlement_plan.patio_count == 0)
+        artifact, map_error, decoded := map_artifact_decode(fixture.map_source.inline_bytes[:])
+        defer map_artifact_error_dispose(&map_error)
+        defer map_artifact_destroy(artifact)
+        testing.expect(t, fixture.map_source.kind == .Inline && decoded)
+        if decoded {
+            testing.expect(t, artifact.project.road_graph.edges[0].use_intensity == 1)
+            testing.expect(t, artifact.project.city_density[17] == 201)
+            testing.expect(t, artifact.project.climbing_leaf_density[29] == 177)
+            testing.expect(t, artifact.project.city_density[terrain.LEGACY_TERRAIN_SAMPLES] == 0)
+            testing.expect(t, artifact.farms[0].plan.garden_span == 3)
+            testing.expect(t, artifact.farms[0].plan.garden_x >= 1)
+            testing.expect(t, artifact.farms[0].plan.garden_z >= 1)
+            testing.expect(t, artifact.settlement_plan.sites[0].kind == .Rejected)
+            testing.expect(t, artifact.settlement_plan.rejected_sites[0].kind == .Rejected)
+            testing.expect(t, artifact.settlement_plan.acceptance_failure == .Building_Access)
+            testing.expect(t, artifact.settlement_plan.growth_event_count == 0)
+            testing.expect(t, artifact.settlement_plan.garden_count == 0)
+            testing.expect(t, artifact.settlement_plan.patio_count == 0)
+        }
         testing.expect(t, fixture.story_state.delivery.care == .Unchosen)
         defaults := tweak_default_state().player_animation
         testing.expect(

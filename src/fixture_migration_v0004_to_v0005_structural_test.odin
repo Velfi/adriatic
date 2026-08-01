@@ -42,6 +42,10 @@ when ODIN_TEST {
         return result
     }
 
+    fixture_migration_v0004_test_orientation_equal :: proc(left, right: quaternion128) -> bool {
+        return left.x == right.x && left.y == right.y && left.z == right.z && left.w == right.w
+    }
+
     fixture_migration_v0004_test_make :: proc(
         t: ^testing.T,
     ) -> (
@@ -261,11 +265,26 @@ when ODIN_TEST {
         )
         testing.expect(
             t,
-            tentative.postale.body.orientation == expected_postale_orientation &&
-            tentative.libellula.body.orientation == expected_libellula_orientation &&
-            tentative.rondine.body.orientation == expected_rondine_orientation &&
-            tentative.libellula.spawn_orientation == expected_libellula_spawn &&
-            tentative.postale.spawn_orientation == expected_postale_spawn,
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.postale.body.orientation,
+                expected_postale_orientation,
+            ) &&
+                fixture_migration_v0004_test_orientation_equal(
+                    tentative.libellula.body.orientation,
+                    expected_libellula_orientation,
+                ) &&
+                fixture_migration_v0004_test_orientation_equal(
+                    tentative.rondine.body.orientation,
+                    expected_rondine_orientation,
+                ) &&
+                fixture_migration_v0004_test_orientation_equal(
+                    tentative.libellula.spawn_orientation,
+                    expected_libellula_spawn,
+                ) &&
+                fixture_migration_v0004_test_orientation_equal(
+                    tentative.postale.spawn_orientation,
+                    expected_postale_spawn,
+                ),
         )
         testing.expect(
             t,
@@ -444,14 +463,17 @@ when ODIN_TEST {
         rondine_velocity := tentative.rondine.body.velocity
         wake_serial := tentative.rondine.wake_serial
         error := fixture_migration_v0004_test_call(t, historical, tentative)
+        testing.expect_value(t, error.kind, Fixture_Migration_Error_Kind.None)
+        testing.expect(t, tentative.rondine.body.angular_velocity_world == flight.Vec3{})
         testing.expect(
             t,
-            error.kind == .None &&
-            tentative.rondine.body.angular_velocity_world == flight.Vec3{} &&
-            tentative.rondine.body.orientation == flight.identity_orientation() &&
-            tentative.rondine.body.velocity == rondine_velocity &&
-            tentative.rondine.wake_serial == wake_serial,
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.rondine.body.orientation,
+                flight.identity_orientation(),
+            ),
         )
+        testing.expect(t, tentative.rondine.body.velocity == rondine_velocity)
+        testing.expect(t, tentative.rondine.wake_serial == wake_serial)
 
         fixture_migration_v0004_test_seed_valid(historical, tentative)
         nil_error := fixture_migration_v0004_test_call(t, historical, nil)

@@ -12,6 +12,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import spy "zelda_engine:spy"
 
 MARKOV_TOWN_GRID :: 23
 MARKOV_TOWN_CELL :: f32(20)
@@ -969,14 +970,14 @@ settlement_lab_configure :: proc(
         &editor.project,
     )
     editor.settlement_plan.valid = editor.settlement_plan.acceptance_failure == .None
-    fmt.println("settlement:", settlement_plan_report(&editor.settlement_plan))
+    spy.debug("settlement:", settlement_plan_report(&editor.settlement_plan))
     if editor.settlement_plan.request.scale == .Village {
-        fmt.println("settlement village:", settlement_village_program_report(&editor.settlement_plan))
+        spy.debug("settlement village:", settlement_village_program_report(&editor.settlement_plan))
     }
     if editor.settlement_plan.acceptance_failure == .Disconnected_Anchors {
         for route, route_index in editor.settlement_plan.routes[:editor.settlement_plan.route_count] {
             if route.required {
-                fmt.println("settlement disconnected required route", route_index, route.class, route.geometry)
+                spy.debug("settlement disconnected required route", route_index, route.class, route.geometry)
             }
         }
     }
@@ -984,7 +985,7 @@ settlement_lab_configure :: proc(
         for route, route_index in editor.settlement_plan.routes[:editor.settlement_plan.route_count] {
             limit := settlement_route_grade_limit(route.class)
             if route.maximum_grade > limit + .001 {
-                fmt.println(
+                spy.debug(
                     "settlement excessive route grade",
                     route_index,
                     route.class,
@@ -998,7 +999,7 @@ settlement_lab_configure :: proc(
     for class_index in 0 ..< SETTLEMENT_ROUTE_CLASS_COUNT {
         length_stats := editor.settlement_plan.metrics.route_length_by_class[class_index]
         if length_stats.count == 0 do continue
-        fmt.println(
+        spy.debug(
             "settlement route",
             Settlement_Route_Class(class_index),
             "length",
@@ -1007,7 +1008,7 @@ settlement_lab_configure :: proc(
             settlement_stats_report(editor.settlement_plan.metrics.route_width_by_class[class_index]),
         )
     }
-    fmt.println(
+    spy.debug(
         "settlement form:",
         "intersections",
         settlement_stats_report(editor.settlement_plan.metrics.intersection_spacing),

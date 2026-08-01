@@ -5,6 +5,10 @@
 *.dSYM/
 src.bin
 imgui.ini
+/plans/
+
+# Local fixture bake cache.
+/fixtures/labs/*.adriatic-map
 
 # Python bytecode caches
 __pycache__/

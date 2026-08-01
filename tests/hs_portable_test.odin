@@ -72,6 +72,12 @@ Excluded_Unsupported_State :: struct {
     list:  []u8 `fixture:"-"`,
 }
 
+Portable_Retain_Tag_Source :: struct {
+    value:     i32,
+    map_value: i32 `fixture:"-" fixture_map:"-"`,
+    scratch:   i32 `fixture:"-"`,
+}
+
 Portable_Additive_Source :: struct {
     kept:    i32,
     removed: i32,
@@ -109,6 +115,17 @@ Portable_Representative :: struct {
     bytes:  [256]u8,
     floats: [256]f32,
     nested: Portable_Nested,
+}
+
+Portable_Bulk_Fixed_Nested :: struct {
+    bytes:  [3]u8,
+    floats: [3]f32,
+}
+
+Portable_Bulk_Fixed_Arrays :: struct {
+    bytes:  [4]u8,
+    floats: [3]f32,
+    nested: Portable_Bulk_Fixed_Nested,
 }
 
 Portable_Scalar_Widths :: struct {
@@ -438,6 +455,84 @@ portable_test_fixture_config :: proc() -> hs.Portable_Config {
     config := hs.portable_default_config()
     config.exclusion_tag = "fixture"
     return config
+}
+
+portable_test_fixture_map_config :: proc() -> hs.Portable_Config {
+    config := portable_test_fixture_config()
+    config.retain_tag = "fixture_map"
+    return config
+}
+
+@(test)
+hs_portable_retain_tag_keeps_only_explicit_fixture_map_fields :: proc(t: ^testing.T) {
+    source := Portable_Retain_Tag_Source {
+        value = 71,
+        map_value = 72,
+        scratch = 73,
+    }
+
+    normal, normal_error, normal_ok := hs.portable_encode(
+        portable_test_any(Portable_Retain_Tag_Source, &source),
+        portable_test_fixture_config(),
+        context.allocator,
+    )
+    testing.expect(t, normal_ok && normal_error.kind == .None)
+    if normal_ok {
+        defer delete(normal)
+        normal_destination := Portable_Retain_Tag_Source{}
+        decode_error, decode_ok := hs.portable_decode(
+            portable_test_any(Portable_Retain_Tag_Source, &normal_destination),
+            normal,
+            portable_test_fixture_config(),
+            context.allocator,
+        )
+        testing.expect(t, decode_ok && decode_error.kind == .None)
+        hs.portable_error_dispose(&decode_error)
+        testing.expect(t, normal_destination.value == source.value)
+        testing.expect(t, normal_destination.map_value == 0)
+        testing.expect(t, normal_destination.scratch == 0)
+    }
+    hs.portable_error_dispose(&normal_error)
+
+    projection_config := portable_test_fixture_map_config()
+    first, first_error, first_ok := hs.portable_encode(
+        portable_test_any(Portable_Retain_Tag_Source, &source),
+        projection_config,
+        context.allocator,
+    )
+    second, second_error, second_ok := hs.portable_encode(
+        portable_test_any(Portable_Retain_Tag_Source, &source),
+        projection_config,
+        context.allocator,
+    )
+    testing.expect(t, first_ok && first_error.kind == .None)
+    testing.expect(t, second_ok && second_error.kind == .None)
+    if first_ok && second_ok {
+        defer delete(first)
+        defer delete(second)
+        testing.expect(t, len(first) == len(second))
+        for index in 0 ..< min(len(first), len(second)) {
+            testing.expect(t, first[index] == second[index])
+        }
+
+        projection_destination := Portable_Retain_Tag_Source{}
+        decode_error, decode_ok := hs.portable_decode(
+            portable_test_any(Portable_Retain_Tag_Source, &projection_destination),
+            first,
+            projection_config,
+            context.allocator,
+        )
+        testing.expect(t, decode_ok && decode_error.kind == .None)
+        hs.portable_error_dispose(&decode_error)
+        testing.expect(t, projection_destination.value == source.value)
+        testing.expect(t, projection_destination.map_value == source.map_value)
+        testing.expect(t, projection_destination.scratch == 0)
+    } else {
+        if first_ok do delete(first)
+        if second_ok do delete(second)
+    }
+    hs.portable_error_dispose(&first_error)
+    hs.portable_error_dispose(&second_error)
 }
 
 portable_test_any :: proc($T: typeid, value: ^T) -> any {
@@ -2238,6 +2333,139 @@ hs_portable_moderate_array_has_bounded_payload_walk :: proc(t: ^testing.T) {
     testing.expect(t, decode_ok)
     testing.expect(t, decoded.bytes == value.bytes)
     delete(encoded)
+}
+
+@(test)
+hs_portable_fixed_u8_and_f32_arrays_preserve_wire_and_failures :: proc(t: ^testing.T) {
+    source := Portable_Bulk_Fixed_Arrays {
+        bytes = {0, 1, 127, 255},
+        floats = {1.0, -1.5, -2.25},
+        nested = {bytes = {17, 34, 51}, floats = {0.5, -4.0, 7.25}},
+    }
+    encoded, encode_error, encode_ok := hs.portable_encode(
+        portable_test_any(Portable_Bulk_Fixed_Arrays, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, encode_ok)
+    testing.expect(t, encode_error.kind == .None)
+    portable_test_dispose_error(&encode_error)
+    if !encode_ok do return
+    defer delete(encoded)
+
+    expected := [31]byte {
+        0,
+        1,
+        127,
+        255,
+        0,
+        0,
+        128,
+        63,
+        0,
+        0,
+        192,
+        191,
+        0,
+        0,
+        16,
+        192,
+        17,
+        34,
+        51,
+        0,
+        0,
+        0,
+        63,
+        0,
+        0,
+        128,
+        192,
+        0,
+        0,
+        232,
+        64,
+    }
+    body_start := portable_test_body_start(encoded)
+    testing.expect(t, portable_test_bytes_equal(encoded[body_start:], expected[:]))
+
+    again, again_error, again_ok := hs.portable_encode(
+        portable_test_any(Portable_Bulk_Fixed_Arrays, &source),
+        alloc = context.allocator,
+    )
+    testing.expect(t, again_ok)
+    testing.expect(t, again_error.kind == .None)
+    portable_test_dispose_error(&again_error)
+    if again_ok {
+        testing.expect(t, portable_test_bytes_equal(again, encoded))
+        delete(again)
+    }
+
+    allocator_state := Portable_Test_Counting_Allocator {
+        backing = context.allocator,
+        fail_at = -1,
+    }
+    allocator := mem.Allocator {
+        procedure = portable_test_counting_allocator_proc,
+        data      = rawptr(&allocator_state),
+    }
+    decoded: Portable_Bulk_Fixed_Arrays
+    decode_error, decode_ok := hs.portable_decode(
+        portable_test_any(Portable_Bulk_Fixed_Arrays, &decoded),
+        encoded,
+        alloc = allocator,
+    )
+    testing.expect(t, decode_ok)
+    testing.expect(t, decode_error.kind == .None)
+    testing.expect(t, decoded == source)
+    portable_test_dispose_error(&decode_error)
+    testing.expect(t, allocator_state.outstanding == 0)
+
+    corrupted := portable_test_copy(encoded)
+    float_record := portable_test_find_type_record(corrupted, .Float)
+    testing.expect(t, float_record >= 0)
+    if float_record >= 0 {
+        corrupted[float_record + 1] = 2
+        corrupt_destination := Portable_Bulk_Fixed_Arrays {
+            bytes  = {99, 99, 99, 99},
+            floats = {99, 99, 99},
+        }
+        corrupt_error, corrupt_ok := hs.portable_decode(
+            portable_test_any(Portable_Bulk_Fixed_Arrays, &corrupt_destination),
+            corrupted,
+            alloc = context.allocator,
+        )
+        testing.expect(t, !corrupt_ok)
+        testing.expect(t, corrupt_error.kind == .Type_Mismatch)
+        testing.expect(t, corrupt_error.path == "$.floats")
+        testing.expect(t, corrupt_destination.bytes == source.bytes)
+        testing.expect(t, corrupt_destination.floats == [3]f32{99, 99, 99})
+        portable_test_dispose_error(&corrupt_error)
+    }
+    delete(corrupted)
+
+    truncated := portable_test_copy(encoded[:len(encoded) - 2])
+    portable_test_put_u32(truncated, 24, portable_test_u32(truncated, 24) - 2)
+    truncated_destination := Portable_Bulk_Fixed_Arrays {
+        bytes = {99, 99, 99, 99},
+        floats = {99, 99, 99},
+        nested = {bytes = {99, 99, 99}, floats = {99, 99, 99}},
+    }
+    truncated_error, truncated_ok := hs.portable_decode(
+        portable_test_any(Portable_Bulk_Fixed_Arrays, &truncated_destination),
+        truncated,
+        alloc = context.allocator,
+    )
+    testing.expect(t, !truncated_ok)
+    testing.expect(t, truncated_error.kind == .Truncated)
+    testing.expect(t, truncated_error.path == "$.nested.floats")
+    testing.expect(t, truncated_destination.bytes == source.bytes)
+    testing.expect(t, truncated_destination.floats == source.floats)
+    testing.expect(t, truncated_destination.nested.bytes == source.nested.bytes)
+    testing.expect(t, truncated_destination.nested.floats[0] == source.nested.floats[0])
+    testing.expect(t, truncated_destination.nested.floats[1] == source.nested.floats[1])
+    testing.expect(t, truncated_destination.nested.floats[2] == 99)
+    portable_test_dispose_error(&truncated_error)
+    delete(truncated)
 }
 
 @(test)

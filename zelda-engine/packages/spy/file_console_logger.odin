@@ -338,22 +338,14 @@ format_logger_line_widget :: proc(
         )
     }
 
-    start, end, has_path := module_bounds(loc.file_path)
-    if has_path || has_scope_label {
-        if has_path {
-            hash: u64 = 1469598103934665603
+    package_name := loc.package_name
+    has_package := package_name != ""
+    if has_package || has_scope_label {
+        if has_package {
+            hash := module_hash(package_name)
             module_start := len(out.buf)
             strings.write_byte(out, '[')
-            for i := start; i < end; i += 1 {
-                c := loc.file_path[i]
-                if c == '/' || c == '\\' {
-                    hash = module_hash_byte(module_hash_byte(hash, ':'), ':')
-                    strings.write_string(out, "::")
-                    continue
-                }
-                hash = module_hash_byte(hash, c)
-                strings.write_byte(out, c)
-            }
+            strings.write_string(out, package_name)
             if has_scope_label {
                 strings.write_byte(out, ':')
             } else {
@@ -686,25 +678,18 @@ do_module_header :: proc(
     scope_override: string,
     has_scope_override: bool,
 ) {
-    start, end, has_path := module_bounds(location.file_path)
+    package_name := location.package_name
+    has_package := package_name != ""
     scope_count := 0
     if !has_scope_override {
         scope_count = active_span_count()
     }
-    if !has_path && !has_scope_override && scope_count == 0 {
+    if !has_package && !has_scope_override && scope_count == 0 {
         return
     }
 
-    if has_path {
-        hash: u64 = 1469598103934665603
-        for i := start; i < end; i += 1 {
-            c := location.file_path[i]
-            if c == '/' || c == '\\' {
-                hash = module_hash_byte(module_hash_byte(hash, ':'), ':')
-                continue
-            }
-            hash = module_hash_byte(hash, c)
-        }
+    if has_package {
+        hash := module_hash(package_name)
         if .Terminal_Color in opts {
             set_text_bold(buf)
             set_fg_color_indexed(buf, module_color(hash))
@@ -712,29 +697,22 @@ do_module_header :: proc(
     }
 
     strings.write_byte(buf, '[')
-    if has_path {
-        for i := start; i < end; i += 1 {
-            c := location.file_path[i]
-            if c == '/' || c == '\\' {
-                strings.write_string(buf, "::")
-                continue
-            }
-            strings.write_byte(buf, c)
-        }
+    if has_package {
+        strings.write_string(buf, package_name)
     }
     if has_scope_override {
-        if has_path {
+        if has_package {
             strings.write_byte(buf, ':')
         }
         do_scope_label_text(opts, buf, scope_override)
     } else if scope_count > 0 {
-        if has_path {
+        if has_package {
             strings.write_byte(buf, ':')
         }
         do_scope_label_parts(opts, buf)
     }
     strings.write_string(buf, "] ")
-    if has_path && .Terminal_Color in opts {
+    if has_package && .Terminal_Color in opts {
         reset_terminal_styles(buf)
     }
 }
@@ -755,41 +733,6 @@ module_hash_byte :: #force_inline proc(hash: u64, b: byte) -> u64 {
 // #+vet redundancy public-api
 module_color :: proc(hash: u64) -> Terminal_Color_Indexed {
     return module_colors[int(hash % u64(len(module_colors)))]
-}
-
-module_bounds :: proc(path: string) -> (start: int, end: int, ok: bool) {
-    if path == "" {
-        return
-    }
-
-    end = -1
-    for i := len(path) - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            end = i
-            break
-        }
-    }
-    if end <= 0 {
-        return
-    }
-
-    start = 0
-    parent_sep := -1
-    for i := end - 1; i >= 0; i -= 1 {
-        if path[i] == '/' || path[i] == '\\' {
-            parent_sep = i
-            break
-        }
-    }
-    if parent_sep < 0 {
-        return
-    }
-    start = parent_sep + 1
-
-    if end <= start {
-        return
-    }
-    return start, end, true
 }
 
 do_location_header :: proc(opts: Options, buf: ^strings.Builder, loc := #caller_location) {

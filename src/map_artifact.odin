@@ -1,5 +1,7 @@
 package main
 
+import "core:mem"
+import "core:strings"
 import harbor "../packages/harbor"
 import fixture_file "../packages/fixture_file"
 import hs "../packages/hs"
@@ -7,10 +9,8 @@ import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import "core:hash"
-import "core:math"
-import "core:mem"
 import "core:os"
-import "core:strings"
+import "core:math"
 
 MAP_ARTIFACT_MAGIC :: [8]byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
 MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)
@@ -20,6 +20,7 @@ MAP_ARTIFACT_FORMAT_VERSION :: u32(1)
 MAP_ARTIFACT_GENERATOR_VERSION :: u64(1)
 MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
+MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE :: "map artifact allocation failed"
 DEFAULT_MAP_ARTIFACT_PATH :: "assets/maps/default.adriatic-map"
 EDITOR_MAP_ARTIFACT_PATH :: "adriatic.adriatic-map"
 
@@ -39,24 +40,24 @@ map_artifact_save_path :: proc(allocator := context.allocator) -> (string, bool)
 
 Map_Artifact :: struct {
     generator_version:            u64,
-    seeds:                         [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
-    project:                       terrain.Project,
-    settlement_plan:               Settlement_Plan,
-    marina_authored:               bool,
-    marina_authored_plan:          marina.Plan,
-    harbor_authored_plan:          harbor.Harbor_Plan,
-    harbor_authored_intervention:  harbor.Harbor_Intervention,
-    farms:                         [FARM_INSTANCE_CAPACITY]Farm_Instance,
-    farm_count:                    int,
-    wrecks:                        [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
-    wreck_count:                   int,
-    default_marinas:               [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan,
-    default_harbors:               [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan,
-    default_harbor_interventions:  [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Intervention,
-    default_marina_islands:        [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island,
-    default_marina_count:          int,
-    greek_placements:              [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
-    greek_placement_count:         int,
+    seeds:                        [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
+    project:                      terrain.Project,
+    settlement_plan:              Settlement_Plan,
+    marina_authored:              bool,
+    marina_authored_plan:         marina.Plan,
+    harbor_authored_plan:         harbor.Harbor_Plan,
+    harbor_authored_intervention: harbor.Harbor_Intervention,
+    farms:                        [FARM_INSTANCE_CAPACITY]Farm_Instance,
+    farm_count:                   int,
+    wrecks:                       [WRECK_INSTANCE_CAPACITY]Wreck_Instance,
+    wreck_count:                  int,
+    default_marinas:              [len(terrain.DEFAULT_ISLAND_SIGNS)]marina.Plan,
+    default_harbors:              [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Plan,
+    default_harbor_interventions: [len(terrain.DEFAULT_ISLAND_SIGNS)]harbor.Harbor_Intervention,
+    default_marina_islands:       [len(terrain.DEFAULT_ISLAND_SIGNS)]story.Island,
+    default_marina_count:         int,
+    greek_placements:             [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
+    greek_placement_count:        int,
 }
 
 Map_Artifact_Error_Kind :: enum {
@@ -79,11 +80,11 @@ Map_Artifact_Error_Kind :: enum {
 }
 
 Map_Artifact_Error :: struct {
-    kind:     Map_Artifact_Error_Kind,
-    offset:   int,
-    message:  string,
-    os_error: os.Error,
-    portable: hs.Portable_Error,
+    kind:      Map_Artifact_Error_Kind,
+    offset:    int,
+    message:   string,
+    os_error:  os.Error,
+    portable:  hs.Portable_Error,
     sectioned: fixture_file.Sectioned_Container_Error,
 }
 
@@ -94,10 +95,31 @@ map_artifact_error_dispose :: proc(error: ^Map_Artifact_Error) {
     error^ = {}
 }
 
+map_artifact_allocation_error :: #force_inline proc() -> Map_Artifact_Error {
+    return {kind = .Limit_Exceeded, message = MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE}
+}
+
+map_artifact_error_is_allocation_failure :: proc(error: Map_Artifact_Error) -> bool {
+    if error.kind == .Limit_Exceeded do return error.message == MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE
+    return(
+        error.kind == .Portable &&
+        error.portable.kind == .Limit_Exceeded &&
+        strings.contains(error.portable.message, "allocation") \
+    )
+}
+
 map_artifact_destroy :: proc(artifact: ^Map_Artifact, alloc := context.allocator) {
     if artifact == nil do return
     terrain.destroy_project(&artifact.project)
     free(artifact, alloc)
+}
+
+map_artifact_allocate :: proc(alloc: mem.Allocator) -> (^Map_Artifact, bool) {
+    bytes, allocation_error := mem.alloc_bytes(size_of(Map_Artifact), align_of(Map_Artifact), alloc)
+    if allocation_error != nil || bytes == nil do return nil, false
+    artifact := cast(^Map_Artifact)raw_data(bytes)
+    artifact^ = {}
+    return artifact, true
 }
 
 map_artifact_put_u16 :: proc(data: []byte, offset: int, value: u16) {
@@ -156,8 +178,10 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
         if math.is_nan(level.cell_size) || math.is_inf(level.cell_size, 0) || level.cell_size <= 0 {
             return "terrain cell size is invalid", false
         }
-        if math.is_nan(level.origin_x) || math.is_inf(level.origin_x, 0) ||
-           math.is_nan(level.origin_z) || math.is_inf(level.origin_z, 0) {
+        if math.is_nan(level.origin_x) ||
+           math.is_inf(level.origin_x, 0) ||
+           math.is_nan(level.origin_z) ||
+           math.is_inf(level.origin_z, 0) {
             return "terrain origin is not finite", false
         }
         for height in level.heights {
@@ -170,7 +194,14 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
     return "", true
 }
 
-map_artifact_encode :: proc(artifact: ^Map_Artifact, alloc := context.allocator) -> ([]byte, Map_Artifact_Error, bool) {
+map_artifact_encode :: proc(
+    artifact: ^Map_Artifact,
+    alloc := context.allocator,
+) -> (
+    []byte,
+    Map_Artifact_Error,
+    bool,
+) {
     if artifact == nil || alloc.procedure == nil do return nil, {kind = .Invalid_Argument}, false
     if message, valid := map_artifact_valid(artifact); !valid {
         return nil, {kind = .Invalid_State, message = message}, false
@@ -217,10 +248,14 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         view, sectioned_error, decoded := fixture_file.sectioned_container_decode(data, entries)
         if !decoded {
             #partial switch sectioned_error.kind {
-            case .Truncated: return nil, {kind = .Truncated, offset = sectioned_error.offset}, false
-            case .Checksum_Mismatch: return nil, {kind = .Checksum_Mismatch, offset = sectioned_error.offset}, false
-            case .Trailing_Bytes: return nil, {kind = .Trailing_Bytes, offset = sectioned_error.offset}, false
-            case: return nil, {kind = .Sectioned, sectioned = sectioned_error}, false
+            case .Truncated:
+                return nil, {kind = .Truncated, offset = sectioned_error.offset}, false
+            case .Checksum_Mismatch:
+                return nil, {kind = .Checksum_Mismatch, offset = sectioned_error.offset}, false
+            case .Trailing_Bytes:
+                return nil, {kind = .Trailing_Bytes, offset = sectioned_error.offset}, false
+            case:
+                return nil, {kind = .Sectioned, sectioned = sectioned_error}, false
             }
         }
         if view.artifact_kind != .Map do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Artifact, offset = 10}}, false
@@ -232,8 +267,8 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         }
         payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
         if !found do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Directory, offset = 24}}, false
-        artifact := new(Map_Artifact, alloc)
-        if artifact == nil do return nil, {kind = .Limit_Exceeded}, false
+        artifact, allocated := map_artifact_allocate(alloc)
+        if !allocated do return nil, map_artifact_allocation_error(), false
         portable_error, portable_ok := hs.portable_decode(
             any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
             payload,
@@ -276,8 +311,8 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
     if hash.fnv64a(payload) != map_artifact_get_u64(data, 32) {
         return nil, {kind = .Checksum_Mismatch, offset = 32}, false
     }
-    artifact := new(Map_Artifact, alloc)
-    if artifact == nil do return nil, {kind = .Limit_Exceeded}, false
+    artifact, allocated := map_artifact_allocate(alloc)
+    if !allocated do return nil, map_artifact_allocation_error(), false
     portable_error, decoded := hs.portable_decode(
         any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
         payload,
@@ -302,7 +337,14 @@ map_artifact_read :: proc(path: string, alloc := context.allocator) -> (^Map_Art
     return map_artifact_decode(data, alloc)
 }
 
-map_artifact_write :: proc(artifact: ^Map_Artifact, path: string, alloc := context.allocator) -> (Map_Artifact_Error, bool) {
+map_artifact_write :: proc(
+    artifact: ^Map_Artifact,
+    path: string,
+    alloc := context.allocator,
+) -> (
+    Map_Artifact_Error,
+    bool,
+) {
     if path == "" do return {kind = .Invalid_Argument}, false
     data, encode_error, encoded := map_artifact_encode(artifact, alloc)
     if !encoded do return encode_error, false

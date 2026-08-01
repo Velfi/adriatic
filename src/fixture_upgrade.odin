@@ -37,9 +37,11 @@ Fixture_Upgrade_Error :: struct {
 }
 
 Fixture_Upgrade_Result :: struct {
-    source_version: int,
-    target_version: int,
-    changed:        bool,
+    source_version:   int,
+    target_version:   int,
+    schema_migrated:  bool,
+    externalized_map: bool,
+    changed:          bool,
 }
 
 Fixture_Upgrade_Summary :: struct {
@@ -126,9 +128,9 @@ fixture_upgrade_file_with_options :: proc(
         return {}, error, false
     }
     result = {
-        source_version = int(view.schema_version),
-        target_version = FIXTURE_SCHEMA_VERSION,
-        changed        = int(view.schema_version) != FIXTURE_SCHEMA_VERSION,
+        source_version  = int(view.schema_version),
+        target_version  = FIXTURE_SCHEMA_VERSION,
+        schema_migrated = int(view.schema_version) != FIXTURE_SCHEMA_VERSION,
     }
 
     decoded, codec_error, decoded_ok := fixture_codec_decode(source, allocator)
@@ -143,7 +145,30 @@ fixture_upgrade_file_with_options :: proc(
     }
     defer fixture_migration_result_dispose(&decoded)
 
+    result.externalized_map = decoded.fixture.map_source.kind == .Inline
+    result.changed = result.schema_migrated || result.externalized_map
+
     if !result.changed || dry_run {
+        return result, {}, true
+    }
+
+    if result.externalized_map {
+        store_error, stored := fixture_editor_store_externalize_inline_fixture_with_options(
+            decoded.fixture,
+            path,
+            options.store,
+            allocator,
+        )
+        if !stored {
+            error = fixture_upgrade_error(.Store, path, allocator)
+            if error.kind == .Out_Of_Memory {
+                fixture_editor_store_error_dispose(&store_error)
+                return {}, error, false
+            }
+            store_error.path = ""
+            error.store = store_error
+            return {}, error, false
+        }
         return result, {}, true
     }
 
@@ -292,7 +317,7 @@ fixture_upgrade_path_with_options :: proc(
     case .Directory:
         collect_error, collected := fixture_upgrade_collect(path, 0, &paths, allocator)
         if !collected do return {}, collect_error, false
-        slice.sort_by(paths[:], proc(a, b: string) -> bool { return a < b })
+        slice.sort_by(paths[:], proc(a, b: string) -> bool { return strings.compare(a, b) < 0 })
     case .Symlink, .Undetermined, .Named_Pipe, .Socket, .Block_Device, .Character_Device:
         return {}, fixture_upgrade_error(.Invalid_Source_Type, path, allocator), false
     }
@@ -335,10 +360,24 @@ fixture_upgrade_path :: proc(
 fixture_upgrade_cli_report :: proc(_: rawptr, path: string, result: Fixture_Upgrade_Result, dry_run: bool) {
     if !result.changed {
         fmt.printf("current v%d %s\n", result.target_version, path)
-    } else if dry_run {
-        fmt.printf("would migrate v%d -> v%d %s\n", result.source_version, result.target_version, path)
+    } else if result.schema_migrated && result.externalized_map {
+        fmt.printf(
+            "%s migrate v%d -> v%d and externalize map %s\n",
+            dry_run ? "would" : "did",
+            result.source_version,
+            result.target_version,
+            path,
+        )
+    } else if result.schema_migrated {
+        fmt.printf(
+            "%s migrate v%d -> v%d %s\n",
+            dry_run ? "would" : "did",
+            result.source_version,
+            result.target_version,
+            path,
+        )
     } else {
-        fmt.printf("migrated v%d -> v%d %s\n", result.source_version, result.target_version, path)
+        fmt.printf("%s externalize map %s\n", dry_run ? "would" : "did", path)
     }
 }
 
@@ -367,7 +406,7 @@ adriatic_cli_fixture_upgrade :: proc(args: []string) -> bool {
         "fixtures: %d total, %d %s, %d current\n",
         summary.total,
         summary.changed,
-        "would migrate" if dry_run else "migrated",
+        "would update" if dry_run else "updated",
         summary.current,
     )
     return true

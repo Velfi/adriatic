@@ -57,6 +57,16 @@ when ODIN_TEST {
         )
         source.project.structure_count = 1
         source.authoring_tool = .Marina
+        source.sdf_obstacles[0] = {
+            position     = {12, 8, -4},
+            rotation     = flight.identity_orientation(),
+            scale        = {1, 2, .5},
+            major_radius = 7,
+            tube_radius  = 1.5,
+            color        = {210, 90, 30, 255},
+        }
+        source.sdf_obstacle_count = 1
+        source.sdf_obstacle_selected = 0
         source.structure_selected = 0
         source.structure_scatter_count = 4
         source.road_selected_node = -1
@@ -98,12 +108,20 @@ when ODIN_TEST {
         source.vehicle_paint_brush_radius = 14
         source.vehicle_paint_brush_hardness = .75
         source.vehicle_paint_brush_strength = .75
-        source.vehicle_paint_layers[0][0] = 0xa7
+        map_source, map_error, captured := fixture_map_source_capture_inline(source)
+        map_artifact_error_dispose(&map_error)
+        if !captured {
+            fixture_storage_destroy(source)
+            free(source)
+            return nil
+        }
+        source.map_source = map_source
         return source
     }
 
     fixture_editor_test_source_destroy :: proc(source: ^Fixture) {
         if source == nil do return
+        delete(source.map_source.inline_bytes)
         fixture_storage_destroy(source)
         free(source)
     }
@@ -294,6 +312,36 @@ when ODIN_TEST {
     }
 
     @(test)
+    fixture_editor_load_v0018_applies_inline_map_without_leaking :: proc(t: ^testing.T) {
+        payload := fixture_migration_v0018_to_v0019_payload(t, 0xa5)
+        testing.expect(t, payload != nil)
+        if payload == nil do return
+        defer delete(payload)
+        data, container_error, encoded := fixture_file.fixture_container_encode(payload, 18)
+        testing.expect(t, encoded && container_error.kind == .None)
+        if !encoded do return
+        defer delete(data)
+
+        editor := fixture_editor_test_editor(t)
+        state := fixture_migration_test_allocator_state {
+            base    = runtime.default_allocator(),
+            fail_at = -1,
+        }
+        error, loaded := fixture_editor_load(editor, data, fixture_migration_test_allocator(&state))
+        testing.expect(t, loaded && error.kind == .None)
+        fixture_editor_load_error_dispose(&error)
+        if loaded {
+            testing.expect(
+                t,
+                editor.project.structure_count == 1 && editor.project.structures[0].id == 0x300 &&
+                    editor.default_map_regeneration_seeds[0] == 0x10203040 && editor.marina_authored,
+            )
+        }
+        fixture_editor_test_destroy(editor)
+        testing.expect(t, state.outstanding == 0)
+    }
+
+    @(test)
     fixture_editor_load_current_rebuilds_runtime_and_releases_replaced_state :: proc(t: ^testing.T) {
         data := fixture_editor_test_current_container(t)
         testing.expect(t, data != nil)
@@ -304,6 +352,7 @@ when ODIN_TEST {
 
         editor := fixture_editor_test_editor(t)
         defer fixture_editor_test_destroy(editor)
+        editor.vehicle_paint_layers[0][0] = 0x5c
         editor.structure_undo[0].structures = make([dynamic]terrain.Structure, 1)
         editor.structure_undo_count = 1
         editor.structure_redo[0].structures = make([dynamic]terrain.Structure, 1)
@@ -337,9 +386,13 @@ when ODIN_TEST {
         testing.expect(t, editor.fixture_owner.arena != nil)
         testing.expect(t, editor.project.revision == 707)
         testing.expect(t, editor.authoring_tool == .Marina)
+        testing.expect(t, editor.sdf_obstacle_count == 1)
+        testing.expect(t, editor.sdf_obstacle_selected == 0)
+        testing.expect(t, editor.sdf_obstacles[0].position == flight.Vec3{12, 8, -4})
+        testing.expect(t, editor.sdf_obstacle_interaction.hovered == -1)
         testing.expect(t, editor.architecture_city_plan.lamp_count == 1)
         testing.expect(t, editor.architecture_city_plan.lamps[0].x == 23)
-        testing.expect(t, editor.vehicle_paint_layers[0][0] == 0xa7)
+        testing.expect(t, editor.vehicle_paint_layers[0][0] == 0x5c)
         testing.expect(t, fixture_lifecycle_test_bound(&editor.fixture, .Car))
         testing.expect(t, fixture_editor_test_root_equal(editor, root_snapshot))
         testing.expect(t, editor.engine_audio.mute_gain == 1)
@@ -442,18 +495,18 @@ when ODIN_TEST {
         fixture_editor_test_expect_failure(t, editor, corrupt, context.allocator, live_snapshot)
         delete(corrupt)
 
-        invalid_count_source := fixture_editor_test_source()
-        invalid_count_source.project.structure_count = len(invalid_count_source.project.structures) + 1
-        invalid_count, invalid_count_error, invalid_count_ok := fixture_codec_encode(
-            invalid_count_source,
+        invalid_map_source := fixture_editor_test_source()
+        invalid_map_source.map_source.inline_bytes[len(invalid_map_source.map_source.inline_bytes) - 1] ~= 0xff
+        invalid_map, invalid_map_error, invalid_map_ok := fixture_codec_encode(
+            invalid_map_source,
             context.allocator,
         )
-        testing.expect(t, invalid_count_ok && invalid_count_error.kind == .None)
-        fixture_codec_error_dispose(&invalid_count_error)
-        fixture_editor_test_source_destroy(invalid_count_source)
-        if invalid_count_ok {
-            fixture_editor_test_expect_failure(t, editor, invalid_count, context.allocator, live_snapshot)
-            delete(invalid_count)
+        testing.expect(t, invalid_map_ok && invalid_map_error.kind == .None)
+        fixture_codec_error_dispose(&invalid_map_error)
+        fixture_editor_test_source_destroy(invalid_map_source)
+        if invalid_map_ok {
+            fixture_editor_test_expect_failure(t, editor, invalid_map, context.allocator, live_snapshot)
+            delete(invalid_map)
         }
 
         invalid_lifecycle_source := fixture_editor_test_source()
@@ -467,21 +520,20 @@ when ODIN_TEST {
         fixture_editor_test_source_destroy(invalid_lifecycle_source)
         if invalid_lifecycle_ok {
             fixture_editor_test_expect_failure(t, editor, invalid_lifecycle, context.allocator, live_snapshot)
+            post_apply_state := fixture_migration_test_allocator_state {
+                base    = runtime.default_allocator(),
+                fail_at = -1,
+            }
+            post_apply_error, post_apply_ok := fixture_editor_load(
+                editor,
+                invalid_lifecycle,
+                fixture_migration_test_allocator(&post_apply_state),
+            )
+            testing.expect(t, !post_apply_ok && post_apply_error.kind == .Lifecycle)
+            testing.expect(t, fixture_editor_test_live_equal(editor, live_snapshot))
+            fixture_editor_load_error_dispose(&post_apply_error)
+            testing.expect(t, post_apply_state.outstanding == 0)
             delete(invalid_lifecycle)
-        }
-
-        invalid_physics_source := fixture_editor_test_source()
-        invalid_physics_source.project.structures[0].center_x = math.nan_f32()
-        invalid_physics, invalid_physics_error, invalid_physics_ok := fixture_codec_encode(
-            invalid_physics_source,
-            context.allocator,
-        )
-        testing.expect(t, invalid_physics_ok && invalid_physics_error.kind == .None)
-        fixture_codec_error_dispose(&invalid_physics_error)
-        fixture_editor_test_source_destroy(invalid_physics_source)
-        if invalid_physics_ok {
-            fixture_editor_test_expect_failure(t, editor, invalid_physics, context.allocator, live_snapshot)
-            delete(invalid_physics)
         }
 
         invalid_body_source := fixture_editor_test_source()
@@ -540,6 +592,39 @@ when ODIN_TEST {
         hostile_counts.settlement_plan.routes[0].geometry.count =
             len(hostile_counts.settlement_plan.routes[0].geometry.points) + 1
         testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.routes.geometry.count")
+        hostile_counts.settlement_plan.routes[0].geometry.count = 0
+        hostile_counts.settlement_plan.route_count = 0
+        hostile_counts.settlement_plan.growth_event_count =
+            len(hostile_counts.settlement_plan.growth_events) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.growth_event_count")
+        hostile_counts.settlement_plan.growth_event_count = 0
+        hostile_counts.settlement_plan.garden_count = len(hostile_counts.settlement_plan.gardens) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.garden_count")
+        hostile_counts.settlement_plan.garden_count = 0
+        hostile_counts.settlement_plan.patio_count = len(hostile_counts.settlement_plan.patios) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.patio_count")
+        hostile_counts.settlement_plan.patio_count = 0
+        hostile_counts.harbor_authored_plan.structure_count =
+            len(hostile_counts.harbor_authored_plan.structures) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_plan.count")
+        hostile_counts.harbor_authored_plan.structure_count = 0
+        hostile_counts.harbor_authored_plan.shoreline.count =
+            len(hostile_counts.harbor_authored_plan.shoreline.points) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_plan.count")
+        hostile_counts.harbor_authored_plan.shoreline.count = 0
+        hostile_counts.harbor_authored_plan.route_count = 1
+        hostile_counts.harbor_authored_plan.routes[0].count =
+            len(hostile_counts.harbor_authored_plan.routes[0].points) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_plan.count")
+        hostile_counts.harbor_authored_plan.routes[0].count = 0
+        hostile_counts.harbor_authored_plan.route_count = 0
+        hostile_counts.harbor_authored_intervention.phase_count =
+            len(hostile_counts.harbor_authored_intervention.phases) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_intervention.count")
+        hostile_counts.harbor_authored_intervention.phase_count = 0
+        hostile_counts.harbor_authored_intervention.runtime_plan.berth_count =
+            len(hostile_counts.harbor_authored_intervention.runtime_plan.berths) + 1
+        testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_intervention.count")
         fixture_editor_test_source_destroy(hostile_counts)
 
         probe_state := fixture_migration_test_allocator_state {

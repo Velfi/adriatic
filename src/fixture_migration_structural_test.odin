@@ -20,7 +20,7 @@ when ODIN_TEST {
         bool,
     ) {
         historical := new(fixture_v0001.Fixture)
-        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 1)
+        fixture_migration_v0004_runtime_seed_legacy(historical, 1)
         historical.project.structure_count = terrain_count
         historical.project.structures[0].id = 0x100
         historical.project.structures[255].id = 0x1ff
@@ -99,7 +99,7 @@ when ODIN_TEST {
         tentative_error, tentative_ok := hs.portable_decode(
             fixture_codec_value(tentative),
             payload,
-            fixture_codec_portable_config(),
+            fixture_codec_migration_portable_config(),
             transaction_allocator,
         )
         if !tentative_ok {
@@ -367,10 +367,9 @@ when ODIN_TEST {
             base    = runtime.default_allocator(),
             fail_at = -1,
         }
-        result, error, ok := fixture_migration_run(
+        result, error, ok := fixture_migration_test_run_through_v0005(
             payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             fixture_migration_test_allocator(&state),
         )
         testing.expect(t, !ok && error.kind == .Step_Failure)
@@ -800,10 +799,9 @@ when ODIN_TEST {
 
         invalid_payload, invalid_payload_ok := fixture_migration_structural_payload(-1, 0, 0, 0, 0, 0)
         testing.expect(t, invalid_payload_ok)
-        invalid_result, invalid_error, invalid_ok := fixture_migration_run(
+        invalid_result, invalid_error, invalid_ok := fixture_migration_test_run_through_v0005(
             invalid_payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             runtime.default_allocator(),
         )
         testing.expect(t, !invalid_ok && invalid_error.kind == .Step_Failure)
@@ -815,10 +813,9 @@ when ODIN_TEST {
 
         valid_payload, valid_payload_ok := fixture_migration_structural_payload(1, 1, 1, 1, 1, 1)
         testing.expect(t, valid_payload_ok)
-        result, error, ok := fixture_migration_run(
+        result, error, ok := fixture_migration_test_run_through_v0005(
             valid_payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             runtime.default_allocator(),
         )
         testing.expect(t, ok && error.kind == .None)

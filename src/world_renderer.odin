@@ -1516,7 +1516,7 @@ world_ocean_vertex :: #force_inline proc(
     if lab_scene_is_active(editor, "dunes") {
         // Carry shallowness under the hidden landward part of the ocean grid
         // so interpolation reaches the exact waterline.
-        shallowness := dunes_lab_water_shallowness(point.x, point.z)
+        shallowness := dunes_lab_water_shallowness(editor, point.x, point.z)
         // Negative Y preserves the shallow tint while suppressing the generic
         // breaking-shore foam mask across the full submerged shelf.
         vertex.material = {shallowness * 1.35, -1}

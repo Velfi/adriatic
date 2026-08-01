@@ -149,16 +149,26 @@ fixture_notes_after_fixture_replace :: proc() {
 
 fixture_notes_save :: proc(editor: ^Editor) -> bool {
     if editor == nil do return false
-    error, ok := fixture_editor_save_to_path(editor, FIXTURE_EDITOR_PATH)
-    defer fixture_editor_store_error_dispose(&error)
-    if ok {
+    path := fixture_editor_current_path(editor)
+    if path == "" {
+        default_path, _, resolved := fixture_editor_store_default_path(context.temp_allocator)
+        if !resolved {
+            fixture_notes_save_failed = true
+            fixture_notes_save_due_at = canvas2d.GetTime() + FIXTURE_NOTES_AUTOSAVE_RETRY_SECONDS
+            terrain_file_feedback(editor, "FIXTURE NOTES SAVE FAILED")
+            return false
+        }
+        path = default_path
+    }
+    saved := fixture_editor_save_path(editor, path)
+    if saved {
         fixture_notes_mark_saved()
     } else {
         fixture_notes_save_failed = true
         fixture_notes_save_due_at = canvas2d.GetTime() + FIXTURE_NOTES_AUTOSAVE_RETRY_SECONDS
         terrain_file_feedback(editor, "FIXTURE NOTES SAVE FAILED")
     }
-    return ok
+    return saved
 }
 
 fixture_notes_process_autosave :: proc(editor: ^Editor) {

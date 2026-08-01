@@ -190,7 +190,7 @@ live_control_focus_business :: proc(editor: ^Editor, name: string) -> (string, b
 }
 
 live_control_terrain_brush_name :: proc(editor: ^Editor) -> string {
-    switch editor.authoring_tool {
+    #partial switch editor.authoring_tool {
     case .Sculpt:
         return "sculpt"
     case .Smooth:
@@ -226,7 +226,7 @@ live_control_terrain_brush_name :: proc(editor: ^Editor) -> string {
 live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string) -> string {
     radius, strength, hardness, width, height, size := f32(0), f32(0), f32(0), f32(0), f32(0), f32(0)
     mode := ""
-    switch editor.authoring_tool {
+    #partial switch editor.authoring_tool {
     case .Sculpt, .Smooth, .Paint:
         radius, strength, hardness = editor.radius, editor.strength, editor.hardness
     case .Formations:
@@ -627,7 +627,7 @@ live_control_poll :: proc(editor: ^Editor) {
                     authoring_select_tool(editor, .GreekAssets)
                 case "-":
                 }
-                switch editor.authoring_tool {
+                #partial switch editor.authoring_tool {
                 case .Sculpt, .Smooth, .Paint:
                     if fields[1] != "-" do editor.radius = clamp(radius, terrain.BASE_CELL_SIZE, 400)
                     if fields[2] != "-" do editor.strength = clamp(strength, 0, 1)

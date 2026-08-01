@@ -1,5 +1,6 @@
 package fixture_schema
 
+import "base:runtime"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -7,7 +8,6 @@ import "core:odin/tokenizer"
 import "core:os"
 import "core:path/filepath"
 import "core:reflect"
-import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -105,14 +105,101 @@ builder_error :: proc(b: ^Builder, message: string) {
     append(&b.errors, message)
 }
 
+file_tag_target_matches :: proc(value: string) -> (recognized, matches: bool) {
+    name, _, _ := strings.partition(value, ":")
+    for os in reflect.enum_fields_zipped(runtime.Odin_OS_Type) {
+        os_type := runtime.Odin_OS_Type(os.value)
+        if os_type != .Unknown && strings.equal_fold(os.name, name) {
+            return true, ODIN_OS == os_type
+        }
+    }
+    for arch in reflect.enum_fields_zipped(runtime.Odin_Arch_Type) {
+        arch_type := runtime.Odin_Arch_Type(arch.value)
+        if arch_type != .Unknown && strings.equal_fold(arch.name, name) {
+            return true, ODIN_ARCH == arch_type
+        }
+    }
+    return false, false
+}
+
+file_tag_line_matches :: proc(text: string) -> (matches, ignored: bool) {
+    source := strings.trim_space(text)
+    if len(source) == 0 || source[0] != '+' do return true, false
+    index := 1
+    directive_start := index
+    for index < len(source) && source[index] != ' ' && source[index] != '\t' && source[index] != ',' {
+        index += 1
+    }
+    directive := source[directive_start:index]
+    if directive == "ignore" do return false, true
+    if directive != "build" {
+        return true, false
+    }
+
+    line_matches := false
+    group_matches := true
+    for index < len(source) {
+        for index < len(source) && (source[index] == ' ' || source[index] == '\t') {
+            index += 1
+        }
+        if index >= len(source) {
+            line_matches ||= group_matches
+            break
+        }
+        if source[index] == ',' {
+            line_matches ||= group_matches
+            group_matches = true
+            index += 1
+            continue
+        }
+        start := index
+        for index < len(source) && source[index] != ' ' && source[index] != '\t' && source[index] != ',' {
+            index += 1
+        }
+        value := source[start:index]
+        if value == "ignore" do return false, true
+        negative := len(value) > 0 && value[0] == '!'
+        if negative do value = value[1:]
+        recognized, target_matches := file_tag_target_matches(value)
+        if recognized && (negative == target_matches) {
+            group_matches = false
+        }
+    }
+    line_matches ||= group_matches
+    return line_matches, false
+}
+
+file_matches_build_target :: proc(file: ^ast.File) -> bool {
+    if file.docs != nil {
+        for comment in file.docs.list {
+            if len(comment.text) < 3 || comment.text[:2] != "//" do continue
+            matches, ignored := file_tag_line_matches(comment.text[2:])
+            if ignored || !matches do return false
+        }
+    }
+    for tag in file.tags {
+        if tag.kind != .File_Tag || len(tag.text) < 2 || tag.text[:2] != "#+" do continue
+        matches, ignored := file_tag_line_matches(tag.text[1:])
+        if ignored || !matches do return false
+    }
+    return true
+}
+
 package_files :: proc(pkg: ^ast.Package) -> [dynamic]^ast.File {
     files: [dynamic]^ast.File
     for _, file in pkg.files {
-        tags := parser.parse_file_tags(file^)
-        if !parser.match_build_tags(tags, parser.Build_Target{os = ODIN_OS, arch = ODIN_ARCH}) do continue
+        if !file_matches_build_target(file) do continue
         append(&files, file)
     }
-    slice.sort_by(files[:], proc(a, b: ^ast.File) -> bool { return a.fullpath < b.fullpath })
+    for index := 1; index < len(files); index += 1 {
+        file := files[index]
+        cursor := index
+        for cursor > 0 && strings.compare(file.fullpath, files[cursor - 1].fullpath) < 0 {
+            files[cursor] = files[cursor - 1]
+            cursor -= 1
+        }
+        files[cursor] = file
+    }
     return files
 }
 
@@ -1343,7 +1430,15 @@ sorted_records :: proc(b: ^Builder) -> [dynamic]^Type_Record {
     for _, record in b.records {
         append(&records, record)
     }
-    slice.sort_by(records[:], proc(a, b: ^Type_Record) -> bool { return a.id < b.id })
+    for index := 1; index < len(records); index += 1 {
+        record := records[index]
+        cursor := index
+        for cursor > 0 && strings.compare(record.id, records[cursor - 1].id) < 0 {
+            records[cursor] = records[cursor - 1]
+            cursor -= 1
+        }
+        records[cursor] = record
+    }
     return records
 }
 

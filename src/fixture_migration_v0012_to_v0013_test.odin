@@ -24,12 +24,14 @@ when ODIN_TEST {
         if !encoded do return
         defer delete(payload)
 
-        result, migration_error, migrated := fixture_migration_run(
-            payload, 12, 13, runtime.default_allocator(),
+        registry := fixture_migration_production_registry()
+        result, migration_error, migrated := fixture_migration_run_with_registry(
+            payload, 12, 13, {steps = registry.steps[:12]}, runtime.default_allocator(),
         )
         defer fixture_migration_error_dispose(&migration_error)
         defer fixture_migration_result_dispose(&result)
-        testing.expect(t, migrated && migration_error.kind == .None)
+        testing.expect(t, migrated)
+        testing.expect_value(t, migration_error.kind, Fixture_Migration_Error_Kind.None)
         testing.expect_value(t, int(buildings.Archetype.Clinic), 21)
         testing.expect_value(t, int(buildings.Landmark_Kind.Clinic), 11)
     }

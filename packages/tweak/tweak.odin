@@ -6,7 +6,7 @@ import "core:reflect"
 import "core:strconv"
 import "core:strings"
 
-import "../spy"
+import "zelda_engine:spy"
 import "../toml"
 import "base:runtime"
 

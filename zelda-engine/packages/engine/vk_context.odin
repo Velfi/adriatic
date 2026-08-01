@@ -312,7 +312,7 @@ vk_context_init :: proc(
     }
 
     ctx.initialized = true
-    log_info("vk_context_init: complete")
+    log_debug("vk_context_init: complete")
     return true
 }
 

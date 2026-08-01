@@ -11,7 +11,7 @@ import "core:testing"
 when ODIN_TEST {
     fixture_migration_v0002_to_v0003_test_v2_payload :: proc(t: ^testing.T) -> ([]byte, bool) {
         historical := new(fixture_v0002.Fixture)
-        fixture_migration_v0004_runtime_seed_legacy_flight(historical, 2)
+        fixture_migration_v0004_runtime_seed_legacy(historical, 2)
         historical.pilot.mode = .Driving
         historical.architecture_brush_radius = 45
         historical.aircraft.slots[0].kind = .Postale
@@ -148,10 +148,9 @@ when ODIN_TEST {
             base    = runtime.default_allocator(),
             fail_at = -1,
         }
-        direct_result, direct_error, direct_ok := fixture_migration_run(
+        direct_result, direct_error, direct_ok := fixture_migration_test_run_through_v0005(
             v2_payload,
             2,
-            FIXTURE_SCHEMA_VERSION,
             fixture_migration_test_allocator(&direct_state),
         )
         testing.expect(t, direct_ok && direct_error.kind == .None)
@@ -163,7 +162,7 @@ when ODIN_TEST {
             testing.expect(t, direct_result.fixture.aircraft.slots[3].kind == .Rondine)
             testing.expect(t, direct_result.fixture.structure_selected == 731)
             testing.expect(t, direct_result.fixture.vehicle_showcase_target == "b3-v2-target")
-            testing.expect(t, direct_result.fixture.active_lab_scene == "b3-v2-lab")
+            testing.expect(t, direct_result.fixture.lab.kind == .None)
         }
         testing.expect(t, fixture_migration_test_bytes_equal(v2_payload, v2_snapshot))
         fixture_migration_error_dispose(&direct_error)
@@ -196,10 +195,9 @@ when ODIN_TEST {
         v1_payload, v1_ok := fixture_migration_v0002_to_v0003_test_v1_payload(t)
         if !v1_ok do return
         defer delete(v1_payload)
-        chained_result, chained_error, chained_ok := fixture_migration_run(
+        chained_result, chained_error, chained_ok := fixture_migration_test_run_through_v0005(
             v1_payload,
             1,
-            FIXTURE_SCHEMA_VERSION,
             runtime.default_allocator(),
         )
         testing.expect(t, chained_ok && chained_error.kind == .None)
@@ -212,7 +210,7 @@ when ODIN_TEST {
             testing.expect(t, chained_result.fixture.structure_selected == 4)
             testing.expect(t, chained_result.fixture.story_state.quest.definition_id == "two-island-story")
             testing.expect(t, chained_result.fixture.vehicle_showcase_target == "historical-target")
-            testing.expect(t, chained_result.fixture.active_lab_scene == "historical-lab")
+            testing.expect(t, chained_result.fixture.lab.kind == .None)
         }
         fixture_migration_error_dispose(&chained_error)
         fixture_migration_result_dispose(&chained_result)

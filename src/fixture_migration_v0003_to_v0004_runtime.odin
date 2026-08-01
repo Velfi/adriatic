@@ -77,7 +77,7 @@ fixture_migration_v0003_project_chained_oracle :: proc(
 
     projected_payload, projection_error, projection_ok := hs.portable_encode(
         fixture_codec_value(tentative),
-        fixture_codec_portable_config(),
+        fixture_codec_migration_portable_config(),
         allocator,
     )
     if !projection_ok {

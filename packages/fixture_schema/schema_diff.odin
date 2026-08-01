@@ -2,7 +2,6 @@ package fixture_schema
 
 import "core:fmt"
 import "core:mem"
-import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -1786,7 +1785,15 @@ schema_diff_mark_type_refs :: proc(
 }
 
 schema_diff_validate_change_ids :: proc(report: ^Schema_Diff_Report, error: ^Schema_Diff_Error) -> bool {
-    slice.sort_by(report.changes[:], proc(a, b: Schema_Diff_Change) -> bool { return a.id < b.id })
+    for index := 1; index < len(report.changes); index += 1 {
+        change := report.changes[index]
+        cursor := index
+        for cursor > 0 && strings.compare(change.id, report.changes[cursor - 1].id) < 0 {
+            report.changes[cursor] = report.changes[cursor - 1]
+            cursor -= 1
+        }
+        report.changes[cursor] = change
+    }
     for index := 1; index < len(report.changes); index += 1 {
         if report.changes[index - 1].id == report.changes[index].id {
             schema_diff_fail(
@@ -2419,7 +2426,7 @@ schema_diff_report_validate :: proc(report: ^Schema_Diff_Report, error: ^Schema_
     state_count, supporting_count := schema_diff_report_counts(report)
     for index := 0; index < len(report.changes); index += 1 {
         change := &report.changes[index]
-        if index > 0 && report.changes[index - 1].id >= change.id {
+        if index > 0 && strings.compare(report.changes[index - 1].id, change.id) >= 0 {
             schema_diff_fail(
                 error,
                 .Invalid_Input,

@@ -1276,7 +1276,8 @@ tweak_draw_developer :: proc(editor: ^Editor) {
         } else {
             im.TextDisabled("Saved")
         }
-        im.TextDisabled("Autosaved to %s · visibility is session-only", FIXTURE_EDITOR_PATH)
+        fixture_path := fixture_editor_current_path(editor)
+        im.TextDisabled("Autosaved to %s · visibility is session-only", fixture_path != "" ? fixture_path : "not saved")
         selected_structure :=
             editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count
         at_capacity := editor.note_count >= FIXTURE_NOTE_CAPACITY

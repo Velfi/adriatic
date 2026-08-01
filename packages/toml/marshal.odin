@@ -4,7 +4,7 @@ import "core:mem"
 import "core:reflect"
 import "core:strings"
 
-import "../spy"
+import "zelda_engine:spy"
 import "base:runtime"
 import "dates"
 

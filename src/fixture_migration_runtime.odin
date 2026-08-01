@@ -242,6 +242,12 @@ fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION - 1]Fixture_Migratio
         wrapper = fixture_migration_step_v0017_to_v0018,
         change_id = "field-add:adriatic:src.Settlement_Metrics.building_base_elevation",
     },
+    {
+        from_version = FIXTURE_MIGRATION_V0018_TO_V0019_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0018_TO_V0019_TO_VERSION,
+        wrapper = fixture_migration_step_v0018_to_v0019,
+        change_id = "field-add:adriatic:src.Fixture.map_source",
+    },
 }
 
 fixture_migration_production_registry :: proc() -> Fixture_Migration_Registry {
@@ -336,6 +342,9 @@ fixture_migration_run_with_registry :: proc(
     }
 
     portable_config := fixture_codec_portable_config()
+    if source_version < FIXTURE_SCHEMA_VERSION {
+        portable_config = fixture_codec_migration_portable_config()
+    }
     if source_version == FIXTURE_SCHEMA_VERSION && target_version == FIXTURE_SCHEMA_VERSION {
         portable_config.exact_schema = true
     }
