@@ -515,7 +515,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 17 &&
+            FIXTURE_SCHEMA_VERSION == 18 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&

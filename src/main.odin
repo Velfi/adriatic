@@ -577,7 +577,7 @@ Fixture :: struct {
     note_count:                                     int,
 }
 
-FIXTURE_SCHEMA_VERSION :: 17
+FIXTURE_SCHEMA_VERSION :: 18
 
 Editor :: struct {
     using fixture:                      Fixture,
