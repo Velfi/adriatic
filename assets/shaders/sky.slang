@@ -467,7 +467,7 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     float rain_column = fbm3(float3(
         ray.x * 18.0 + drift.x * 2.4,
         ray.z * 18.0 + drift.y * 2.4,
-        floor(cloud_seconds * .18) * .07 + seed * 41.0
+        cloud_seconds * .0126 + seed * 41.0
     ));
     float rain_horizon = (1.0 - smoothstep(.015, .27, elevation)) *
                          smoothstep(.42, .72, rain_column + shelf_horizon * .24);
