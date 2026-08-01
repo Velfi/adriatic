@@ -329,52 +329,84 @@ scrapbook_sort := Scrapbook_Sort.Manual
 scrapbook_manage := false
 scrapbook_viewing := false
 scrapbook_initialized := false
+scrapbook_count := 0
 scrapbook_favorites: [SCRAPBOOK_PHOTO_COUNT]bool
 scrapbook_archived: [SCRAPBOOK_PHOTO_COUNT]bool
 scrapbook_order: [SCRAPBOOK_PHOTO_COUNT]int
+scrapbook_paths: [SCRAPBOOK_PHOTO_COUNT]string
+scrapbook_textures: [SCRAPBOOK_PHOTO_COUNT]canvas2d.Texture
 
-scrapbook_titles := [SCRAPBOOK_PHOTO_COUNT]cstring {
-    "FIRST FLIGHT",
-    "PORTO ROSSO",
-    "AFTER THE RAIN",
-    "MARTA'S HANGAR",
-    "THE OLD LIGHT",
-    "GERTA AT NOON",
-    "ISLAND POST",
-    "BOUGAINVILLEA",
-    "QUIET RUNWAY",
-    "MARKOV WRECK",
-    "GOLDEN CROSSING",
-    "HOMEWARD",
+scrapbook_is_photo :: proc(name: string) -> bool {
+    return strings.has_prefix(name, "adriatic-photo-") && strings.has_suffix(name, ".png")
 }
 
-scrapbook_dates := [SCRAPBOOK_PHOTO_COUNT]cstring {
-    "18 APR",
-    "23 APR",
-    "02 MAY",
-    "09 MAY",
-    "17 MAY",
-    "25 MAY",
-    "03 JUN",
-    "12 JUN",
-    "21 JUN",
-    "29 JUN",
-    "08 JUL",
-    "17 JUL",
+// Keep the most recent photos without making the UI or texture use unbounded.
+scrapbook_collect_paths :: proc(directory: string) -> ([SCRAPBOOK_PHOTO_COUNT]string, int) {
+    result: [SCRAPBOOK_PHOTO_COUNT]string
+    count := 0
+    entries, err := os.read_all_directory_by_path(directory, context.temp_allocator)
+    if err != nil do return result, 0
+    defer os.file_info_slice_delete(entries, context.temp_allocator)
+    for entry in entries {
+        if entry.type != .Regular || !scrapbook_is_photo(entry.name) do continue
+        if count == SCRAPBOOK_PHOTO_COUNT {
+            if entry.name <= result[0] do continue
+            for position in 0 ..< SCRAPBOOK_PHOTO_COUNT - 1 do result[position] = result[position + 1]
+            count -= 1
+        }
+        insert := count
+        for insert > 0 && entry.name < result[insert - 1] do insert -= 1
+        for position := count; position > insert; position -= 1 do result[position] = result[position - 1]
+        result[insert] = entry.fullpath
+        count += 1
+    }
+    return result, count
+}
+
+scrapbook_refresh :: proc() {
+    pictures, pictures_error := os.user_pictures_dir(context.temp_allocator)
+    if pictures_error != nil || pictures == "" do return
+    directory, directory_error := strings.concatenate({pictures, "/Adriatic"}, context.temp_allocator)
+    if directory_error != nil do return
+    paths, count := scrapbook_collect_paths(directory)
+
+    old_paths := scrapbook_paths
+    old_textures := scrapbook_textures
+    old_favorites := scrapbook_favorites
+    old_archived := scrapbook_archived
+    scrapbook_paths = {}
+    scrapbook_textures = {}
+    scrapbook_favorites = {}
+    scrapbook_archived = {}
+    for index in 0 ..< count {
+        for old_index in 0 ..< scrapbook_count {
+            if old_paths[old_index] != paths[index] do continue
+            scrapbook_textures[index] = old_textures[old_index]
+            scrapbook_favorites[index] = old_favorites[old_index]
+            scrapbook_archived[index] = old_archived[old_index]
+            break
+        }
+        scrapbook_paths[index] = strings.clone(paths[index], context.allocator) or_else ""
+        if !scrapbook_textures[index].ready && scrapbook_paths[index] != "" {
+            scrapbook_textures[index] = canvas2d.LoadTexture(scrapbook_paths[index])
+        }
+        scrapbook_order[index] = index
+    }
+    for index in 0 ..< scrapbook_count {
+        if old_paths[index] != "" do delete(old_paths[index])
+    }
+    scrapbook_count = count
 }
 
 scrapbook_init :: proc() {
     if scrapbook_initialized do return
-    for index in 0 ..< SCRAPBOOK_PHOTO_COUNT do scrapbook_order[index] = index
-    scrapbook_favorites[1] = true
-    scrapbook_favorites[6] = true
-    scrapbook_favorites[10] = true
+    scrapbook_refresh()
     scrapbook_initialized = true
 }
 
 scrapbook_visible_count :: proc() -> int {
     count := 0
-    for index in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+    for index in 0 ..< scrapbook_count {
         if !scrapbook_archived[index] do count += 1
     }
     return count
@@ -384,8 +416,8 @@ scrapbook_photo_at :: proc(visible_index: int) -> int {
     scrapbook_init()
     seen := 0
     if scrapbook_sort == .Newest {
-        for reverse in 0 ..< SCRAPBOOK_PHOTO_COUNT {
-            photo := scrapbook_order[SCRAPBOOK_PHOTO_COUNT - 1 - reverse]
+        for reverse in 0 ..< scrapbook_count {
+            photo := scrapbook_order[scrapbook_count - 1 - reverse]
             if scrapbook_archived[photo] do continue
             if seen == visible_index do return photo
             seen += 1
@@ -393,7 +425,7 @@ scrapbook_photo_at :: proc(visible_index: int) -> int {
     } else if scrapbook_sort == .Favorites {
         for wanted_favorite in 0 ..< 2 {
             favorite := wanted_favorite == 0
-            for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+            for position in 0 ..< scrapbook_count {
                 photo := scrapbook_order[position]
                 if scrapbook_archived[photo] || scrapbook_favorites[photo] != favorite do continue
                 if seen == visible_index do return photo
@@ -401,7 +433,7 @@ scrapbook_photo_at :: proc(visible_index: int) -> int {
             }
         }
     } else {
-        for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+        for position in 0 ..< scrapbook_count {
             photo := scrapbook_order[position]
             if scrapbook_archived[photo] do continue
             if seen == visible_index do return photo
@@ -426,6 +458,7 @@ scrapbook_sort_label :: proc() -> cstring {
 scrapbook_open :: proc(editor: ^Editor) {
     if editor == nil do return
     scrapbook_init()
+    scrapbook_refresh()
     scrapbook_focus = clamp(scrapbook_focus, 0, max(scrapbook_visible_count() - 1, 0))
     scrapbook_manage = false
     scrapbook_viewing = false
@@ -441,7 +474,7 @@ scrapbook_move_manual :: proc(direction: int) {
     a := scrapbook_photo_at(scrapbook_focus)
     b := scrapbook_photo_at(target)
     a_position, b_position := -1, -1
-    for position in 0 ..< SCRAPBOOK_PHOTO_COUNT {
+    for position in 0 ..< scrapbook_count {
         if scrapbook_order[position] == a do a_position = position
         if scrapbook_order[position] == b do b_position = position
     }
@@ -685,6 +718,9 @@ photo_mode_capture_pending :: proc(editor: ^Editor) {
     if make_error := os.make_directory_all(directory); make_error != nil && make_error != .Exist do return
     path := fmt.ctprintf("%s/adriatic-photo-%d.png", directory, i64(canvas2d.GetTime() * 1000))
     canvas2d.TakeScreenshot(path)
+    // TakeScreenshot queues the write, so add this capture to the live catalog
+    // now; the next scrapbook open also rescans disk as a fallback.
+    scrapbook_initialized = false
     editor.photo_capture_notice_until = canvas2d.GetTime() + 2.5
 }
 
@@ -1757,42 +1793,19 @@ scrapbook_card_bounds :: proc(panel: canvas2d.Rectangle, visible_index: int) -> 
 
 scrapbook_draw_photo :: proc(bounds: canvas2d.Rectangle, photo: int) {
     image := canvas2d.Rectangle{bounds.x + 7, bounds.y + 7, bounds.width - 14, bounds.height - 43}
-    sky_colors := [4]canvas2d.Color {
-        {126, 184, 201, 255},
-        {222, 164, 112, 255},
-        {111, 142, 156, 255},
-        {179, 201, 190, 255},
+    texture := scrapbook_textures[photo]
+    if !texture.ready do return
+    source_width, source_height := f32(texture.width), f32(texture.height)
+    source_aspect, target_aspect := source_width / source_height, image.width / image.height
+    source := canvas2d.Rectangle{0, 0, source_width, source_height}
+    if source_aspect > target_aspect {
+        source.width = source_height * target_aspect
+        source.x = (source_width - source.width) * .5
+    } else {
+        source.height = source_width / target_aspect
+        source.y = (source_height - source.height) * .5
     }
-    sea_colors := [4]canvas2d.Color{{52, 115, 137, 255}, {71, 119, 126, 255}, {54, 86, 105, 255}, {65, 127, 118, 255}}
-    sky := sky_colors[photo % 4]
-    sea := sea_colors[(photo / 2) % 4]
-    canvas2d.DrawRectangleRec(image, sky)
-    horizon := image.y + image.height * (.52 + f32(photo % 3) * .05)
-    canvas2d.DrawRectangleRec({image.x, horizon, image.width, image.y + image.height - horizon}, sea)
-    sun_x := image.x + image.width * (.2 + f32((photo * 37) % 61) / 100)
-    sun_y := image.y + image.height * (.18 + f32(photo % 4) * .055)
-    canvas2d.DrawCircleV({sun_x, sun_y}, max(f32(5), image.width * .045), {247, 215, 142, 235})
-    island := canvas2d.Color{74, 91, 74, 255}
-    canvas2d.DrawCircleV({image.x + image.width * .28, horizon + 10}, image.width * .19, island)
-    canvas2d.DrawCircleV({image.x + image.width * .48, horizon + 13}, image.width * .23, island)
-    canvas2d.DrawCircleV({image.x + image.width * .72, horizon + 11}, image.width * .18, island)
-    building := canvas2d.Color{230, 211, 171, 255}
-    roof := canvas2d.Color{157, 70, 49, 255}
-    house_x := image.x + image.width * (.28 + f32(photo % 5) * .08)
-    canvas2d.DrawRectangleRec({house_x, horizon - 3, image.width * .16, image.height * .20}, building)
-    canvas2d.DrawRectangleRec({house_x - 2, horizon - 7, image.width * .16 + 4, 5}, roof)
-    if photo % 3 == 0 {
-        canvas2d.DrawRectangleRec(
-            {image.x + image.width * .72, horizon - image.height * .23, 7, image.height * .28},
-            building,
-        )
-        canvas2d.DrawCircleV({image.x + image.width * .72 + 3.5, horizon - image.height * .23}, 5, roof)
-    }
-    // A small white aeroplane silhouette ties the memories back to travel.
-    plane_x := image.x + image.width * (.58 + f32(photo % 3) * .08)
-    plane_y := image.y + image.height * (.25 + f32(photo % 2) * .10)
-    canvas2d.DrawRectangleRec({plane_x, plane_y, image.width * .13, 3}, {249, 242, 220, 235})
-    canvas2d.DrawRectangleRec({plane_x + image.width * .055, plane_y - 5, 3, 13}, {249, 242, 220, 235})
+    canvas2d.DrawTexturePro(texture, source, image)
 }
 
 scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
@@ -1848,11 +1861,10 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
         )
         scrapbook_draw_photo({preview.x, preview.y, preview.width, preview.height + 36}, photo)
         label := fmt.ctprintf(
-            "%02d  /  %02d     %s     %s",
+            "%02d  /  %02d     PHOTO %02d",
             scrapbook_focus + 1,
             count,
-            scrapbook_titles[photo],
-            scrapbook_dates[photo],
+            photo + 1,
         )
         ui_draw_text(.Label, label, {preview.x + 8, preview.y + preview.height + 19}, .38, ui_theme_text())
         if scrapbook_favorites[photo] do ui_draw_text(.Data, "FAVORITE", {preview.x + preview.width - 76, preview.y + 12}, .2, {255, 247, 228, 255})
@@ -1870,11 +1882,13 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
                 focused ? ui_theme_focus() : ui_theme_border(),
             )
             scrapbook_draw_photo(card, photo)
-            ui_draw_text(.Data, scrapbook_titles[photo], {card.x + 9, card.y + card.height - 28}, .19, ui_theme_text())
-            date_size := ui_measure_text(.Data, scrapbook_dates[photo], .17)
+            photo_label := fmt.ctprintf("PHOTO %02d", photo + 1)
+            ui_draw_text(.Data, photo_label, {card.x + 9, card.y + card.height - 28}, .19, ui_theme_text())
+            saved_label: cstring = "SAVED"
+            date_size := ui_measure_text(.Data, saved_label, .17)
             ui_draw_text(
                 .Data,
-                scrapbook_dates[photo],
+                saved_label,
                 {card.x + card.width - date_size.x - 9, card.y + card.height - 27},
                 .17,
                 ui_theme_text_muted(),
