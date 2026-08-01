@@ -323,12 +323,15 @@ render_graph_terrain :: proc(user_data: rawptr) {
         u32(size_of(ctx.world_push)),
         &ctx.world_push,
     )
-    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+    first_level := world_renderer.clipmap_first_level
+    for level in first_level ..< terrain.CLIPMAP_LEVELS {
         level_buffer := &world_renderer.clipmap_vertex[ctx.pass.frame.frame_index][level]
         vk.CmdBindVertexBuffers(cmd, 0, 1, &level_buffer.handle, &ctx.offset)
-        if level == 0 {
-            vk.CmdBindIndexBuffer(cmd, world_renderer.clipmap_index.handle, 0, .UINT32)
-            vk.CmdDrawIndexed(cmd, world_renderer.clipmap_full_indices, 1, 0, 0, 0)
+        if level == first_level {
+            index_buffer := first_level == 0 ? &world_renderer.clipmap_index : &world_renderer.clipmap_outer_full_index
+            index_count := first_level == 0 ? world_renderer.clipmap_full_indices : world_renderer.clipmap_outer_full_indices
+            vk.CmdBindIndexBuffer(cmd, index_buffer.handle, 0, .UINT32)
+            vk.CmdDrawIndexed(cmd, index_count, 1, 0, 0, 0)
         } else {
             variant := clipmap_ring_variant(int(ctx.pass.frame.frame_index), level)
             ring := &world_renderer.clipmap_ring_index[variant[1]][variant[0]]

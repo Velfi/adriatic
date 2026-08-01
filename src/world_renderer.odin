@@ -206,6 +206,7 @@ CLIPMAP_INNER_GRID_RESOLUTION :: terrain.TERRAIN_RESOLUTION + 1
 CLIPMAP_INNER_VERTEX_COUNT :: CLIPMAP_INNER_GRID_RESOLUTION * CLIPMAP_INNER_GRID_RESOLUTION
 CLIPMAP_FULL_INDEX_COUNT :: (CLIPMAP_INNER_GRID_RESOLUTION - 1) * (CLIPMAP_INNER_GRID_RESOLUTION - 1) * 6
 CLIPMAP_TRANSITION_WIDTH :: 4
+CLIPMAP_EDITOR_MIN_VERTEX_SPACING_PIXELS :: f32(1)
 
 // Keep the world pass useful beyond the immediate flight envelope. The
 // clipmap already provides this coverage; these values prevent the camera
@@ -1024,9 +1025,11 @@ World_Renderer :: struct {
     player_shadow_receiver:                       f32,
     clipmap_vertex:                               [engine.MAX_FRAMES_IN_FLIGHT][terrain.CLIPMAP_LEVELS]engine.Vk_Buffer,
     clipmap_index:                                engine.Vk_Buffer,
+    clipmap_outer_full_index:                     engine.Vk_Buffer,
     clipmap_ring_index:                           [3][3]engine.Vk_Buffer,
     clipmap_inner_ring_index:                     [3][3]engine.Vk_Buffer,
     clipmap_full_indices:                         u32,
+    clipmap_outer_full_indices:                   u32,
     clipmap_ring_indices:                         u32,
     clipmap_inner_ring_indices:                   u32,
     clipmap_revision:                             [engine.MAX_FRAMES_IN_FLIGHT]u64,
@@ -1038,6 +1041,7 @@ World_Renderer :: struct {
     clipmap_cache_center:                         [terrain.CLIPMAP_LEVELS][2]f32,
     clipmap_cache_valid:                          [terrain.CLIPMAP_LEVELS]bool,
     clipmap_cache_revision:                       u64,
+    clipmap_first_level:                          int,
     clipmap_levels_generated:                     u64,
     clipmap_levels_copied:                        u64,
     clipmap_full_rebuilds:                        u64,
@@ -3155,6 +3159,25 @@ clipmap_grid_resolution :: #force_inline proc(level: int) -> int {
     return level == 0 ? CLIPMAP_INNER_GRID_RESOLUTION : CLIPMAP_GRID_RESOLUTION
 }
 
+// Editor views do not need sub-pixel terrain tessellation. Select the first
+// clipmap whose vertex spacing is visible at the current camera distance; that
+// level becomes the solid center and coarser levels remain rings around it.
+// Gameplay keeps the finest level so near-ground movement is unchanged.
+clipmap_first_render_level :: proc(editor: ^Editor, viewport_height: i32) -> int {
+    if editor == nil || editor.in_map || viewport_height <= 0 do return 0
+    delta := editor.camera_pose.position - editor.camera_pose.target
+    distance := f32(math.sqrt(f64(linalg.dot(delta, delta))))
+    if distance <= .001 do return 0
+    focal_length := perspective_camera(editor.camera_pose).focal_length
+    pixels_per_meter := focal_length * f32(viewport_height) * .5 / distance
+    for level in 0 ..< terrain.CLIPMAP_LEVELS - 1 {
+        if clipmap_grid_cell(editor, level) * pixels_per_meter >= CLIPMAP_EDITOR_MIN_VERTEX_SPACING_PIXELS {
+            return level
+        }
+    }
+    return terrain.CLIPMAP_LEVELS - 1
+}
+
 @(no_instrumentation)
 clipmap_center_offset :: proc(
     old_center, new_center: [2]f32,
@@ -3430,7 +3453,7 @@ world_structure_storage_ensure :: proc(count: int) {
     reserve(&world_renderer.structure_candidates, capacity)
 }
 
-clipmap_update :: proc(editor: ^Editor, frame_index: int) {
+clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_update")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     cache_revision_changed := world_renderer.clipmap_cache_revision != editor.terrain_revision
@@ -3438,7 +3461,18 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int) {
     localized_revision :=
         cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     target := [2]f32{editor.camera_pose.target.x, editor.camera_pose.target.z}
-    for level in 0 ..< terrain.CLIPMAP_LEVELS {
+    first_level := clipmap_first_render_level(editor, viewport_height)
+    world_renderer.clipmap_first_level = first_level
+    // Skipped caches do not receive terrain revisions. Invalidate them so a
+    // later zoom-in regenerates and uploads current terrain instead of
+    // reviving stale vertices from the previous detail band.
+    for level in 0 ..< first_level {
+        world_renderer.clipmap_cache_valid[level] = false
+        for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+            world_renderer.clipmap_valid[frame][level] = false
+        }
+    }
+    for level in first_level ..< terrain.CLIPMAP_LEVELS {
         grid_cell := clipmap_grid_cell(editor, level)
         center := clipmap_level_center(target, grid_cell)
         cache_center_changed :=
@@ -3573,6 +3607,28 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
         return false
     }
     mem.copy_non_overlapping(world_renderer.clipmap_index.mapped, raw_data(indices[:]), len(indices) * size_of(u32))
+
+    clear(&indices)
+    for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+        for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
+            clipmap_append_cell(&indices, x, z, CLIPMAP_GRID_RESOLUTION)
+        }
+    }
+    world_renderer.clipmap_outer_full_indices = u32(len(indices))
+    if !world_host_buffer_create(
+        ctx,
+        vk.DeviceSize(len(indices) * size_of(u32)),
+        {.INDEX_BUFFER},
+        &world_renderer.clipmap_outer_full_index,
+        "world clipmap outer full index buffer",
+    ) {
+        return false
+    }
+    mem.copy_non_overlapping(
+        world_renderer.clipmap_outer_full_index.mapped,
+        raw_data(indices[:]),
+        len(indices) * size_of(u32),
+    )
 
     // Adjacent centers differ by at most half a coarse cell in either axis.
     // A 63-cell asymmetric hole follows that offset and leaves one coarse-cell
@@ -29455,7 +29511,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     }
     world_renderer.dynamic_shadow.frame_prepared = false
     if !editor.vehicle_showcase_scene && !lab_scene_replaces_world(editor) {
-        clipmap_update(editor, int(pass.frame.frame_index))
+        clipmap_update(editor, int(pass.frame.frame_index), i32(pass.framebuffer_extent.height))
     }
     frame_index := int(pass.frame.frame_index)
     world_instances_flatten()
@@ -29825,6 +29881,7 @@ world_renderer_destroy :: proc() {
         }
     }
     engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_index)
+    engine.vk_destroy_buffer(world_renderer.ctx, &world_renderer.clipmap_outer_full_index)
     for &row in world_renderer.clipmap_ring_index {
         for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     }

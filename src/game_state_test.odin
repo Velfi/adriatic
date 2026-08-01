@@ -6,6 +6,7 @@ import marina "../packages/marina"
 import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
+import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:testing"
@@ -149,6 +150,20 @@ when ODIN_TEST {
         level_two_coverage := f32(clipmap_grid_resolution(2) - 1) * clipmap_grid_cell(editor, 2)
         testing.expect_value(t, level_one_coverage, inner_coverage * 2)
         testing.expect_value(t, level_two_coverage, level_one_coverage * 4)
+    }
+
+    @(test)
+    editor_clipmap_detail_follows_projected_vertex_spacing :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        terrain.init_project(&editor.project)
+        defer terrain.destroy_project(&editor.project)
+        editor.camera_pose = third_person.camera_look_at({0, 900, 0}, {0, 0, 0})
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 1)
+        editor.camera_pose = third_person.camera_look_at({0, 3000, 0}, {0, 0, 0})
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
+        editor.in_map = true
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
     }
 
     @(test)
