@@ -401,6 +401,11 @@ step_normalized_command :: proc(
             runtime.body.angular_velocity_world = {}
         }
         runtime.body.angular_velocity_world.x *= max_f32(0, 1 - dt * 8)
+        // Tire contact owns heading on the runway. The aerodynamic solver runs
+        // before ground contact is resolved, so retaining its yaw rate here
+        // stores crosswind rotation behind the ground-attitude constraint and
+        // releases it all at once on liftoff.
+        runtime.body.angular_velocity_world.y = 0
         runtime.body.angular_velocity_world.z *= max_f32(0, 1 - dt * 8)
         // Positive yaw input is pilot-right. Around world-up, however, the
         // Postale's -Z forward basis turns right with a negative rotation.

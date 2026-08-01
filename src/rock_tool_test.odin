@@ -43,6 +43,26 @@ selecting_another_tool_exits_rock_placement :: proc(t: ^testing.T) {
 }
 
 @(test)
+selection_tool_is_selection_only_session_state :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    editor.authoring_tool = .Paint
+    editor.tool = .Paint
+    editor.structure_placing = true
+    editor.structure_moving = true
+
+    authoring_select_selection_tool(editor)
+
+    testing.expect(t, editor.selection_tool_active)
+    testing.expect_value(t, editor.tool, terrain.Tool.Structure)
+    testing.expect(t, !editor.structure_placing)
+    testing.expect(t, !editor.structure_moving)
+
+    authoring_select_tool(editor, .Paint)
+    testing.expect(t, !editor.selection_tool_active)
+}
+
+@(test)
 rock_tool_uses_the_authored_mesh_marker_and_complete_catalog :: proc(t: ^testing.T) {
     editor := new(Editor)
     defer free(editor)

@@ -704,6 +704,24 @@ vehicle_paint_brush_coverage :: proc(distance, hardness: f32) -> f32 {
     return clamp(1 - (distance - normalized_hardness) / (1 - normalized_hardness), 0, 1)
 }
 
+// Brush radius is expressed in atlas-height texels. The paint atlas is twice
+// as wide as it is tall, so an equal texel radius on both axes would cover
+// half as much normalized UV space horizontally and appear oval on the model.
+vehicle_paint_brush_texel_radii :: proc(radius: int) -> (radius_x, radius_y: int) {
+    radius_y = max(radius, 1)
+    radius_x = max(
+        int(math.ceil(f64(radius_y * VEHICLE_PAINT_TEXTURE_WIDTH) / f64(VEHICLE_PAINT_TEXTURE_HEIGHT))),
+        1,
+    )
+    return
+}
+
+vehicle_paint_brush_distance :: proc(dx, dy, radius_x, radius_y: int) -> f32 {
+    nx := f32(dx) / f32(max(radius_x, 1))
+    ny := f32(dy) / f32(max(radius_y, 1))
+    return f32(math.sqrt(f64(nx * nx + ny * ny)))
+}
+
 vehicle_paint_mix_color :: proc(a, b: canvas2d.Color, amount: f32) -> canvas2d.Color {
     t := clamp(amount, 0, 1)
     return {
@@ -732,24 +750,32 @@ vehicle_paint_shade_ramp :: proc(base: canvas2d.Color) -> [5]canvas2d.Color {
     }
 }
 
-vehicle_paint_shade_step :: proc(pixel: [4]u8, base: canvas2d.Color, lighter: bool) -> (canvas2d.Color, bool) {
+vehicle_paint_shade_step :: proc(pixel: [4]u8, lighter: bool) -> (canvas2d.Color, bool) {
     if pixel[3] < 16 do return {}, false
-    ramp := vehicle_paint_shade_ramp(base)
+    base := canvas2d.Color{pixel[0], pixel[1], pixel[2], 255}
     nearest := 0
     nearest_distance := 2_000_000_000
-    for color, index in ramp {
-        dr := int(pixel[0]) - int(color.r)
-        dg := int(pixel[1]) - int(color.g)
-        db := int(pixel[2]) - int(color.b)
-        distance := dr * dr + dg * dg + db * db
-        if distance < nearest_distance {
-            nearest = index
-            nearest_distance = distance
+    for palette_color in VEHICLE_PAINT_COLORS {
+        candidate_ramp := vehicle_paint_shade_ramp(palette_color)
+        for color, index in candidate_ramp {
+            dr := int(pixel[0]) - int(color.r)
+            dg := int(pixel[1]) - int(color.g)
+            db := int(pixel[2]) - int(color.b)
+            distance := dr * dr + dg * dg + db * db
+            if distance < nearest_distance {
+                base = palette_color
+                nearest = index
+                nearest_distance = distance
+            }
         }
     }
-    // Avoid pulling unrelated liveries into the selected hue family. The
-    // tolerance still accepts soft brush/texture filtering residue.
-    if nearest_distance > 48 * 48 * 3 do return {}, false
+    // Preserve custom colors instead of pulling them into an unrelated palette
+    // family. Their current RGB becomes the center of a local shade ramp.
+    if nearest_distance > 48 * 48 * 3 {
+        base = {pixel[0], pixel[1], pixel[2], 255}
+        nearest = 2
+    }
+    ramp := vehicle_paint_shade_ramp(base)
     target := lighter ? min(nearest + 1, len(ramp) - 1) : max(nearest - 1, 0)
     return ramp[target], target != nearest
 }
@@ -758,7 +784,6 @@ vehicle_paint_shade_texture :: proc(
     editor: ^Editor,
     part: vehicles.Aircraft_Mesh_Part,
     uv: [2]f32,
-    base: canvas2d.Color,
     lighter: bool,
 ) {
     if editor == nil do return
@@ -781,7 +806,7 @@ vehicle_paint_shade_texture :: proc(
             if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
             index := texel * 4
             before := [4]u8{pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]}
-            if shade, ok := vehicle_paint_shade_step(before, base, lighter); ok {
+            if shade, ok := vehicle_paint_shade_step(before, lighter); ok {
                 vehicle_paint_set_texel(pixels, texel, shade, before[3])
                 changed = true
             }
@@ -798,13 +823,14 @@ vehicle_paint_stamp_texture :: proc(editor: ^Editor, part: vehicles.Aircraft_Mes
     pixels := vehicle_paint_pixels(editor)
     component := vehicle_paint_component_for_part(part)
     if !editor.vehicle_paint_component_mask[component] do return
-    radius := clamp(editor.vehicle_paint_shape_size, 8, 256) / 2
+    radius := editor.vehicle_paint_brush_radius
+    radius_x, radius_y := vehicle_paint_brush_texel_radii(radius)
     center_x := int(uv[0] * f32(VEHICLE_PAINT_TEXTURE_WIDTH))
     center_y := int(uv[1] * f32(VEHICLE_PAINT_TEXTURE_HEIGHT))
-    for y in max(0, center_y - radius) ..< min(VEHICLE_PAINT_TEXTURE_HEIGHT, center_y + radius + 1) {
-        for x in max(0, center_x - radius) ..< min(VEHICLE_PAINT_TEXTURE_WIDTH, center_x + radius + 1) {
+    for y in max(0, center_y - radius_y) ..< min(VEHICLE_PAINT_TEXTURE_HEIGHT, center_y + radius_y + 1) {
+        for x in max(0, center_x - radius_x) ..< min(VEHICLE_PAINT_TEXTURE_WIDTH, center_x + radius_x + 1) {
             dx, dy := x - center_x, y - center_y
-            distance := f32(math.sqrt(f64(dx * dx + dy * dy))) / f32(radius)
+            distance := vehicle_paint_brush_distance(dx, dy, radius_x, radius_y)
             if distance > 1 do continue
             texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
             if editor.vehicle_paint_texel_part[texel] != u8(part) + 1 || !vehicle_paint_texel_selected(editor, texel) do continue
@@ -1010,12 +1036,13 @@ vehicle_paint_preview_rebuild :: proc(
     #partial switch editor.vehicle_paint_tool {
     case .Brush:
         radius := editor.vehicle_paint_brush_radius
-        for y in max(0, center_y - radius) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, center_y + radius) {
-            for x in max(0, center_x - radius) ..= min(VEHICLE_PAINT_TEXTURE_WIDTH - 1, center_x + radius) {
+        radius_x, radius_y := vehicle_paint_brush_texel_radii(radius)
+        for y in max(0, center_y - radius_y) ..= min(VEHICLE_PAINT_TEXTURE_HEIGHT - 1, center_y + radius_y) {
+            for x in max(0, center_x - radius_x) ..= min(VEHICLE_PAINT_TEXTURE_WIDTH - 1, center_x + radius_x) {
                 texel := y * VEHICLE_PAINT_TEXTURE_WIDTH + x
                 if editor.vehicle_paint_texel_part[texel] != owner || !vehicle_paint_texel_selected(editor, texel) do continue
                 dx, dy := x - center_x, y - center_y
-                distance := f32(math.sqrt(f64(dx * dx + dy * dy))) / f32(radius)
+                distance := vehicle_paint_brush_distance(dx, dy, radius_x, radius_y)
                 coverage := vehicle_paint_brush_coverage(distance, editor.vehicle_paint_brush_hardness)
                 alpha := u8(clamp(coverage * editor.vehicle_paint_brush_strength * 255, 0, 255))
                 if alpha > 0 do vehicle_paint_preview_set(editor, texel, color, alpha)
@@ -1979,7 +2006,10 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
     }
     vehicle_paint_camera_step(editor, delta_seconds)
     vehicle_paint_process_save(editor)
-    controller := canvas2d.GamepadAvailable()
+    // A connected controller must not own the paint cursor indefinitely.
+    // Runtime input switches back to mouse/keyboard as soon as the mouse is
+    // used, even while the controller remains connected.
+    controller := controller_prompt_active(editor)
     if controller {
         editor.vehicle_paint_cursor_x = clamp(
             editor.vehicle_paint_cursor_x + gamepad_axis(.Left_X) * delta_seconds * 420,
@@ -2527,7 +2557,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                             if editor.vehicle_paint_tool == .Blend {
                                 vehicle_paint_blend(editor, hover_part, dab_uv)
                             } else if editor.vehicle_paint_tool == .Shade {
-                                vehicle_paint_shade_texture(editor, hover_part, dab_uv, primary, shift_key_down())
+                                vehicle_paint_shade_texture(editor, hover_part, dab_uv, shift_key_down())
                             } else {
                                 vehicle_paint_stamp_texture(editor, hover_part, dab_uv, primary)
                             }
@@ -2535,14 +2565,14 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                     } else if editor.vehicle_paint_tool == .Blend {
                         vehicle_paint_blend(editor, hover_part, hover_uv)
                     } else if editor.vehicle_paint_tool == .Shade {
-                        vehicle_paint_shade_texture(editor, hover_part, hover_uv, primary, shift_key_down())
+                        vehicle_paint_shade_texture(editor, hover_part, hover_uv, shift_key_down())
                     } else {
                         vehicle_paint_stamp_texture(editor, hover_part, hover_uv, primary)
                     }
                 } else if editor.vehicle_paint_tool == .Blend {
                     vehicle_paint_blend(editor, hover_part, hover_uv)
                 } else if editor.vehicle_paint_tool == .Shade {
-                    vehicle_paint_shade_texture(editor, hover_part, hover_uv, primary, shift_key_down())
+                    vehicle_paint_shade_texture(editor, hover_part, hover_uv, shift_key_down())
                 } else {
                     vehicle_paint_stamp_texture(editor, hover_part, hover_uv, primary)
                 }
@@ -2581,7 +2611,7 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                                 if editor.vehicle_paint_tool == .Blend {
                                     vehicle_paint_blend(editor, mirror_part, dab_uv)
                                 } else if editor.vehicle_paint_tool == .Shade {
-                                    vehicle_paint_shade_texture(editor, mirror_part, dab_uv, primary, shift_key_down())
+                                    vehicle_paint_shade_texture(editor, mirror_part, dab_uv, shift_key_down())
                                 } else {
                                     vehicle_paint_stamp_texture(editor, mirror_part, dab_uv, primary)
                                 }
@@ -2589,14 +2619,14 @@ vehicle_paint_process_input :: proc(editor: ^Editor, width, height: i32, delta_s
                         } else if editor.vehicle_paint_tool == .Blend {
                             vehicle_paint_blend(editor, mirror_part, mirror_uv)
                         } else if editor.vehicle_paint_tool == .Shade {
-                            vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, primary, shift_key_down())
+                            vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, shift_key_down())
                         } else {
                             vehicle_paint_stamp_texture(editor, mirror_part, mirror_uv, primary)
                         }
                     } else if editor.vehicle_paint_tool == .Blend {
                         vehicle_paint_blend(editor, mirror_part, mirror_uv)
                     } else if editor.vehicle_paint_tool == .Shade {
-                        vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, primary, shift_key_down())
+                        vehicle_paint_shade_texture(editor, mirror_part, mirror_uv, shift_key_down())
                     } else {
                         vehicle_paint_stamp_texture(editor, mirror_part, mirror_uv, primary)
                     }

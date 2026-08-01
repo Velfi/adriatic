@@ -40,7 +40,7 @@ Plant_Stamp_Mode :: enum u8 {
 // but is no longer part of the live editor tool palette.
 AUTHORING_TOOL_COUNT :: 14
 AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 1
-AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_DISPLAY_COUNT + 1
+AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_DISPLAY_COUNT + 2
 AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Sculpt,
     .Smooth,
@@ -187,6 +187,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.plant_stamp_mode = .Climbing
     }
     editor.authoring_tool = resolved
+    editor.selection_tool_active = false
     editor.architecture_painting = false
     architecture.city_plan_destroy(&editor.architecture_preview_plan)
     editor.architecture_dirty_bounds = {}
@@ -260,6 +261,16 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     curve_reset(editor)
     editor.structure_placing = false
     editor.structure_moving = false
+}
+
+authoring_select_selection_tool :: proc(editor: ^Editor) {
+    if editor == nil do return
+    // Reuse the common cancellation path, then turn the structure interaction
+    // into selection-only behavior. This mode is session state, not map data.
+    authoring_select_tool(editor, .Formations)
+    editor.selection_tool_active = true
+    editor.tool = .Structure
+    editor.tweak.terrain.tool = editor.tool
 }
 
 authoring_select_rock_tool :: proc(editor: ^Editor) {
@@ -594,6 +605,11 @@ editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, in
 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
+    if editor.selection_tool_active {
+        if editor.structure_moving do return "Move the selected item; release to commit."
+        if editor.structure_selected >= 0 do return "Drag to move. R rotates; Alt-wheel edits height; Shift-wheel edits size; Backspace deletes."
+        return "Click an item to select it."
+    }
     if fixture_note_placement_active() do return "Place note: left-click terrain to commit; right-click or Escape cancels."
     if editor.rock_placement_mode do return "Left spawns rocks; right erases rocks. Drag to build clusters; adjust density in the inspector."
     if editor.marina_paint_mode {
@@ -642,13 +658,13 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor.structure_moving do return "Move the selected formation; release to commit."
     switch editor.authoring_tool {
     case .Sculpt:
-        return "Left raises terrain; right lowers it. Wheel zooms; use Radius in the inspector."
+        return "[Left] to raise   [Right] to lower   [Wheel] to zoom"
     case .Smooth:
-        return "Paint smoothing with either mouse button. Wheel zooms; use Radius in the inspector."
+        return "[Left or Right] to smooth   [Wheel] to zoom"
     case .Paint:
-        return "Left paints material; right erases it. Wheel zooms; use Radius in the inspector."
+        return "[Left] to paint   [Right] to erase   [Wheel] to zoom"
     case .Formations:
-        return "Left stamps formations; right erases. Wheel zooms; Shift density; Alt hardness."
+        return "[Left] to stamp   [Right] to erase   [Wheel] to zoom"
     case .Foliage:
         if editor.plant_stamp_mode == .Climbing {
             if editor.plant_stamp_target_valid {
@@ -701,10 +717,12 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     hovered_tool := -1
     for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
         bounds := editor_ui_tool_bounds(layout, index)
-        rock_tool := index == AUTHORING_TOOL_DISPLAY_COUNT
-        tool := rock_tool ? Authoring_Tool.Formations : AUTHORING_TOOL_DISPLAY_ORDER[index]
+        select_tool := index == 0
+        display_index := index - 1
+        rock_tool := display_index == AUTHORING_TOOL_DISPLAY_COUNT
+        tool := rock_tool || select_tool ? Authoring_Tool.Formations : AUTHORING_TOOL_DISPLAY_ORDER[display_index]
         selected :=
-            rock_tool ? editor.rock_placement_mode : editor.authoring_tool == tool && !(tool == .Formations && editor.rock_placement_mode)
+            select_tool ? editor.selection_tool_active : rock_tool ? editor.rock_placement_mode : !editor.selection_tool_active && editor.authoring_tool == tool && !(tool == .Formations && editor.rock_placement_mode)
         hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
         fill := selected ? canvas2d.Color{35, 91, 94, 255} : canvas2d.Color{35, 39, 46, 246}
         if hovered && !selected do fill = {48, 55, 64, 250}
@@ -712,11 +730,26 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         canvas2d.DrawRectangleRounded(bounds, .10, 6, fill)
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .10, 6, selected ? 2 : 1, border)
         icon_tint := selected ? canvas2d.Color{255, 255, 255, 255} : canvas2d.Color{225, 231, 235, 255}
-        editor_ui_draw_tool_icon(editor, rock_tool ? int(Authoring_Tool.Formations) : int(tool), bounds, icon_tint)
+        if select_tool {
+            // A compact pointer glyph keeps Select distinct from placement art.
+            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 10}, {bounds.x + 14, bounds.y + 37}, 3, icon_tint)
+            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 10}, {bounds.x + 34, bounds.y + 30}, 3, icon_tint)
+            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 37}, {bounds.x + 34, bounds.y + 30}, 3, icon_tint)
+            canvas2d.DrawLineEx({bounds.x + 24, bounds.y + 29}, {bounds.x + 34, bounds.y + 40}, 4, icon_tint)
+        } else {
+            editor_ui_draw_tool_icon(editor, rock_tool ? int(Authoring_Tool.Formations) : int(tool), bounds, icon_tint)
+        }
         if hovered do hovered_tool = index
     }
     if hovered_tool >= 0 {
-        if hovered_tool == AUTHORING_TOOL_DISPLAY_COUNT {
+        if hovered_tool == 0 {
+            bounds := editor_ui_tool_bounds(layout, hovered_tool)
+            size := ui_measure_text(.Label, "SELECT  [S]", .5)
+            tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
+            canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
+            canvas2d.DrawRectangleRoundedLinesEx(tooltip, .14, 5, 1, {89, 101, 114, 255})
+            ui_draw_text(.Label, "SELECT  [S]", {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
+        } else if hovered_tool - 1 == AUTHORING_TOOL_DISPLAY_COUNT {
             bounds := editor_ui_tool_bounds(layout, hovered_tool)
             size := ui_measure_text(.Label, "ROCKS", .5)
             tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
@@ -726,7 +759,7 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             editor_ui_draw_tooltip(
                 editor_ui_tool_bounds(layout, hovered_tool),
-                AUTHORING_TOOL_DISPLAY_ORDER[hovered_tool],
+                AUTHORING_TOOL_DISPLAY_ORDER[hovered_tool - 1],
             )
         }
     }
@@ -744,13 +777,39 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 6, 1, {62, 69, 78, 255})
     ui_draw_text(
         .Heading,
-        editor.rock_placement_mode ? "ROCKS" : authoring_tool_name(editor.authoring_tool),
+        editor.selection_tool_active ? "SELECT" : editor.rock_placement_mode ? "ROCKS" : authoring_tool_name(editor.authoring_tool),
         {panel.x + 14, panel.y + 14},
         .5,
         {235, 239, 243, 255},
     )
     editor_ui_panel_button({panel.x + panel.width - 39, panel.y + 10, 29, 28}, ">>")
     editor_ui_section_title("TOOL SETTINGS", panel.x + 14, panel.y + 50, panel.width - 28)
+
+    if editor.selection_tool_active {
+        if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
+            structure := editor.project.structures[editor.structure_selected]
+            ui_draw_text(
+                .Label,
+                formation_kind_name(structure.kind),
+                {panel.x + 14, panel.y + 88},
+                .5,
+                {209, 215, 222, 255},
+            )
+            ui_draw_text(
+                .Data,
+                fmt.ctprintf("%.0f x %.0f x %.0f m", structure.width, structure.depth, structure.height),
+                {panel.x + 14, panel.y + 116},
+                .5,
+                {134, 224, 216, 255},
+            )
+            ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 158}, .4, {139, 149, 160, 255})
+            ui_draw_text(.Data, "R  ROTATE", {panel.x + 14, panel.y + 182}, .4, {139, 149, 160, 255})
+            ui_draw_text(.Data, "BACKSPACE  DELETE", {panel.x + 14, panel.y + 206}, .4, {139, 149, 160, 255})
+        } else {
+            ui_draw_text(.Data, "CLICK AN ITEM", {panel.x + 14, panel.y + 88}, .5, {139, 149, 160, 255})
+        }
+        return
+    }
 
     row := 0
     switch editor.authoring_tool {
@@ -865,10 +924,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         // Small silhouettes make the choice scannable before reading labels.
         canvas2d.DrawCircleV({ground_preview.x + 25, ground_preview.y + 22}, 10, {91, 147, 76, 255})
         canvas2d.DrawCircleV({ground_preview.x + 42, ground_preview.y + 20}, 13, {70, 126, 68, 255})
-        canvas2d.DrawRectangleRec(
-            {climbing_preview.x + 18, climbing_preview.y + 9, 32, 28},
-            {146, 133, 108, 255},
-        )
+        canvas2d.DrawRectangleRec({climbing_preview.x + 18, climbing_preview.y + 9, 32, 28}, {146, 133, 108, 255})
         canvas2d.DrawLineEx(
             {climbing_preview.x + 22, climbing_preview.y + 35},
             {climbing_preview.x + 45, climbing_preview.y + 12},
@@ -896,8 +952,10 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 2,
             )
             row += 1
-            status: cstring = editor.plant_stamp_target_valid ? "SURFACE READY — CLICK TO ATTACH" : "HOVER AN ELIGIBLE SURFACE"
-            status_color := editor.plant_stamp_target_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+            status: cstring =
+                editor.plant_stamp_target_valid ? "SURFACE READY — CLICK TO ATTACH" : "HOVER AN ELIGIBLE SURFACE"
+            status_color :=
+                editor.plant_stamp_target_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
             ui_draw_text(.Data, status, {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, status_color)
             break
         }
@@ -1343,7 +1401,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             {209, 215, 222, 255},
         )
     } else {
-        ui_draw_text(.Data, "CURSOR   OUTSIDE TERRAIN", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
+        ui_draw_text(.Data, "CURSOR   —", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
     }
     minutes := int(editor.atmosphere.world_minutes)
     ui_draw_text(
@@ -1374,7 +1432,9 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
 
     undo_enabled := editor.tool == .Structure ? editor.structure_undo_count > 0 : editor.terrain_undo_count > 0
     redo_enabled := editor.tool == .Structure ? editor.structure_redo_count > 0 : editor.terrain_redo_count > 0
-    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 0), "SAVE", false, true)
+    project_dirty := editor.project.revision != editor.terrain_saved_revision
+    save_label: cstring = project_dirty ? "SAVE  •" : "SAVE"
+    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 0), save_label, project_dirty, true)
     editor_ui_panel_button(editor_ui_small_action_bounds(layout, 1), "LOAD", false, true)
     editor_ui_panel_button(editor_ui_small_action_bounds(layout, 2), "UNDO", false, undo_enabled)
     editor_ui_panel_button(editor_ui_small_action_bounds(layout, 3), "REDO", false, redo_enabled)
@@ -1388,13 +1448,11 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     fixture_path := fixture_editor_current_path(editor)
     fixture_label: cstring = fixture_path != "" ? fmt.ctprintf("FIXTURE  %s", fixture_path) : "FIXTURE  UNSAVED"
     ui_draw_text(.Data, fixture_label, {16, 18}, .4, {209, 215, 222, 255})
-    project_state: cstring = editor.project.revision == editor.terrain_saved_revision ? "SAVED" : "UNSAVED"
     if editor.terrain_file_status != nil && f32(canvas2d.GetTime()) < editor.terrain_file_status_until {
-        project_state = editor.terrain_file_status
+        status := fmt.ctprintf("%s", editor.terrain_file_status)
+        status_size := ui_measure_text(.Data, status, .4)
+        ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
     }
-    status := fmt.ctprintf("%s", project_state)
-    status_size := ui_measure_text(.Data, status, .4)
-    ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
     editor_ui_draw_left(editor, layout)
     editor_ui_draw_inspector(editor, layout)
     if layout.hint.width > 160 {
@@ -1444,10 +1502,12 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             }
             for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
                 if canvas2d.CheckCollisionPointRec(mouse, editor_ui_tool_bounds(layout, index)) {
-                    if index == AUTHORING_TOOL_DISPLAY_COUNT {
+                    if index == 0 {
+                        authoring_select_selection_tool(editor)
+                    } else if index - 1 == AUTHORING_TOOL_DISPLAY_COUNT {
                         authoring_select_rock_tool(editor)
                     } else {
-                        authoring_select_tool(editor, AUTHORING_TOOL_DISPLAY_ORDER[index])
+                        authoring_select_tool(editor, AUTHORING_TOOL_DISPLAY_ORDER[index - 1])
                     }
                     return
                 }
@@ -1482,6 +1542,7 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
 
     if !layout.inspector_visible do return
+    if editor.selection_tool_active do return
     row := 0
     switch editor.authoring_tool {
     case .Sculpt, .Smooth, .Paint:

@@ -1,6 +1,7 @@
 package main
 
 import game_input "../packages/game_input"
+import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
@@ -148,7 +149,7 @@ customization_headgear_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> 
     scale_y := customization_scale_y(panel)
     return {
         controls_x + f32(index % 4) * (card_width + gap),
-        customization_y(panel, 346 + f32(index / 4) * 44),
+        customization_y(panel, 356 + f32(index / 4) * 44),
         card_width,
         38 * scale_y,
     }
@@ -161,27 +162,31 @@ customization_scarf_bounds :: proc(panel: canvas2d.Rectangle, index: int) -> can
     card_width := (available - gap * 3) / 4
     return {
         controls_x + f32(index) * (card_width + gap),
-        customization_y(panel, 500),
+        customization_y(panel, 516),
         card_width,
         38 * customization_scale_y(panel),
     }
 }
 
+customization_color_track_bounds :: proc(bounds: canvas2d.Rectangle) -> canvas2d.Rectangle {
+    return {bounds.x + 42, bounds.y + 16, max(bounds.width - 82, f32(12)), 10}
+}
+
 customization_back_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {
         panel.x + panel.width * .41,
-        customization_y(panel, 554),
+        customization_y(panel, 566),
         panel.width * .55,
-        42 * customization_scale_y(panel),
+        38 * customization_scale_y(panel),
     }
 }
 
 customization_preview_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
     return {
-        panel.x + 22,
-        customization_y(panel, 92),
-        panel.width * .365,
-        panel.height - 110 * customization_scale_y(panel),
+        panel.x,
+        customization_y(panel, 96),
+        panel.width * .39,
+        panel.height - 96 * customization_scale_y(panel),
     }
 }
 
@@ -243,6 +248,19 @@ customization_set_scarf_component :: proc(editor: ^Editor, component: int, norma
     editor.mouse_scarf_enabled = true
 }
 
+customization_adjust_scarf_component :: proc(editor: ^Editor, component, direction: int, fine: bool = false) {
+    hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
+    current := component == 0 ? hue : (component == 1 ? saturation : lightness)
+    step := fine ? f32(.01) : f32(.04)
+    next := current + f32(direction) * step
+    if component == 0 {
+        if next < 0 do next += 1
+        if next > 1 do next -= 1
+    }
+    customization_set_scarf_component(editor, component, next)
+    _ = mouse_preference_save(editor)
+}
+
 customization_activate :: proc(editor: ^Editor, focus: int) {
     changed := true
     if focus >= 0 && focus < CUSTOMIZATION_COLOR_COUNT {
@@ -255,11 +273,8 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
         editor.mouse_scarf_enabled = !editor.mouse_scarf_enabled
     } else if focus > CUSTOMIZATION_SCARF_START && focus < CUSTOMIZATION_BACK_FOCUS {
         component := focus - CUSTOMIZATION_SCARF_START - 1
-        hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
-        current := component == 0 ? hue : (component == 1 ? saturation : lightness)
-        next := component == 0 ? current + .08 : clamp(current + .08, 0, 1)
-        if component == 0 && next > 1 do next -= 1
-        customization_set_scarf_component(editor, component, next)
+        customization_adjust_scarf_component(editor, component, 1)
+        changed = false
     } else if focus == CUSTOMIZATION_BACK_FOCUS {
         menu_scene_set(editor, .Options)
         changed = false
@@ -355,33 +370,46 @@ customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
 customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     panel := customization_scene_panel(width, height)
     preview := customization_preview_bounds(panel)
+    navigation_x := gamepad_axis(.Left_X)
+    navigation_y := gamepad_axis(.Left_Y)
+    if canvas2d.IsKeyDown(.LEFT) || gamepad_down(.Dpad_Left) do navigation_x = -1
+    if canvas2d.IsKeyDown(.RIGHT) || gamepad_down(.Dpad_Right) do navigation_x = 1
+    if canvas2d.IsKeyDown(.UP) || gamepad_down(.Dpad_Up) do navigation_y = -1
+    if canvas2d.IsKeyDown(.DOWN) || gamepad_down(.Dpad_Down) do navigation_y = 1
     stick_x, stick_y := game_input.menu_steps(
         &editor.runtime_input,
-        gamepad_axis(.Left_X),
-        gamepad_axis(.Left_Y),
+        navigation_x,
+        navigation_y,
         delta_seconds,
     )
-    horizontal := 0
-    vertical := 0
-    if canvas2d.IsKeyPressed(.LEFT) || gamepad_pressed(.Dpad_Left) do horizontal = -1
-    if canvas2d.IsKeyPressed(.RIGHT) || gamepad_pressed(.Dpad_Right) do horizontal = 1
-    if canvas2d.IsKeyPressed(.UP) || gamepad_pressed(.Dpad_Up) do vertical = -1
-    if canvas2d.IsKeyPressed(.DOWN) || gamepad_pressed(.Dpad_Down) do vertical = 1
-    if horizontal == 0 do horizontal = stick_x
-    if vertical == 0 do vertical = stick_y
+    horizontal := stick_x
+    vertical := stick_y
+    if canvas2d.IsKeyPressed(.TAB) {
+        direction := shift_key_down() ? -1 : 1
+        editor.customization_focus = (editor.customization_focus + direction + CUSTOMIZATION_BACK_FOCUS + 1) %
+                                     (CUSTOMIZATION_BACK_FOCUS + 1)
+        horizontal, vertical = 0, 0
+        game_input.reset_menu_repeat(&editor.runtime_input)
+    }
+    if editor.customization_focus >= CUSTOMIZATION_SCARF_START &&
+       editor.customization_focus < CUSTOMIZATION_BACK_FOCUS {
+        shoulder_step := 0
+        if gamepad_pressed(.Left_Shoulder) do shoulder_step = -1
+        if gamepad_pressed(.Right_Shoulder) do shoulder_step = 1
+        if shoulder_step != 0 {
+            scarf_index := editor.customization_focus - CUSTOMIZATION_SCARF_START
+            scarf_index = (scarf_index + shoulder_step + CUSTOMIZATION_SCARF_CONTROL_COUNT) %
+                          CUSTOMIZATION_SCARF_CONTROL_COUNT
+            editor.customization_focus = CUSTOMIZATION_SCARF_START + scarf_index
+            horizontal, vertical = 0, 0
+            game_input.reset_menu_repeat(&editor.runtime_input)
+        }
+    }
     if horizontal != 0 &&
        editor.customization_focus > CUSTOMIZATION_SCARF_START &&
        editor.customization_focus < CUSTOMIZATION_BACK_FOCUS {
         component := editor.customization_focus - CUSTOMIZATION_SCARF_START - 1
-        hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
-        current := component == 0 ? hue : (component == 1 ? saturation : lightness)
-        next := component == 0 ? current + f32(horizontal) * .025 : clamp(current + f32(horizontal) * .04, 0, 1)
-        if component == 0 {
-            if next < 0 do next += 1
-            if next > 1 do next -= 1
-        }
-        customization_set_scarf_component(editor, component, next)
-        _ = mouse_preference_save(editor)
+        customization_adjust_scarf_component(editor, component, horizontal, shift_key_down())
         horizontal = 0
     }
     if horizontal != 0 || vertical != 0 do customization_move_focus(editor, horizontal, vertical)
@@ -440,8 +468,8 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     if editor.customization_slider_drag > 0 && canvas2d.IsMouseButtonDown(.LEFT) {
         component := editor.customization_slider_drag - 1
         bounds := customization_scarf_bounds(panel, component + 1)
-        track_x := bounds.x + 42
-        normalized := clamp((mouse.x - track_x) / max(bounds.width - 52, f32(1)), 0, 1)
+        track := customization_color_track_bounds(bounds)
+        normalized := clamp((mouse.x - track.x) / track.width, 0, 1)
         customization_set_scarf_component(editor, component, normalized)
         _ = mouse_preference_save(editor)
     }
@@ -563,7 +591,10 @@ customization_color_component :: proc(
     enabled: bool,
 ) {
     customization_card(bounds, label, false, focused)
-    track := canvas2d.Rectangle{bounds.x + 42, bounds.y + 16, bounds.width - 52, 10}
+    value_label := fmt.ctprintf("%d", int(clamp(value, 0, 1) * 100 + .5))
+    value_size := ui_measure_text(.Data, value_label, .1)
+    value_x := bounds.x + bounds.width - value_size.x - 8
+    track := customization_color_track_bounds(bounds)
     opacity := enabled ? u8(255) : u8(95)
     canvas2d.DrawRectangleRounded(track, .45, 6, ui_theme_scrim(opacity))
     fill := track
@@ -572,6 +603,13 @@ customization_color_component :: proc(
     if fill.width > 0 do canvas2d.DrawRectangleRounded(fill, .45, 6, shade)
     handle_x := track.x + track.width * clamp(value, 0, 1)
     canvas2d.DrawCircleV({handle_x, track.y + track.height * .5}, 5, ui_theme_surface_elevated(opacity))
+    ui_draw_text(
+        .Data,
+        value_label,
+        {value_x, bounds.y + (bounds.height - value_size.y) * .5 + 1},
+        .1,
+        ui_theme_text_muted(opacity),
+    )
     if !enabled {
         canvas2d.DrawRectangleRounded(bounds, .12, 8, ui_theme_scrim(86))
         if focused do canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 8, 2, ui_theme_focus())
@@ -583,7 +621,6 @@ customization_draw_3d_preview :: proc(_: ^Editor, bounds: canvas2d.Rectangle) {
     // Keeping the UI layer to chrome preserves the model's real
     // depth, lighting, animation, fur markings, and headgear geometry.
     canvas2d.DrawRectangleRounded(bounds, .035, 12, ui_theme_scrim(42))
-    canvas2d.DrawRectangleRoundedLinesEx(bounds, .035, 12, 2, ui_theme_border(235))
 }
 
 customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
@@ -599,8 +636,14 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRounded(controls_panel, .02, 10, ui_theme_surface())
     canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border())
     pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
-    hint: cstring = "SAVES AUTOMATICALLY  /  DRAG PREVIEW"
-    if controller_prompt_active(editor) do hint = "SAVES AUTOMATICALLY  /  D-PAD + A"
+    slider_focused := editor.customization_focus > CUSTOMIZATION_SCARF_START &&
+                      editor.customization_focus < CUSTOMIZATION_BACK_FOCUS
+    hint: cstring = slider_focused ? "LEFT/RIGHT ADJUST  /  SHIFT = FINE  /  TAB NEXT" :
+                                     "SAVES AUTOMATICALLY  /  ARROWS + ENTER"
+    if controller_prompt_active(editor) {
+        hint = slider_focused ? "LEFT/RIGHT ADJUST  /  LB/RB NEXT" :
+                                "SAVES AUTOMATICALLY  /  D-PAD + A"
+    }
     hint_size := ui_measure_text(.Data, hint, .2)
     ui_draw_text(
         .Data,
@@ -636,7 +679,7 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         customization_pattern_thumbnail(customization_pattern_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "HEADGEAR", {controls_x, customization_y(panel, 326)}, .4, ui_theme_text())
+    ui_draw_text(.Label, "HEADGEAR", {controls_x, customization_y(panel, 334)}, .4, ui_theme_text())
     for index in 0 ..< CUSTOMIZATION_HEADGEAR_COUNT {
         value := Mouse_Accessory(index)
         customization_card(
@@ -648,13 +691,14 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
         customization_headgear_thumbnail(customization_headgear_bounds(panel, index), value)
     }
 
-    ui_draw_text(.Label, "SCARF", {controls_x, customization_y(panel, 478)}, .4, ui_theme_text())
+    ui_draw_text(.Label, "SCARF", {controls_x, customization_y(panel, 494)}, .4, ui_theme_text())
+    scarf_swatch := editor.mouse_scarf_enabled ? editor.mouse_scarf_color : canvas2d.Color{}
     customization_card(
         customization_scarf_bounds(panel, 0),
-        editor.mouse_scarf_enabled ? "ON" : "OFF",
+        editor.mouse_scarf_enabled ? "SCARF ON" : "SCARF OFF",
         editor.mouse_scarf_enabled,
         editor.customization_focus == CUSTOMIZATION_SCARF_START,
-        editor.mouse_scarf_color,
+        scarf_swatch,
     )
     hue, saturation, lightness := customization_rgb_to_hsv(editor.mouse_scarf_color)
     customization_color_component(

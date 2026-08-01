@@ -298,7 +298,7 @@ when ODIN_TEST {
     }
 
     @(test)
-    vehicle_paint_shade_ramps_are_asymmetric_and_step_without_recoloring_unrelated_pixels :: proc(t: ^testing.T) {
+    vehicle_paint_shade_ramps_are_asymmetric_and_respect_existing_colors :: proc(t: ^testing.T) {
         for base in VEHICLE_PAINT_COLORS {
             ramp := vehicle_paint_shade_ramp(base)
             testing.expect(t, ramp[2] == base)
@@ -327,14 +327,24 @@ when ODIN_TEST {
         high_gap := int(ramp[4].r) - int(ramp[3].r)
         testing.expect(t, low_gap != high_gap)
 
-        darker, changed := vehicle_paint_shade_step({base.r, base.g, base.b, 255}, base, false)
+        darker, changed := vehicle_paint_shade_step({base.r, base.g, base.b, 255}, false)
         testing.expect(t, changed)
         testing.expect(t, darker == ramp[1])
-        lighter, lighter_changed := vehicle_paint_shade_step({darker.r, darker.g, darker.b, 255}, base, true)
+        lighter, lighter_changed := vehicle_paint_shade_step({darker.r, darker.g, darker.b, 255}, true)
         testing.expect(t, lighter_changed)
         testing.expect(t, lighter == base)
-        _, changed = vehicle_paint_shade_step({0, 255, 0, 255}, base, false)
-        testing.expect(t, !changed)
+        custom := canvas2d.Color{0, 255, 0, 255}
+        custom_darker, custom_changed := vehicle_paint_shade_step({custom.r, custom.g, custom.b, 255}, false)
+        testing.expect(t, custom_changed)
+        testing.expect(t, custom_darker == vehicle_paint_shade_ramp(custom)[1])
+
+        other_base := VEHICLE_PAINT_COLORS[6]
+        other_darker, other_changed := vehicle_paint_shade_step(
+            {other_base.r, other_base.g, other_base.b, 255},
+            false,
+        )
+        testing.expect(t, other_changed)
+        testing.expect(t, other_darker == vehicle_paint_shade_ramp(other_base)[1])
     }
 
     @(test)

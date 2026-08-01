@@ -53,11 +53,11 @@ extern "C" uint32_t adriatic_generate_optimized_mesh(
     const void *vertices, uint32_t vertex_count, uint32_t vertex_stride,
     uint32_t position_offset, uint32_t uv_offset, uint32_t part_offset,
     const uint16_t *indices, uint32_t triangle_count,
-    float *uv_by_source_vertex, uint16_t *source_by_optimized_vertex,
+    float *uv_by_optimized_vertex, uint16_t *source_by_optimized_vertex,
     uint16_t *optimized_indices, uint32_t output_vertex_capacity,
     uint32_t output_index_capacity)
 {
-    if (!vertices || !indices || !uv_by_source_vertex || vertex_count == 0 ||
+    if (!vertices || !indices || !uv_by_optimized_vertex || vertex_count == 0 ||
         !source_by_optimized_vertex || !optimized_indices || triangle_count == 0 ||
         output_vertex_capacity < vertex_count ||
         output_index_capacity < triangle_count * 3) return 0;
@@ -94,46 +94,61 @@ extern "C" uint32_t adriatic_generate_optimized_mesh(
         return 0;
     }
 
-    std::vector<uint8_t> assigned(vertex_count, 0);
     const xatlas::Mesh &mesh = atlas->meshes[0];
+    if (mesh.vertexCount > output_vertex_capacity ||
+        mesh.indexCount != triangle_count * 3) {
+        xatlas::Destroy(atlas);
+        return 0;
+    }
+
+    // xatlas may split a source vertex at a chart seam. Keep its vertex and
+    // index streams together; assigning one UV back to each source vertex and
+    // then reusing the original indices loses that seam assignment.
+    std::vector<uint8_t> keyed_vertices(
+        static_cast<size_t>(mesh.vertexCount) * vertex_stride);
+    std::vector<uint16_t> atlas_indices(mesh.indexCount);
     for (uint32_t index = 0; index < mesh.vertexCount; ++index) {
         const xatlas::Vertex &vertex = mesh.vertexArray[index];
-        if (vertex.xref >= vertex_count || vertex.atlasIndex != 0) continue;
-        uv_by_source_vertex[vertex.xref * 2] = vertex.uv[0] / float(atlas->width);
-        uv_by_source_vertex[vertex.xref * 2 + 1] = vertex.uv[1] / float(atlas->height);
-        assigned[vertex.xref] = 1;
-    }
-    for (uint32_t index = 0; index < vertex_count; ++index) {
-        if (!assigned[index]) {
+        if (vertex.xref >= vertex_count || vertex.atlasIndex != 0) {
             xatlas::Destroy(atlas);
             return 0;
         }
-    }
-    xatlas::Destroy(atlas);
-
-    // Include the generated UVs and Adriatic's part/animation metadata in the
-    // vertex key. UV seams and independently animated assemblies must remain
-    // split even when their positions happen to coincide.
-    std::vector<uint8_t> keyed_vertices(static_cast<size_t>(vertex_count) * vertex_stride);
-    std::memcpy(keyed_vertices.data(), vertices, keyed_vertices.size());
-    for (uint32_t index = 0; index < vertex_count; ++index) {
+        uint8_t *destination = keyed_vertices.data() +
+            static_cast<size_t>(index) * vertex_stride;
         std::memcpy(
-            keyed_vertices.data() + static_cast<size_t>(index) * vertex_stride + uv_offset,
-            uv_by_source_vertex + index * 2,
-            sizeof(float) * 2);
+            destination,
+            bytes + static_cast<size_t>(vertex.xref) * vertex_stride,
+            vertex_stride);
+        const float uv[2] = {
+            vertex.uv[0] / float(atlas->width),
+            vertex.uv[1] / float(atlas->height),
+        };
+        std::memcpy(destination + uv_offset, uv, sizeof(uv));
+    }
+    for (uint32_t index = 0; index < mesh.indexCount; ++index) {
+        if (mesh.indexArray[index] >= mesh.vertexCount ||
+            mesh.indexArray[index] > UINT16_MAX) {
+            xatlas::Destroy(atlas);
+            return 0;
+        }
+        atlas_indices[index] = static_cast<uint16_t>(mesh.indexArray[index]);
     }
 
-    std::vector<unsigned int> remap(vertex_count);
+    std::vector<unsigned int> remap(mesh.vertexCount);
     const size_t optimized_vertex_count = meshopt_generateVertexRemap(
-        remap.data(), indices, triangle_count * 3, keyed_vertices.data(),
-        vertex_count, vertex_stride);
+        remap.data(), atlas_indices.data(), mesh.indexCount,
+        keyed_vertices.data(), mesh.vertexCount, vertex_stride);
     if (optimized_vertex_count == 0 || optimized_vertex_count > output_vertex_capacity ||
-        optimized_vertex_count > UINT16_MAX) return 0;
+        optimized_vertex_count > UINT16_MAX) {
+        xatlas::Destroy(atlas);
+        return 0;
+    }
 
     std::vector<uint16_t> remapped_indices(triangle_count * 3);
     std::vector<uint16_t> cache_indices(triangle_count * 3);
     meshopt_remapIndexBuffer(
-        remapped_indices.data(), indices, triangle_count * 3, remap.data());
+        remapped_indices.data(), atlas_indices.data(), triangle_count * 3,
+        remap.data());
     meshopt_optimizeVertexCache(
         cache_indices.data(), remapped_indices.data(), triangle_count * 3,
         optimized_vertex_count);
@@ -146,14 +161,28 @@ extern "C" uint32_t adriatic_generate_optimized_mesh(
         optimized_indices, cache_indices.data(), triangle_count * 3,
         fetch_remap.data());
 
-    std::vector<uint16_t> representative(optimized_vertex_count, UINT16_MAX);
-    for (uint32_t source = 0; source < vertex_count; ++source) {
-        if (representative[remap[source]] == UINT16_MAX)
-            representative[remap[source]] = static_cast<uint16_t>(source);
+    std::vector<uint32_t> representative(optimized_vertex_count, UINT32_MAX);
+    for (uint32_t atlas_vertex = 0; atlas_vertex < mesh.vertexCount; ++atlas_vertex) {
+        if (representative[remap[atlas_vertex]] == UINT32_MAX)
+            representative[remap[atlas_vertex]] = atlas_vertex;
     }
-    for (uint32_t old_index = 0; old_index < optimized_vertex_count; ++old_index)
-        source_by_optimized_vertex[fetch_remap[old_index]] = representative[old_index];
+    for (uint32_t old_index = 0; old_index < optimized_vertex_count; ++old_index) {
+        const uint32_t atlas_vertex = representative[old_index];
+        if (atlas_vertex == UINT32_MAX) {
+            xatlas::Destroy(atlas);
+            return 0;
+        }
+        const uint32_t optimized_index = fetch_remap[old_index];
+        const xatlas::Vertex &vertex = mesh.vertexArray[atlas_vertex];
+        source_by_optimized_vertex[optimized_index] =
+            static_cast<uint16_t>(vertex.xref);
+        uv_by_optimized_vertex[optimized_index * 2] =
+            vertex.uv[0] / float(atlas->width);
+        uv_by_optimized_vertex[optimized_index * 2 + 1] =
+            vertex.uv[1] / float(atlas->height);
+    }
 
+    xatlas::Destroy(atlas);
     return static_cast<uint32_t>(optimized_vertex_count);
 }
 

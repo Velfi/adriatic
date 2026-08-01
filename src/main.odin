@@ -293,6 +293,7 @@ Fixture :: struct {
     circulation_structures:                         [dynamic]terrain.Structure `fixture:"-"`,
     circulation_structure_count:                    int `fixture:"-"`,
     authoring_tool:                                 Authoring_Tool,
+    selection_tool_active:                         bool `fixture:"-"`,
     editor_ui:                                      Editor_UI_State,
     sdf_obstacles:                                  [SDF_OBSTACLE_CAPACITY]SDF_Torus_Obstacle,
     sdf_obstacle_count:                             int,
@@ -1338,6 +1339,93 @@ regenerate_default_map :: proc(editor: ^Editor) {
     editor.tweak_panel_visible = false
 }
 
+default_map_respawn_mobile_actors :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    // Regeneration replaces the terrain beneath every mobile actor. Return the
+    // player and locally controlled vehicles to spawn points derived from the
+    // new map without resetting story progress or aircraft unlocks.
+    player_place(editor, runway_spawn_position(editor), .Reset)
+    editor.camera = third_person.default_camera()
+    editor.camera_pose = third_person.camera_pose(editor.player.position, editor.camera)
+    third_person.camera_set_pose(&editor.cameras, .Player, editor.camera_pose)
+    third_person.camera_set_active(&editor.cameras, .Player)
+    editor.camera_target_lock = false
+    editor.flight_control = {}
+
+    previous_fleet := editor.aircraft
+    editor.postale = postale_game.new_runtime(postale_spawn_position(editor))
+    libellula_spawn := libellula_spawn_position(editor)
+    editor.libellula = libellula_game.new_runtime({libellula_spawn.x, libellula_spawn.y, libellula_spawn.z})
+    editor.rondine = rondine_game.new_runtime(rondine_spawn_position(editor))
+    editor.aircraft = {}
+    vehicles.aircraft_fleet_add(
+        &editor.aircraft,
+        .Postale,
+        "Postale",
+        &editor.postale.vehicle,
+        aircraft_kind_was_available(&previous_fleet, .Postale),
+    )
+    when LIBELLULA_MK1_ENABLED {
+        vehicles.aircraft_fleet_add(
+            &editor.aircraft,
+            .Libellula,
+            "Libellula",
+            &editor.libellula.vehicle,
+            aircraft_kind_was_available(&previous_fleet, .Libellula),
+        )
+    }
+    vehicles.aircraft_fleet_add(
+        &editor.aircraft,
+        .Libellula_Mk2,
+        "Libellula Mk2",
+        &editor.libellula.vehicle,
+        aircraft_kind_was_available(&previous_fleet, .Libellula_Mk2),
+    )
+    vehicles.aircraft_fleet_add(
+        &editor.aircraft,
+        .Rondine,
+        "Rondine",
+        &editor.rondine.vehicle,
+        aircraft_kind_was_available(&previous_fleet, .Rondine),
+    )
+    if vehicles.aircraft_fleet_slot(&editor.aircraft, previous_fleet.active) != nil {
+        editor.aircraft.active = previous_fleet.active
+    }
+    editor.postale_visible = true
+    editor.libellula_visible = true
+    editor.rondine_visible = false
+    editor.libellula.vehicle.locked = true
+    editor.rondine.vehicle.locked = true
+    editor.aircraft_fixed_accumulator = 0
+    editor.aircraft_previous_body_valid = false
+
+    editor.car = vehicles.default_vehicle(car_spawn_position(editor))
+    editor.car.interaction_radius = 2.2
+    editor.car.exit_distance = 1.1
+    editor.car.yaw_radians = -math.PI * .5
+    editor.car_drive = {}
+    editor.car_wheels = {}
+    editor.car_impact_detector = {}
+    editor.car_audio_damage = 0
+    editor.car_audio_gearbox = {}
+    editor.car_physics_accumulator = 0
+    car_physics_teleport(editor)
+    editor.car_trailer = {}
+    editor.car_trailer_attached = true
+    editor.car_trailer_position = editor.car.position
+    editor.car_trailer_yaw = editor.car.yaw_radians
+
+    editor.boat_traffic = new_world_boat_traffic(&editor.project)
+    editor.ocean_traffic = boats.new_ocean_traffic()
+    gameplay_physics_rebuild_boats(editor)
+}
+
+aircraft_kind_was_available :: proc(fleet: ^vehicles.Aircraft_Fleet, kind: vehicles.Aircraft_Kind) -> bool {
+    slot := vehicles.aircraft_fleet_slot(fleet, kind)
+    return slot != nil && slot.available
+}
+
 default_map_regeneration_progress :: proc(editor: ^Editor) -> (f32, cstring) {
     if editor == nil do return 0, "Preparing a new archipelago"
     switch editor.default_map_regeneration_stage {
@@ -1388,6 +1476,8 @@ default_map_regeneration_step :: proc(editor: ^Editor) {
         }
         world_renderer_fixture_invalidate(editor)
         gameplay_physics_rebuild_structures(editor)
+        gameplay_physics_sync_revisions(editor)
+        default_map_respawn_mobile_actors(editor)
         editor.default_map_regeneration_active = false
         terrain_file_feedback(editor, "DEFAULT MAP REGENERATED")
     }
@@ -1600,6 +1690,7 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
 
 formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || editor.tool != .Structure do return
+    if editor.selection_tool_active do return
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
     if editor.authoring_tool == .Foliage && editor.plant_stamp_mode == .Climbing do return
     if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode do return
@@ -5568,6 +5659,7 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
             editor.structure_grab_offset_z = editor.project.structures[index].center_z - world_z
         } else {
             editor.structure_selected = -1
+            if editor.selection_tool_active do return
             editor.structure_placing = true
             editor.structure_anchor_x = structure_editor_snap(world_x, editor)
             editor.structure_anchor_z = structure_editor_snap(world_z, editor)
@@ -8245,30 +8337,6 @@ draw_instrument_dial :: proc(
 }
 
 draw_attitude_indicator :: proc(center: canvas2d.Vector2, radius, pitch, bank: f32) {
-    sky := canvas2d.Color {
-        r = 35,
-        g = 91,
-        b = 128,
-        a = 255,
-    }
-    sky_horizon := canvas2d.Color {
-        r = 74,
-        g = 158,
-        b = 184,
-        a = 255,
-    }
-    earth := canvas2d.Color {
-        r = 91,
-        g = 57,
-        b = 37,
-        a = 255,
-    }
-    earth_horizon := canvas2d.Color {
-        r = 163,
-        g = 111,
-        b = 62,
-        a = 255,
-    }
     mark := canvas2d.Color {
         r = 240,
         g = 248,
@@ -8283,54 +8351,15 @@ draw_attitude_indicator :: proc(center: canvas2d.Vector2, radius, pitch, bank: f
     }
     draw_instrument_bezel(center, radius)
 
-    // Rasterize the moving card as rotated chords. Each chord is constrained
-    // to the dial circle, so bank and pitch never produce the rectangular
-    // color bars that made the old indicator read like a placeholder.
     scale := radius / 48
     inner_radius := radius - 4
     pitch_offset := clamp(pitch * 42 * scale, -inner_radius * .72, inner_radius * .72)
-    c, s := math.cos(bank), math.sin(bank)
-    scan_count := max(1, int(math.ceil(f64(inner_radius * 2))))
-    for scan in 0 ..< scan_count {
-        card_y := -inner_radius + (f32(scan) + .5) * inner_radius * 2 / f32(scan_count)
-        half_chord := f32(math.sqrt(f64(max(inner_radius * inner_radius - card_y * card_y, 0))))
-        line_center := canvas2d.Vector2{center.x + s * card_y, center.y - c * card_y}
-        left := canvas2d.Vector2{line_center.x - c * half_chord, line_center.y - s * half_chord}
-        right := canvas2d.Vector2{line_center.x + c * half_chord, line_center.y + s * half_chord}
-        distance_from_horizon := clamp(math.abs(card_y - pitch_offset) / max(inner_radius * .85, f32(1)), 0, 1)
-        card_color := color_lerp(earth_horizon, earth, distance_from_horizon)
-        if card_y >= pitch_offset {
-            card_color = color_lerp(sky_horizon, sky, distance_from_horizon)
-        }
-        canvas2d.DrawLineEx(left, right, 1.35, card_color)
-    }
-
-    tangent := canvas2d.Vector2{c, s}
-    normal := canvas2d.Vector2{s, -c}
-    horizon_center := canvas2d.Vector2{center.x + normal.x * pitch_offset, center.y + normal.y * pitch_offset}
-    horizon_half := f32(math.sqrt(f64(max(inner_radius * inner_radius - pitch_offset * pitch_offset, 0))))
-    draw_antialiased_line(
-        {horizon_center.x - tangent.x * horizon_half, horizon_center.y - tangent.y * horizon_half},
-        {horizon_center.x + tangent.x * horizon_half, horizon_center.y + tangent.y * horizon_half},
-        2,
-        mark,
+    effect := Attitude_Gauge_Effect{pitch_offset / inner_radius, bank, scale / inner_radius}
+    canvas2d.draw_effect_quad(
+        {center.x - inner_radius, center.y - inner_radius, inner_radius * 2, inner_radius * 2},
+        {255, 255, 255, 255},
+        canvas2d.effect_payload(ATTITUDE_GAUGE_EFFECT, &effect),
     )
-
-    // Ten-degree pitch ladder, attached to the moving card.
-    ladder_spacing := 10 * scale
-    for step in -2 ..= 2 {
-        if step == 0 do continue
-        ladder_y := pitch_offset + f32(step) * ladder_spacing
-        if math.abs(ladder_y) >= inner_radius - 8 do continue
-        ladder_half := (step % 2 == 0 ? f32(16) : f32(10)) * scale
-        ladder_center := canvas2d.Vector2{center.x + normal.x * ladder_y, center.y + normal.y * ladder_y}
-        draw_antialiased_line(
-            {ladder_center.x - tangent.x * ladder_half, ladder_center.y - tangent.y * ladder_half},
-            {ladder_center.x + tangent.x * ladder_half, ladder_center.y + tangent.y * ladder_half},
-            1.3,
-            mark,
-        )
-    }
 
     // Fixed bank scale and lubber pointer make roll readable even when the
     // horizon is near the edge of the dial.
@@ -8344,13 +8373,6 @@ draw_attitude_indicator :: proc(center: canvas2d.Vector2, radius, pitch, bank: f
         }
         draw_antialiased_line(inner, outer, degrees == 0 ? f32(2.5) : f32(1.5), mark)
     }
-
-    // The white chevron belongs to the moving card. Against the fixed bank
-    // scale it gives an immediate, mechanical read of roll direction.
-    bank_tip := canvas2d.Vector2{center.x + normal.x * (radius - 15), center.y + normal.y * (radius - 15)}
-    bank_base := canvas2d.Vector2{center.x + normal.x * (radius - 23), center.y + normal.y * (radius - 23)}
-    draw_antialiased_line({bank_base.x - tangent.x * 4, bank_base.y - tangent.y * 4}, bank_tip, 1.8, mark)
-    draw_antialiased_line(bank_tip, {bank_base.x + tangent.x * 4, bank_base.y + tangent.y * 4}, 1.8, mark)
 
     // Fixed miniature-aircraft symbol.
     draw_antialiased_line({center.x - 29 * scale, center.y}, {center.x - 8 * scale, center.y}, 3.5, accent)
@@ -13591,6 +13613,7 @@ adriatic_run :: proc(
             if !fixture_editor_file_dialog_is_open(editor) {
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
             if !imgui_captures_keyboard() {
+                if canvas2d.IsKeyPressed(.S) && !control_key_down() do authoring_select_selection_tool(editor)
                 if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
                 if canvas2d.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
                 if canvas2d.IsKeyPressed(.H) {
@@ -13727,6 +13750,7 @@ adriatic_run :: proc(
                     )
                 }
             } else if editor.tool == .Structure &&
+               !editor.selection_tool_active &&
                (editor.authoring_tool == .Formations || editor.authoring_tool == .Foliage) {
                 wheel := viewport_wheel
                 if shift_key_down() {
@@ -13808,12 +13832,16 @@ adriatic_run :: proc(
            !editor.farm_paint_mode &&
            !editor.wreck_paint_mode &&
            !editor.climbing_leaf_paint_mode &&
+           !editor.selection_tool_active &&
            editor.authoring_tool != .Formations &&
            (editor.authoring_tool != .Foliage || editor.foliage_hedgerow_mode) &&
            !editor.road_mode &&
            !editor.curve_mode &&
            !editor.curve_drawing &&
            editor.curve_point_count == 0 {
+            structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        }
+        if !note_placement_consumes_input && editor.selection_tool_active {
             structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         }
         crash_severity := f32(0)

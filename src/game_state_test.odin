@@ -2,8 +2,12 @@ package main
 
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
+import flight "../packages/flight"
+import libellula_game "../packages/libellula"
 import marina "../packages/marina"
+import postale_game "../packages/postale"
 import roads "../packages/roads"
+import rondine_game "../packages/rondine"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -274,6 +278,48 @@ when ODIN_TEST {
         testing.expect(t, gameplay_physics_player_needs_teleport(spawn, {}, true))
         testing.expect(t, !gameplay_physics_player_needs_teleport(spawn, spawn, true))
         testing.expect(t, gameplay_physics_player_needs_teleport(spawn, spawn, false))
+    }
+
+    @(test)
+    default_map_respawn_repositions_player_and_vehicles_without_resetting_progress :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        terrain.init_project(&editor.project)
+        defer terrain.destroy_project(&editor.project)
+
+        editor.story_state.romance = .Meeting
+        editor.postale = postale_game.new_runtime({100, 100, 100})
+        editor.libellula = libellula_game.new_runtime({200, 200, 200})
+        editor.rondine = rondine_game.new_runtime({300, 300, 300})
+        vehicles.aircraft_fleet_add(&editor.aircraft, .Postale, "Postale", &editor.postale.vehicle, true)
+        vehicles.aircraft_fleet_add(&editor.aircraft, .Libellula_Mk2, "Libellula Mk2", &editor.libellula.vehicle, true)
+        vehicles.aircraft_fleet_add(&editor.aircraft, .Rondine, "Rondine", &editor.rondine.vehicle, false)
+        editor.aircraft.active = .Libellula_Mk2
+        editor.car = vehicles.default_vehicle({400, 400, 400})
+        editor.pilot.mode = .Driving
+        editor.pilot.vehicle = &editor.car
+        editor.car.driver = &editor.pilot
+
+        default_map_respawn_mobile_actors(editor)
+
+        testing.expect_value(t, editor.story_state.romance, story.Romance_Stage.Meeting)
+        testing.expect_value(t, editor.player.position, runway_spawn_position(editor))
+        testing.expect_value(t, editor.pilot.mode, vehicles.Occupancy_Mode.On_Foot)
+        testing.expect(t, editor.pilot.vehicle == nil)
+        testing.expect_value(t, editor.postale.body.position, postale_spawn_position(editor))
+        libellula_spawn := libellula_spawn_position(editor)
+        testing.expect_value(
+            t,
+            editor.libellula.body.position,
+            flight.Vec3{libellula_spawn.x, libellula_spawn.y, libellula_spawn.z},
+        )
+        testing.expect_value(t, editor.rondine.body.position, rondine_spawn_position(editor))
+        testing.expect_value(t, editor.car.position, car_spawn_position(editor))
+        testing.expect(t, editor.car_trailer_attached)
+        testing.expect_value(t, editor.aircraft.active, vehicles.Aircraft_Kind.Libellula_Mk2)
+        testing.expect(t, vehicles.aircraft_fleet_slot(&editor.aircraft, .Postale).vehicle == &editor.postale.vehicle)
+        testing.expect(t, vehicles.aircraft_fleet_slot(&editor.aircraft, .Libellula_Mk2).available)
+        testing.expect(t, !vehicles.aircraft_fleet_slot(&editor.aircraft, .Rondine).available)
     }
 
     @(test)

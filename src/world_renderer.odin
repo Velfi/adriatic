@@ -27397,7 +27397,7 @@ world_petal_particles :: proc(editor: ^Editor) {
 }
 
 customization_preview_camera_pose :: proc() -> third_person.Camera_Pose {
-    return {position = {2.28, 1.18, 3.08}, target = {1.86, .38, 0}}
+    return {position = {2.24, 1.10, 2.77}, target = {1.86, .38, 0}}
 }
 
 world_vehicle_particle :: proc(

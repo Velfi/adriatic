@@ -62,6 +62,54 @@ VertexOutput vertex_main(VertexInput input) {
 
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
+    if (push.texture_hatch.y == 1.0) {
+        float2 p = float2(input.uv.x * 2.0 - 1.0, 1.0 - input.uv.y * 2.0);
+        float radius = length(p);
+        if (radius > 1.0) discard;
+
+        float pitch = push.hatch_shape.x;
+        float bank = push.hatch_shape.y;
+        float gauge_scale = push.hatch_shape.z;
+        float sine_bank, cosine_bank;
+        sincos(bank, sine_bank, cosine_bank);
+        float2 card = float2(
+            cosine_bank * p.x - sine_bank * p.y,
+            sine_bank * p.x + cosine_bank * p.y
+        );
+        float horizon_distance = abs(card.y - pitch);
+        float gradient = saturate(horizon_distance / .85);
+        float3 sky = srgb_to_linear(float3(35, 91, 128) / 255.0);
+        float3 sky_horizon = srgb_to_linear(float3(74, 158, 184) / 255.0);
+        float3 earth = srgb_to_linear(float3(91, 57, 37) / 255.0);
+        float3 earth_horizon = srgb_to_linear(float3(163, 111, 62) / 255.0);
+        float3 mark = srgb_to_linear(float3(240, 248, 235) / 255.0);
+        float3 color = card.y >= pitch
+            ? lerp(sky_horizon, sky, gradient)
+            : lerp(earth_horizon, earth, gradient);
+
+        float pixel = max(fwidth(card.y), 0.0001);
+        float horizon_line = 1.0 - smoothstep(pixel * .35, pixel * 1.35, horizon_distance);
+        float ladder_line = 0.0;
+        [unroll]
+        for (int step = -2; step <= 2; ++step) {
+            if (step == 0) continue;
+            float ladder_y = pitch + float(step) * 10.0 * gauge_scale;
+            float half_width = (abs(step) == 2 ? 16.0 : 10.0) * gauge_scale;
+            float line_distance = max(abs(card.y - ladder_y), abs(card.x) - half_width);
+            ladder_line = max(ladder_line, 1.0 - smoothstep(pixel * .2, pixel, line_distance));
+        }
+        color = lerp(color, mark, max(horizon_line, ladder_line));
+
+        // The moving card's roll pointer is generated here as well, leaving
+        // only fixed instrument furniture for the CPU overlay.
+        float pointer_y = 1.0 - 19.0 * gauge_scale;
+        float pointer_half = 4.0 * gauge_scale;
+        float2 pointer = card - float2(0.0, pointer_y);
+        float pointer_edge = abs(pointer.x) + abs(pointer.y + 4.0 * gauge_scale) - pointer_half;
+        float pointer_mask = 1.0 - smoothstep(pixel * .2, pixel * 1.2, abs(pointer_edge));
+        color = lerp(color, mark, pointer_mask);
+        return float4(color, 1.0);
+    }
     float4 texel = ui_texture.Sample(ui_sampler, input.uv);
     if (push.texture_hatch.x > 1.5) {
         return float4(input.color.rgb, input.color.a * texel.r);

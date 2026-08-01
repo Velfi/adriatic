@@ -792,6 +792,30 @@ postale_takeoff_distance_responds_to_weight_and_wind :: proc(t: ^testing.T) {
 }
 
 @(test)
+postale_crosswind_takeoff_does_not_release_stored_ground_yaw :: proc(t: ^testing.T) {
+    runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
+    basis := flight.basis_from_orientation(runtime.body.orientation)
+    crosswind := basis.right * 12
+    took_off := false
+
+    for _ in 0 ..< 3600 {
+        postale.step(&runtime, {throttle_up = true, pitch = .35}, 0, 1.0 / 60.0, crosswind)
+        if !runtime.grounded {
+            took_off = true
+            break
+        }
+    }
+
+    testing.expect(t, took_off)
+    testing.expectf(
+        t,
+        math.abs(runtime.body.angular_velocity_world.y) < .25,
+        "crosswind takeoff released %.3f rad/s of stored ground yaw",
+        runtime.body.angular_velocity_world.y,
+    )
+}
+
+@(test)
 postale_requires_rotation_input_to_take_off :: proc(t: ^testing.T) {
     runtime := postale.new_runtime(flight.Vec3{0, postale.GROUND_CLEARANCE, 0})
     for _ in 0 ..< 360 {

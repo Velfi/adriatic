@@ -9,7 +9,7 @@ when ODIN_OS == .Windows {
 }
 
 foreign adriatic_mesh {
-    adriatic_generate_optimized_mesh :: proc(vertices: rawptr, vertex_count, vertex_stride, position_offset, uv_offset, part_offset: u32, indices: ^u16, triangle_count: u32, uv_by_source_vertex: ^f32, source_by_optimized_vertex, optimized_indices: ^u16, output_vertex_capacity, output_index_capacity: u32) -> u32 ---
+    adriatic_generate_optimized_mesh :: proc(vertices: rawptr, vertex_count, vertex_stride, position_offset, uv_offset, part_offset: u32, indices: ^u16, triangle_count: u32, uv_by_optimized_vertex: ^f32, source_by_optimized_vertex, optimized_indices: ^u16, output_vertex_capacity, output_index_capacity: u32) -> u32 ---
 }
 
 Mesh_Optimization_Cache :: struct {
@@ -90,7 +90,7 @@ mesh_finalize :: proc(
     for optimized_index in 0 ..< cache.optimized_vertex_count {
         source_index := int(sources[optimized_index])
         scratch[optimized_index] = mesh.vertices[source_index]
-        scratch[optimized_index].uv = {uvs[source_index * 2], uvs[source_index * 2 + 1]}
+        scratch[optimized_index].uv = {uvs[optimized_index * 2], uvs[optimized_index * 2 + 1]}
     }
     copy(mesh.vertices[:cache.optimized_vertex_count], scratch[:cache.optimized_vertex_count])
     for triangle_index in 0 ..< mesh.triangle_count {
