@@ -1,8 +1,8 @@
 # Pinned compiler contract for this project.
 ODIN_FORK_REPOSITORY=https://github.com/catermujo/Odin.git
-ODIN_FORK_COMMIT=ee17d542d96752c0eb3495d4add51b80b1441aec
-ODIN_FORK_VERSION=catermujo-ee17d542
-ODIN_VERSION_OUTPUT=dev-2026-08:ee17d542d
+ODIN_FORK_COMMIT=0195592ac9bbf532e82dee3efb2e52d3f70737b6
+ODIN_FORK_VERSION=catermujo-0195592ac
+ODIN_VERSION_OUTPUT=dev-2026-08:0195592ac
 OLS_FORK_REPOSITORY=https://github.com/catermujo/ols.git
 OLS_FORK_COMMIT=86c112b1c6cceb19e2b31d50f6ac2ac004c94ab6
 OLS_FORK_VERSION=catermujo-86c112b1
