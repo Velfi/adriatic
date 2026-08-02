@@ -66,13 +66,23 @@ configuration_is_clamped_and_capacity_bounded :: proc(t: ^testing.T) {
     config.meander = 7
     config.spring_radius = 0
     plan := generate(config)
-    testing.expect_value(t, plan.point_count, MAX_POINTS)
+    testing.expect_value(t, plan.point_count, 451)
     testing.expect_value(t, plan.config.length, f32(900))
     testing.expect_value(t, plan.config.segment_length, f32(2))
     testing.expect_value(t, plan.config.gradient, f32(.002))
     testing.expect_value(t, plan.config.discharge, f32(2))
     testing.expect_value(t, plan.config.meander, f32(1))
     testing.expect_value(t, plan.config.spring_radius, f32(1))
+}
+
+@(test)
+long_rivers_retain_terrain_scale_centerline_spacing :: proc(t: ^testing.T) {
+    config := test_config()
+    config.length = 900
+    config.segment_length = 2
+    plan := generate(config)
+    testing.expect_value(t, plan.point_count, 451)
+    testing.expect(t, plan.point_count < MAX_POINTS)
 }
 
 @(test)

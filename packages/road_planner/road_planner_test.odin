@@ -151,3 +151,26 @@ planner_rejects_routes_without_a_legal_grade :: proc(t: ^testing.T) {
     )
     testing.expect(t, !result.found)
 }
+
+@(test)
+planner_rewards_perpendicular_water_crossings :: proc(t: ^testing.T) {
+    heights: [7 * 7]f32
+    for &height in heights do height = 1
+    for z in 2 ..= 4 do for x in 0 ..< 7 do heights[z * 7 + x] = -1
+    grid := Grid {
+        origin_x = 0,
+        origin_z = 0,
+        width = 7,
+        height = 7,
+        sea_level = 0,
+        heights = heights[:],
+    }
+
+    perpendicular := water_crossing_obliqueness(grid, 3, 2, 0, 1)
+    diagonal := water_crossing_obliqueness(grid, 3, 2, 1, 1)
+    parallel := water_crossing_obliqueness(grid, 3, 2, 1, 0)
+
+    testing.expect_value(t, perpendicular, f32(0))
+    testing.expect(t, diagonal > perpendicular && diagonal < parallel)
+    testing.expect_value(t, parallel, f32(1))
+}

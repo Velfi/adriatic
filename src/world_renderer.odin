@@ -24,6 +24,7 @@ import plants "../packages/plants"
 import plazas "../packages/plazas"
 import render_graph "../packages/render_graph"
 import roads "../packages/roads"
+import spring_river "../packages/spring_river"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -39,6 +40,7 @@ import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 import gltf "zelda_engine:gltf"
+import physics "zelda_engine:physics"
 import render3d "zelda_engine:render3d"
 import resources "zelda_engine:render_resources"
 
@@ -3175,6 +3177,96 @@ world_ocean :: proc(editor: ^Editor) {
     }
 }
 
+world_river_water_spline :: proc(editor: ^Editor, spline: ^terrain.River_Water_Spline) {
+    if editor == nil || spline == nil || spline.point_count < 2 do return
+    count := clamp(spline.point_count, 0, terrain.RIVER_WATER_POINT_CAPACITY)
+    // The terrain clipmap interpolates independently from the authored river
+    // cross-sections. Give the visible surface enough overlap and clearance to
+    // remain continuous through that envelope, especially from an aircraft.
+    // This is presentation margin only; the narrower sampled bed still owns
+    // terrain carving and traversal.
+    surface_width_scale := f32(.58)
+    surface_min_half_width := f32(1.25)
+    surface_clearance := f32(.12)
+    color := canvas2d.Color{41, 132, 154, 250}
+
+    // The generator's first width describes a spring basin, not the outgoing
+    // channel. Rendering it as a strip cross-section produces long wedges as
+    // that width contracts over the first few tightly-spaced points. Keep the
+    // basin round and clamp the strip to its settled downstream width.
+    source := spline.points[0]
+    // The outgoing ribbon begins inside this basin. Keep the basin a hair
+    // above that overlapping strip so depth testing has one stable owner at
+    // the source instead of alternating between coplanar water triangles.
+    source_cap_bias := f32(.004)
+    source_y := max(source.water_level, editor.project.sea_level) + surface_clearance + source_cap_bias
+    source_center := third_person.Vec3{source.position[0], source_y, source.position[1]}
+    source_radius := max(source.width * .5, surface_min_half_width)
+    source_segments := 20
+    for segment in 0 ..< source_segments {
+        angle_a := f32(segment) / f32(source_segments) * math.PI * 2
+        angle_b := f32(segment + 1) / f32(source_segments) * math.PI * 2
+        edge_a := source_center + third_person.Vec3{math.cos(angle_a) * source_radius, 0, math.sin(angle_a) * source_radius}
+        edge_b := source_center + third_person.Vec3{math.cos(angle_b) * source_radius, 0, math.sin(angle_b) * source_radius}
+        world_water_triangle_colored(source_center, edge_b, edge_a, color, color, color)
+    }
+    settled_index := clamp(count / 12, 1, count - 1)
+    source_channel_half_width := max(
+        spline.points[settled_index].width * surface_width_scale,
+        surface_min_half_width,
+    )
+
+    for point_index in 0 ..< count - 1 {
+        a, b := spline.points[point_index], spline.points[point_index + 1]
+        // The ocean owns the final sea-level portion. Stop emitting the river
+        // ribbon once both cross-sections have merged into that plane.
+        if a.water_level <= editor.project.sea_level + .01 &&
+           b.water_level <= editor.project.sea_level + .01 {
+            continue
+        }
+        previous := spline.points[max(point_index - 1, 0)].position
+        next := spline.points[min(point_index + 2, count - 1)].position
+        tangent_a := spring_river.normalize_or(a.position - previous, b.position - a.position)
+        tangent_b := spring_river.normalize_or(next - b.position, b.position - a.position)
+        side_a := spring_river.Vec2{-tangent_a[1], tangent_a[0]}
+        side_b := spring_river.Vec2{-tangent_b[1], tangent_b[0]}
+        half_width_a := max(a.width * surface_width_scale, surface_min_half_width)
+        half_width_b := max(b.width * surface_width_scale, surface_min_half_width)
+        half_width_a = min(half_width_a, source_channel_half_width)
+        half_width_b = min(half_width_b, source_channel_half_width)
+        y_a := max(a.water_level, editor.project.sea_level) + surface_clearance
+        y_b := max(b.water_level, editor.project.sea_level) + surface_clearance
+        left_a := third_person.Vec3{
+            a.position[0] + side_a[0] * half_width_a,
+            y_a,
+            a.position[1] + side_a[1] * half_width_a,
+        }
+        left_b := third_person.Vec3{
+            b.position[0] + side_b[0] * half_width_b,
+            y_b,
+            b.position[1] + side_b[1] * half_width_b,
+        }
+        right_b := third_person.Vec3{
+            b.position[0] - side_b[0] * half_width_b,
+            y_b,
+            b.position[1] - side_b[1] * half_width_b,
+        }
+        right_a := third_person.Vec3{
+            a.position[0] - side_a[0] * half_width_a,
+            y_a,
+            a.position[1] - side_a[1] * half_width_a,
+        }
+        world_water_quad(left_a, left_b, right_b, right_a, color)
+    }
+}
+
+world_river_water :: proc(editor: ^Editor) {
+    if editor == nil do return
+    for &spline in editor.project.river_water_splines {
+        world_river_water_spline(editor, &spline)
+    }
+}
+
 world_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p := [8]third_person.Vec3 {
@@ -5659,6 +5751,10 @@ world_architecture_roof_style :: proc(structure: terrain.Structure) -> architect
     if identity.region == .Aegean && !buildings.is_landmark(identity) {
         return .Parapet
     }
+    if identity.region == .Adriatic &&
+       (identity.archetype == .Farmstead || identity.archetype == .Barn_Granary) {
+        return .Low_Gable
+    }
     return architecture.roof_style_for_seed(structure.seed)
 }
 
@@ -5964,6 +6060,18 @@ world_architecture_roof :: proc(
     }
     roof_bytes := architecture.architecture_roof_color(structure.seed, landmark)
     terracotta := canvas2d.Color{roof_bytes[0], roof_bytes[1], roof_bytes[2], roof_bytes[3]}
+    agricultural_stone_roof :=
+        identity.region == .Adriatic &&
+        (identity.archetype == .Farmstead || identity.archetype == .Barn_Granary) &&
+        structure.seed % 4 != 0
+    if agricultural_stone_roof {
+        stone_roof_palette := [3]canvas2d.Color {
+            {142, 139, 125, 255},
+            {156, 151, 134, 255},
+            {129, 132, 123, 255},
+        }
+        terracotta = stone_roof_palette[int((structure.seed >> 3) % 3)]
+    }
     // The ridge follows the building depth. Gable roofs continue the left and
     // right walls to their ridge apexes; hip roofs close the front and rear
     // ends against the shortened ridge.
@@ -6157,7 +6265,7 @@ world_architecture_roof :: proc(
         }
     }
 
-    if lod == .Near {
+    if lod == .Near && !agricultural_stone_roof {
         // These are stylized groups of barrel tiles rather than literal
         // one-tile meshes, but their module must remain small enough that a
         // residential roof reads as courses instead of four giant panels.
@@ -6210,7 +6318,7 @@ world_architecture_roof :: proc(
             )
         }
     }
-    if lod != .Far {
+    if lod != .Far && !agricultural_stone_roof {
         // Mediterranean roofs finish their exposed seams with convex cap
         // tiles. Besides giving the ridge a readable silhouette, these cover
         // the tiny gaps where independently tessellated roof faces meet.
@@ -10846,6 +10954,12 @@ world_architecture_oriented :: proc(
         child.width = mass.width
         child.depth = mass.depth
         child.height = max(f32(0), structure.height * mass.height_scale)
+        if identity.archetype == .Farmstead || identity.archetype == .Barn_Granary {
+            child.color = identity.region == .Aegean ? [4]u8{178, 173, 153, 255} : [4]u8{184, 176, 151, 255}
+            if identity.archetype == .Farmstead {
+                child.color = identity.region == .Aegean ? [4]u8{236, 232, 216, 255} : [4]u8{204, 194, 169, 255}
+            }
+        }
         layout := architecture.architecture_opening_layout(structure, 0, 0)
         // Even a one-mass footprint may intentionally narrow or reshape the
         // authored lot (campanile and Cycladic bell). Render that resolved
@@ -10903,6 +11017,24 @@ world_architecture_oriented :: proc(
         child.height = max(f32(0), structure.height * mass.height_scale)
         // Keep palette identity while decoupling repeated openings and tiles.
         child.seed = structure.seed + u32(mass_index * 747796405)
+        agricultural :=
+            compound_identity.archetype == .Farmstead || compound_identity.archetype == .Barn_Granary
+        if agricultural {
+            if compound_identity.region == .Aegean {
+                // The inhabited frontage cell is limewashed; stable and
+                // storage cells retain their native stone and remain visually
+                // subordinate to the house.
+                child.color = (
+                    mass_index == frontage_index && compound_identity.archetype == .Farmstead ?
+                    [4]u8{236, 232, 216, 255} : [4]u8{171, 166, 146, 255}
+                )
+            } else {
+                child.color = (
+                    mass_index == frontage_index && compound_identity.archetype == .Farmstead ?
+                    [4]u8{204, 194, 169, 255} : [4]u8{181, 174, 151, 255}
+                )
+            }
+        }
         if compound_identity.archetype == .Mixed_Use_Dwelling && mass_index != frontage_index {
             // Private rear ranges stay subordinate to the commercial street
             // bar. A consistent parapet avoids pitched secondary roofs
@@ -21840,7 +21972,29 @@ world_vehicle_transform :: #force_inline proc(
     }
 }
 
+// The authored car mesh faces local -Z, while Jolt vehicles face local +Z.
+// Mesh local +X likewise maps to Jolt local -X. Apply that fixed 180-degree
+// authoring conversion to the physical quaternion instead of decomposing and
+// reconstructing an approximate Euler pose.
+world_vehicle_transform_physics :: #force_inline proc(
+    origin: third_person.Vec3,
+    rotation: physics.Quat,
+) -> World_Vehicle_Transform {
+    physical_right := car_physics_rotate_vector(rotation, {1, 0, 0})
+    physical_up := car_physics_rotate_vector(rotation, {0, 1, 0})
+    physical_forward := car_physics_rotate_vector(rotation, {0, 0, 1})
+    return {
+        origin = origin,
+        right_basis = {-physical_right[0], -physical_right[1], -physical_right[2]},
+        up_basis = {physical_up[0], physical_up[1], physical_up[2]},
+        forward_basis = {physical_forward[0], physical_forward[1], physical_forward[2]},
+    }
+}
+
 world_car_transform :: #force_inline proc(editor: ^Editor) -> World_Vehicle_Transform {
+    if editor.car_physics_body_rotation_valid {
+        return world_vehicle_transform_physics(editor.car.position, editor.car_physics_body_rotation)
+    }
     return world_vehicle_transform(
         editor.car.position,
         editor.car.yaw_radians,
@@ -21953,6 +22107,66 @@ trailer_part_color :: #force_inline proc(editor: ^Editor, part: vehicles.Aircraf
     return color
 }
 
+car_authored_wheel_index :: #force_inline proc(position: [3]f32) -> int {
+    front := position[2] < 0
+    // Authored mesh +X maps to Jolt -X and authored -Z maps to Jolt +Z.
+    if front do return position[0] < 0 ? 0 : 1
+    return position[0] < 0 ? 2 : 3
+}
+
+car_authored_wheel_center :: #force_inline proc(index: int) -> [3]f32 {
+    x := index == 0 || index == 2 ? -vehicles.CAR_WHEEL_TRACK_HALF : vehicles.CAR_WHEEL_TRACK_HALF
+    z := index < 2 ? -vehicles.CAR_WHEELBASE_HALF : vehicles.CAR_WHEELBASE_HALF
+    return {x, vehicles.CAR_WHEEL_CENTER_Y, z}
+}
+
+car_wheel_vertex_world :: #force_inline proc(
+    editor: ^Editor,
+    position: [3]f32,
+) -> third_person.Vec3 {
+    index := car_authored_wheel_index(position)
+    wheel := editor.car_wheels[index]
+    center := car_authored_wheel_center(index)
+    local := position - center
+    spin_cos, spin_sin := math.cos(wheel.rotation), math.sin(wheel.rotation)
+    spun_y := local[1] * spin_cos - local[2] * spin_sin
+    spun_z := local[1] * spin_sin + local[2] * spin_cos
+
+    physical_right := car_physics_rotate_vector(editor.car_physics_body_rotation, {1, 0, 0})
+    physical_up := car_physics_rotate_vector(editor.car_physics_body_rotation, {0, 1, 0})
+    physical_forward := car_physics_rotate_vector(editor.car_physics_body_rotation, {0, 0, 1})
+    steer_cos, steer_sin := math.cos(wheel.steering), math.sin(wheel.steering)
+    wheel_right := physical_right * steer_cos - physical_forward * steer_sin
+    wheel_forward := physical_forward * steer_cos + physical_right * steer_sin
+    return {
+        wheel.position[0] - local[0] * wheel_right[0] + spun_y * physical_up[0] - spun_z * wheel_forward[0],
+        wheel.position[1] - local[0] * wheel_right[1] + spun_y * physical_up[1] - spun_z * wheel_forward[1],
+        wheel.position[2] - local[0] * wheel_right[2] + spun_y * physical_up[2] - spun_z * wheel_forward[2],
+    }
+}
+
+car_wheel_normal_world :: #force_inline proc(
+    editor: ^Editor,
+    position, normal: [3]f32,
+) -> third_person.Vec3 {
+    index := car_authored_wheel_index(position)
+    wheel := editor.car_wheels[index]
+    spin_cos, spin_sin := math.cos(wheel.rotation), math.sin(wheel.rotation)
+    spun_y := normal[1] * spin_cos - normal[2] * spin_sin
+    spun_z := normal[1] * spin_sin + normal[2] * spin_cos
+    physical_right := car_physics_rotate_vector(editor.car_physics_body_rotation, {1, 0, 0})
+    physical_up := car_physics_rotate_vector(editor.car_physics_body_rotation, {0, 1, 0})
+    physical_forward := car_physics_rotate_vector(editor.car_physics_body_rotation, {0, 0, 1})
+    steer_cos, steer_sin := math.cos(wheel.steering), math.sin(wheel.steering)
+    wheel_right := physical_right * steer_cos - physical_forward * steer_sin
+    wheel_forward := physical_forward * steer_cos + physical_right * steer_sin
+    return {
+        -normal[0] * wheel_right[0] + spun_y * physical_up[0] - spun_z * wheel_forward[0],
+        -normal[0] * wheel_right[1] + spun_y * physical_up[1] - spun_z * wheel_forward[1],
+        -normal[0] * wheel_right[2] + spun_y * physical_up[2] - spun_z * wheel_forward[2],
+    }
+}
+
 world_car :: proc(editor: ^Editor) {
     car_position := editor.car.position
     trailer_position := editor.car_trailer_position
@@ -22014,13 +22228,19 @@ world_car :: proc(editor: ^Editor) {
             case .Headlight, .Tail_Light:
                 roughness = .30
             }
+            a_position := a.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_vertex_world(editor, a.position) : world_vehicle_vertex_world(car_transform, a.position)
+            b_position := b.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_vertex_world(editor, b.position) : world_vehicle_vertex_world(car_transform, b.position)
+            c_position := c.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_vertex_world(editor, c.position) : world_vehicle_vertex_world(car_transform, c.position)
+            a_normal := a.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_normal_world(editor, a.position, a.normal) : world_vehicle_normal_world(car_transform, a.normal)
+            b_normal := b.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_normal_world(editor, b.position, b.normal) : world_vehicle_normal_world(car_transform, b.normal)
+            c_normal := c.part == .Wheel && editor.car_physics_body_rotation_valid ? car_wheel_normal_world(editor, c.position, c.normal) : world_vehicle_normal_world(car_transform, c.normal)
             world_triangle_smooth_lit(
-                world_vehicle_vertex_world(car_transform, a.position),
-                world_vehicle_vertex_world(car_transform, b.position),
-                world_vehicle_vertex_world(car_transform, c.position),
-                world_vehicle_normal_world(car_transform, a.normal),
-                world_vehicle_normal_world(car_transform, b.normal),
-                world_vehicle_normal_world(car_transform, c.normal),
+                a_position,
+                b_position,
+                c_position,
+                a_normal,
+                b_normal,
+                c_normal,
                 color,
                 color,
                 color,
@@ -26766,6 +26986,7 @@ world_plant_stamp_attachment_preview :: proc(editor: ^Editor) {
 world_brush :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_brush")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
+    if editor.selection_tool_active do return
     formation_brush := editor.authoring_tool == .Formations || editor.authoring_tool == .Foliage
     if editor.in_map ||
        editor.road_mode ||
@@ -27284,6 +27505,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
     world_ocean(editor)
+    world_river_water(editor)
     infrastructure_shadow_first := len(world_renderer.vertices)
     for index in 0 ..< editor.default_marina_count {
         world_shoreline_harbor_facility(editor, &editor.default_harbors[index])
@@ -27329,6 +27551,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_town_mice(editor)
     world_settlement_inhabitants(editor)
     world_settlement_patios(editor)
+    world_farm_compounds(editor)
     world_settlement_cemetery(editor)
     world_authored_farmland(editor)
     world_authored_wrecks(editor)

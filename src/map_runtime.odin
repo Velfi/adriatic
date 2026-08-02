@@ -159,6 +159,7 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
     terrain.destroy_project(&fixture.project)
     fixture.project = artifact.project
     artifact.project.structures = nil
+    terrain.rebuild_default_river_water_splines(&fixture.project, artifact.seeds)
     fixture.settlement_plan = artifact.settlement_plan
     fixture.marina_authored = artifact.marina_authored
     fixture.marina_authored_plan = artifact.marina_authored_plan

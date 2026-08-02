@@ -6432,6 +6432,26 @@ settlement_village_program :: proc(
 ) -> int {
     if purposes == nil do return 0
     count := 0
+    if reason == .Agricultural_Terrace {
+        // Reserve coherent farm compounds before domestic infill consumes
+        // their yards and field gates. Barn ranges immediately follow their
+        // hosts so every agricultural service building has an assignment.
+        purposes[0] = .Farmstead
+        purposes[1] = .Farmstead
+        purposes[2] = .Barn_Granary
+        purposes[3] = .Barn_Granary
+        purposes[4] = .Barn_Granary
+        purposes[5] = .Inn_Shop
+        purposes[6] = .Workshop
+        count = 7
+        dwelling_count := 7 + int(seed % 4)
+        for _ in 0 ..< dwelling_count {
+            purposes[count] = .Dwelling
+            count += 1
+        }
+        purposes[count] = .Mill
+        return count + 1
+    }
     purposes[count] = .Inn_Shop
     purposes[count + 1] = .Workshop
     count += 2
@@ -6448,13 +6468,7 @@ settlement_village_program :: proc(
         purposes[count + 3] = .Storehouse
         count += 4
     case .Agricultural_Terrace:
-        purposes[count] = .Farmstead
-        purposes[count + 1] = .Farmstead
-        purposes[count + 2] = .Barn_Granary
-        purposes[count + 3] = .Barn_Granary
-        purposes[count + 4] = .Barn_Granary
-        purposes[count + 5] = .Mill
-        count += 6
+        // Handled above so compounds reserve their envelopes first.
     case .Upland_Pastoral:
         purposes[count] = .Farmstead
         purposes[count + 1] = .Barn_Granary
@@ -6513,7 +6527,12 @@ settlement_village_purpose_dimensions :: proc(
         depth = clamp(frontage * settlement_sample_triangular(rng, 1.15, 1.3, 1.55), 5.5, 16)
     }
     switch purpose {
-    case .Barn_Granary, .Storehouse:
+    case .Barn_Granary:
+        // Mediterranean barns are compact stable/granary ranges rather than
+        // freestanding hay halls. Keep the public face broad but low-volume.
+        frontage = clamp(frontage * 1.04, 7.2, region == .Aegean ? f32(12) : f32(14))
+        depth = clamp(depth * .82, 6.4, region == .Aegean ? f32(10) : f32(11.5))
+    case .Storehouse:
         frontage = clamp(frontage * 1.15, 5.5, region == .Aegean ? f32(11) : f32(13))
         depth = clamp(depth * 1.12, 7, region == .Aegean ? f32(16) : f32(18))
     case .Workshop, .Inn_Shop, .Fishery, .Mill:
@@ -6944,8 +6963,9 @@ settlement_plan_generate_village_buildings :: proc(
         best_route_index := -1
         best_frontage_kind := Settlement_Village_Frontage_Kind.None
         best_court_outward: [2]f32
-        resource_slot := 0
+        resource_slot, barn_slot := 0, 0
         for prior_purpose in program[:program_index] {
+            if prior_purpose == .Barn_Granary do barn_slot += 1
             if prior_purpose == .Barn_Granary ||
                prior_purpose == .Storehouse ||
                prior_purpose == .Mill ||
@@ -7012,15 +7032,28 @@ settlement_plan_generate_village_buildings :: proc(
             }
             resource_purpose :=
                 purpose == .Barn_Granary || purpose == .Storehouse || purpose == .Mill || purpose == .Fishery
+            farm_barn_purpose :=
+                purpose == .Barn_Granary &&
+                (plan.village_reason == .Agricultural_Terrace || plan.village_reason == .Upland_Pastoral)
             if resource_purpose {
                 // A working yard is a focus, not a tiny packing circle. Allow
                 // later barns and stores to occupy its outer edge while their
                 // access paths continue to share the cart connector.
                 radius_low, radius_high = aegean_form ? f32(6) : f32(7), f32(34)
             }
+            host_compound, host_compound_found := farm_compound_host_for_barn(
+                &result,
+                plan.request.region,
+                barn_slot,
+                project,
+            )
+            if farm_barn_purpose && host_compound_found {
+                radius_low, radius_high = aegean_form ? f32(4.8) : f32(5.8), aegean_form ? f32(10) : f32(12)
+            }
             amount := f32(candidate_index / 12) / 12
             radius := radius_low + (radius_high - radius_low) * clamp(amount, 0, 1)
             placement_center := resource_purpose ? resource_center : cohort_center
+            if farm_barn_purpose && host_compound_found do placement_center = host_compound.yard_center
             if aegean_form && purpose == .Dwelling && cohort_route_index < 0 {
                 cluster_index := (program_index - 2) % 3
                 cluster_angle := phase + f32(cluster_index) * f32(math.TAU / 3)
@@ -7151,6 +7184,12 @@ settlement_plan_generate_village_buildings :: proc(
             } else if gradient_length > .001 {
                 rotation = f32(math.atan2(f64(-gradient[0]), f64(gradient[1])))
             }
+            if farm_barn_purpose && host_compound_found {
+                // Stable/store doors address the shared work yard. The long
+                // wall remains approximately tangent to the yard edge.
+                rotation = host_compound.rotation
+                rotation = settlement_rotation_face_point(rotation, {x, z}, host_compound.yard_center)
+            }
             if (civic_route_frontage || (cohort_route_index >= 0 && candidate_route_found)) && !resource_purpose {
                 rotation = settlement_rotation_face_point(rotation, {x, z}, candidate_route_origin)
             } else {
@@ -7172,6 +7211,65 @@ settlement_plan_generate_village_buildings :: proc(
             candidate_structure := terrain.structure_make(x, z, frontage, depth, 0, 1)
             candidate_structure.width, candidate_structure.depth = frontage, depth
             candidate_structure.rotation = rotation
+            allowed_compound := farm_barn_purpose && host_compound_found ? &host_compound : nil
+            if purpose != .Farmstead && !farm_compound_structure_clear(
+                &result,
+                plan.request.region,
+                x,
+                z,
+                frontage,
+                depth,
+                rotation,
+                allowed_compound,
+                project,
+            ) {
+                continue
+            }
+            if purpose == .Farmstead {
+                compound := farm_compound_derive(plan.request.region, candidate_structure, project)
+                if !settlement_structure_footprint_on_land(
+                       project,
+                       compound.envelope_center[0],
+                       compound.envelope_center[1],
+                       compound.envelope_width,
+                       compound.envelope_depth,
+                       compound.rotation,
+                       .35,
+                   ) ||
+                   !settlement_structure_clear(
+                       project,
+                       &result,
+                       compound.envelope_center[0],
+                       compound.envelope_center[1],
+                       compound.envelope_width,
+                       compound.envelope_depth,
+                       compound.rotation,
+                       .45,
+                   ) ||
+                   !farm_compound_envelope_clear(&result, compound, project) {
+                    continue
+                }
+            }
+            if farm_barn_purpose && host_compound_found {
+                // Barn ranges belong within the host compound but must leave
+                // the circular threshing floor and field gate unobstructed.
+                if !farm_compound_contains_point(host_compound, x, z, 0) ||
+                   !settlement_oriented_rectangles_clear(
+                       x,
+                       z,
+                       frontage,
+                       depth,
+                       rotation,
+                       host_compound.threshing_center[0],
+                       host_compound.threshing_center[1],
+                       host_compound.threshing_radius * 2,
+                       host_compound.threshing_radius * 2,
+                       0,
+                       .6,
+                   ) {
+                    continue
+                }
+            }
             if !settlement_structure_committed_roads_clear(project, candidate_structure) do continue
             if !settlement_structure_plazas_clear(plan, candidate_structure) do continue
             if settlement_access_structure_overlaps_alley(&result, candidate_structure) do continue
@@ -7240,6 +7338,8 @@ settlement_plan_generate_village_buildings :: proc(
             }
             if harbor_quay_candidate {
                 score = f32(candidate_index) * .02
+            } else if farm_barn_purpose && host_compound_found {
+                score = radius * .35
             } else if resource_purpose {
                 // Barns, mills, stores, and fisheries share one legible
                 // working yard instead of becoming unrelated outer outliers.

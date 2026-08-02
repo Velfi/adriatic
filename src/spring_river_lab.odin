@@ -3,7 +3,6 @@ package main
 import atmosphere "../packages/atmosphere"
 import estuaries "../packages/estuaries"
 import spring_river "../packages/spring_river"
-import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -42,6 +41,22 @@ spring_river_lab_base_height :: #force_inline proc(x, z: f32) -> f32 {
     return 18.8 - downstream * 12.7 + valley + undulation
 }
 
+spring_river_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> Lab_Terrain_Sample {
+    base := spring_river_lab_base_height(world_x, world_z)
+    nx, nz := spring_river_lab_estuary_coordinates(world_x, world_z)
+    if math.abs(nx) <= 1 && nz >= -1 && nz <= 1 {
+        base = estuaries.sample_elevation(&spring_river_lab_estuary, nx, nz)
+    }
+    river := spring_river.sample(&spring_river_lab_plan, {world_x, world_z})
+    carved := base
+    if river.bank_influence > 0 {
+        bank_target := river.water_level + .20 + (1 - river.bank_influence) * 1.25
+        carved = min(base, base + (bank_target - base) * river.bank_influence)
+        if river.inside_water do carved = min(carved, river.bed_height)
+    }
+    return {height = carved, material = -river.wetness * 1.4 + (1 - river.bank_influence) * .18}
+}
+
 spring_river_lab_regenerate :: proc(editor: ^Editor) {
     estuaries.destroy(&spring_river_lab_estuary)
     spring_river_lab_plan = spring_river.generate(
@@ -51,7 +66,7 @@ spring_river_lab_regenerate :: proc(editor: ^Editor) {
             direction = {.10, 1},
             source_height = 14.5,
             length = 230,
-            segment_length = 5,
+            segment_length = 2,
             gradient = spring_river_lab_gradient,
             discharge = spring_river_lab_discharge,
             meander = spring_river_lab_meander,
@@ -67,36 +82,17 @@ spring_river_lab_regenerate :: proc(editor: ^Editor) {
     estuary_config.seed = spring_river.hash(spring_river_lab_seed ~ 0x45535455)
     spring_river_lab_estuary = estuaries.generate(estuary_config)
     if editor == nil do return
-    editor.project.sea_level = spring_river_lab_estuary.config.mean_sea_level
-    for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
-        data := &editor.project.levels[level_index]
-        half_grid := f32(terrain.TERRAIN_RESOLUTION - 1) * .5 * data.cell_size
-        data.origin_x = -half_grid
-        data.origin_z = -half_grid
-        for z_index in 0 ..< terrain.TERRAIN_RESOLUTION {
-            world_z := data.origin_z + f32(z_index) * data.cell_size
-            for x_index in 0 ..< terrain.TERRAIN_RESOLUTION {
-                world_x := data.origin_x + f32(x_index) * data.cell_size
-                index := z_index * terrain.TERRAIN_RESOLUTION + x_index
-                base := spring_river_lab_base_height(world_x, world_z)
-                nx, nz := spring_river_lab_estuary_coordinates(world_x, world_z)
-                if math.abs(nx) <= 1 && nz >= -1 && nz <= 1 {
-                    base = estuaries.sample_elevation(&spring_river_lab_estuary, nx, nz)
-                }
-                river := spring_river.sample(&spring_river_lab_plan, {world_x, world_z})
-                carved := base
-                if river.bank_influence > 0 {
-                    bank_target := river.water_level + .20 + (1 - river.bank_influence) * 1.25
-                    carved = min(base, base + (bank_target - base) * river.bank_influence)
-                    if river.inside_water do carved = min(carved, river.bed_height)
-                }
-                data.heights[index] = carved
-                data.material[index] = -river.wetness * 1.4 + (1 - river.bank_influence) * .18
-            }
-        }
-    }
-    editor.project.revision += 1
-    world_terrain_invalidate_all(editor)
+    _ = lab_terrain_load(
+        editor,
+        {
+            half_extent_x = 210,
+            half_extent_z = 150,
+            sea_level = spring_river_lab_estuary.config.mean_sea_level,
+            outside_height = 12,
+            outside_material = .18,
+        },
+        spring_river_lab_terrain_sample,
+    )
 }
 
 spring_river_lab_exit :: proc(_: ^Editor) {

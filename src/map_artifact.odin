@@ -154,6 +154,7 @@ map_artifact_get_u64 :: proc(data: []byte, offset: int) -> u64 {
 map_artifact_portable_config :: proc() -> hs.Portable_Config {
     config := hs.portable_default_config()
     config.exact_schema = true
+    config.exclusion_tag = "map"
     return config
 }
 
@@ -189,6 +190,24 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
         }
         for material in level.material {
             if math.is_nan(material) || math.is_inf(material, 0) do return "terrain material is not finite", false
+        }
+    }
+    for &spline in artifact.project.river_water_splines {
+        if spline.point_count < 0 || spline.point_count > terrain.RIVER_WATER_POINT_CAPACITY {
+            return "river water spline point count is invalid", false
+        }
+        for point in spline.points[:spline.point_count] {
+            if math.is_nan(point.position[0]) ||
+               math.is_inf(point.position[0], 0) ||
+               math.is_nan(point.position[1]) ||
+               math.is_inf(point.position[1], 0) ||
+               math.is_nan(point.water_level) ||
+               math.is_inf(point.water_level, 0) ||
+               math.is_nan(point.width) ||
+               math.is_inf(point.width, 0) ||
+               point.width < 0 {
+                return "river water spline point is invalid", false
+            }
         }
     }
     return "", true

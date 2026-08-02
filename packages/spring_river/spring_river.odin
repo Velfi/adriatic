@@ -2,7 +2,9 @@ package spring_river
 
 import "core:math"
 
-MAX_POINTS :: 96
+// Long generated rivers use 2 m centerline spacing to stay near the terrain's
+// 1 m authored grid. Leave enough capacity for the maximum supported length.
+MAX_POINTS :: 512
 
 Vec2 :: [2]f32
 
@@ -108,7 +110,11 @@ generate :: proc(requested: Config) -> Plan {
         lateral := (broad + detail + noise) * config.meander * config.length * .055 * envelope
         // Limit local bends so downstream segments never fold back on themselves.
         lateral = clamp(lateral, previous_lateral - step * .7, previous_lateral + step * .7)
-        if index == 0 do lateral = 0
+        // Both ends are contract points: the source stays on its requested
+        // position and the mouth must meet the estuary inlet exactly. With a
+        // fine centerline the per-segment bend clamp otherwise prevents the
+        // last point from returning all the way to zero lateral offset.
+        if index == 0 || index == plan.point_count - 1 do lateral = 0
         previous_lateral = lateral
         flow := config.discharge * (.72 + progress * .46)
         width :=

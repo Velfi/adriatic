@@ -824,6 +824,61 @@ settlement_village_reserves_lane_before_house_frontages :: proc(t: ^testing.T) {
 }
 
 @(test)
+settlement_agricultural_village_groups_compact_barns_with_farmsteads :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    project.road_graph = {}
+    center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    for region in Settlement_Region {
+        plan := Settlement_Plan {
+            request = {region = region, scale = .Village, seed = 16, center = {center, center}, radius = 120},
+            neighborhood_count = 1,
+            village_reason = .Agricultural_Terrace,
+        }
+        plan.neighborhoods[0] = {
+            center      = {center, center + 8},
+            radius      = 28,
+            density     = .36,
+            suitability = 1,
+            tissue      = region == .Aegean ? .Contour_Terrace : .Dalmatian_Planned,
+        }
+        plan.routes[0].geometry.points[0], plan.routes[0].geometry.points[1] =
+            {center - 100, center}, {center + 100, center}
+        plan.routes[0].geometry.count = 2
+        plan.routes[0].class = .Street
+        plan.routes[0].width = 3.5
+        plan.routes[0].shoulder = .8
+        plan.routes[0].drivable = true
+        plan.route_count = 1
+
+        rng := settlement_rng_new(16 ~ u32(region) * 0x9e37)
+        city := settlement_plan_generate_village_buildings(&plan, project, &rng)
+        farmsteads, barns := 0, 0
+        for structure in city.structures[:city.count] {
+            identity := architecture.architecture_resolve_legacy_identity(structure)
+            if identity.archetype == .Farmstead do farmsteads += 1
+            if identity.archetype != .Barn_Granary do continue
+            barns += 1
+            testing.expect(t, structure.width <= (region == .Aegean ? f32(12) : f32(14)) + .001)
+            testing.expect(t, structure.depth <= (region == .Aegean ? f32(10) : f32(11.5)) + .001)
+            nearest_yard := f32(1e30)
+            for host in city.structures[:city.count] {
+                host_identity := architecture.architecture_resolve_legacy_identity(host)
+                if host_identity.archetype != .Farmstead do continue
+                compound := farm_compound_derive(region, host, project)
+                nearest_yard = min(nearest_yard, linalg.length([2]f32{structure.center_x, structure.center_z} - compound.yard_center))
+            }
+            testing.expectf(t, nearest_yard <= 13, "barn is detached from every farm yard region=%v distance=%.2f", region, nearest_yard)
+        }
+        testing.expectf(t, farmsteads >= 1, "agricultural village has no compound host region=%v", region)
+        testing.expectf(t, barns >= 1, "agricultural village has no compact barn range region=%v", region)
+        testing.expect(t, farmsteads <= 2 && barns <= 3)
+        architecture.city_plan_destroy(&city)
+    }
+}
+
+@(test)
 settlement_aegean_civic_buildings_face_their_route_on_sloped_ground :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)

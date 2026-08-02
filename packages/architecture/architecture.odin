@@ -1965,9 +1965,8 @@ architecture_opening_layout :: proc(
     }
     barn_range := identity.archetype == .Barn_Granary
     if barn_range {
-        // Barn walls need both low working ventilation and a high hayloft
-        // opening. A single warehouse-sill row leaves tall barns blank above
-        // their cart doors and hides the usable upper storage level.
+        // Mediterranean stable and storage cells use a sparse single band of
+        // deeply recessed vents. They do not advertise a northern hayloft.
         profile = {
             front_bays_min    = 1,
             front_bays_max    = 2,
@@ -1975,13 +1974,13 @@ architecture_opening_layout :: proc(
             rear_bays_max     = 2,
             side_bays_min     = 1,
             side_bays_max     = 1,
-            window_width_min  = .70,
-            window_width_max  = 1.05,
-            window_height_min = .85,
-            window_height_max = 1.35,
+            window_width_min  = .48,
+            window_width_max  = .82,
+            window_height_min = .55,
+            window_height_max = .95,
             opening_ratio_min = .01,
             opening_ratio_max = .06,
-            rows_max          = 2,
+            rows_max          = 1,
             service           = true,
         }
     }
@@ -2242,11 +2241,10 @@ architecture_opening_layout :: proc(
             door_width = clamp(span * .13, f32(1.8), f32(2.8))
             door_height := clamp(wall_height * .075, f32(3.0), f32(4.0))
             if primary_face && identity.archetype == .Barn_Granary {
-                // The main threshing aisle must admit a loaded cart, not just
-                // a person. Its broader leaf also becomes the organizing void
-                // for the sparse front-vent rhythm.
-                door_width = clamp(span * .26, f32(4.2), f32(6.0))
-                door_height = clamp(wall_height * .22, f32(4.5), f32(6.0))
+                // A compact double plank leaf admits a handcart or small farm
+                // cart without turning the elevation into a hay-hall portal.
+                door_width = clamp(span * .20, f32(2.6), f32(3.8))
+                door_height = clamp(wall_height * .18, f32(3.2), f32(4.2))
             } else if primary_face && identity.archetype == .Storehouse {
                 door_width = clamp(span * .20, f32(3.4), f32(5.0))
                 door_height = clamp(wall_height * .19, f32(4.0), f32(5.5))
@@ -2272,8 +2270,8 @@ architecture_opening_layout :: proc(
                 door_width = clamp(span * .24, f32(3.4), f32(5.0))
                 door_height = clamp(wall_height * .25, f32(3.8), f32(5.0))
             } else if barn_aisle_entry {
-                door_width = clamp(span * .24, f32(3.2), f32(4.8))
-                door_height = clamp(wall_height * .28, f32(3.8), f32(5.0))
+                door_width = clamp(span * .20, f32(2.2), f32(3.2))
+                door_height = clamp(wall_height * .24, f32(3.0), f32(3.8))
             } else if post_parcel_annex_entry {
                 // The side annex is the cart-facing parcel dock, while the
                 // centered sorting range retains a staff-scale yard door.
@@ -3571,6 +3569,34 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
     variant := structure.seed
 
     if archetype == .Farmstead &&
+       identity.region == .Aegean &&
+       structure.width >= 12 &&
+       structure.depth >= 12 {
+        // Cycladic farmhouses are accretions of compact cells, not a pitched
+        // domestic bar with a northern service wing. Step two useful rooms
+        // down the contour and leave a yard-facing notch between them.
+        side := variant & 1 == 0 ? f32(-1) : f32(1)
+        result.masses[0] = {0, structure.depth * .22, structure.width, structure.depth * .56, 1}
+        result.masses[1] = {
+            side * structure.width * .27,
+            -structure.depth * .18,
+            max(structure.width * .46, f32(4.5)),
+            max(structure.depth * .52, f32(4.5)),
+            .72,
+        }
+        result.count = 2
+        if structure.width >= 20 && structure.depth >= 18 && variant % 3 == 0 {
+            result.masses[2] = {
+                -side * structure.width * .31,
+                -structure.depth * .24,
+                max(structure.width * .34, f32(4.5)),
+                max(structure.depth * .38, f32(4.5)),
+                .58,
+            }
+            result.count = 3
+        }
+    } else if archetype == .Farmstead &&
+       identity.region == .Adriatic &&
        structure.width >= 20 &&
        structure.depth >= 18 &&
        structure.height >= ARCHITECTURE_MIN_OPENING_WALL_HEIGHT / .58 &&
@@ -3588,7 +3614,7 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             .58,
         }
         result.count = 2
-    } else if (archetype == .Dwelling || archetype == .Farmstead) &&
+    } else if (archetype == .Dwelling || (archetype == .Farmstead && identity.region == .Adriatic)) &&
        structure.width >= 26 &&
        structure.depth >= 20 &&
        variant % 8 == 3 {
@@ -3610,7 +3636,7 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             .72,
         }
         result.count = 3
-    } else if (archetype == .Dwelling || archetype == .Farmstead) &&
+    } else if (archetype == .Dwelling || (archetype == .Farmstead && identity.region == .Adriatic)) &&
        structure.width >= 18 &&
        structure.depth >= 18 &&
        variant % 8 == 6 {
@@ -3626,7 +3652,7 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             .82,
         }
         result.count = 2
-    } else if (archetype == .Dwelling || archetype == .Farmstead) &&
+    } else if (archetype == .Dwelling || (archetype == .Farmstead && identity.region == .Adriatic)) &&
        structure.width >= 12 &&
        structure.depth >= 14 &&
        variant % 4 == 1 {
@@ -3843,22 +3869,32 @@ architecture_footprint :: #force_inline proc(structure: terrain.Structure) -> Ar
             .68,
         }
         result.count = 2
-    } else if archetype == .Barn_Granary &&
-       structure.width >= 12 &&
-       structure.height >= ARCHITECTURE_MIN_OPENING_WALL_HEIGHT / .58 {
-        if structure.depth >= 12 {
-            wing_width := max(structure.width * .28, f32(4.5))
-            overlap := min(max(f32(2.0), structure.width * .10), wing_width * .45)
-            main_width := structure.width - wing_width + overlap
-            wing_x := structure.width * .5 - wing_width * .5
-            side := (variant & 1) == 0 ? f32(-1) : f32(1)
-            result.masses[0] = {-side * (wing_width - overlap) * .5, 0, main_width, structure.depth, 1}
+    } else if archetype == .Barn_Granary && structure.width >= 11 && structure.depth >= 10 {
+        // Mediterranean agricultural stores are compact masonry ranges. The
+        // Adriatic uses a low attached work cell; the Aegean steps a smaller
+        // flat-roof stable down the contour. Both keep a broad internal join
+        // without inheriting the former full-height hay hall and side aisle.
+        side := (variant & 1) == 0 ? f32(-1) : f32(1)
+        if identity.region == .Aegean {
+            result.masses[0] = {0, structure.depth * .12, structure.width, structure.depth * .76, 1}
+            if structure.width >= 14 && structure.depth >= 12 {
+                result.masses[1] = {
+                    side * structure.width * .24,
+                    -structure.depth * .24,
+                    max(structure.width * .52, f32(4.5)),
+                    max(structure.depth * .40, f32(4.5)),
+                    .62,
+                }
+                result.count = 2
+            }
+        } else if structure.width >= 14 && structure.depth >= 12 && variant % 3 != 2 {
+            result.masses[0] = {0, structure.depth * .10, structure.width, structure.depth * .72, 1}
             result.masses[1] = {
-                side * wing_x,
-                structure.depth * .08,
-                wing_width,
-                max(structure.depth * .70, f32(4.5)),
-                .62,
+                side * structure.width * .25,
+                -structure.depth * .23,
+                max(structure.width * .50, f32(4.5)),
+                max(structure.depth * .42, f32(4.5)),
+                .64,
             }
             result.count = 2
         }

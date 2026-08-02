@@ -2,7 +2,6 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import rocky "../packages/coastal_ecology"
-import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -16,56 +15,44 @@ rocky_beach_config: rocky.Config
 rocky_beach_tide_phase := f32(.12)
 rocky_beach_tide_running := true
 
+rocky_beach_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> Lab_Terrain_Sample {
+    cell := rocky.sample(&rocky_beach_plan, world_x, world_z)
+    material: f32
+    switch cell.habitat {
+    case .Subtidal:
+        material = -.72
+    case .Reef:
+        material = -.32
+    case .Rock_Platform:
+        material = -.20 - cell.algae * .22
+    case .Tidepool:
+        material = -.48
+    case .Pocket_Beach:
+        material = -.94
+    case .Wrack_Shore:
+        material = -.68
+    case .Backshore:
+        material = -.08
+    case .Coastal_Scrub:
+        material = .58
+    }
+    return {height = cell.height, material = material}
+}
+
 rocky_beach_regenerate :: proc(editor: ^Editor) {
     rocky_beach_plan = rocky.generate(rocky_beach_config)
     if editor == nil do return
-    editor.project.sea_level = rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase)
-    for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
-        data := &editor.project.levels[level_index]
-        half_grid := f32(terrain.TERRAIN_RESOLUTION - 1) * .5 * data.cell_size
-        data.origin_x, data.origin_z = -half_grid, -half_grid
-        for z in 0 ..< terrain.TERRAIN_RESOLUTION {
-            world_z := data.origin_z + f32(z) * data.cell_size
-            for x in 0 ..< terrain.TERRAIN_RESOLUTION {
-                world_x := data.origin_x + f32(x) * data.cell_size
-                index := z * terrain.TERRAIN_RESOLUTION + x
-                inside :=
-                    math.abs(world_x) <= rocky_beach_config.width * .5 &&
-                    math.abs(world_z) <= rocky_beach_config.depth * .5
-                if inside {
-                    cell := rocky.sample(&rocky_beach_plan, world_x, world_z)
-                    data.heights[index] = cell.height
-                    switch cell.habitat {
-                    case .Subtidal:
-                        data.material[index] = -.72
-                    case .Reef:
-                        data.material[index] = -.32
-                    case .Rock_Platform:
-                        data.material[index] = -.20 - cell.algae * .22
-                    case .Tidepool:
-                        data.material[index] = -.48
-                    case .Pocket_Beach:
-                        data.material[index] = -.94
-                    case .Wrack_Shore:
-                        data.material[index] = -.68
-                    case .Backshore:
-                        data.material[index] = -.08
-                    case .Coastal_Scrub:
-                        data.material[index] = .58
-                    }
-                } else {
-                    distance := max(
-                        math.abs(world_x) - rocky_beach_config.width * .5,
-                        math.abs(world_z) - rocky_beach_config.depth * .5,
-                    )
-                    data.heights[index] = 5.5 + max(distance, f32(0)) * .025
-                    data.material[index] = -.08
-                }
-            }
-        }
-    }
-    editor.project.revision += 1
-    world_terrain_invalidate_all(editor)
+    _ = lab_terrain_load(
+        editor,
+        {
+            half_extent_x = rocky_beach_config.width * .5,
+            half_extent_z = rocky_beach_config.depth * .5,
+            sea_level = rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase),
+            outside_height = 5.5,
+            outside_material = -.08,
+        },
+        rocky_beach_lab_terrain_sample,
+    )
 }
 
 rocky_beach_lab_configure :: proc(editor: ^Editor, target: string) -> bool {

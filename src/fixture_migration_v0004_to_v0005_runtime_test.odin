@@ -529,7 +529,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 19 &&
+            FIXTURE_SCHEMA_VERSION == 20 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
@@ -554,7 +554,11 @@ when ODIN_TEST {
             production.steps[17].from_version == 18 &&
             production.steps[17].to_version == 19 &&
             production.steps[17].wrapper == fixture_migration_step_v0018_to_v0019 &&
-            production.steps[17].change_id == "field-add:adriatic:src.Fixture.map_source",
+            production.steps[17].change_id == "field-add:adriatic:src.Fixture.map_source" &&
+            production.steps[18].from_version == 19 &&
+            production.steps[18].to_version == 20 &&
+            production.steps[18].wrapper == fixture_migration_step_v0019_to_v0020 &&
+            production.steps[18].change_id == "field-add:adriatic:src.Fixture.car_handling_model",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(

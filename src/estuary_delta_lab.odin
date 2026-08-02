@@ -2,7 +2,6 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import estuaries "../packages/estuaries"
-import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -28,7 +27,15 @@ Estuary_Lab_View :: enum u8 {
     Eye_Level,
 }
 
-ESTUARY_LAB_LAYER_NAMES := [7]string{"ELEVATION", "WET / DRY", "FLOW", "SEDIMENT", "EROSION / DEPOSITION", "WETLANDS", "CHANNEL ORDER"}
+ESTUARY_LAB_LAYER_NAMES := [7]string {
+    "ELEVATION",
+    "WET / DRY",
+    "FLOW",
+    "SEDIMENT",
+    "EROSION / DEPOSITION",
+    "WETLANDS",
+    "CHANNEL ORDER",
+}
 
 estuary_lab_config: estuaries.Config
 estuary_lab_plan: estuaries.Plan
@@ -39,10 +46,14 @@ estuary_lab_view: Estuary_Lab_View
 
 estuary_lab_source_to_world :: proc(x, z: f32, orientation: estuaries.Orientation) -> (f32, f32) {
     switch orientation {
-    case .North: return x, z
-    case .East:  return z, -x
-    case .South: return -x, -z
-    case .West:  return -z, x
+    case .North:
+        return x, z
+    case .East:
+        return z, -x
+    case .South:
+        return -x, -z
+    case .West:
+        return -z, x
     }
     return x, z
 }
@@ -52,9 +63,9 @@ estuary_lab_set_camera_look_at :: proc(editor: ^Editor, eye, target: third_perso
     distance := max(f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z))), f32(1))
     editor.editor_focus = target
     editor.editor_camera = {
-        yaw_radians = f32(math.atan2(f64(delta.x), f64(delta.z))),
+        yaw_radians   = f32(math.atan2(f64(delta.x), f64(delta.z))),
         pitch_radians = f32(math.asin(f64(clamp(delta.y / distance, -1, 1)))),
-        distance = distance,
+        distance      = distance,
     }
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
@@ -100,7 +111,11 @@ estuary_lab_configure_camera :: proc(editor: ^Editor) {
         eye_source_x := estuary_lab_channel_center(eye_source_z)
         target_source_x := estuary_lab_marsh_focus(target_source_z)
         eye_x, eye_z := estuary_lab_source_to_world(eye_source_x, eye_source_z, estuary_lab_config.orientation)
-        target_x, target_z := estuary_lab_source_to_world(target_source_x, target_source_z, estuary_lab_config.orientation)
+        target_x, target_z := estuary_lab_source_to_world(
+            target_source_x,
+            target_source_z,
+            estuary_lab_config.orientation,
+        )
         sea := estuary_lab_plan.config.mean_sea_level
         estuary_lab_set_camera_look_at(
             editor,
@@ -154,25 +169,24 @@ estuary_lab_material :: proc(height: f32) -> f32 {
     return -bar_fade - wetness * .72
 }
 
+estuary_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> Lab_Terrain_Sample {
+    height := estuary_lab_height(world_x, world_z)
+    return {height = height, material = estuary_lab_material(height)}
+}
+
 estuary_lab_apply_terrain :: proc(editor: ^Editor) {
-    editor.project.sea_level = estuary_lab_plan.config.mean_sea_level
-    for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
-        data := &editor.project.levels[level_index]
-        half_grid := f32(terrain.TERRAIN_RESOLUTION - 1) * .5 * data.cell_size
-        data.origin_x, data.origin_z = -half_grid, -half_grid
-        for z in 0 ..< terrain.TERRAIN_RESOLUTION {
-            world_z := data.origin_z + f32(z) * data.cell_size
-            for x in 0 ..< terrain.TERRAIN_RESOLUTION {
-                world_x := data.origin_x + f32(x) * data.cell_size
-                i := z * terrain.TERRAIN_RESOLUTION + x
-                height := estuary_lab_height(world_x, world_z)
-                data.heights[i] = height
-                data.material[i] = estuary_lab_material(height)
-            }
-        }
-    }
-    editor.project.revision += 1
-    world_terrain_invalidate_all(editor)
+    _ = lab_terrain_load(
+        editor,
+        {
+            half_extent_x    = ESTUARY_LAB_HALF_X,
+            // Leave room for the optional source channel north of the map.
+            half_extent_z    = ESTUARY_LAB_HALF_Z * 1.35,
+            sea_level        = estuary_lab_plan.config.mean_sea_level,
+            outside_height   = estuary_lab_plan.config.mean_sea_level - 4,
+            outside_material = -1.5,
+        },
+        estuary_lab_terrain_sample,
+    )
 }
 
 estuary_lab_regenerate :: proc(editor: ^Editor) -> bool {
@@ -220,9 +234,7 @@ world_estuary_delta_lab :: proc(_: ^Editor) {
         world_z := -ESTUARY_LAB_HALF_Z + f32(z_index) * spacing
         for x_index in 0 ..= samples {
             mixed := estuaries.hash(
-                estuary_lab_plan.selected_seed ~
-                u32(x_index + 1) * 0x9e3779b9 ~
-                u32(z_index + 1) * 0x85ebca6b,
+                estuary_lab_plan.selected_seed ~ u32(x_index + 1) * 0x9e3779b9 ~ u32(z_index + 1) * 0x85ebca6b,
             )
             // Broad deterministic bands make beds and openings instead of a
             // salt-and-pepper distribution of isolated plants.
@@ -294,7 +306,8 @@ estuary_delta_lab_process_input :: proc(editor: ^Editor) {
             changed = true
         }
         if canvas2d.CheckCollisionPointRec(mouse, estuary_lab_button(40, 202, 118)) {
-            estuary_lab_config.archetype = estuary_lab_config.archetype == .Tidal_Estuary ? .Distributary_Delta : .Tidal_Estuary
+            estuary_lab_config.archetype =
+                estuary_lab_config.archetype == .Tidal_Estuary ? .Distributary_Delta : .Tidal_Estuary
             changed = true
         }
         if canvas2d.CheckCollisionPointRec(mouse, estuary_lab_button(168, 202, 118)) {
@@ -303,10 +316,13 @@ estuary_delta_lab_process_input :: proc(editor: ^Editor) {
         }
     }
     changed = estuary_lab_slider_update(estuary_lab_slider_bounds(0), &estuary_lab_config.branching, 0, 1) || changed
-    changed = estuary_lab_slider_update(estuary_lab_slider_bounds(1), &estuary_lab_config.mouth_width, .08, .45) || changed
-    changed = estuary_lab_slider_update(estuary_lab_slider_bounds(2), &estuary_lab_config.sediment_load, 0, 1) || changed
+    changed =
+        estuary_lab_slider_update(estuary_lab_slider_bounds(1), &estuary_lab_config.mouth_width, .08, .45) || changed
+    changed =
+        estuary_lab_slider_update(estuary_lab_slider_bounds(2), &estuary_lab_config.sediment_load, 0, 1) || changed
     changed = estuary_lab_slider_update(estuary_lab_slider_bounds(3), &estuary_lab_config.relief, 2, 30) || changed
-    changed = estuary_lab_slider_update(estuary_lab_slider_bounds(4), &estuary_lab_config.mean_sea_level, -5, 5) || changed
+    changed =
+        estuary_lab_slider_update(estuary_lab_slider_bounds(4), &estuary_lab_config.mean_sea_level, -5, 5) || changed
     changed = estuary_lab_slider_update(estuary_lab_slider_bounds(5), &estuary_lab_config.tidal_range, 0, 4) || changed
     if changed do estuary_lab_stale = true
     if regenerate do _ = estuary_lab_regenerate(editor)
@@ -323,7 +339,14 @@ estuary_lab_color :: proc(index: int) -> canvas2d.Color {
     case .Wet_Dry:
         return elevation <= sea ? canvas2d.Color{38, 145, 188, 255} : canvas2d.Color{174, 158, 100, 255}
     case .Flow:
-        speed := f32(math.sqrt(f64(estuary_lab_plan.flow_x[index] * estuary_lab_plan.flow_x[index] + estuary_lab_plan.flow_z[index] * estuary_lab_plan.flow_z[index])))
+        speed := f32(
+            math.sqrt(
+                f64(
+                    estuary_lab_plan.flow_x[index] * estuary_lab_plan.flow_x[index] +
+                    estuary_lab_plan.flow_z[index] * estuary_lab_plan.flow_z[index],
+                ),
+            ),
+        )
         return {30, u8(clamp(speed * 220, 30, 245)), 220, 255}
     case .Sediment:
         value := u8(clamp(estuary_lab_plan.sediment[index] * 500, 0, 255))
@@ -333,7 +356,14 @@ estuary_lab_color :: proc(index: int) -> canvas2d.Color {
         if value < 0 do return {u8(clamp(-value * 220, 20, 255)), 70, 45, 255}
         return {45, 90, u8(clamp(value * 220, 20, 255)), 255}
     case .Wetland:
-        colors := [6]canvas2d.Color{{91, 94, 72, 255}, {32, 112, 171, 255}, {153, 125, 74, 255}, {82, 139, 88, 255}, {203, 177, 105, 255}, {25, 78, 139, 255}}
+        colors := [6]canvas2d.Color {
+            {91, 94, 72, 255},
+            {32, 112, 171, 255},
+            {153, 125, 74, 255},
+            {82, 139, 88, 255},
+            {203, 177, 105, 255},
+            {25, 78, 139, 255},
+        }
         return colors[int(estuary_lab_plan.wetland[index])]
     case .Channels:
         order := estuary_lab_plan.channel_order[index]
@@ -344,16 +374,31 @@ estuary_lab_color :: proc(index: int) -> canvas2d.Color {
 
 estuary_lab_draw_button :: proc(bounds: canvas2d.Rectangle, label: cstring) {
     hover := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
-    canvas2d.DrawRectangleRounded(bounds, .20, 6, hover ? canvas2d.Color{49, 111, 118, 250} : canvas2d.Color{31, 69, 77, 245})
+    canvas2d.DrawRectangleRounded(
+        bounds,
+        .20,
+        6,
+        hover ? canvas2d.Color{49, 111, 118, 250} : canvas2d.Color{31, 69, 77, 245},
+    )
     canvas2d.DrawRectangleRoundedLinesEx(bounds, .20, 6, 1, {103, 178, 177, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + 9, bounds.y + 8}, 10, 1, {240, 229, 187, 255})
 }
 
 estuary_lab_draw_slider :: proc(index: int, label: cstring, value, lower, upper: f32) {
     bounds := estuary_lab_slider_bounds(index)
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s  %.2f", label, value), {bounds.x, bounds.y - 13}, 10, 1, {190, 216, 211, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("%s  %.2f", label, value),
+        {bounds.x, bounds.y - 13},
+        10,
+        1,
+        {190, 216, 211, 255},
+    )
     canvas2d.DrawRectangleRec(bounds, {25, 58, 64, 255})
-    canvas2d.DrawRectangleRec({bounds.x, bounds.y, bounds.width * clamp((value - lower) / (upper - lower), 0, 1), bounds.height}, {67, 151, 148, 255})
+    canvas2d.DrawRectangleRec(
+        {bounds.x, bounds.y, bounds.width * clamp((value - lower) / (upper - lower), 0, 1), bounds.height},
+        {67, 151, 148, 255},
+    )
 }
 
 estuary_delta_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
@@ -361,17 +406,66 @@ estuary_delta_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     canvas2d.DrawRectangleRounded(panel, .06, 8, {8, 26, 37, 236})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .06, 8, 1, {94, 156, 169, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "ESTUARY / DELTA LAB", {40, 40}, 18, 1, {242, 231, 188, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s%s", estuaries.archetype_name(estuary_lab_config.archetype), estuary_lab_stale ? "  • STALE" : ""), {40, 70}, 11, 1, estuary_lab_stale ? canvas2d.Color{244, 164, 91, 255} : canvas2d.Color{166, 220, 169, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf(
+            "%s%s",
+            estuaries.archetype_name(estuary_lab_config.archetype),
+            estuary_lab_stale ? "  • STALE" : "",
+        ),
+        {40, 70},
+        11,
+        1,
+        estuary_lab_stale ? canvas2d.Color{244, 164, 91, 255} : canvas2d.Color{166, 220, 169, 255},
+    )
     view_name := estuary_lab_view == .Overview ? "OVERVIEW" : "EYE"
     canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s [C]", view_name), {244, 70}, 9, 1, {153, 202, 202, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("REQUEST %08X  SELECTED %08X", estuary_lab_plan.requested_seed, estuary_lab_plan.selected_seed), {40, 92}, 10, 1, {188, 219, 217, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("REQUEST %08X  SELECTED %08X", estuary_lab_plan.requested_seed, estuary_lab_plan.selected_seed),
+        {40, 92},
+        10,
+        1,
+        {188, 219, 217, 255},
+    )
     d := &estuary_lab_plan.diagnostics
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s  TRY %d  %.1f ms", estuaries.rejection_text(d.rejection_mask), estuary_lab_plan.attempts, estuary_lab_generation_ms), {40, 112}, 10, 1, estuary_lab_plan.valid ? canvas2d.Color{154, 220, 148, 255} : canvas2d.Color{245, 154, 116, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("OUT %d  ISL %d  NAV %.1f%%  WET %.1f%%", d.outlet_count, d.island_count, d.navigable_fraction * 100, d.wetland_fraction * 100), {40, 132}, 10, 1, {188, 219, 217, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf(
+            "%s  TRY %d  %.1f ms",
+            estuaries.rejection_text(d.rejection_mask),
+            estuary_lab_plan.attempts,
+            estuary_lab_generation_ms,
+        ),
+        {40, 112},
+        10,
+        1,
+        estuary_lab_plan.valid ? canvas2d.Color{154, 220, 148, 255} : canvas2d.Color{245, 154, 116, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf(
+            "OUT %d  ISL %d  NAV %.1f%%  WET %.1f%%",
+            d.outlet_count,
+            d.island_count,
+            d.navigable_fraction * 100,
+            d.wetland_fraction * 100,
+        ),
+        {40, 132},
+        10,
+        1,
+        {188, 219, 217, 255},
+    )
     estuary_lab_draw_button(estuary_lab_button(40, 164, 118), "REGENERATE [ENTER]")
     estuary_lab_draw_button(estuary_lab_button(168, 164, 118), "RESET DEFAULTS")
-    estuary_lab_draw_button(estuary_lab_button(40, 202, 118), estuary_lab_config.archetype == .Tidal_Estuary ? "MODE: ESTUARY" : "MODE: DELTA")
-    estuary_lab_draw_button(estuary_lab_button(168, 202, 118), fmt.ctprintf("ORIENT: %d", int(estuary_lab_config.orientation)))
+    estuary_lab_draw_button(
+        estuary_lab_button(40, 202, 118),
+        estuary_lab_config.archetype == .Tidal_Estuary ? "MODE: ESTUARY" : "MODE: DELTA",
+    )
+    estuary_lab_draw_button(
+        estuary_lab_button(168, 202, 118),
+        fmt.ctprintf("ORIENT: %d", int(estuary_lab_config.orientation)),
+    )
     estuary_lab_draw_slider(0, "BRANCHING", estuary_lab_config.branching, 0, 1)
     estuary_lab_draw_slider(1, "MOUTH WIDTH", estuary_lab_config.mouth_width, .08, .45)
     estuary_lab_draw_slider(2, "SEDIMENT", estuary_lab_config.sediment_load, 0, 1)
@@ -387,8 +481,23 @@ estuary_delta_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     for z in 0 ..< estuaries.GRID_HEIGHT {
         for x in 0 ..< estuaries.GRID_WIDTH {
             i := z * estuaries.GRID_WIDTH + x
-            canvas2d.DrawRectangleRec({origin.x + f32(x) * cell_w, origin.y + f32(estuaries.GRID_HEIGHT - 1 - z) * cell_h, cell_w + .3, cell_h + .3}, estuary_lab_color(i))
+            canvas2d.DrawRectangleRec(
+                {
+                    origin.x + f32(x) * cell_w,
+                    origin.y + f32(estuaries.GRID_HEIGHT - 1 - z) * cell_h,
+                    cell_w + .3,
+                    cell_h + .3,
+                },
+                estuary_lab_color(i),
+            )
         }
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s  [D]", ESTUARY_LAB_LAYER_NAMES[int(estuary_lab_layer)]), {origin.x, origin.y + preview_h + 10}, 11, 1, {207, 224, 213, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("%s  [D]", ESTUARY_LAB_LAYER_NAMES[int(estuary_lab_layer)]),
+        {origin.x, origin.y + preview_h + 10},
+        11,
+        1,
+        {207, 224, 213, 255},
+    )
 }

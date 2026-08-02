@@ -3,6 +3,36 @@ package vehicles
 import third_person "../third_person"
 import "core:math"
 
+Car_Handling_Model :: enum {
+    Current_Physics,
+    Racer_Arcade,
+}
+
+Car_Racer_Assist :: struct {
+    steering:               f32,
+    drift_amount:           f32,
+    rear_grip_scale:        f32,
+    target_lateral_velocity: f32,
+}
+
+Car_Racer_Runtime :: struct {
+    drift_amount: f32,
+}
+
+Car_Racer_Tune :: struct {
+    steering_authority_low:  f32,
+    steering_authority_high: f32,
+    drift_min_speed:         f32,
+    drift_full_speed:        f32,
+    drift_steering_start:    f32,
+    drift_steering_full:     f32,
+    drift_rear_grip:         f32,
+    drift_slip_ratio:        f32,
+    drift_engage_response:   f32,
+    drift_release_response:  f32,
+    drift_lateral_response:  f32,
+}
+
 // Car_Drive_State keeps driveline speed separate from chassis momentum. That
 // small distinction is what lets steering, braking, and the handbrake produce
 // readable slip without requiring a full tire solver.
@@ -16,6 +46,7 @@ Car_Drive_State :: struct {
     surface_lateral_grip:            f32,
     surface_rolling_resistance:      f32,
     slip_amount:                     f32,
+    racer:                           Car_Racer_Runtime,
 }
 
 Car_Drive_Input :: struct {
@@ -31,6 +62,7 @@ Car_Drive_Tune :: struct {
     high_speed_steering, reverse_steering:     f32,
     lateral_grip, handbrake_grip:              f32,
     coast_deceleration:                        f32,
+    racer:                                     Car_Racer_Tune,
 }
 
 Car_Drive_Surface :: struct {
@@ -71,6 +103,19 @@ CAR_DRIVE_SEDAN_TUNE :: Car_Drive_Tune {
     lateral_grip         = 8.4,
     handbrake_grip       = .95,
     coast_deceleration   = 1.25,
+    racer = {
+        steering_authority_low  = 1.08,
+        steering_authority_high = 1.32,
+        drift_min_speed         = 5,
+        drift_full_speed        = 14,
+        drift_steering_start    = .18,
+        drift_steering_full     = .70,
+        drift_rear_grip         = .28,
+        drift_slip_ratio        = .18,
+        drift_engage_response   = 8,
+        drift_release_response  = 2.4,
+        drift_lateral_response  = 7,
+    },
 }
 
 car_drive_speed :: proc(state: Car_Drive_State) -> f32 {
@@ -112,6 +157,62 @@ car_drive_speed_sensitive_steering :: proc(steering, longitudinal_speed: f32, tu
     authority := 1 - speed_ratio * (1 - clamp(tune.high_speed_steering, 0, 1))
     if longitudinal_speed < 0 do authority *= tune.reverse_steering
     return car_drive_arcade_steering(steering) * authority
+}
+
+// Racer Arcade keeps the physical chassis and tire contacts, then interprets
+// control input as driving intent. A committed brake-and-steer gesture opens a
+// stable drift without requiring a separate handbrake, while ordinary steering
+// retains more authority at speed than the baseline vehicle.
+car_racer_arcade_assist :: proc(
+    runtime: ^Car_Racer_Runtime,
+    steering, longitudinal_speed, lateral_speed, brake_amount: f32,
+    handbrake: bool,
+    delta_seconds: f32,
+    tune := CAR_DRIVE_SEDAN_TUNE,
+) -> Car_Racer_Assist {
+    if runtime == nil || delta_seconds <= 0 do return {}
+    racer := tune.racer
+    dt := min(delta_seconds, f32(.05))
+    speed := math.abs(longitudinal_speed)
+    speed_ratio := clamp(speed / max(tune.max_forward, f32(.01)), 0, 1)
+    shaped_steering := car_drive_speed_sensitive_steering(steering, longitudinal_speed, tune)
+    steering_authority :=
+        racer.steering_authority_low +
+        (racer.steering_authority_high - racer.steering_authority_low) * speed_ratio
+
+    steering_range := max(racer.drift_steering_full - racer.drift_steering_start, f32(.01))
+    committed_steering := clamp((math.abs(steering) - racer.drift_steering_start) / steering_range, 0, 1)
+    speed_range := max(racer.drift_full_speed - racer.drift_min_speed, f32(.01))
+    drift_speed := clamp((speed - racer.drift_min_speed) / speed_range, 0, 1)
+    brake_drift := clamp(brake_amount, 0, 1) * committed_steering * drift_speed
+    handbrake_drift := handbrake ? clamp(.55 + drift_speed * .45, 0, 1) : f32(0)
+    drift_intent := max(brake_drift, handbrake_drift)
+
+    // Once initiated, lateral motion sustains the drift after the player lets
+    // go of the brake. Countersteer and a cleanly aligned exit release it more
+    // quickly, avoiding both a one-frame grip snap and an invisible drift lock.
+    slip_ratio := math.abs(lateral_speed) / max(speed, f32(1))
+    sustain := clamp(slip_ratio / max(racer.drift_slip_ratio, f32(.01)), 0, 1)
+    countersteering := lateral_speed * steering < -.02
+    drift_target := drift_intent
+    if runtime.drift_amount > .05 && speed > racer.drift_min_speed && !countersteering {
+        drift_target = max(drift_target, sustain)
+    }
+    response := drift_target > runtime.drift_amount ? racer.drift_engage_response : racer.drift_release_response
+    if countersteering do response *= 2.5
+    runtime.drift_amount +=
+        (drift_target - runtime.drift_amount) * clamp(max(response, f32(0)) * dt, 0, 1)
+    runtime.drift_amount = clamp(runtime.drift_amount, 0, 1)
+    drift := runtime.drift_amount
+
+    slip_direction := math.sign(steering)
+    if slip_direction == 0 && math.abs(lateral_speed) > .01 do slip_direction = math.sign(lateral_speed)
+    return {
+        steering                = clamp(shaped_steering * steering_authority, -1, 1),
+        drift_amount            = drift,
+        rear_grip_scale         = 1 + (clamp(racer.drift_rear_grip, 0, 1) - 1) * drift,
+        target_lateral_velocity = slip_direction * speed * racer.drift_slip_ratio * drift,
+    }
 }
 
 // Report chassis slip as an angle rather than raw lateral speed. A given

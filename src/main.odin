@@ -480,6 +480,7 @@ Fixture :: struct {
     occupant:                                       vehicles.Fixture_Occupant,
     pilot:                                          vehicles.Character,
     car:                                            vehicles.Vehicle,
+    car_handling_model:                             vehicles.Car_Handling_Model,
     car_drive:                                      vehicles.Car_Drive_State,
     car_trailer:                                    vehicles.Car_Trailer_State,
     car_trailer_attached:                           bool,
@@ -641,7 +642,7 @@ Fixture :: struct {
     map_source:                                     Fixture_Map_Source,
 }
 
-FIXTURE_SCHEMA_VERSION :: 19
+FIXTURE_SCHEMA_VERSION :: 20
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -769,6 +770,8 @@ Editor :: struct {
     car_physics_terrain:                [terrain.CLIPMAP_LEVELS]physics.Body_ID,
     car_physics_terrain_revision:       u64,
     car_physics_accumulator:            f64,
+    car_physics_body_rotation:          physics.Quat `fixture:"-"`,
+    car_physics_body_rotation_valid:    bool `fixture:"-"`,
     car_wheels:                         [4]physics.Wheel_State,
     car_impact_detector:                engine_sound.Vehicle_Impact_Detector,
     car_audio_damage:                   f32,
@@ -10061,6 +10064,22 @@ car_physics_yaw :: proc(rotation: physics.Quat) -> f32 {
     return math.PI * .5 - jolt_yaw
 }
 
+car_physics_rotate_vector :: proc(rotation: physics.Quat, vector: physics.Vec3) -> physics.Vec3 {
+    q := physics.Vec3{rotation[0], rotation[1], rotation[2]}
+    uv := physics.Vec3 {
+        q[1] * vector[2] - q[2] * vector[1],
+        q[2] * vector[0] - q[0] * vector[2],
+        q[0] * vector[1] - q[1] * vector[0],
+    }
+    uuv := physics.Vec3 {
+        q[1] * uv[2] - q[2] * uv[1],
+        q[2] * uv[0] - q[0] * uv[2],
+        q[0] * uv[1] - q[1] * uv[0],
+    }
+    scale := 2 * rotation[3]
+    return vector + uv * scale + uuv * 2
+}
+
 car_physics_level_heights :: proc(editor: ^Editor, level_index: int, result: []f32) {
     if editor == nil ||
        level_index < 0 ||
@@ -10129,6 +10148,8 @@ car_physics_create :: proc(editor: ^Editor) {
         {editor.car.position.x, ground + .74, editor.car.position.z},
         car_physics_rotation(editor.car.yaw_radians),
     )
+    editor.car_physics_body_rotation = car_physics_rotation(editor.car.yaw_radians)
+    editor.car_physics_body_rotation_valid = editor.car_physics_vehicle != nil
     if editor.car_physics_vehicle == nil {
         editor.car_physics_world = nil
         for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
@@ -10144,6 +10165,8 @@ car_physics_destroy :: proc(editor: ^Editor) {
     }
     editor.car_physics_world = nil
     editor.car_physics_vehicle = nil
+    editor.car_physics_body_rotation = physics.IDENTITY_ROTATION
+    editor.car_physics_body_rotation_valid = false
     for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
         editor.car_physics_terrain[level_index] = physics.INVALID_BODY
     }
@@ -10159,6 +10182,8 @@ car_physics_teleport :: proc(editor: ^Editor, reset_velocity: bool = true) {
         car_physics_rotation(editor.car.yaw_radians),
         reset_velocity,
     )
+    editor.car_physics_body_rotation = car_physics_rotation(editor.car.yaw_radians)
+    editor.car_physics_body_rotation_valid = true
     if reset_velocity {
         editor.car_drive = {}
         editor.car_physics_accumulator = 0
@@ -10179,8 +10204,14 @@ car_physics_step :: proc(
     body := physics.vehicle_body(editor.car_physics_vehicle)
     velocity := physics.get_linear_velocity(editor.car_physics_world, body)
     velocity_before := velocity
-    forward := physics.Vec3{math.cos(editor.car.yaw_radians), 0, math.sin(editor.car.yaw_radians)}
-    longitudinal := velocity[0] * forward[0] + velocity[2] * forward[2]
+    body_rotation := editor.car_physics_body_rotation_valid ? editor.car_physics_body_rotation : car_physics_rotation(editor.car.yaw_radians)
+    forward := car_physics_rotate_vector(body_rotation, {0, 0, 1})
+    physical_right_before := car_physics_rotate_vector(body_rotation, {1, 0, 0})
+    longitudinal := velocity[0] * forward[0] + velocity[1] * forward[1] + velocity[2] * forward[2]
+    lateral_before_step :=
+        velocity[0] * physical_right_before[0] +
+        velocity[1] * physical_right_before[1] +
+        velocity[2] * physical_right_before[2]
     brake := f32(0)
     drive := throttle
     if throttle > .01 && longitudinal < -.5 {
@@ -10189,9 +10220,49 @@ car_physics_step :: proc(
         brake, drive = -throttle, 0
     }
     dt := max(delta_seconds, f32(.001))
+    tune := editor.tweak.car
+    if drive > 0 {
+        drive *= clamp(tune.acceleration / max(vehicles.CAR_DRIVE_SEDAN_TUNE.acceleration, f32(.01)), 0, 1)
+        if longitudinal >= tune.max_forward do drive = 0
+    } else if drive < 0 {
+        drive *= clamp(
+            tune.reverse_acceleration / max(vehicles.CAR_DRIVE_SEDAN_TUNE.reverse_acceleration, f32(.01)),
+            0,
+            1,
+        )
+        if longitudinal <= -tune.max_reverse do drive = 0
+    }
+    brake *= clamp(tune.brake / max(vehicles.CAR_DRIVE_SEDAN_TUNE.brake, f32(.01)), 0, 1)
     editor.car_drive.steering +=
-        (steering - editor.car_drive.steering) * clamp(vehicles.CAR_DRIVE_SEDAN_TUNE.steering_response * dt, 0, 1)
-    physics_steering := vehicles.car_drive_speed_sensitive_steering(editor.car_drive.steering, longitudinal)
+        (steering - editor.car_drive.steering) * clamp(tune.steering_response * dt, 0, 1)
+    physics_steering := vehicles.car_drive_speed_sensitive_steering(editor.car_drive.steering, longitudinal, tune)
+    racer_assist: vehicles.Car_Racer_Assist
+    if editor.car_handling_model == .Racer_Arcade {
+        racer_assist = vehicles.car_racer_arcade_assist(
+            &editor.car_drive.racer,
+            editor.car_drive.steering,
+            longitudinal,
+            lateral_before_step,
+            brake,
+            handbrake,
+            dt,
+            tune,
+        )
+        physics_steering = racer_assist.steering
+
+        // Pull velocity toward a readable slip angle before the tire solver.
+        // The modest response preserves accumulated momentum and lets terrain
+        // and collisions remain authoritative.
+        lateral_assist :=
+            (racer_assist.target_lateral_velocity - lateral_before_step) *
+            clamp((2.2 + racer_assist.drift_amount * tune.racer.drift_lateral_response) * dt, 0, .35)
+        if math.abs(lateral_assist) > .0001 {
+            velocity[0] += physical_right_before[0] * lateral_assist
+            velocity[1] += physical_right_before[1] * lateral_assist
+            velocity[2] += physical_right_before[2] * lateral_assist
+            physics.set_linear_velocity(editor.car_physics_world, body, velocity)
+        }
+    }
     physics.set_vehicle_input(
         editor.car_physics_world,
         editor.car_physics_vehicle,
@@ -10212,11 +10283,28 @@ car_physics_step :: proc(
         wheel := editor.car_wheels[index]
         wheel_position := roads.Vec3{wheel.position[0], wheel.position[1], wheel.position[2]}
         wheel_dust, wheel_surface := road_car_surface(editor, wheel_position)
+        wheel_lateral_scale := f32(1)
+        authored_lateral_scale :=
+            clamp(tune.lateral_grip / max(vehicles.CAR_DRIVE_SEDAN_TUNE.lateral_grip, f32(.01)), .05, 4)
+        wheel_lateral_scale *= authored_lateral_scale
+        if index >= 2 {
+            if editor.car_handling_model == .Racer_Arcade {
+                wheel_lateral_scale *= racer_assist.rear_grip_scale
+            } else if handbrake {
+                authored_handbrake_scale :=
+                    clamp(
+                        tune.handbrake_grip / max(vehicles.CAR_DRIVE_SEDAN_TUNE.handbrake_grip, f32(.01)),
+                        0,
+                        4,
+                    )
+                wheel_lateral_scale *= .22 * authored_handbrake_scale
+            }
+        }
         physics.set_vehicle_wheel_grip(
             editor.car_physics_vehicle,
             u32(index),
             wheel_surface.longitudinal_grip,
-            wheel_surface.lateral_grip * (handbrake && index >= 2 ? f32(.22) : f32(1)),
+            wheel_surface.lateral_grip * wheel_lateral_scale,
         )
         if wheel.contact {
             bump_acceleration += car_surface_bump_acceleration(wheel_dust, wheel_position, longitudinal)
@@ -10232,7 +10320,7 @@ car_physics_step :: proc(
     editor.car_physics_terrain_revision = editor.gameplay_physics.terrain_revision
     gameplay_physics_step_world(editor, delta_seconds)
 
-    position, body_rotation, body_ok := physics.get_transform(editor.car_physics_world, body)
+    position, body_rotation_after, body_ok := physics.get_transform(editor.car_physics_world, body)
     if !body_ok do return
     velocity = physics.get_linear_velocity(editor.car_physics_world, body)
     impact_severity, impact_slide_speed, impact_obliqueness = engine_sound.detect_vehicle_impact(
@@ -10255,12 +10343,21 @@ car_physics_step :: proc(
         )
     }
     previous_yaw := editor.car.yaw_radians
-    editor.car.position = {position[0], position[1] - .74, position[2]}
-    editor.car.yaw_radians = car_physics_yaw(body_rotation)
-    x, y, z, w := body_rotation[0], body_rotation[1], body_rotation[2], body_rotation[3]
+    body_up := car_physics_rotate_vector(body_rotation_after, {0, 1, 0})
+    editor.car.position = {
+        position[0] - body_up[0] * .74,
+        position[1] - body_up[1] * .74,
+        position[2] - body_up[2] * .74,
+    }
+    editor.car_physics_body_rotation = body_rotation_after
+    editor.car_physics_body_rotation_valid = true
+    editor.car.yaw_radians = car_physics_yaw(body_rotation_after)
+    x, y, z, w := body_rotation_after[0], body_rotation_after[1], body_rotation_after[2], body_rotation_after[3]
     editor.car_drive.body_pitch = math.asin(clamp(2 * (y * z - w * x), -1, 1))
     editor.car_drive.body_roll = math.asin(clamp(2 * (x * y + w * z), -1, 1))
-    longitudinal_after := velocity[0] * forward[0] + velocity[2] * forward[2]
+    forward_after := car_physics_rotate_vector(body_rotation_after, {0, 0, 1})
+    longitudinal_after :=
+        velocity[0] * forward_after[0] + velocity[1] * forward_after[1] + velocity[2] * forward_after[2]
     acceleration_target := clamp(
         (longitudinal_after - longitudinal) / dt / max(vehicles.CAR_DRIVE_SEDAN_TUNE.acceleration, f32(1)),
         -1,
@@ -10276,7 +10373,8 @@ car_physics_step :: proc(
     editor.car_drive.yaw_rate = yaw_delta / dt
     editor.car_drive.handbrake_amount +=
         ((handbrake ? f32(1) : f32(0)) - editor.car_drive.handbrake_amount) * clamp(8 * dt, 0, 1)
-    lateral := velocity[0] * -forward[2] + velocity[2] * forward[0]
+    physical_right := car_physics_rotate_vector(body_rotation_after, {1, 0, 0})
+    lateral := velocity[0] * physical_right[0] + velocity[1] * physical_right[1] + velocity[2] * physical_right[2]
     editor.car_drive.slip_amount +=
         (vehicles.car_drive_slip_angle_amount(longitudinal_after, lateral) - editor.car_drive.slip_amount) *
         clamp(8 * dt, 0, 1)
@@ -14153,26 +14251,18 @@ adriatic_run :: proc(
                             )
                             crash_water_mix = terrain_height < editor.project.sea_level ? 1 : 0
                         }
-                        forward_x, forward_z := math.cos(editor.car.yaw_radians), math.sin(editor.car.yaw_radians)
-                        right_x, right_z := -forward_z, forward_x
                         contacts := [4]particle_systems.Vehicle_Contact{}
-                        wheel_x := [2]f32{-vehicles.CAR_WHEEL_TRACK_HALF, vehicles.CAR_WHEEL_TRACK_HALF}
-                        wheel_z := [2]f32{-vehicles.CAR_WHEELBASE_HALF, vehicles.CAR_WHEELBASE_HALF}
-                        contact_index := 0
-                        for x in wheel_x {
-                            for z in wheel_z {
-                                contact_x := editor.car.position.x + right_x * x - forward_x * z
-                                contact_z := editor.car.position.z + right_z * x - forward_z * z
-                                contacts[contact_index] = {
-                                    position = {
-                                        contact_x,
-                                        terrain.sample_height(&editor.project, 0, contact_x, contact_z),
-                                        contact_z,
-                                    },
-                                    grounded = true,
-                                    surface  = dust_surface,
-                                }
-                                contact_index += 1
+                        for wheel, index in editor.car_wheels {
+                            wheel_position := roads.Vec3{wheel.position[0], wheel.position[1], wheel.position[2]}
+                            wheel_dust, _ := road_car_surface(editor, wheel_position)
+                            contacts[index] = {
+                                position = {
+                                    wheel.position[0],
+                                    terrain.sample_height(&editor.project, 0, wheel.position[0], wheel.position[2]),
+                                    wheel.position[2],
+                                },
+                                grounded = wheel.contact,
+                                surface  = wheel_dust,
                             }
                         }
                         particle_systems.step_vehicle_effects(

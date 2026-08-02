@@ -67,20 +67,167 @@ DEFAULT_DUNE_WIDTH :: f32(68)
 DEFAULT_DUNE_MAX_WIDTH :: f32(82)
 DEFAULT_ESTUARY_HALF_EXTENT :: f32(330)
 DEFAULT_RIVER_LENGTH :: f32(380)
+RIVER_WATER_SPLINE_CAPACITY :: len(DEFAULT_ISLAND_SIGNS)
+RIVER_WATER_POINT_CAPACITY :: spring_river.MAX_POINTS
+
+River_Water_Point :: struct {
+    position:    spring_river.Vec2,
+    water_level: f32,
+    width:       f32,
+}
+
+River_Water_Spline :: struct {
+    points:      [RIVER_WATER_POINT_CAPACITY]River_Water_Point,
+    point_count: int,
+}
 
 Default_Island_Hydrology :: struct {
     river:               spring_river.Plan,
     estuary:             estuaries.Plan,
     archetype:           estuaries.Archetype,
+    mountain_center:     spring_river.Vec2,
+    mountain_radius:     f32,
+    mountain_height:     f32,
     estuary_center:      spring_river.Vec2,
     estuary_half_extent: f32,
     coast_position:      spring_river.Vec2,
+}
+
+default_mountain_offset :: #force_inline proc(
+    center: spring_river.Vec2,
+    radius, summit_height, world_x, world_z: f32,
+) -> f32 {
+    dx, dz := world_x - center[0], world_z - center[1]
+    distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if distance >= radius do return 0
+    weight := terrain_smooth_weight(1 - distance / radius)
+    // A broad lower shoulder and steeper summit read as one mountain without
+    // producing a conical silhouette or a single-cell spike.
+    return summit_height * weight * (.62 + weight * .38)
+}
+
+default_island_surface_for_flow :: #force_inline proc(
+    island: ^islands.Plan,
+    sign: f32,
+    center_x, center_z: f32,
+    mountain_center: spring_river.Vec2,
+    mountain_radius, mountain_height,
+    world_x, world_z: f32,
+) -> f32 {
+    local_x := (world_x - center_x) / DEFAULT_GENERATED_ISLAND_HALF_X
+    if sign < 0 do local_x = -local_x
+    local_z := (world_z - center_z) / DEFAULT_GENERATED_ISLAND_HALF_Z
+    return islands.sample_elevation(island, local_x, local_z) +
+        default_mountain_offset(mountain_center, mountain_radius, mountain_height, world_x, world_z)
+}
+
+default_route_river_downhill :: proc(
+    river: ^spring_river.Plan,
+    island: ^islands.Plan,
+    sign: f32,
+    center_x, center_z: f32,
+    mountain_center: spring_river.Vec2,
+    mountain_radius, mountain_height: f32,
+) {
+    if river == nil || river.point_count < 2 do return
+    mouth := river.points[river.point_count - 1].position
+    previous_direction := spring_river.normalize_or(mouth - mountain_center, {0, -1})
+    river.points[0].position = mountain_center
+    previous_height := default_island_surface_for_flow(
+        island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
+        mountain_center[0], mountain_center[1],
+    )
+    river.points[0].water_level = previous_height + .15
+    for point_index in 1 ..< river.point_count - 1 {
+        previous := river.points[point_index - 1].position
+        remaining_points := river.point_count - point_index
+        to_mouth := mouth - previous
+        distance_to_mouth := f32(math.sqrt(f64(to_mouth[0] * to_mouth[0] + to_mouth[1] * to_mouth[1])))
+        step := distance_to_mouth / f32(remaining_points)
+        direct := spring_river.normalize_or(to_mouth, previous_direction)
+        side := spring_river.Vec2{-direct[1], direct[0]}
+        best_position := previous + direct * step
+        best_direction := direct
+        best_height := f32(1e30)
+        best_score := f32(1e30)
+        // Sample a forward fan. Elevation is authoritative; the distance and
+        // turn terms only break broad flats and keep the drainage connected to
+        // its selected estuary instead of wandering into another coastal bay.
+        for candidate_index in -4 ..= 4 {
+            lateral := f32(candidate_index) * .19
+            direction := spring_river.normalize_or(direct + side * lateral, direct)
+            candidate := previous + direction * step
+            height := default_island_surface_for_flow(
+                island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
+                candidate[0], candidate[1],
+            )
+            candidate_to_mouth := mouth - candidate
+            remaining := f32(math.sqrt(f64(
+                candidate_to_mouth[0] * candidate_to_mouth[0] + candidate_to_mouth[1] * candidate_to_mouth[1],
+            )))
+            turn := 1 - (direction[0] * previous_direction[0] + direction[1] * previous_direction[1])
+            score := height + remaining * .004 + turn * .35
+            if score < best_score {
+                best_position, best_direction = candidate, direction
+                best_height, best_score = height, score
+            }
+        }
+        river.points[point_index].position = best_position
+        // Water follows the sampled downhill envelope. A small minimum fall
+        // lets the channel cut through closed depressions rather than ending
+        // in an accidental lake before reaching the coast.
+        minimum_remaining_fall := f32(remaining_points) * .002
+        river.points[point_index].water_level = max(
+            minimum_remaining_fall,
+            min(previous_height - .002, best_height + .12),
+        )
+        previous_height = river.points[point_index].water_level
+        previous_direction = best_direction
+    }
+    river.points[river.point_count - 1].position = mouth
+    river.points[river.point_count - 1].water_level = 0
 }
 
 default_island_hydrology_destroy :: proc(hydrology: ^Default_Island_Hydrology) {
     if hydrology == nil do return
     estuaries.destroy(&hydrology.estuary)
     hydrology^ = {}
+}
+
+river_water_spline_from_plan :: proc(plan: ^spring_river.Plan) -> River_Water_Spline {
+    result: River_Water_Spline
+    if plan == nil do return result
+    result.point_count = clamp(plan.point_count, 0, RIVER_WATER_POINT_CAPACITY)
+    for point, point_index in plan.points[:result.point_count] {
+        result.points[point_index] = {
+            position = point.position,
+            water_level = point.water_level,
+            width = point.width,
+        }
+    }
+    return result
+}
+
+rebuild_default_river_water_splines :: proc(
+    project: ^Project,
+    seeds: [len(DEFAULT_ISLAND_SEEDS)]u32,
+) {
+    if project == nil do return
+    project.river_water_splines = {}
+    island_signs := DEFAULT_ISLAND_SIGNS
+    for seed, island_index in seeds {
+        island := islands.generate(seed)
+        hydrology := default_island_hydrology_generate(
+            &island,
+            seed,
+            island_index,
+            island_signs[island_index],
+            false,
+        )
+        project.river_water_splines[island_index] = river_water_spline_from_plan(&hydrology.river)
+        default_island_hydrology_destroy(&hydrology)
+        islands.destroy(&island)
+    }
 }
 
 default_main_land_south_shore :: proc(island: ^islands.Plan, local_x: f32) -> (south, north: f32, ok: bool) {
@@ -110,6 +257,7 @@ default_island_hydrology_generate :: proc(
     island_seed: u32,
     island_index: int,
     sign: f32,
+    generate_estuary: bool = true,
 ) -> Default_Island_Hydrology {
     if island == nil do return {}
     unit := proc(value: u32) -> f32 { return f32(islands.hash(value) & 0xffff) / 65535 }
@@ -156,20 +304,37 @@ default_island_hydrology_generate :: proc(
     river_mouth_z := estuary_center[1] + estuary_half
     archetype: estuaries.Archetype = island_index & 1 == 0 ? .Tidal_Estuary : .Distributary_Delta
     discharge := archetype == .Distributary_Delta ? f32(1.18) : f32(.72)
-    source_height := 15 + unit(island_seed ~ 0x53524348) * 7
+    mountain_radius := 170 + unit(island_seed ~ 0x4d545241) * 65
+    mountain_height := 24 + unit(island_seed ~ 0x4d544854) * 12
+    mountain_center := spring_river.Vec2{
+        world_mouth_x + (unit(island_seed ~ 0x4d545258) * 2 - 1) * 54,
+        river_mouth_z + DEFAULT_RIVER_LENGTH,
+    }
+    source_height := default_island_surface_for_flow(
+        island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
+        mountain_center[0], mountain_center[1],
+    )
+    river_length := f32(math.sqrt(f64(
+        (mountain_center[0] - world_mouth_x) * (mountain_center[0] - world_mouth_x) +
+        (mountain_center[1] - river_mouth_z) * (mountain_center[1] - river_mouth_z),
+    )))
     river := spring_river.generate(
         {
             seed = islands.hash(island_seed ~ 0x52495652),
-            source = {world_mouth_x, river_mouth_z + DEFAULT_RIVER_LENGTH},
-            direction = {0, -1},
+            source = mountain_center,
+            direction = spring_river.normalize_or({world_mouth_x, river_mouth_z} - mountain_center, {0, -1}),
             source_height = source_height,
-            length = DEFAULT_RIVER_LENGTH,
-            segment_length = 8,
+            length = river_length,
+            segment_length = 2,
             gradient = source_height / DEFAULT_RIVER_LENGTH,
             discharge = discharge,
             meander = .48 + unit(island_seed ~ 0x4d45414e) * .34,
             spring_radius = 5 + discharge * 2.4,
         },
+    )
+    default_route_river_downhill(
+        &river, island, sign, center_x, center_z,
+        mountain_center, mountain_radius, mountain_height,
     )
     // Preserve seeded meanders, but contract individual bends toward the
     // proven center-connected drainage line whenever they leave the island.
@@ -194,16 +359,22 @@ default_island_hydrology_generate :: proc(
         }
         point.position[0] = world_mouth_x + (proposed_x - world_mouth_x) * inside_amount * .96
     }
-    mouth := spring_river.mouth(&river)
-    config := estuaries.config_from_river_mouth(mouth, archetype, estuary_half)
-    config.seed = islands.hash(island_seed ~ 0x45535455)
-    config.orientation = .North
-    config.mean_sea_level = 0
-    estuary := estuaries.generate(config)
+    estuary: estuaries.Plan
+    if generate_estuary {
+        mouth := spring_river.mouth(&river)
+        config := estuaries.config_from_river_mouth(mouth, archetype, estuary_half)
+        config.seed = islands.hash(island_seed ~ 0x45535455)
+        config.orientation = .North
+        config.mean_sea_level = 0
+        estuary = estuaries.generate(config)
+    }
     return {
         river = river,
         estuary = estuary,
         archetype = archetype,
+        mountain_center = mountain_center,
+        mountain_radius = mountain_radius,
+        mountain_height = mountain_height,
         estuary_center = estuary_center,
         estuary_half_extent = estuary_half,
         coast_position = {world_mouth_x, world_coast_z},
@@ -547,6 +718,7 @@ Project :: struct {
     road_graph:            roads.Graph,
     city_density:          [CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
+    river_water_splines:    [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
 }
 
 Project_File_Payload :: struct {
@@ -1188,6 +1360,9 @@ terrain_erode_default_level :: proc(data: ^Clipmap_Level, scratch: []f32, _: f32
                 index := sample_index(x, z)
                 height := scratch[index]
                 if height <= 0 do continue
+                // Keep the post-generation smoothing pass from refilling a
+                // carved channel above its matching water spline.
+                if data.material[index] < -1.001 do continue
                 neighbor_average :=
                     (scratch[sample_index(x - 1, z)] +
                         scratch[sample_index(x + 1, z)] +
@@ -1245,6 +1420,9 @@ init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]
             seed,
             island_index,
             island_signs[island_index],
+        )
+        result.river_water_splines[island_index] = river_water_spline_from_plan(
+            &generated_hydrology[island_index].river,
         )
     }
     defer for &plan in generated_islands do islands.destroy(&plan)
@@ -1936,6 +2114,14 @@ default_apply_island_hydrology :: proc(
     height, material = input_height, input_material
     if hydrology == nil do return
 
+    height += default_mountain_offset(
+        hydrology.mountain_center,
+        hydrology.mountain_radius,
+        hydrology.mountain_height,
+        world_x,
+        world_z,
+    )
+
     river := spring_river.sample(&hydrology.river, {world_x, world_z})
     if river.bank_influence > .001 {
         bank_target := river.water_level + .18 + (1 - river.bank_influence) * 1.45
@@ -1961,6 +2147,14 @@ default_apply_island_hydrology :: proc(
     edge := 1 - terrain_smooth_weight((max(math.abs(nx), math.abs(nz)) - .58) / .42)
     seaward := terrain_smooth_weight((nz + .42) / .20)
     edge *= seaward
+    if class == .Channel {
+        // The north edge is the intentional river inlet, not an accidental
+        // simulation boundary. Preserve the narrow classified channel there
+        // so the estuary overlaps the terminal river bed instead of fading to
+        // zero and leaving a dry diamond-shaped seam at the handoff.
+        inlet := terrain_smooth_weight((nz - .58) / .42) * seaward
+        edge = max(edge, inlet)
+    }
     if edge <= .001 do return
     target := estuaries.sample_elevation(&hydrology.estuary, nx, nz)
     influence: f32

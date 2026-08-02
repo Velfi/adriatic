@@ -102,6 +102,7 @@ river_mouth_drives_estuary_inputs_and_opens_the_inland_channel :: proc(t: ^testi
     testing.expect(t, config.branching > .7)
     plan := generate(config)
     defer destroy(&plan)
+    testing.expect(t, sample_wetland(&plan, 0, .975) == .Channel)
     inlet := index_of(GRID_WIDTH / 2, GRID_HEIGHT - 1)
     testing.expect_value(t, plan.channel_order[inlet], u8(3))
     testing.expect(t, plan.elevation[inlet] < config.mean_sea_level)

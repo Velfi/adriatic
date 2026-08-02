@@ -6,6 +6,7 @@ import plants "../packages/plants"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
 
@@ -40,6 +41,7 @@ farmland_render_preview := false
 farmland_render_width := farmland.GRID_WIDTH
 farmland_render_height := farmland.GRID_HEIGHT
 farmland_render_tradition := farmland.Tradition.Ancient_Enclosure
+farmland_render_region := Settlement_Region.Adriatic
 markov_farmland_lab_terrain := Farmland_Lab_Terrain.Flat
 markov_farmland_lab_input_ready := false
 
@@ -99,6 +101,13 @@ farmland_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
     if editor == nil do return false
     if !lab_scene_is_active(editor, "markov-farmland") do return true
     x, z := farmland_world_xz(grid_x, grid_z)
+    if editor.settlement_plan.valid {
+        for site in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
+            if !site.accepted || site.kind != .Ordinary || site.purpose != .Farmstead do continue
+            compound := farm_compound_derive(editor.settlement_plan.request.region, site.structure, &editor.project)
+            if farm_compound_contains_point(compound, x, z, .6) do return false
+        }
+    }
     local_x := x - MARKOV_FARMLAND_ORIGIN_X
     local_z := z - MARKOV_FARMLAND_ORIGIN_Z
     switch markov_farmland_lab_terrain {
@@ -116,6 +125,35 @@ farmland_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) -> bool {
         return cliff_coordinate < -5
     }
     return true
+}
+
+farmland_dry_stone_edge :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detail_fade: f32) {
+    if editor == nil || farmland_render_preview || detail_fade <= .15 do return
+    a_x, a_z := farmland_world_xz(x0, z0)
+    b_x, b_z := farmland_world_xz(x1, z1)
+    dx, dz := b_x - a_x, b_z - a_z
+    length := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if length <= .2 do return
+    segments := max(int(math.ceil(f64(length / 3.2))), 1)
+    stone := farmland_render_region == .Aegean ? canvas2d.Color{145, 145, 134, 255} : canvas2d.Color{151, 145, 128, 255}
+    yaw := f32(math.atan2(f64(dz), f64(dx)))
+    for segment in 0 ..< segments {
+        t0, t1 := f32(segment) / f32(segments), f32(segment + 1) / f32(segments)
+        midpoint_x := a_x + dx * (t0 + t1) * .5
+        midpoint_z := a_z + dz * (t0 + t1) * .5
+        span := length / f32(segments)
+        base_y := terrain.sample_height(&editor.project, 0, midpoint_x, midpoint_z)
+        if base_y <= editor.project.sea_level + .25 || terrain.active_waterway_at(&editor.project, 0, midpoint_x, midpoint_z) {
+            continue
+        }
+        variation := f32(farmland.mix(seed ~ u32(segment)) & 31) / 310
+        world_box_rotated(
+            {midpoint_x, base_y + .25 + variation * .5, midpoint_z},
+            {span + .08, .50 + variation, .42},
+            yaw,
+            stone,
+        )
+    }
 }
 
 farmland_vineyard_heights_are_safe :: proc(center: f32, neighbors: [4]f32) -> bool {
@@ -507,6 +545,13 @@ farmland_instance_contains_world_point :: proc(farm: ^Farm_Instance, x, z: f32, 
 
 farmland_excludes_ground_grass :: proc(editor: ^Editor, x, z: f32) -> bool {
     if editor == nil do return false
+    if editor.settlement_plan.valid {
+        for site in editor.settlement_plan.sites[:editor.settlement_plan.site_count] {
+            if !site.accepted || site.kind != .Ordinary || site.purpose != .Farmstead do continue
+            compound := farm_compound_derive(editor.settlement_plan.request.region, site.structure, &editor.project)
+            if farm_compound_contains_point(compound, x, z, .8) do return true
+        }
+    }
     for &farm in editor.farms[:editor.farm_count] {
         if farmland_instance_contains_world_point(&farm, x, z, .8) do return true
     }
@@ -621,6 +666,49 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     // silhouette. Cards disappear before the aerial solid-color LOD.
     for parcel, parcel_index in plan.parcels[:plan.parcel_count] {
         hedge_seed := plan.seed ~ u32(parcel_index + 1) * u32(0x85ebca6b)
+        if plan.tradition == .Ancient_Enclosure {
+            farmland_dry_stone_edge(
+                editor,
+                f32(parcel.min_x),
+                f32(parcel.min_z),
+                f32(parcel.min_x),
+                f32(parcel.max_z),
+                hedge_seed,
+                detail_fade,
+            )
+            farmland_dry_stone_edge(
+                editor,
+                f32(parcel.min_x),
+                f32(parcel.min_z),
+                f32(parcel.max_x),
+                f32(parcel.min_z),
+                hedge_seed ~ u32(0xc2b2ae35),
+                detail_fade,
+            )
+            if parcel.max_x == plan.width {
+                farmland_dry_stone_edge(
+                    editor,
+                    f32(parcel.max_x),
+                    f32(parcel.min_z),
+                    f32(parcel.max_x),
+                    f32(parcel.max_z),
+                    hedge_seed ~ u32(0x27d4eb2f),
+                    detail_fade,
+                )
+            }
+            if parcel.max_z == plan.height {
+                farmland_dry_stone_edge(
+                    editor,
+                    f32(parcel.min_x),
+                    f32(parcel.max_z),
+                    f32(parcel.max_x),
+                    f32(parcel.max_z),
+                    hedge_seed ~ u32(0x165667b1),
+                    detail_fade,
+                )
+            }
+            continue
+        }
         if plan.tradition == .Parliamentary_Enclosure || farmland.mix(hedge_seed) & 3 != 0 {
             farmland_hedgerow(
                 editor,
@@ -749,6 +837,7 @@ world_markov_farmland :: proc(editor: ^Editor) {
 
 world_authored_farmland :: proc(editor: ^Editor) {
     if editor == nil do return
+    farmland_render_region = editor.settlement_plan.valid ? editor.settlement_plan.request.region : .Adriatic
     for &instance in editor.farms[:editor.farm_count] {
         scale_x := instance.scale_x > 0 ? instance.scale_x : f32(1)
         scale_z := instance.scale_z > 0 ? instance.scale_z : f32(1)
@@ -812,27 +901,28 @@ settlement_village_attach_farmland :: proc(editor: ^Editor) -> bool {
     if farmstead_index < 0 do return false
 
     farmstead := editor.settlement_plan.sites[farmstead_index].structure
-    outward_x, outward_z := farmstead.center_x - common[0], farmstead.center_z - common[1]
-    outward_length := f32(math.sqrt(f64(outward_x * outward_x + outward_z * outward_z)))
-    if outward_length < .01 {
-        outward_x, outward_z = f32(math.cos(f64(farmstead.rotation))), f32(math.sin(f64(farmstead.rotation)))
-    } else {
-        outward_x /= outward_length
-        outward_z /= outward_length
-    }
+    compound := farm_compound_derive(editor.settlement_plan.request.region, farmstead, &editor.project)
     grid_width := editor.settlement_plan.request.region == .Aegean ? 8 : 10
     grid_height := editor.settlement_plan.request.region == .Aegean ? 8 : 9
-    field_offset := f32(grid_width) * farmland.CELL_METERS * .5 + farmstead.depth * .5 + 3
+    field_direction := compound.field_anchor - compound.field_gate
+    field_direction_length := linalg.length(field_direction)
+    if field_direction_length <= .001 {
+        field_direction = {f32(math.sin(f64(compound.field_yaw))), -f32(math.cos(f64(compound.field_yaw)))}
+    } else {
+        field_direction /= field_direction_length
+    }
+    half_field_depth := f32(grid_height) * farmland.CELL_METERS * compound.field_scale_z * .5
+    field_center := compound.field_gate + field_direction * (half_field_depth + 2.5)
     seed := editor.settlement_plan.request.seed ~ farmstead.seed ~ u32(0x4641524d)
     plan := farmland.generate_sized(seed, grid_width, grid_height, context.temp_allocator)
     if !farmland.validate(&plan) do return false
     editor.farms[editor.farm_count] = {
         plan     = plan,
-        origin_x = farmstead.center_x + outward_x * field_offset,
-        origin_z = farmstead.center_z + outward_z * field_offset,
-        yaw      = farmstead.rotation,
-        scale_x  = 1,
-        scale_z  = 1,
+        origin_x = field_center[0],
+        origin_z = field_center[1],
+        yaw      = compound.field_yaw,
+        scale_x  = compound.field_scale_x,
+        scale_z  = compound.field_scale_z,
     }
     editor.farm_count += 1
     return true

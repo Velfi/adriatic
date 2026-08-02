@@ -4,8 +4,12 @@ import spring_river "../spring_river"
 import "base:runtime"
 import "core:math"
 
-GRID_WIDTH :: 128
-GRID_HEIGHT :: 128
+// Keep the generated bed close enough to the 1 m terrain grid that narrow
+// channels and wetland boundaries do not resolve as visibly larger source
+// cells after they are baked into the map. The default 660 m basin samples at
+// about 2.6 m here; the former 128-square field sampled at about 5.2 m.
+GRID_WIDTH :: 256
+GRID_HEIGHT :: 256
 CELL_COUNT :: GRID_WIDTH * GRID_HEIGHT
 SIMULATION_STEPS :: 240
 MAX_CANDIDATE_ATTEMPTS :: 8
@@ -285,7 +289,13 @@ channel_geometry :: proc(config: Config, nx, nz: f32) -> (distance, half_width: 
     // scale.  The prior 15–30 m offset read as an almost perfectly straight,
     // symmetric trench from a human-height camera.
     meander := (primary + secondary * .28) * (.045 + config.branching * .055)
-    trunk_x := meander * smoothstep((nz + 1) * .5)
+    downstream_envelope := smoothstep((nz + 1) * .5)
+    // The graph and boundary condition place the river inlet at {0, 1}.
+    // Bring the procedural trunk onto that axis before allowing its meander
+    // to develop; otherwise the first interior cells jump sideways from the
+    // centered opening and leave a broken, diamond-shaped river handoff.
+    inlet_envelope := smoothstep((1 - nz) / .18)
+    trunk_x := meander * downstream_envelope * inlet_envelope
     coast_t := clamp((.30 - nz) / 1.30, 0, 1)
     if config.archetype == .Tidal_Estuary {
         width := .025 + coast_t * config.mouth_width * .5
@@ -398,7 +408,7 @@ build_initial :: proc(plan: ^Plan) {
 
 count_tidal_islands :: proc(plan: ^Plan) -> int {
     visited: [CELL_COUNT]bool
-    queue: [CELL_COUNT]int
+    queue := make([]int, CELL_COUNT, context.temp_allocator)
     count := 0
     sea := plan.config.mean_sea_level + .05
     for z in 1 ..< GRID_HEIGHT - 1 {

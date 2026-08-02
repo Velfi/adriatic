@@ -39,17 +39,35 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
             math.abs(mouth.position[1] - (water.estuary_center[1] + water.estuary_half_extent)) < .01,
         )
         testing.expect(t, math.abs(mouth.water_level) < .01)
+
+        // Probe beyond the river's terminal bank kernel, inside the estuary.
+        // The inlet must remain carved across the finite simulation boundary.
+        inlet_height, inlet_material := default_apply_island_hydrology(
+            &water,
+            mouth.position[0],
+            mouth.position[1] - 8,
+            10,
+            0,
+        )
+        testing.expect(t, inlet_height < 2)
+        testing.expect(t, inlet_material < -1)
     }
 
     for &water, index in hydrology {
         sign := island_signs[index]
         center_x, center_z := default_island_center(sign)
+        testing.expect_value(t, water.river.points[0].position, water.mountain_center)
+        testing.expect(t, water.mountain_height >= 24)
+        testing.expect(t, water.mountain_radius >= 170)
         for point_index in 0 ..< water.river.point_count {
             point := water.river.points[point_index]
             local_x := (point.position[0] - center_x) / DEFAULT_GENERATED_ISLAND_HALF_X
             if sign < 0 do local_x = -local_x
             local_z := (point.position[1] - center_z) / DEFAULT_GENERATED_ISLAND_HALF_Z
             testing.expect(t, islands.sample_signed_distance(&plans[index], local_x, local_z) < 0)
+            if point_index > 0 {
+                testing.expect(t, point.water_level < water.river.points[point_index - 1].water_level)
+            }
         }
     }
 
@@ -63,6 +81,15 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
     testing.expect_value(t, duplicate.estuary.selected_seed, hydrology[0].estuary.selected_seed)
     testing.expect_value(t, duplicate.estuary.score, hydrology[0].estuary.score)
     testing.expect_value(t, duplicate.river.points, hydrology[0].river.points)
+
+    water_spline := river_water_spline_from_plan(&hydrology[0].river)
+    testing.expect_value(t, water_spline.point_count, hydrology[0].river.point_count)
+    testing.expect_value(t, water_spline.points[0].position, hydrology[0].mountain_center)
+    testing.expect_value(
+        t,
+        water_spline.points[water_spline.point_count - 1].water_level,
+        hydrology[0].river.points[hydrology[0].river.point_count - 1].water_level,
+    )
 
     half_extent := f32(WORLD_SIZE_METERS * .5)
     river_sample := hydrology[0].river.points[hydrology[0].river.point_count / 2].position
@@ -170,6 +197,15 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
 
     project := new_project()
     defer free_project(project)
+    visible_water_points := 0
+    east_water := &project.river_water_splines[1]
+    for water_point in east_water.points[:east_water.point_count] {
+        if !level_contains(&project.levels[0], water_point.position[0], water_point.position[1]) do continue
+        ground := sample_height(project, 0, water_point.position[0], water_point.position[1])
+        testing.expect(t, ground <= water_point.water_level + .05)
+        visible_water_points += 1
+    }
+    testing.expect(t, visible_water_points > 32)
     east_midpoint := hydrology[1].river.points[hydrology[1].river.point_count / 2]
     minimum_lod_height, maximum_lod_height := f32(1e6), f32(-1e6)
     sampled_levels := 0

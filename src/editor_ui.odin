@@ -795,16 +795,17 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 .5,
                 {209, 215, 222, 255},
             )
-            ui_draw_text(
-                .Data,
-                fmt.ctprintf("%.0f x %.0f x %.0f m", structure.width, structure.depth, structure.height),
-                {panel.x + 14, panel.y + 116},
-                .5,
-                {134, 224, 216, 255},
-            )
-            ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 158}, .4, {139, 149, 160, 255})
-            ui_draw_text(.Data, "R  ROTATE", {panel.x + 14, panel.y + 182}, .4, {139, 149, 160, 255})
-            ui_draw_text(.Data, "BACKSPACE  DELETE", {panel.x + 14, panel.y + 206}, .4, {139, 149, 160, 255})
+            row := 1
+            cell := editor.project.levels[0].cell_size
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", structure.width, cell, 400, 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", structure.depth, cell, 400, 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", structure.height, cell, 400, 1)
+            row += 1
+            ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, {139, 149, 160, 255})
+            ui_draw_text(.Data, "R  ROTATE", {panel.x + 14, panel.y + 106 + f32(row) * 48}, .4, {139, 149, 160, 255})
+            ui_draw_text(.Data, "BACKSPACE  DELETE", {panel.x + 14, panel.y + 130 + f32(row) * 48}, .4, {139, 149, 160, 255})
         } else {
             ui_draw_text(.Data, "CLICK AN ITEM", {panel.x + 14, panel.y + 88}, .5, {139, 149, 160, 255})
         }
@@ -1542,7 +1543,18 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
 
     if !layout.inspector_visible do return
-    if editor.selection_tool_active do return
+    if editor.selection_tool_active {
+        if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
+            structure := &editor.project.structures[editor.structure_selected]
+            cell := editor.project.levels[0].cell_size
+            changed := false
+            changed = editor_ui_slider_input(editor, layout, 101, 1, &structure.width, cell, 400, 1, 2) || changed
+            changed = editor_ui_slider_input(editor, layout, 102, 2, &structure.depth, cell, 400, 1, 2) || changed
+            changed = editor_ui_slider_input(editor, layout, 103, 3, &structure.height, cell, 400, 1, 2) || changed
+            if changed do editor.project.revision += 1
+        }
+        return
+    }
     row := 0
     switch editor.authoring_tool {
     case .Sculpt, .Smooth, .Paint:

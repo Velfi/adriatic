@@ -15,6 +15,12 @@ when ODIN_TEST {
         artifact.project.revision = 7
         artifact.project.sea_level = 1.25
         artifact.project.next_structure_id = 2
+        artifact.project.river_water_splines[0].point_count = 1
+        artifact.project.river_water_splines[0].points[0] = {
+            position = {12, -34},
+            water_level = 7.5,
+            width = 4.25,
+        }
         artifact.project.structures = make([dynamic]terrain.Structure, 1)
         artifact.project.structure_count = 1
         artifact.project.structures[0] = {
@@ -243,6 +249,11 @@ when ODIN_TEST {
             testing.expect(t, decoded.project.structure_count == 1)
             testing.expect(t, decoded.project.structures[0].height == 6)
             testing.expect(t, decoded.seeds == source.seeds)
+            testing.expect_value(
+                t,
+                decoded.project.river_water_splines,
+                [terrain.RIVER_WATER_SPLINE_CAPACITY]terrain.River_Water_Spline{},
+            )
         }
 
         truncated, truncated_error, truncated_ok := map_artifact_decode(first[:MAP_ARTIFACT_HEADER_SIZE - 1])
@@ -345,6 +356,8 @@ when ODIN_TEST {
         testing.expect(t, target.project.levels[0].heights[9] == f32(3.75))
         testing.expect(t, target.project.city_density[11] == 12)
         testing.expect(t, target.project.climbing_leaf_density[13] == 14)
+        testing.expect(t, target.project.river_water_splines[0].point_count > 1)
+        testing.expect(t, target.project.river_water_splines[1].point_count > 1)
         testing.expect(t, target.settlement_plan.valid)
         testing.expect(t, target.settlement_plan.neighborhood_count == 2)
         testing.expect(t, target.settlement_plan.route_count == 3)

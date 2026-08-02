@@ -961,6 +961,17 @@ tweak_draw_particles :: proc(editor: ^Editor) {
 
 tweak_draw_car :: proc(editor: ^Editor) {
     t := &editor.tweak.car
+    if tweak_section("Handling model", true) {
+        if im.RadioButton("Current Physics", editor.car_handling_model == .Current_Physics) {
+            editor.car_handling_model = .Current_Physics
+            editor.car_drive.racer = {}
+        }
+        im.SameLine()
+        if im.RadioButton("Racer Arcade", editor.car_handling_model == .Racer_Arcade) {
+            editor.car_handling_model = .Racer_Arcade
+            editor.car_drive.racer = {}
+        }
+    }
     if tweak_section("Driving", true) {
         tweak_drag_f32("Acceleration", &t.acceleration, 0, 100, .1)
         tweak_drag_f32("Brake", &t.brake, 0, 100, .1)
@@ -968,10 +979,21 @@ tweak_draw_car :: proc(editor: ^Editor) {
         tweak_drag_f32("Max forward", &t.max_forward, .1, 200, .1)
         tweak_drag_f32("Max reverse", &t.max_reverse, .1, 100, .1)
         tweak_drag_f32("Steering response", &t.steering_response, 0, 50, .1)
-        tweak_drag_f32("Yaw response", &t.yaw_response, 0, 50, .1)
         tweak_drag_f32("Lateral grip", &t.lateral_grip, 0, 50, .1)
         tweak_drag_f32("Handbrake grip", &t.handbrake_grip, 0, 50, .1)
-        tweak_drag_f32("Coast deceleration", &t.coast_deceleration, 0, 50, .1)
+    }
+    if tweak_section("Racer Arcade") {
+        tweak_drag_f32("Steering authority low", &t.racer.steering_authority_low, 0, 3, .01)
+        tweak_drag_f32("Steering authority high", &t.racer.steering_authority_high, 0, 3, .01)
+        tweak_drag_f32("Drift minimum speed", &t.racer.drift_min_speed, 0, 100, .1)
+        tweak_drag_f32("Drift full speed", &t.racer.drift_full_speed, 0, 100, .1)
+        tweak_drag_f32("Drift steering start", &t.racer.drift_steering_start, 0, 1, .01)
+        tweak_drag_f32("Drift steering full", &t.racer.drift_steering_full, 0, 1, .01)
+        tweak_drag_f32("Drift rear grip", &t.racer.drift_rear_grip, 0, 1, .01)
+        tweak_drag_f32("Drift slip ratio", &t.racer.drift_slip_ratio, 0, 1, .01)
+        tweak_drag_f32("Drift engage response", &t.racer.drift_engage_response, 0, 30, .1)
+        tweak_drag_f32("Drift release response", &t.racer.drift_release_response, 0, 30, .1)
+        tweak_drag_f32("Drift lateral response", &t.racer.drift_lateral_response, 0, 30, .1)
     }
     if tweak_section("Interaction") {
         tweak_drag_f32("Enter radius", &editor.tweak.car_vehicle.interaction_radius, 0, 20, .05)

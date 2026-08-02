@@ -1276,27 +1276,23 @@ architecture_floorplans_offer_distinct_archetype_appropriate_topologies :: proc(
     barn_aisle := architecture.architecture_footprint(structure)
     testing.expect_value(t, barn_aisle.count, 2)
     main_left := barn_aisle.masses[0].local_x - barn_aisle.masses[0].width * .5
-    aisle_left := barn_aisle.masses[1].local_x - barn_aisle.masses[1].width * .5
-    testing.expect(t, aisle_left < main_left)
+    work_left := barn_aisle.masses[1].local_x - barn_aisle.masses[1].width * .5
     shared_width :=
         min(
             barn_aisle.masses[0].local_x + barn_aisle.masses[0].width * .5,
             barn_aisle.masses[1].local_x + barn_aisle.masses[1].width * .5,
         ) -
-        max(main_left, aisle_left)
-    testing.expect(t, shared_width >= 1.35 - .001)
+        max(main_left, work_left)
+    testing.expect(t, shared_width >= 2.0 - .001)
+    testing.expect(t, barn_aisle.masses[1].height_scale < barn_aisle.masses[0].height_scale)
     barn_primary := architecture.architecture_frontage_mass_index(structure)
     testing.expect_value(t, barn_primary, 0)
     aisle_layout := architecture.architecture_opening_layout(structure, 1, barn_primary)
-    aisle_doors := 0
-    expected_aisle_face := barn_aisle.masses[1].local_x < 0 ? architecture.Face.Left : architecture.Face.Right
+    aisle_vents := 0
     for opening in aisle_layout.openings[:aisle_layout.count] {
-        if opening.kind == .Service_Door {
-            aisle_doors += 1
-            testing.expect_value(t, opening.face, expected_aisle_face)
-        }
+        if opening.kind == .Vent do aisle_vents += 1
     }
-    testing.expect_value(t, aisle_doors, 1)
+    testing.expect(t, aisle_vents > 0)
 
     structure.building.archetype = .Mixed_Use_Dwelling
     structure.seed = 43
@@ -4899,14 +4895,9 @@ architecture_productive_floorplans_use_cart_scale_loading_doors :: proc(t: ^test
     barn_door, found_barn_door := architecture.opening_layout_find(&barn_layout, .Front, .Service_Door, 0, 0)
     testing.expect(t, found_barn_door)
     if found_barn_door {
-        testing.expect(t, barn_door.width >= 5.0)
-        testing.expect(t, barn_door.height >= 5.0)
+        testing.expect(t, barn_door.width >= 2.6 && barn_door.width <= 3.8)
+        testing.expect(t, barn_door.height >= 3.2 && barn_door.height <= 4.2)
     }
-    aisle_layout := architecture.architecture_opening_layout(structure, 1, barn_primary)
-    aisle_face := barn.masses[1].local_x < 0 ? architecture.Face.Left : architecture.Face.Right
-    aisle_door, found_aisle_door := architecture.opening_layout_find(&aisle_layout, aisle_face, .Service_Door, 0, 0)
-    testing.expect(t, found_aisle_door)
-    if found_aisle_door do testing.expect(t, aisle_door.width >= 3.8)
 
     structure.building.archetype = .Storehouse
     storehouse := architecture.architecture_footprint(structure)
@@ -4959,7 +4950,7 @@ architecture_productive_floorplans_use_cart_scale_loading_doors :: proc(t: ^test
 }
 
 @(test)
-architecture_barn_ranges_keep_high_hayloft_vents_above_loading_doors :: proc(t: ^testing.T) {
+architecture_barn_ranges_use_sparse_mediterranean_ventilation :: proc(t: ^testing.T) {
     structure := terrain.structure_make(1300, 1300, 30, 24, 4, 24)
     structure.kind = .Architecture
     structure.building.archetype = .Barn_Granary
@@ -4969,19 +4960,18 @@ architecture_barn_ranges_keep_high_hayloft_vents_above_loading_doors :: proc(t: 
         primary := architecture.architecture_frontage_mass_index(structure)
         for mass, mass_index in footprint.masses[:footprint.count] {
             layout := architecture.architecture_opening_layout(structure, mass_index, primary)
-            high_vents := 0
+            vents := 0
             for opening in layout.openings[:layout.count] {
                 if opening.kind != .Vent do continue
-                testing.expect(t, opening.width >= .70 && opening.width <= 1.05)
-                testing.expect(t, opening.height >= .85 && opening.height <= 1.35)
-                if opening.y >= structure.height * mass.height_scale * .60 {
-                    high_vents += 1
-                }
+                vents += 1
+                testing.expect(t, opening.width >= .48 && opening.width <= .82)
+                testing.expect(t, opening.height >= .55 && opening.height <= .95)
+                testing.expect(t, opening.y < structure.height * mass.height_scale * .60)
             }
             testing.expectf(
                 t,
-                high_vents > 0,
-                "barn range lacks hayloft vent seed=%d mass=%d height=%.2f",
+                vents > 0,
+                "agricultural range lacks ventilation seed=%d mass=%d height=%.2f",
                 seed,
                 mass_index,
                 structure.height * mass.height_scale,
@@ -4991,7 +4981,7 @@ architecture_barn_ranges_keep_high_hayloft_vents_above_loading_doors :: proc(t: 
 }
 
 @(test)
-architecture_low_barn_avoids_a_sealed_side_aisle :: proc(t: ^testing.T) {
+architecture_low_barn_avoids_a_sealed_work_range :: proc(t: ^testing.T) {
     structure := terrain.structure_make(1300, 1300, 14, 14, 4, 4.8)
     structure.width, structure.depth, structure.height = 14, 14, 4.8
     structure.kind = .Architecture
@@ -5014,18 +5004,15 @@ architecture_low_barn_avoids_a_sealed_side_aisle :: proc(t: ^testing.T) {
     testing.expect_value(t, tall.count, 2)
     primary := architecture.architecture_frontage_mass_index(structure)
     aisle_layout := architecture.architecture_opening_layout(structure, 1, primary)
-    expected_face := tall.masses[1].local_x < 0 ? architecture.Face.Left : architecture.Face.Right
-    aisle_doors, aisle_vents := 0, 0
+    aisle_vents := 0
     for opening in aisle_layout.openings[:aisle_layout.count] {
-        if opening.face == expected_face && opening.kind == .Service_Door do aisle_doors += 1
         if opening.kind == .Vent do aisle_vents += 1
     }
-    testing.expect_value(t, aisle_doors, 1)
-    testing.expectf(t, aisle_vents > 0, "usable barn aisle lacks ventilation")
+    testing.expectf(t, aisle_vents > 0, "usable barn work range lacks ventilation")
 }
 
 @(test)
-architecture_barn_side_aisles_keep_serviceable_hall_connections :: proc(t: ^testing.T) {
+architecture_mediterranean_barn_ranges_keep_serviceable_connections :: proc(t: ^testing.T) {
     sizes := [5][3]f32 {
         {12, 12, 9.6},
         {14, 12, 9.6},
@@ -5041,15 +5028,16 @@ architecture_barn_side_aisles_keep_serviceable_hall_connections :: proc(t: ^test
             structure.seed = u32(seed)
             structure.building.archetype = .Barn_Granary
             footprint := architecture.architecture_footprint(structure)
-            testing.expect_value(t, footprint.count, 2)
-            hall, aisle := footprint.masses[0], footprint.masses[1]
+            testing.expect(t, footprint.count == 1 || footprint.count == 2)
+            if footprint.count == 1 do continue
+            hall, work_range := footprint.masses[0], footprint.masses[1]
             overlap_x :=
-                min(hall.local_x + hall.width * .5, aisle.local_x + aisle.width * .5) -
-                max(hall.local_x - hall.width * .5, aisle.local_x - aisle.width * .5)
+                min(hall.local_x + hall.width * .5, work_range.local_x + work_range.width * .5) -
+                max(hall.local_x - hall.width * .5, work_range.local_x - work_range.width * .5)
             testing.expectf(
                 t,
                 overlap_x >= 2.0 - .001,
-                "barn side aisle has a pinched hall connection size=(%.1f,%.1f,%.1f) seed=%d overlap=%.2f",
+                "barn work range has a pinched connection size=(%.1f,%.1f,%.1f) seed=%d overlap=%.2f",
                 size[0],
                 size[1],
                 size[2],
@@ -5058,6 +5046,38 @@ architecture_barn_side_aisles_keep_serviceable_hall_connections :: proc(t: ^test
             )
         }
     }
+}
+
+@(test)
+architecture_farms_use_distinct_adriatic_and_aegean_massing :: proc(t: ^testing.T) {
+    structure := terrain.structure_make(1300, 1300, 24, 20, 4, 9.6)
+    structure.width, structure.depth, structure.height = 24, 20, 9.6
+    structure.kind = .Architecture
+    structure.seed = 0
+    structure.building.archetype = .Farmstead
+
+    structure.building.region = .Adriatic
+    adriatic := architecture.architecture_footprint(structure)
+    testing.expect_value(t, adriatic.count, 2)
+    testing.expect(t, adriatic.masses[1].height_scale == .58)
+
+    structure.building.region = .Aegean
+    aegean := architecture.architecture_footprint(structure)
+    testing.expect_value(t, aegean.count, 3)
+    testing.expect(t, aegean.masses[1].height_scale == .72)
+    testing.expect(t, aegean.masses[2].height_scale == .58)
+    testing.expect(t, aegean.masses[1].local_x * aegean.masses[2].local_x < 0)
+
+    structure.building.archetype = .Barn_Granary
+    adriatic_barn := structure
+    adriatic_barn.building.region = .Adriatic
+    aegean_barn := structure
+    aegean_barn.building.region = .Aegean
+    adriatic_barn_footprint := architecture.architecture_footprint(adriatic_barn)
+    aegean_barn_footprint := architecture.architecture_footprint(aegean_barn)
+    testing.expect_value(t, adriatic_barn_footprint.count, 2)
+    testing.expect_value(t, aegean_barn_footprint.count, 2)
+    testing.expect(t, adriatic_barn_footprint.masses[1].depth != aegean_barn_footprint.masses[1].depth)
 }
 
 @(test)

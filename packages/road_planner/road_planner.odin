@@ -81,6 +81,28 @@ grid_valid :: proc(grid: Grid) -> bool {
         grid.height <= MAX_GRID_HEIGHT && len(grid.heights) >= grid.width * grid.height
 }
 
+// Returns the fraction of a road step that runs along a nearby shoreline.
+// The wet/dry mask gradient is normal to the bank, so a square crossing has
+// no surcharge while an increasingly oblique crossing pays more. Away from a
+// shoreline there is no meaningful crossing direction and therefore no
+// surcharge.
+water_mask_at :: #force_inline proc(grid: Grid, x, z: int) -> f32 {
+    sample_x := clamp(x, 0, grid.width - 1)
+    sample_z := clamp(z, 0, grid.height - 1)
+    return grid.heights[sample_z * grid.width + sample_x] <= grid.sea_level ? f32(1) : f32(0)
+}
+
+water_crossing_obliqueness :: proc(grid: Grid, x, z, step_x, step_z: int) -> f32 {
+    normal_x := water_mask_at(grid, x + 1, z) - water_mask_at(grid, x - 1, z)
+    normal_z := water_mask_at(grid, x, z + 1) - water_mask_at(grid, x, z - 1)
+    normal_length := f32(math.sqrt(f64(normal_x * normal_x + normal_z * normal_z)))
+    step_length := f32(math.sqrt(f64(step_x * step_x + step_z * step_z)))
+    if normal_length <= .001 || step_length <= .001 do return 0
+    cross := f32(step_x) * normal_z - f32(step_z) * normal_x
+    tangential := math.abs(cross) / (step_length * normal_length)
+    return tangential * tangential
+}
+
 // Plan on a regularly sampled height grid. Grid spacing belongs to Config so
 // the same policy can be exercised in a lab and by terrain generation.
 workspace_heap_swap :: proc(work: ^Workspace, a, b: int) {
@@ -204,7 +226,14 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
                     break
                 }
                 sample_height := grid.heights[sample_cell]
-                if sample_height <= grid.sea_level do step_cost += config.water_cost * distance / f32(sample_count)
+                if sample_height <= grid.sea_level {
+                    water_step_cost := config.water_cost * distance / f32(sample_count)
+                    // Crossing along the bank costs up to twice as much as
+                    // crossing its local normal. This keeps water expensive
+                    // while rewarding short, square bridge approaches.
+                    step_cost += water_step_cost *
+                        (1 + water_crossing_obliqueness(grid, sample_x, sample_z, offset[0], offset[1]))
+                }
                 if sample < sample_count {
                     expected_height := current_height + rise * amount
                     deviation_grade := math.abs(sample_height - expected_height) / config.cell_size
