@@ -638,7 +638,10 @@ when ODIN_TEST {
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))
         testing.expect(t, os.write_entire_file(sidecar_path, sidecar_bytes) == nil)
 
-        malformed_adrmap := []byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
+        malformed_adrmap := make([]byte, len(sidecar_bytes))
+        defer delete(malformed_adrmap)
+        copy(malformed_adrmap, sidecar_bytes)
+        malformed_adrmap[len(malformed_adrmap) - 1] ~= 1
         malformed_sidecar, malformed_derived := fixture_map_sidecar_derive(malformed_adrmap)
         testing.expect(t, malformed_derived && fixture_map_sidecar_matches_encoded(malformed_sidecar, malformed_adrmap))
         if !malformed_derived do return
@@ -674,7 +677,7 @@ when ODIN_TEST {
             t,
             !map_loaded && map_error.kind == .Load && map_error.path == path && map_error.sidecar == malformed_sidecar &&
                 map_error.load.kind == .Invalid_State && map_error.load.path == "map_source" &&
-                map_error.load.map_error.kind == .Truncated && map_error.load.map_error.offset == len(malformed_adrmap),
+                map_error.load.map_error.kind == .Checksum_Mismatch,
         )
         fixture_editor_store_error_dispose(&map_error)
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))

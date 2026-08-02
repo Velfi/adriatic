@@ -22,6 +22,8 @@ MAP_ARTIFACT_LEGACY_FORMAT_VERSION :: u32(1)
 MAP_ARTIFACT_GENERATOR_VERSION :: u64(6)
 MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(5)
 MAP_ARTIFACT_LEGACY_GENERATOR_VERSION :: u64(3)
+// The committed Dunes fixture predates the initial generator bump.
+MAP_ARTIFACT_INITIAL_GENERATOR_VERSION :: u64(1)
 MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
 MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE :: "map artifact allocation failed"
@@ -69,7 +71,9 @@ map_artifact_version_is_legacy :: #force_inline proc(format: u32, generator: u64
     return(
         (format == MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION && generator == MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION) ||
         (format == u32(2) && generator == u64(4)) ||
-        (format == MAP_ARTIFACT_LEGACY_FORMAT_VERSION && generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION) \
+        (format == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
+            (generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION ||
+                generator == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION)) \
     )
 }
 
@@ -164,17 +168,53 @@ map_artifact_get_u64 :: proc(data: []byte, offset: int) -> u64 {
     return result
 }
 
-map_artifact_portable_config :: proc() -> hs.Portable_Config {
+map_artifact_portable_config :: proc(exact_schema := true) -> hs.Portable_Config {
     config := hs.portable_default_config()
-    config.exact_schema = true
+    config.exact_schema = exact_schema
     config.exclusion_tag = "map"
     return config
 }
 
-map_artifact_legacy_portable_config :: proc() -> hs.Portable_Config {
-    config := map_artifact_portable_config()
-    config.exact_schema = false
-    return config
+map_artifact_schema_pair :: proc(format_version: u32, generator_version: u64) -> (exact_schema, supported: bool) {
+    if format_version == MAP_ARTIFACT_FORMAT_VERSION && generator_version == MAP_ARTIFACT_GENERATOR_VERSION {
+        return true, true
+    }
+    if map_artifact_version_is_legacy(format_version, generator_version) do return false, true
+    return false, false
+}
+
+// Return the physical version pair without decoding the map payload. Sidecar
+// metadata must match this header before a later full decode may trust it.
+map_artifact_header_version_pair :: proc(data: []byte) -> (format_version: u32, generator_version: u64, ok: bool) {
+    sectioned_magic := fixture_file.Sectioned_Container_Magic
+    sectioned := len(data) >= len(sectioned_magic)
+    if sectioned {
+        for value, index in sectioned_magic {
+            if data[index] != value {
+                sectioned = false
+                break
+            }
+        }
+    }
+    if sectioned {
+        if len(data) < fixture_file.Sectioned_Container_Header_Size ||
+           map_artifact_get_u16(data, 8) != fixture_file.Sectioned_Container_Version ||
+           fixture_file.Artifact_Kind(map_artifact_get_u16(data, 10)) != .Map ||
+           map_artifact_get_u32(data, 28) != 0 {
+            return 0, 0, false
+        }
+        return map_artifact_get_u32(data, 12), map_artifact_get_u64(data, 16), true
+    }
+    if len(data) < MAP_ARTIFACT_HEADER_SIZE do return 0, 0, false
+    magic := MAP_ARTIFACT_MAGIC
+    for value, index in magic {
+        if data[index] != value do return 0, 0, false
+    }
+    if map_artifact_get_u16(data, 8) != MAP_ARTIFACT_CONTAINER_VERSION ||
+       map_artifact_get_u16(data, 10) != 0 {
+        return 0, 0, false
+    }
+    return map_artifact_get_u32(data, 12), map_artifact_get_u64(data, 16), true
 }
 
 map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
@@ -329,11 +369,11 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
             }
         }
         if view.artifact_kind != .Map do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Artifact, offset = 10}}, false
-        legacy := map_artifact_version_is_legacy(view.schema_version, view.generator_version)
-        if view.schema_version != MAP_ARTIFACT_FORMAT_VERSION && !legacy {
-            return nil, {kind = .Unsupported_Format, offset = 12}, false
-        }
-        if view.generator_version != MAP_ARTIFACT_GENERATOR_VERSION && !legacy {
+        exact_schema, supported := map_artifact_schema_pair(view.schema_version, view.generator_version)
+        if !supported {
+            if view.schema_version != MAP_ARTIFACT_FORMAT_VERSION {
+                return nil, {kind = .Unsupported_Format, offset = 12}, false
+            }
             return nil, {kind = .Stale_Generator, offset = 16}, false
         }
         payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
@@ -343,16 +383,18 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         portable_error, portable_ok := hs.portable_decode(
             any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
             payload,
-            legacy ? map_artifact_legacy_portable_config() : map_artifact_portable_config(),
+            map_artifact_portable_config(exact_schema),
             alloc,
         )
         if !portable_ok {
             map_artifact_destroy(artifact, alloc)
             return nil, {kind = .Portable, portable = portable_error}, false
         }
-        if legacy {
-            artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+        if artifact.generator_version != view.generator_version {
+            map_artifact_destroy(artifact, alloc)
+            return nil, {kind = .Invalid_State, message = "map generator version does not match container"}, false
         }
+        if !exact_schema do artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
         terrain.island_transforms_initialize(&artifact.project)
         if message, valid := map_artifact_valid(artifact); !valid {
             map_artifact_destroy(artifact, alloc)
@@ -369,13 +411,13 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         return nil, {kind = .Unsupported_Container, offset = 8}, false
     }
     if map_artifact_get_u16(data, 10) != 0 do return nil, {kind = .Invalid_Flags, offset = 10}, false
-    stored_format := map_artifact_get_u32(data, 12)
-    stored_generator := map_artifact_get_u64(data, 16)
-    legacy := map_artifact_version_is_legacy(stored_format, stored_generator)
-    if stored_format != MAP_ARTIFACT_FORMAT_VERSION && !legacy {
-        return nil, {kind = .Unsupported_Format, offset = 12}, false
-    }
-    if stored_generator != MAP_ARTIFACT_GENERATOR_VERSION && !legacy {
+    format_version := map_artifact_get_u32(data, 12)
+    generator_version := map_artifact_get_u64(data, 16)
+    exact_schema, supported := map_artifact_schema_pair(format_version, generator_version)
+    if !supported {
+        if format_version != MAP_ARTIFACT_FORMAT_VERSION {
+            return nil, {kind = .Unsupported_Format, offset = 12}, false
+        }
         return nil, {kind = .Stale_Generator, offset = 16}, false
     }
     payload_size := map_artifact_get_u64(data, 24)
@@ -394,16 +436,18 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
     portable_error, decoded := hs.portable_decode(
         any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
         payload,
-        legacy ? map_artifact_legacy_portable_config() : map_artifact_portable_config(),
+        map_artifact_portable_config(exact_schema),
         alloc,
     )
     if !decoded {
         map_artifact_destroy(artifact, alloc)
         return nil, {kind = .Portable, portable = portable_error}, false
     }
-    if legacy {
-        artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+    if artifact.generator_version != generator_version {
+        map_artifact_destroy(artifact, alloc)
+        return nil, {kind = .Invalid_State, message = "map generator version does not match container"}, false
     }
+    if !exact_schema do artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
     terrain.island_transforms_initialize(&artifact.project)
     if message, valid := map_artifact_valid(artifact); !valid {
         map_artifact_destroy(artifact, alloc)

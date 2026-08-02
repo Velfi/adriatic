@@ -49,10 +49,13 @@ fixture_map_sidecar_canonical_basename :: proc(sidecar: Fixture_Map_Sidecar) -> 
 
 fixture_map_sidecar_derive :: proc(encoded_adrmap: []byte) -> (Fixture_Map_Sidecar, bool) {
     if len(encoded_adrmap) == 0 do return {}, false
+    format_version, generator_version, header_ok := map_artifact_header_version_pair(encoded_adrmap)
+    _, supported := map_artifact_schema_pair(format_version, generator_version)
+    if !header_ok || !supported do return {}, false
     sidecar := Fixture_Map_Sidecar {
         container_version = MAP_ARTIFACT_CONTAINER_VERSION,
-        format_version    = MAP_ARTIFACT_FORMAT_VERSION,
-        generator_version = MAP_ARTIFACT_GENERATOR_VERSION,
+        format_version    = format_version,
+        generator_version = generator_version,
     }
     ctx: sha2.Context_256
     sha2.init_256(&ctx)
@@ -64,6 +67,12 @@ fixture_map_sidecar_derive :: proc(encoded_adrmap: []byte) -> (Fixture_Map_Sidec
 
 fixture_map_sidecar_matches_encoded :: proc(sidecar: Fixture_Map_Sidecar, encoded_adrmap: []byte) -> bool {
     if !fixture_map_sidecar_valid(sidecar) || len(encoded_adrmap) == 0 do return false
+    format_version, generator_version, header_ok := map_artifact_header_version_pair(encoded_adrmap)
+    if !header_ok ||
+       format_version != sidecar.format_version ||
+       generator_version != sidecar.generator_version {
+        return false
+    }
     derived, derived_ok := fixture_map_sidecar_derive(encoded_adrmap)
     if !derived_ok do return false
     for index in 0 ..< len(sidecar.encoded_sha256) {
@@ -240,12 +249,9 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
 }
 
 fixture_map_sidecar_valid :: proc(sidecar: Fixture_Map_Sidecar) -> bool {
-    legacy := map_artifact_version_is_legacy(sidecar.format_version, sidecar.generator_version)
-    if sidecar.container_version != MAP_ARTIFACT_CONTAINER_VERSION ||
-       (sidecar.format_version != MAP_ARTIFACT_FORMAT_VERSION && !legacy) ||
-       (sidecar.generator_version != MAP_ARTIFACT_GENERATOR_VERSION && !legacy) {
-        return false
-    }
+    if sidecar.container_version != MAP_ARTIFACT_CONTAINER_VERSION do return false
+    _, supported := map_artifact_schema_pair(sidecar.format_version, sidecar.generator_version)
+    if !supported do return false
     if !fixture_map_sidecar_canonical_basename(sidecar) do return false
     for value in sidecar.encoded_sha256 {
         if value != 0 do return true

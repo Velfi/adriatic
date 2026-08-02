@@ -128,7 +128,13 @@ when ODIN_TEST {
 
     @(test)
     map_artifact_sidecar_descriptor_contract :: proc(t: ^testing.T) {
-        encoded := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x01, 0x02, 0x03}
+        artifact := map_artifact_test_source()
+        defer map_artifact_destroy(artifact)
+        encoded, encode_error, encoded_ok := map_artifact_encode(artifact)
+        defer delete(encoded)
+        defer map_artifact_error_dispose(&encode_error)
+        testing.expect(t, encoded_ok)
+        if !encoded_ok do return
         sidecar, derived := fixture_map_sidecar_derive(encoded)
         testing.expect(t, derived)
         testing.expect(t, fixture_map_sidecar_valid(sidecar))
@@ -152,7 +158,10 @@ when ODIN_TEST {
         )
         testing.expect(t, fixture_map_sidecar_matches_encoded(sidecar, encoded))
 
-        mismatched := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x01, 0x02, 0x04}
+        mismatched := make([]byte, len(encoded))
+        defer delete(mismatched)
+        copy(mismatched, encoded)
+        mismatched[len(mismatched) - 1] ~= 1
         testing.expect(t, !fixture_map_sidecar_matches_encoded(sidecar, mismatched))
 
         empty, empty_ok := fixture_map_sidecar_derive(nil)
@@ -171,13 +180,67 @@ when ODIN_TEST {
             sidecar = sidecar,
         }
         testing.expect(t, fixture_map_source_valid(source))
+        legacy := sidecar
+        legacy.format_version = MAP_ARTIFACT_LEGACY_FORMAT_VERSION
+        legacy.generator_version = MAP_ARTIFACT_INITIAL_GENERATOR_VERSION
+        testing.expect(t, fixture_map_sidecar_valid(legacy))
+        testing.expect(t, !fixture_map_sidecar_matches_encoded(legacy, encoded))
+        legacy.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+        testing.expect(t, !fixture_map_sidecar_valid(legacy))
         source.inline_bytes = inline_bytes
         testing.expect(t, !fixture_map_source_valid(source))
     }
 
     @(test)
+    map_artifact_committed_dunes_sidecar_remains_compatible :: proc(t: ^testing.T) {
+        fixture_bytes, fixture_read_error := os.read_entire_file("fixtures/labs/dunes.fixture", context.allocator)
+        testing.expect(t, fixture_read_error == nil)
+        if fixture_read_error != nil do return
+        defer delete(fixture_bytes)
+
+        decoded, decode_error, decoded_ok := fixture_codec_decode(fixture_bytes)
+        testing.expect(t, decoded_ok && decode_error.kind == .None)
+        fixture_codec_error_dispose(&decode_error)
+        if !decoded_ok do return
+        defer fixture_migration_result_dispose(&decoded)
+        sidecar := decoded.fixture.map_source.sidecar
+        testing.expect(
+            t,
+            decoded.fixture.map_source.kind == .Sidecar &&
+                fixture_map_sidecar_valid(sidecar) &&
+                sidecar.format_version == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
+                sidecar.generator_version == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION,
+        )
+
+        sidecar_path, resolved := fixture_map_sidecar_resolve("fixtures/labs/dunes.fixture", sidecar)
+        testing.expect(t, resolved)
+        if !resolved do return
+        defer delete(sidecar_path)
+        sidecar_bytes, sidecar_read_error := os.read_entire_file(sidecar_path, context.allocator)
+        testing.expect(t, sidecar_read_error == nil)
+        if sidecar_read_error != nil do return
+        defer delete(sidecar_bytes)
+        derived, derived_ok := fixture_map_sidecar_derive(sidecar_bytes)
+        testing.expect(t, derived_ok && derived == sidecar)
+        testing.expect(t, fixture_map_sidecar_matches_encoded(sidecar, sidecar_bytes))
+
+        artifact, map_error, decoded_map := map_artifact_decode(sidecar_bytes)
+        testing.expect(t, decoded_map && map_error.kind == .None)
+        map_artifact_error_dispose(&map_error)
+        if !decoded_map do return
+        defer map_artifact_destroy(artifact)
+        testing.expect(t, artifact.generator_version == MAP_ARTIFACT_GENERATOR_VERSION)
+    }
+
+    @(test)
     map_artifact_sidecar_rejects_noncanonical_names_and_resolves_only_siblings :: proc(t: ^testing.T) {
-        encoded := []byte{0x41, 0x44, 0x52, 0x4d, 0x41, 0x50, 0x11}
+        artifact := map_artifact_test_source()
+        defer map_artifact_destroy(artifact)
+        encoded, encode_error, encoded_ok := map_artifact_encode(artifact)
+        defer delete(encoded)
+        defer map_artifact_error_dispose(&encode_error)
+        testing.expect(t, encoded_ok)
+        if !encoded_ok do return
         sidecar, derived := fixture_map_sidecar_derive(encoded)
         testing.expect(t, derived)
         if !derived do return
