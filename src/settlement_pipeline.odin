@@ -6470,6 +6470,35 @@ settlement_village_program :: proc(
     return count
 }
 
+// Ordinary structures represent occupied homes and working buildings, not
+// sheds. The area is an exterior footprint: 500 ft² leaves roughly the UK
+// 37–39 m² one-person dwelling minimum after thick perimeter walls, while the
+// short-side floor prevents the same area from becoming a closet-like sliver.
+SETTLEMENT_MIN_ORDINARY_BUILDING_AREA :: f32(46.45152) // 500 ft² in m²
+SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE :: f32(4.5)
+
+settlement_normalize_ordinary_building_dimensions :: proc(
+    width_in, depth_in: f32,
+) -> (
+    width, depth: f32,
+) {
+    width = max(width_in, SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE)
+    depth = max(depth_in, SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE)
+    area := width * depth
+    if area < SETTLEMENT_MIN_ORDINARY_BUILDING_AREA {
+        scale := f32(math.sqrt(f64(SETTLEMENT_MIN_ORDINARY_BUILDING_AREA / area)))
+        width *= scale
+        depth *= scale
+    }
+    return
+}
+
+settlement_ordinary_building_dimensions_valid :: proc(width, depth: f32) -> bool {
+    return width >= SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE &&
+        depth >= SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE &&
+        width * depth >= SETTLEMENT_MIN_ORDINARY_BUILDING_AREA - .001
+}
+
 settlement_village_purpose_dimensions :: proc(
     purpose: Settlement_Building_Purpose,
     region: Settlement_Region,
@@ -6499,6 +6528,7 @@ settlement_village_purpose_dimensions :: proc(
     if depth > frontage {
         frontage, depth = depth, frontage
     }
+    frontage, depth = settlement_normalize_ordinary_building_dimensions(frontage, depth)
     return
 }
 
@@ -7468,6 +7498,7 @@ settlement_town_try_pair_singleton :: proc(
     // metre facade and a shallower rear wall while retaining the street line.
     frontage := clamp(first.width * .68, f32(4), f32(7))
     depth := clamp(first.depth * .78, f32(8), f32(16))
+    frontage, depth = settlement_normalize_ordinary_building_dimensions(frontage, depth)
     separation := settlement_building_separation(
         settlement.request.region,
         .Town,
@@ -7660,6 +7691,7 @@ settlement_plan_generate_buildings :: proc(
             if depth > frontage && settlement.request.scale != .Town {
                 frontage, depth = depth, frontage
             }
+            frontage, depth = settlement_normalize_ordinary_building_dimensions(frontage, depth)
             hero_candidate := !hero_post_office_placed || !hero_clinic_placed
             hero_kind := !hero_post_office_placed ? hero.Kind.Post_Office : hero.Kind.Clinic
             if hero_candidate {

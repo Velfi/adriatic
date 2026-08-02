@@ -444,6 +444,7 @@ Settlement_Acceptance_Failure :: enum {
     Height_Outlier,
     Landmark_Count,
     Park_Count,
+    Undersized_Building,
 }
 
 Settlement_Plan :: struct {
@@ -1031,6 +1032,12 @@ settlement_plan_acceptance_failure :: proc(
             return .Submerged_Site
         }
         if site.kind != .Ordinary do continue
+        if !settlement_ordinary_building_dimensions_valid(
+            site.structure.width,
+            site.structure.depth,
+        ) {
+            return .Undersized_Building
+        }
         ordinary_count += 1
         village_purposes[int(site.purpose)] += 1
         if site.structure.height > 22 do ordinary_above_22 += 1

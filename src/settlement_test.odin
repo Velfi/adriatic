@@ -1474,6 +1474,7 @@ settlement_generated_parcels_and_heights_hold_across_seed_suite :: proc(t: ^test
                     minimum_height, maximum_height := settlement_height_band(region, scale)
                     testing.expect(t, structure.width >= frontage_low && structure.width <= frontage_high)
                     testing.expect(t, structure.depth >= depth_low && structure.depth <= depth_high)
+                    testing.expect(t, settlement_ordinary_building_dimensions_valid(structure.width, structure.depth))
                     testing.expect(t, structure.height >= minimum_height && structure.height <= maximum_height)
                     testing.expect(t, structure.width <= parcel.frontage_width + .001)
                     testing.expect(t, structure.depth <= parcel.depth + .001)
@@ -4083,6 +4084,41 @@ settlement_acceptance_requires_every_building_access_connection :: proc(t: ^test
 }
 
 @(test)
+settlement_ordinary_building_dimensions_enforce_area_and_short_side :: proc(t: ^testing.T) {
+    width, depth := settlement_normalize_ordinary_building_dimensions(4, 5.5)
+    testing.expect(t, settlement_ordinary_building_dimensions_valid(width, depth))
+    testing.expect(t, width >= SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE)
+    testing.expect(t, depth >= SETTLEMENT_MIN_ORDINARY_BUILDING_SIDE)
+    testing.expect(t, math.abs(width * depth - SETTLEMENT_MIN_ORDINARY_BUILDING_AREA) < .001)
+
+    unchanged_width, unchanged_depth := settlement_normalize_ordinary_building_dimensions(8, 8)
+    testing.expect_value(t, unchanged_width, f32(8))
+    testing.expect_value(t, unchanged_depth, f32(8))
+}
+
+@(test)
+settlement_acceptance_rejects_an_undersized_ordinary_building :: proc(t: ^testing.T) {
+    project := terrain.new_project()
+    defer terrain.free_project(project)
+    project.sea_level = -100
+    plan: Settlement_Plan
+    plan.request.scale = .Village
+    plan.metrics.public_component_count = 1
+    plan.sites[0] = {
+        structure = terrain.structure_make(0, 0, 4, 4, 0, 4),
+        kind      = .Ordinary,
+        accepted  = true,
+    }
+    plan.site_count = 1
+
+    testing.expect_value(
+        t,
+        settlement_plan_acceptance_failure(&plan, project),
+        Settlement_Acceptance_Failure.Undersized_Building,
+    )
+}
+
+@(test)
 settlement_pedestrian_access_is_sparse_and_bounded :: proc(t: ^testing.T) {
     plan: Settlement_Plan
     plan.request.scale = .Town
@@ -4180,6 +4216,14 @@ settlement_acceptance_rejects_wide_roads_and_height_outliers :: proc(t: ^testing
     testing.expect(t, plan.metrics.fabric_quadrants >= 2)
     testing.expect(t, plan.metrics.fabric_aspect_ratio <= 3.2)
     testing.expect_value(t, settlement_plan_acceptance_failure(&plan, project), Settlement_Acceptance_Failure.None)
+    original_width, original_depth := plan.sites[0].structure.width, plan.sites[0].structure.depth
+    plan.sites[0].structure.width, plan.sites[0].structure.depth = 4, 4
+    testing.expect_value(
+        t,
+        settlement_plan_acceptance_failure(&plan, project),
+        Settlement_Acceptance_Failure.Undersized_Building,
+    )
+    plan.sites[0].structure.width, plan.sites[0].structure.depth = original_width, original_depth
     plan.metrics.wide_route_share = .13
     testing.expect(t, !settlement_plan_acceptance_valid(&plan, project))
     plan.village_reason = .Harbor_Fishery
