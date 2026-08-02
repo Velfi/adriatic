@@ -110,6 +110,10 @@ map_artifact_capture_fixture :: proc(
     artifact.seeds = seeds
     artifact.project = fixture.project
     artifact.project.structures = nil
+    artifact.project.islands = fixture.project.islands
+    artifact.project.bathymetry_tiles = fixture.project.bathymetry_tiles
+    fixture.project.islands = nil
+    fixture.project.bathymetry_tiles = nil
     if fixture.project.structure_count > 0 {
         structures, allocation_error := make([dynamic]terrain.Structure, fixture.project.structure_count, alloc)
         if allocation_error != nil {
@@ -159,6 +163,8 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
     terrain.destroy_project(&fixture.project)
     fixture.project = artifact.project
     artifact.project.structures = nil
+    artifact.project.islands = nil
+    artifact.project.bathymetry_tiles = nil
     terrain.rebuild_default_river_water_splines(&fixture.project, artifact.seeds)
     fixture.settlement_plan = artifact.settlement_plan
     fixture.marina_authored = artifact.marina_authored

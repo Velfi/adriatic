@@ -315,13 +315,14 @@ world_ocean_vertex :: #force_inline proc(
     // Ocean shading receives the actual heightfield elevation above sea level.
     // Interpolation across the local ocean grid turns that signal into a
     // shoreline band without baking the default islands into the shader.
-    elevation := terrain.sample_height(&editor.project, 0, point.x, point.z) - editor.project.sea_level
-    vertex.material = {elevation, 1}
-    if elevation < 0 {
+    land_height, _, land_found := terrain.sample_land(&editor.project, 0, point.x, point.z)
+    elevation := land_height - editor.project.sea_level
+    if !land_found {
+        depth := terrain.sample_water_interface(&editor.project, point.x, point.z)
         // Generated coastal bathymetry stores depth below sea level. Convert
         // the upper shelf into the positive shallowness signal expected by the
         // water shader and suppress broad breaking foam across that shelf.
-        vertex.material.x = clamp(1 - (-elevation / 13), 0, 1) * 1.35
+        vertex.material.x = clamp(1 - depth / 13, 0, 1) * 1.35
         vertex.material.y = -1
     } else {
         // The ocean mesh extends beneath hidden dry land. Carry maximum

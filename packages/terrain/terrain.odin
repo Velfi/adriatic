@@ -719,6 +719,8 @@ Project :: struct {
     city_density:          [CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
     river_water_splines:    [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
+    islands:               [dynamic]Island_Asset,
+    bathymetry_tiles:      [dynamic]Bathymetry_Tile,
 }
 
 Project_File_Payload :: struct {
@@ -816,6 +818,8 @@ project_replace :: proc(project, loaded: ^Project) {
         if structure.kind != .Foliage do structure.color[3] = 255
     }
     delete(project.structures)
+    island_assets_destroy(&project.islands)
+    delete(project.bathymetry_tiles)
     project^ = loaded^
     loaded.structures = nil
 }
@@ -1404,6 +1408,8 @@ default_island_feature_seed_for :: #force_inline proc(island_seed, salt: u32) ->
 init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) {
     if result == nil do return
     delete(result.structures)
+    island_assets_destroy(&result.islands)
+    delete(result.bathymetry_tiles)
     result^ = {}
     result.sea_level = 0
     result.revision = 1
@@ -1458,6 +1464,11 @@ init_project_seeded :: proc(result: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]
         }
         terrain_erode_default_level(data, erosion_scratch, authored_half_extent)
     }
+    // Island chunks are the authoritative land representation. The global
+    // levels above are retained only as an intermediate generation scratch
+    // space and are never used by runtime sampling.
+    island_build_default_assets(result, seeds)
+    bathymetry_build_default(result)
     _ = add_default_runways_seeded(result, seeds)
     refresh_derived_overlaps(result)
 }
@@ -1694,6 +1705,9 @@ destroy_project :: proc(project: ^Project) {
     delete(project.structures)
     project.structures = nil
     project.structure_count = 0
+    island_assets_destroy(&project.islands)
+    delete(project.bathymetry_tiles)
+    project.bathymetry_tiles = nil
 }
 
 free_project :: proc(project: ^Project) {
@@ -2481,13 +2495,52 @@ sample_level_render_material :: #force_inline proc(data: ^Clipmap_Level, x, z: f
 // coarser nested grids when a coordinate is outside a fine level.
 @(no_instrumentation)
 sample_height :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
-    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
-    for candidate in level ..< CLIPMAP_LEVELS {
-        data := &project.levels[candidate]
-        if !level_contains(data, x, z) do continue
-        return sample_level_height(data, x, z)
+    height, _, found := sample_island_land(project, level, x, z)
+    return found ? height : 0
+}
+
+// Resolve detailed land through positioned island assets first. The legacy
+// project clipmap remains a fallback while maps are regenerated into the new
+// representation.
+sample_island_land :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+    if project == nil do return
+    for &island in project.islands {
+        island_height, island_material, island_found := island_sample_world(&island, level, x, z)
+        if island_found {
+            return island_height, island_material, true
+        }
     }
-    return 0
+    return
+}
+
+sample_land :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+    if project == nil do return
+    island_height, island_material, island_found := sample_island_land(project, level, x, z)
+    if island_found {
+        return island_height, island_material, true
+    }
+    return
+}
+
+// Bathymetry is deliberately independent of island terrain. Tiles store depth
+// below sea level and are sampled only when no detailed island land is found.
+sample_bathymetry :: #force_inline proc(project: ^Project, x, z: f32) -> (depth, material: f32, found: bool) {
+    if project == nil do return
+    for &tile in project.bathymetry_tiles {
+        extent := f32(BATHYMETRY_TILE_CELLS) * tile.cell_size
+        if x < tile.origin_x || z < tile.origin_z || x > tile.origin_x + extent || z > tile.origin_z + extent do continue
+        gx, gz := (x - tile.origin_x) / tile.cell_size, (z - tile.origin_z) / tile.cell_size
+        ix, iz := clamp(int(math.floor(f64(gx))), 0, BATHYMETRY_TILE_CELLS - 1), clamp(int(math.floor(f64(gz))), 0, BATHYMETRY_TILE_CELLS - 1)
+        index := iz * BATHYMETRY_TILE_CELLS + ix
+        return tile.depth[index], tile.material[index], true
+    }
+    return
+}
+
+sample_water_interface :: proc(project: ^Project, x, z: f32) -> (depth: f32) {
+    if project == nil do return
+    if value, _, found := sample_bathymetry(project, x, z); found do return max(value, 0)
+    return max(project.sea_level - sample_height(project, CLIPMAP_LEVELS - 1, x, z), 0)
 }
 
 // Blend a rendered fine-grid vertex onto the next coarser surface near the
@@ -2505,12 +2558,8 @@ sample_clipmap_transition_height :: #force_inline proc(project: ^Project, level:
 
 @(no_instrumentation)
 sample_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
-    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
-    for candidate in level ..< CLIPMAP_LEVELS {
-        data := &project.levels[candidate]
-        if !level_contains(data, x, z) do continue
-        return sample_level_material(data, x, z)
-    }
+    _, material, found := sample_island_land(project, level, x, z)
+    if found do return material
     return 0
 }
 
@@ -2524,12 +2573,8 @@ active_waterway_at :: #force_inline proc(project: ^Project, level: int, x, z: f3
 
 @(no_instrumentation)
 sample_render_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
-    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
-    for candidate in level ..< CLIPMAP_LEVELS {
-        data := &project.levels[candidate]
-        if !level_contains(data, x, z) do continue
-        return sample_level_render_material(data, x, z)
-    }
+    _, material, found := sample_island_land(project, level, x, z)
+    if found do return material
     return 0
 }
 
