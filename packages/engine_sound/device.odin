@@ -4,7 +4,7 @@ import "core:c"
 import sdl "vendor:sdl3"
 
 BUFFER_SAMPLES :: 1024
-TARGET_QUEUED_FRAMES :: BUFFER_SAMPLES * 2
+TARGET_QUEUED_FRAMES :: BUFFER_SAMPLES * 4
 AUDIO_CHANNELS :: 2
 
 Aux_Mix_Callback :: #type proc(userdata: rawptr, output: []f32)
