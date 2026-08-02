@@ -404,9 +404,13 @@ world_aircraft_transform :: #force_inline proc(body: flight.Body_State, scale: f
     basis := flight.basis_from_orientation(body.orientation)
     return world_model_transform_from_basis(
         {body.position.x, body.position.y, body.position.z},
-        {basis.right.x * scale, basis.right.y * scale, basis.right.z * scale},
+        // Aircraft meshes are authored facing the opposite horizontal
+        // direction from the flight basis. Rotate the presentation basis 180
+        // degrees around up so the nose follows body.forward. The occupant
+        // path performs its own convention conversion and must not inherit it.
+        {-basis.right.x * scale, -basis.right.y * scale, -basis.right.z * scale},
         {basis.up.x * scale, basis.up.y * scale, basis.up.z * scale},
-        {basis.forward.x * scale, basis.forward.y * scale, basis.forward.z * scale},
+        {-basis.forward.x * scale, -basis.forward.y * scale, -basis.forward.z * scale},
     )
 }
 
