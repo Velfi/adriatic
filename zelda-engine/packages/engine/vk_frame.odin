@@ -6,17 +6,6 @@ import vk "vendor:vulkan"
 vk_begin_frame :: proc(ctx: ^Vk_Context) -> (Vk_Frame, bool) {
     frame: Vk_Frame
     if !ctx.initialized || !ctx.frame_resources_ready || ctx.needs_swapchain_recreate {
-        if ctx.debug_acquire_log_count < VK_DEBUG_FRAME_LOG_LIMIT {
-            log_debug(
-                "vk_begin_frame: skipped initialized=",
-                ctx.initialized,
-                " frame_resources_ready=",
-                ctx.frame_resources_ready,
-                " needs_swapchain_recreate=",
-                ctx.needs_swapchain_recreate,
-            )
-            ctx.debug_acquire_log_count += 1
-        }
         return frame, false
     }
 
@@ -40,21 +29,6 @@ vk_begin_frame :: proc(ctx: ^Vk_Context) -> (Vk_Frame, bool) {
         &image_index,
     )
     ctx.last_cpu_timings.acquire_ms = vk_elapsed_ms(acquire_start)
-    if ctx.debug_acquire_log_count < VK_DEBUG_FRAME_LOG_LIMIT {
-        log_debug(
-            "vk_begin_frame: frame_slot=",
-            frame_index,
-            " acquire_result=",
-            acquire_result,
-            " image_index=",
-            image_index,
-            " wait_ms=",
-            ctx.last_cpu_timings.wait_fence_ms,
-            " acquire_ms=",
-            ctx.last_cpu_timings.acquire_ms,
-        )
-        ctx.debug_acquire_log_count += 1
-    }
     if acquire_result == .ERROR_OUT_OF_DATE_KHR {
         log_warn("vk_begin_frame: acquire out of date")
         ctx.needs_swapchain_recreate = true
@@ -146,20 +120,6 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
     _ = vk.ResetFences(ctx.device, 1, &frame.state.in_flight)
     submit_result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit, frame.state.in_flight)
     ctx.last_cpu_timings.queue_submit_ms = vk_elapsed_ms(submit_start)
-    if ctx.debug_present_log_count < VK_DEBUG_FRAME_LOG_LIMIT {
-        log_debug(
-            "vk_end_frame: frame_slot=",
-            frame.frame_index,
-            " image_index=",
-            frame.image_index,
-            " submit_result=",
-            submit_result,
-            " end_cmd_ms=",
-            ctx.last_cpu_timings.end_command_ms,
-            " submit_ms=",
-            ctx.last_cpu_timings.queue_submit_ms,
-        )
-    }
     if submit_result != .SUCCESS {
         log_error("vk_end_frame: QueueSubmit failed result=", submit_result)
         if submit_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "submitting GPU work")
@@ -179,22 +139,6 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
     present_result := vk.QueuePresentKHR(ctx.present_queue, &present)
     ctx.last_cpu_timings.queue_present_ms = vk_elapsed_ms(present_start)
     ctx.last_command_shape = ctx.command_shape
-    queue_idle_result := vk.Result.SUCCESS
-    if ctx.debug_present_log_count < VK_DEBUG_FRAME_LOG_LIMIT {
-        log_debug(
-            "vk_end_frame: frame_slot=",
-            frame.frame_index,
-            " image_index=",
-            frame.image_index,
-            " present_result=",
-            present_result,
-            " queue_idle_result=",
-            queue_idle_result,
-            " present_ms=",
-            ctx.last_cpu_timings.queue_present_ms,
-        )
-        ctx.debug_present_log_count += 1
-    }
     if present_result == .ERROR_OUT_OF_DATE_KHR || present_result == .SUBOPTIMAL_KHR {
         log_warn("vk_end_frame: present requires swapchain recreate result=", present_result)
         ctx.needs_swapchain_recreate = true

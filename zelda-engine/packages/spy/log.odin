@@ -454,41 +454,69 @@ ensuref :: proc(condition: bool, fmt_str: string, args: ..any, loc := #caller_lo
 // log_prechecked emits after a caller has already applied its own severity
 // policy. It deliberately bypasses the resolved logger's lowest-level gate.
 log_prechecked :: proc(level: Level, args: ..any, sep := " ", loc := #caller_location) -> bool {
-    logger, ok := resolve_logger()
-    if !ok {
+    context_logger := context.logger
+    context_logger_ok := context_logger.procedure != nil && context_logger.procedure != nil_logger_proc
+    subscriber_logger, subscriber_logger_ok := global_subscriber_registry_logger()
+    if !context_logger_ok && !subscriber_logger_ok {
         return false
     }
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     str := fmt.tprint(..args, sep = sep)
     str = annotate_log_text_with_active_scope(str)
-    logger.procedure(logger.data, level, str, logger.options, loc)
+    if context_logger_ok {
+        context_logger.procedure(context_logger.data, level, str, context_logger.options, loc)
+    }
+    if subscriber_logger_ok &&
+       (!context_logger_ok ||
+               context_logger.procedure != subscriber_logger.procedure ||
+               context_logger.data != subscriber_logger.data) {
+        subscriber_logger.procedure(subscriber_logger.data, level, str, subscriber_logger.options, loc)
+    }
     return true
 }
 
 log :: proc(level: Level, args: ..any, sep := " ", loc := #caller_location) {
-    logger, ok := resolve_logger()
-    if !ok {
-        return
-    }
-    if level < logger.lowest_level {
+    context_logger := context.logger
+    context_logger_ok := context_logger.procedure != nil && context_logger.procedure != nil_logger_proc
+    subscriber_logger, subscriber_logger_ok := global_subscriber_registry_logger()
+    context_enabled := context_logger_ok && level >= context_logger.lowest_level
+    subscriber_enabled := subscriber_logger_ok && level >= subscriber_logger.lowest_level
+    if !context_enabled && !subscriber_enabled {
         return
     }
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     str := fmt.tprint(..args, sep = sep)
     str = annotate_log_text_with_active_scope(str)
-    logger.procedure(logger.data, level, str, logger.options, loc)
+    if context_enabled {
+        context_logger.procedure(context_logger.data, level, str, context_logger.options, loc)
+    }
+    if subscriber_enabled &&
+       (!context_enabled ||
+               context_logger.procedure != subscriber_logger.procedure ||
+               context_logger.data != subscriber_logger.data) {
+        subscriber_logger.procedure(subscriber_logger.data, level, str, subscriber_logger.options, loc)
+    }
 }
 
 logf :: proc(level: Level, fmt_str: string, args: ..any, loc := #caller_location) {
-    logger, ok := resolve_logger()
-    if !ok {
-        return
-    }
-    if level < logger.lowest_level {
+    context_logger := context.logger
+    context_logger_ok := context_logger.procedure != nil && context_logger.procedure != nil_logger_proc
+    subscriber_logger, subscriber_logger_ok := global_subscriber_registry_logger()
+    context_enabled := context_logger_ok && level >= context_logger.lowest_level
+    subscriber_enabled := subscriber_logger_ok && level >= subscriber_logger.lowest_level
+    if !context_enabled && !subscriber_enabled {
         return
     }
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     str := fmt.tprintf(fmt_str, ..args)
     str = annotate_log_text_with_active_scope(str)
-    logger.procedure(logger.data, level, str, logger.options, loc)
+    if context_enabled {
+        context_logger.procedure(context_logger.data, level, str, context_logger.options, loc)
+    }
+    if subscriber_enabled &&
+       (!context_enabled ||
+               context_logger.procedure != subscriber_logger.procedure ||
+               context_logger.data != subscriber_logger.data) {
+        subscriber_logger.procedure(subscriber_logger.data, level, str, subscriber_logger.options, loc)
+    }
 }

@@ -1,5 +1,7 @@
 include toolchain.mk
 
+.DEFAULT_GOAL := run
+
 APP := adriatic
 BUILD_DIR := build
 TOOLS_DIR := .tools

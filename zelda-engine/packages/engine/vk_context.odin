@@ -16,7 +16,6 @@ MAX_FRAMES_IN_FLIGHT :: 2
 DEFAULT_REPORTED_BUDGET_CEILING :: 0.70
 DEFAULT_HEAP_SIZE_CEILING :: 0.60
 GPU_ALLOCATION_HEADROOM_BYTES :: u64(64 * 1024 * 1024)
-VK_DEBUG_FRAME_LOG_LIMIT :: u32(120)
 VK_SHUTDOWN_FRAME_FENCE_TIMEOUT_NS :: u64(1_000_000_000)
 
 Gpu_Memory_Heap :: struct {
@@ -172,8 +171,6 @@ Vk_Context :: struct {
     capture_enabled:                 bool,
     vsync_enabled:                   bool,
     supports_debug_utils:            bool,
-    debug_acquire_log_count:         u32,
-    debug_present_log_count:         u32,
 }
 
 vk_record_device_loss :: proc(ctx: ^Vk_Context, stage: string) {

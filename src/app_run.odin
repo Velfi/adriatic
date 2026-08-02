@@ -35,7 +35,7 @@ import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
-adriatic_run :: proc(
+adriatic_run_impl :: proc(
     persistent_canvas_state: rawptr,
     args: []string = os.args,
     request: ^Capture_Request = nil,
