@@ -5,46 +5,18 @@ BUILD_DIR := build
 TOOLS_DIR := .tools
 
 PROFILE ?= hot
-PROFILE_ODIN_FLAGS_hot := -dynamic-map-calls -o:minimal -debug
+PROFILE_ODIN_FLAGS_hot := -dynamic-map-calls -o:minimal
 PROFILE_DEFINE_FLAGS_hot := -define:HOT_RELOAD=true
-PROFILE_CONFIG_hot := debug
-PROFILE_ENTRY_hot := hot
-PROFILE_LINK_MODE_hot := shared
-PROFILE_VULKAN_VALIDATION_hot := false
-PROFILE_ASAN_hot := false
 
-PROFILE_ODIN_FLAGS_debug := -dynamic-map-calls -o:minimal -debug
-PROFILE_DEFINE_FLAGS_debug :=
-PROFILE_CONFIG_debug := debug
-PROFILE_ENTRY_debug := cold
-PROFILE_LINK_MODE_debug := system
-PROFILE_VULKAN_VALIDATION_debug := false
-PROFILE_ASAN_debug := false
-
-PROFILE_ODIN_FLAGS_release := -dynamic-map-calls -o:speed -debug
+PROFILE_ODIN_FLAGS_release := -o:speed
 PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true -define:MAP_DEVELOPMENT_FALLBACK=false
-PROFILE_CONFIG_release := release
-PROFILE_ENTRY_release := cold
-PROFILE_LINK_MODE_release := system
-PROFILE_VULKAN_VALIDATION_release := false
-PROFILE_ASAN_release := false
 
-PROFILE_ODIN_FLAGS_validation := -debug -o:none -sanitize:address
+PROFILE_ODIN_FLAGS_validation := -dynamic-map-calls -debug -o:none -sanitize:address
 PROFILE_DEFINE_FLAGS_validation :=
-PROFILE_CONFIG_validation := debug
-PROFILE_ENTRY_validation := cold
-PROFILE_LINK_MODE_validation := system
-PROFILE_VULKAN_VALIDATION_validation := true
-PROFILE_ASAN_validation := true
 
-PROFILE_ODIN_FLAGS_instrument := -dynamic-map-calls -o:minimal -debug
+PROFILE_ODIN_FLAGS_instrument := -o:speed -debug
 PROFILE_DEFINE_FLAGS_instrument := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
 PROFILE_DEFINE_FLAGS_instrument_deep := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true -define:FLAME_AUTO_SLOT_CAP=50000
-PROFILE_CONFIG_instrument := release
-PROFILE_ENTRY_instrument := cold
-PROFILE_LINK_MODE_instrument := system
-PROFILE_VULKAN_VALIDATION_instrument := false
-PROFILE_ASAN_instrument := false
 
 VALIDATION_PROFILE_RUNTIME_ENV := env \
 	MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0 \
@@ -55,11 +27,12 @@ NON_VALIDATION_PROFILE_RUNTIME_ENV := env \
 	-u VK_LOADER_LAYERS_ENABLE \
 	MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0
 PROFILE_RUNTIME_ENV_hot := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
-PROFILE_RUNTIME_ENV_debug := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
 PROFILE_RUNTIME_ENV_release := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
 PROFILE_RUNTIME_ENV_validation := $(VALIDATION_PROFILE_RUNTIME_ENV)
 PROFILE_RUNTIME_ENV_instrument := $(NON_VALIDATION_PROFILE_RUNTIME_ENV) \
 	ZELDA_ENGINE_GPU_PROFILER=1
+
+DEV_APP_ODIN_FLAGS := -dynamic-map-calls -o:minimal
 
 ZELDA_ENGINE_ROOT ?= $(CURDIR)/zelda-engine
 ZELDA_ENGINE_PACKAGES := $(abspath $(ZELDA_ENGINE_ROOT))/packages
@@ -622,33 +595,27 @@ cgltf-build: doctor $(CGLTF_LIB)
 
 profile-info:
 	@case "$(PROFILE)" in \
-		hot|debug|release|validation|instrument) \
+		hot|release|validation|instrument) \
 			echo "Profile: $(PROFILE)"; \
-			echo "Config: $(PROFILE_CONFIG_$(PROFILE))"; \
-			echo "Entry: $(PROFILE_ENTRY_$(PROFILE))"; \
-			echo "Link mode: $(PROFILE_LINK_MODE_$(PROFILE))"; \
 			echo "Odin flags: $(PROFILE_ODIN_FLAGS_$(PROFILE))"; \
-			echo "Vulkan validation: $(PROFILE_VULKAN_VALIDATION_$(PROFILE))"; \
-			echo "ASAN: $(PROFILE_ASAN_$(PROFILE))"; \
 			;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, validation, or instrument" >&2; exit 2 ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, or instrument" >&2; exit 2 ;; \
 	esac
 
 profile:
 	@case "$(PROFILE)" in \
 		hot) $(MAKE) hot-build ;; \
-		debug) $(MAKE) build ;; \
 		release) $(MAKE) release ;; \
 		validation) $(MAKE) validation-build ;; \
 		instrument) $(MAKE) instrument-build ;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, debug, release, validation, or instrument" >&2; exit 2 ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, or instrument" >&2; exit 2 ;; \
 	esac
 
 dev: PROFILE=hot
 dev: hot
 
-debug: PROFILE=debug
-debug: profile
+debug: PROFILE=validation
+debug: validation
 
 # The Zelda Engine physics package is backed by its pinned Jolt checkout. Keep
 # the native build in the engine repository, but provision it before producing
@@ -734,7 +701,7 @@ $(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 
 $(DEV_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/bougainvillea.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_debug) $(PROFILE_DEFINE_FLAGS_debug) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(DEV_APP_ODIN_FLAGS) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
 $(RELEASE_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/bougainvillea.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
@@ -781,7 +748,7 @@ instrument-deep: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
 	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_DEEP_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
 
 run: build
-	$(PROFILE_RUNTIME_ENV_debug) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"
+	$(NON_VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"
 
 benchmark: release
 	$(PROFILE_RUNTIME_ENV_release) $(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"
