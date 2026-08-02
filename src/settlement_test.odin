@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import bridges "../packages/bridges"
 import buildings "../packages/buildings"
 import cemeteries "../packages/cemeteries"
 import hero "../packages/hero_buildings"
@@ -5147,6 +5148,36 @@ settlement_lab_targets_select_deterministic_fixtures :: proc(t: ^testing.T) {
     testing.expect_value(t, fixture, Settlement_Lab_Fixture.Waterfront)
     testing.expect(t, !map_view)
     testing.expect_value(t, seed, "211")
+}
+
+@(test)
+settlement_water_crossings_select_regional_bridge_plans :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    editor.settlement_plan.valid = true
+    editor.settlement_plan.request = {
+        region = .Adriatic,
+        scale = .Town,
+        center = {10,20},
+        radius = 80,
+        seed = 211,
+    }
+    adriatic,found := world_settlement_bridge_plan(editor,{10,4,20},32,5,5,3)
+    testing.expect(t,found)
+    testing.expect_value(t,adriatic.region,bridges.Region.Adriatic)
+    testing.expect_value(t,adriatic.archetype,bridges.Archetype.Dalmatian_Multi_Arch)
+    testing.expect(t,adriatic.pier_count > 0)
+
+    editor.settlement_plan.request.region = .Aegean
+    editor.settlement_plan.request.scale = .Village
+    aegean: bridges.Plan
+    aegean,found = world_settlement_bridge_plan(editor,{10,4,20},15,3,4,3)
+    testing.expect(t,found)
+    testing.expect_value(t,aegean.region,bridges.Region.Aegean)
+    testing.expect_value(t,aegean.archetype,bridges.Archetype.Cycladic_Rural)
+
+    _,found = world_settlement_bridge_plan(editor,{500,4,500},15,3,4,3)
+    testing.expect(t,!found)
 }
 
 @(test)

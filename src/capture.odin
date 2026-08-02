@@ -40,6 +40,7 @@ Capture_Kind :: enum {
     Leaf_Generator_Lab,
     Flower_Generator_Lab,
     Window_Generator_Lab,
+    Bridge_Generator_Lab,
     Fountain_Generator_Lab,
     Cemetery_Generator_Lab,
     Estuary_Delta_Lab,
@@ -319,6 +320,7 @@ CAPTURE_WINDOW_GENERATOR_TARGETS := [?]string {
     "open",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
+CAPTURE_BRIDGE_GENERATOR_TARGETS := [?]string{"dalmatian", "herzegovinian", "venetian", "rialto", "cycladic", "fortress", "timber", "iron"}
 CAPTURE_CEMETERY_GENERATOR_TARGETS := [?]string {
     "mediterranean",
     "adriatic-medieval",
@@ -407,6 +409,8 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_FLOWER_GENERATOR_TARGETS[:]
     case .Window_Generator_Lab:
         return CAPTURE_WINDOW_GENERATOR_TARGETS[:]
+    case .Bridge_Generator_Lab:
+        return CAPTURE_BRIDGE_GENERATOR_TARGETS[:]
     case .Fountain_Generator_Lab:
         return CAPTURE_FOUNTAIN_GENERATOR_TARGETS[:]
     case .Cemetery_Generator_Lab:
@@ -511,6 +515,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Flower_Generator_Lab, true
     case "window-generator", "window-generator-lab":
         return .Window_Generator_Lab, true
+    case "bridge-generator", "bridge-generator-lab":
+        return .Bridge_Generator_Lab, true
     case "fountain-generator", "fountain-generator-lab":
         return .Fountain_Generator_Lab, true
     case "cemetery-generator", "cemetery-generator-lab", "graveyard-generator", "graveyard-generator-lab":

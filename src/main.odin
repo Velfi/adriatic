@@ -10981,6 +10981,7 @@ adriatic_run :: proc(
     if capture_kind == .Leaf_Generator_Lab do capture_lab_name = "leaf-generator"
     if capture_kind == .Flower_Generator_Lab do capture_lab_name = "flower-generator"
     if capture_kind == .Window_Generator_Lab do capture_lab_name = "window-generator"
+    if capture_kind == .Bridge_Generator_Lab do capture_lab_name = "bridge-generator"
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
     if capture_kind == .Cemetery_Generator_Lab do capture_lab_name = "cemetery-generator"
     if capture_kind == .Estuary_Delta_Lab do capture_lab_name = "estuary-delta"
@@ -11014,6 +11015,7 @@ adriatic_run :: proc(
         capture_kind == .Leaf_Generator_Lab ||
         capture_kind == .Flower_Generator_Lab ||
         capture_kind == .Window_Generator_Lab ||
+        capture_kind == .Bridge_Generator_Lab ||
         capture_kind == .Fountain_Generator_Lab ||
         capture_kind == .Cemetery_Generator_Lab ||
         capture_kind == .Estuary_Delta_Lab ||
@@ -13405,7 +13407,7 @@ adriatic_run :: proc(
     benchmark_sample_count := 0
     instrument_started_at := canvas2d.GetTime()
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Bridge_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose: third_person.Camera_Pose
     selector_capture_pose_set := false

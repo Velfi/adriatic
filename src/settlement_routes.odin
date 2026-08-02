@@ -690,6 +690,10 @@ settlement_route_find :: proc(
     case .Civic_Spine, .Connector:
         config.grade_cost = 42
         config.steep_grade_cost = 220
+        // Major settlement routes may pay for a short engineered waterway
+        // crossing when the land detour is materially worse. The shared road
+        // renderer turns those crossing runs into regional bridge plans.
+        config.water_cost = 140
     case .Street:
         config.grade_cost = 34
         config.steep_grade_cost = 180
@@ -702,6 +706,7 @@ settlement_route_find :: proc(
     case .Waterfront:
         config.grade_cost = 56
         config.steep_grade_cost = 260
+        config.water_cost = 240
     case .Ridge:
         config.grade_cost = 30
         config.steep_grade_cost = 150

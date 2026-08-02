@@ -4,6 +4,7 @@ import air_effects "../packages/air_effects"
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
+import bridges "../packages/bridges"
 import buildings "../packages/buildings"
 import cinematic "../packages/cinematic"
 import circulation "../packages/circulation"
@@ -2443,6 +2444,68 @@ world_box_rotated_to :: proc(
     world_quad_to(destination, p[0], p[1], p[5], p[4], color)
 }
 
+world_settlement_bridge_plan :: proc(
+    editor: ^Editor,
+    center: roads.Vec3,
+    length, width, clearance: f32,
+    edge_index: int,
+) -> (bridges.Plan, bool) {
+    if editor == nil || !editor.settlement_plan.valid do return {}, false
+    settlement := &editor.settlement_plan
+    dx := center.x-settlement.request.center[0]
+    dz := center.z-settlement.request.center[1]
+    settlement_radius := settlement.request.radius*1.35
+    if dx*dx+dz*dz > settlement_radius*settlement_radius do return {}, false
+
+    archetype := bridges.Archetype.Dalmatian_Multi_Arch
+    if settlement.request.region == .Aegean {
+        archetype = settlement.request.scale == .Village || length < 20 ? .Cycladic_Rural : .Aegean_Fortress
+    } else if length < 18 && settlement.request.scale != .Village {
+        archetype = .Venetian_Canal
+    }
+    config := bridges.defaults(archetype)
+    config.length = clamp(length,f32(10),f32(80))
+    config.width = settlement.request.region == .Aegean ? min(max(width,f32(2.2)),f32(4.5)) : clamp(width,f32(2.2),f32(10))
+    config.clearance = clamp(clearance,f32(2.5),f32(16))
+    if archetype == .Dalmatian_Multi_Arch {
+        config.span_count = clamp(int(math.round(f64(config.length/6))),2,bridges.MAX_SPANS)
+    }
+    seed := settlement.request.seed ~ u32(edge_index+1)*u32(0x9e3779b9)
+    plan := bridges.generate(seed,config)
+    return plan,plan.valid
+}
+
+world_road_bridge_extent :: proc(editor: ^Editor, graph: ^roads.Graph, edge_index: int) -> (f32,f32,bool) {
+    if editor == nil || graph == nil || edge_index < 0 || edge_index >= graph.edge_count do return 0,0,false
+    edge := graph.edges[edge_index]
+    if edge.engineering_designed {
+        return 0,1,edge.structure_kind == .Bridge
+    }
+    SAMPLES :: 48
+    first,last := -1,-1
+    for sample in 0 ..= SAMPLES {
+        t := f32(sample)/f32(SAMPLES)
+        point := roads.edge_point(graph,edge,t)
+        if terrain.active_waterway_at(&editor.project,0,point.x,point.z) {
+            if first < 0 do first = sample
+            last = sample
+        }
+    }
+    if first < 0 do return 0,0,false
+    return max(f32(0),f32(first-1)/f32(SAMPLES)),min(f32(1),f32(last+1)/f32(SAMPLES)),true
+}
+
+world_road_bridge_arch_fraction :: proc(shape: bridges.Arch_Shape, u: f32) -> f32 {
+    switch shape {
+    case .Semicircular,.Segmental:
+        return math.sqrt(max(f32(0),1-u*u))
+    case .Slightly_Pointed:
+        semicircle := math.sqrt(max(f32(0),1-u*u))
+        return (semicircle+max(f32(0),1-abs(u))*.20)/1.20
+    }
+    return 0
+}
+
 world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
     if editor == nil || graph == nil do return
     stone := canvas2d.Color{133, 128, 112, 255}
@@ -2479,6 +2542,30 @@ world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
             continue
         }
         approximate_length := roads.edge_control_polygon_length(graph, edge)
+        bridge_from,bridge_to,has_bridge := world_road_bridge_extent(editor,graph,edge_index)
+        if !has_bridge do continue
+        crossing_length := max(approximate_length*(bridge_to-bridge_from),f32(1))
+        crossing_center := roads.edge_point(graph,edge,(bridge_from+bridge_to)*.5)
+        crossing_bed := terrain.sample_height(&editor.project,0,crossing_center.x,crossing_center.z)
+        crossing_deck, _ := road_bridge_deck_height(editor,edge_index,(bridge_from+bridge_to)*.5)
+        regional,regional_bridge := world_settlement_bridge_plan(
+            editor,crossing_center,crossing_length,
+            (edge.half_width+edge.shoulder_width*.45)*2,
+            crossing_deck-crossing_bed,
+            edge_index,
+        )
+        bridge_stone,bridge_rail := stone,rail
+        if regional_bridge {
+            switch regional.material {
+            case .Limestone:     bridge_stone,bridge_rail = {174,166,143,255},{205,198,171,255}
+            case .Travertine:    bridge_stone,bridge_rail = {146,137,112,255},{184,174,145,255}
+            case .Istrian_Stone: bridge_stone,bridge_rail = {190,184,166,255},{218,211,191,255}
+            case .Slate:         bridge_stone,bridge_rail = {104,107,105,255},{142,145,139,255}
+            case .Fieldstone:    bridge_stone,bridge_rail = {126,116,94,255},{158,147,117,255}
+            case .Timber:        bridge_stone,bridge_rail = {91,64,41,255},{124,88,52,255}
+            case .Iron:          bridge_stone,bridge_rail = {61,67,64,255},{88,96,92,255}
+            }
+        }
         segment_count := clamp(int(math.ceil(f64(approximate_length / 2))), 2, 512)
         width := (edge.half_width + edge.shoulder_width * .45) * 2
         for segment_index in 0 ..< segment_count {
@@ -2498,28 +2585,55 @@ world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
                 {pm.x, deck_y - .20, pm.z},
                 {width, .38, length + .08},
                 yaw,
-                stone,
+                bridge_stone,
             )
             side_x, side_z := dz / length, -dx / length
             sides := [2]f32{-1, 1}
             for side in sides {
                 world_box_rotated_to(
                     &world_renderer.road_geometry_cache,
-                    {pm.x + side_x * side * width * .48, deck_y + .22, pm.z + side_z * side * width * .48},
-                    {.16, .72, length + .10},
+                    {pm.x + side_x * side * width * .48, deck_y + (regional_bridge ? regional.parapet_height*.5 : f32(.22)), pm.z + side_z * side * width * .48},
+                    {regional_bridge ? regional.parapet_width : f32(.16), regional_bridge ? regional.parapet_height : f32(.72), length + .10},
                     yaw,
-                    rail,
+                    bridge_rail,
                 )
             }
             bed_y := terrain.sample_height(&editor.project, 0, pm.x, pm.z)
             support_height := deck_y - .38 - bed_y
-            if support_height > .7 && segment_index % 4 == 2 {
+            pier_here := segment_index % 4 == 2
+            pier_width := f32(.42)
+            if regional_bridge && regional.construction != .Framed {
+                crossing_t := clamp((tm-bridge_from)/max(bridge_to-bridge_from,f32(.001)),f32(0),f32(1))
+                station := (crossing_t-.5)*regional.length
+                span_index := clamp(int(math.floor(f64((station+regional.length*.5)/regional.span_length))),0,regional.pier_count)
+                span_center := -regional.length*.5+(f32(span_index)+.5)*regional.span_length
+                u := clamp((station-span_center)/(regional.span_length*.43),f32(-1),f32(1))
+                opening_y := deck_y-regional.deck_thickness-regional.arch_rise+
+                    world_road_bridge_arch_fraction(regional.arch_shape,u)*regional.arch_rise
+                spandrel_height := deck_y-regional.deck_thickness-opening_y
+                if spandrel_height > .04 {
+                    world_box_rotated_to(
+                        &world_renderer.road_geometry_cache,
+                        {pm.x,opening_y+spandrel_height*.5,pm.z},
+                        {width,spandrel_height,length+.10},yaw,bridge_stone,
+                    )
+                }
+                pier_here = false
+                for pier in regional.piers[:regional.pier_count] {
+                    if abs(station-pier.station) <= length*.65 {
+                        pier_here = true
+                        pier_width = pier.width
+                        break
+                    }
+                }
+            }
+            if support_height > .7 && pier_here {
                 world_box_rotated_to(
                     &world_renderer.road_geometry_cache,
                     {pm.x, bed_y + support_height * .5, pm.z},
-                    {max(width * .72, f32(1)), support_height, .42},
+                    {max(width * .72, f32(1)), support_height, pier_width},
                     yaw,
-                    stone,
+                    bridge_stone,
                 )
             }
         }
