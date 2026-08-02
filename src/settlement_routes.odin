@@ -1,7 +1,9 @@
 package main
 
-import roads "../packages/roads"
+import planar_geometry "../packages/planar_geometry"
+
 import road_planner "../packages/road_planner"
+import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:math/linalg"
@@ -178,26 +180,19 @@ settlement_route_segment_intersection :: proc(
     along_ab, along_cd: f32,
     found: bool,
 ) {
-    ab_x, ab_z := b[0] - a[0], b[1] - a[1]
-    cd_x, cd_z := d[0] - c[0], d[1] - c[1]
-    denominator := ab_x * cd_z - ab_z * cd_x
-    if math.abs(denominator) <= .00001 do return
-    ac_x, ac_z := c[0] - a[0], c[1] - a[1]
-    along_ab = (ac_x * cd_z - ac_z * cd_x) / denominator
-    along_cd = (ac_x * ab_z - ac_z * ab_x) / denominator
+    intersection := planar_geometry.segment_intersection(a, b, c, d, .00001)
+    if !intersection.found do return
+    point = intersection.point
+    along_ab, along_cd = intersection.along_ab, intersection.along_cd
     epsilon := f32(.0001)
     if along_ab < -epsilon || along_ab > 1 + epsilon || along_cd < -epsilon || along_cd > 1 + epsilon {
         return
     }
-    point = {a[0] + ab_x * along_ab, a[1] + ab_z * along_ab}
     found = true
     return
 }
 
-settlement_route_segment_overlaps_box :: proc(
-    a, b, box_start, box_finish: [2]f32,
-    half_width: f32,
-) -> bool {
+settlement_route_segment_overlaps_box :: proc(a, b, box_start, box_finish: [2]f32, half_width: f32) -> bool {
     box_delta := box_finish - box_start
     box_length := linalg.length(box_delta)
     if box_length <= .01 do return false
@@ -794,8 +789,7 @@ settlement_route_find :: proc(
             distance := linalg.length(b - a)
             if distance <= .01 do continue
             rise := math.abs(
-                terrain.sample_height(project, 0, b[0], b[1]) -
-                    terrain.sample_height(project, 0, a[0], a[1]),
+                terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1]),
             )
             chord: Settlement_Route
             chord.points[0], chord.points[1], chord.count = a, b, 2
@@ -955,8 +949,10 @@ settlement_plan_connect_road_network :: proc(
         if plan.request.scale == .Town {
             for to in 0 ..< poi_count {
                 if connected[to] do continue
-                road_point, _, _, _, _, road_distance, _, road_found :=
-                    settlement_nearest_route_frame(plan, pois[to].position)
+                road_point, _, _, _, _, road_distance, _, road_found := settlement_nearest_route_frame(
+                    plan,
+                    pois[to].position,
+                )
                 if !road_found || road_distance <= .5 do continue
                 route := settlement_route_find(
                     project,
@@ -981,8 +977,7 @@ settlement_plan_connect_road_network :: proc(
         }
         if best_to < 0 do break
         if plan.request.scale == .Town && route_class == .Connector {
-            _, _, _, _, _, road_distance, _, road_found :=
-                settlement_nearest_route_frame(plan, pois[best_to].position)
+            _, _, _, _, _, road_distance, _, road_found := settlement_nearest_route_frame(plan, pois[best_to].position)
             connector_length := settlement_route_length(best_route)
             if road_found && settlement_town_connector_redundant(connector_length, road_distance) {
                 // A compact hillside district this close to an existing

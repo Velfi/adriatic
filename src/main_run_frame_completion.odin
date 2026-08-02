@@ -1,0 +1,83 @@
+#+feature using-stmt
+package main
+
+import atmosphere "../packages/atmosphere"
+import boats "../packages/boats"
+import chase_camera "../packages/chase_camera"
+import dio "../packages/dio"
+import engine_sound "../packages/engine_sound"
+import flight "../packages/flight"
+import game_input "../packages/game_input"
+import libellula_game "../packages/libellula"
+import ocean_audio "../packages/ocean_audio"
+import particle_systems "../packages/particles"
+import postale_game "../packages/postale"
+import roads "../packages/roads"
+import rondine_game "../packages/rondine"
+import scene_stack "../packages/scene_stack"
+import spray_audio "../packages/spray_audio"
+import terrain "../packages/terrain"
+import third_person "../packages/third_person"
+import vehicles "../packages/vehicles"
+import wind_audio "../packages/wind_audio"
+import "core:fmt"
+import "core:math"
+import "core:time"
+import sdl "vendor:sdl3"
+import canvas2d "zelda_engine:canvas2d"
+import physics "zelda_engine:physics"
+
+run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) -> bool {
+    // Player captures wait long enough for the Verlet tail and pose blends
+    // to settle; frame two only showed the first few links as a short nub.
+    if capture_mode && request != nil && request.sequence_frames > 0 {
+        if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
+            canvas2d.TakeScreenshot(fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index))
+            sequence_last_capture_frame = frame
+            sequence_frame_index += 1
+        }
+    } else if capture_mode && request != nil && request.turntable_frames > 0 {
+        next_capture_frame := capture_frame + turntable_frame_index * turntable_capture_stride
+        if turntable_frame_index < request.turntable_frames && frame == next_capture_frame {
+            canvas2d.TakeScreenshot(fmt.ctprintf("%s/frame-%03d.png", capture_output, turntable_frame_index))
+            turntable_last_capture_frame = frame
+            turntable_frame_index += 1
+        }
+    } else if capture_mode && frame == capture_frame {
+        canvas2d.TakeScreenshot(fmt.ctprintf("%s", capture_output))
+    }
+    // Vulkan screenshot readback completes asynchronously; retain several
+    // presented frames after the request so capture mode always writes its PNG.
+    if capture_mode &&
+       request != nil &&
+       request.sequence_frames > 0 &&
+       sequence_frame_index >= request.sequence_frames &&
+       frame >= sequence_last_capture_frame + 1 {
+        return false
+    }
+    if capture_mode &&
+       request != nil &&
+       request.turntable_frames > 0 &&
+       turntable_frame_index >= request.turntable_frames &&
+       frame >= turntable_last_capture_frame + 12 {
+        return false
+    }
+    if capture_mode &&
+       (request == nil || (request.turntable_frames == 0 && request.sequence_frames == 0)) &&
+       frame >= max(32, capture_frame + 12) {
+        return false
+    }
+    if instrument_duration_seconds > 0 && canvas2d.GetTime() - instrument_started_at >= instrument_duration_seconds {
+        editor.quit_requested = true
+    }
+    if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) {
+        if !hot_state_save(editor, hot_state_path) {
+            fmt.eprintln("adriatic hot reload could not save state")
+            return false
+        }
+        reload_requested = true
+        return false
+    }
+    frame += 1
+    return true
+}
