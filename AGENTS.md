@@ -19,6 +19,15 @@
   stop immediately and report the compiler version, command, evidence, and smallest
   reproducer. Do not work around the compiler bug or continue until given direction.
 
+## Logging
+
+- Adriatic installs two global Spy sinks for each run: `Info` and above reach the
+  timestamp-free console; `Debug` and above are retained in
+  `/tmp/adriatic-<datetime>.log` with timestamps.
+- Use `spy.debug` for high-volume diagnostics. Reserve `spy.info`, `spy.warn`, and
+  `spy.error` for developer-relevant status and failures. Do not use `fmt` output
+  for runtime logging.
+
 ## Screenshot capture
 
 - Build the app, then use its capture tool at `build/dev/adriatic capture`.
