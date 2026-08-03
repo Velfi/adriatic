@@ -11,7 +11,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
 
     format, format_found := vk_choose_surface_format(ctx.physical_device, ctx.surface)
     if !format_found {
-        log_error("vk_create_swapchain: an 8-bit sRGB nonlinear surface format is required")
+        log_error("an 8-bit sRGB nonlinear surface format is required")
         return false
     }
     present_mode := vk_choose_present_mode(ctx.physical_device, ctx.surface, ctx.vsync_enabled)
@@ -26,7 +26,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         image_count = MAX_SWAPCHAIN_IMAGES
     }
     log_debug(
-        "vk_create_swapchain: surface current_extent=",
+        "surface current_extent=",
         caps.currentExtent.width,
         "x",
         caps.currentExtent.height,
@@ -40,7 +40,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         caps.maxImageExtent.height,
     )
     log_debug(
-        "vk_create_swapchain: requested=",
+        "requested=",
         width,
         "x",
         height,
@@ -56,7 +56,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         image_count,
     )
     log_debug(
-        "vk_create_swapchain: format=",
+        "format=",
         format.format,
         " color_space=",
         format.colorSpace,
@@ -100,7 +100,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         clipped               = true,
     }
     create_result := vk.CreateSwapchainKHR(ctx.device, &create_info, nil, &ctx.swapchain)
-    log_debug("vk_create_swapchain: CreateSwapchainKHR result=", create_result)
+    log_debug("create result=", create_result)
     if create_result != .SUCCESS {
         return false
     }
@@ -108,7 +108,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
 
     actual_count: u32
     get_count_result := vk.GetSwapchainImagesKHR(ctx.device, ctx.swapchain, &actual_count, nil)
-    log_debug("vk_create_swapchain: GetSwapchainImages count result=", get_count_result, " count=", actual_count)
+    log_debug("image count result=", get_count_result, " count=", actual_count)
     if get_count_result != .SUCCESS {
         return false
     }
@@ -122,7 +122,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
         raw_data(ctx.swapchain_images[:]),
     )
     log_debug(
-        "vk_create_swapchain: GetSwapchainImages data result=",
+        "image retrieval result=",
         get_images_result,
         " stored_count=",
         actual_count,
@@ -160,7 +160,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
             },
         }
         view_result := vk.CreateImageView(ctx.device, &view_info, nil, &ctx.swapchain_image_views[i])
-        log_debug("vk_create_swapchain: image_view index=", i, " result=", view_result)
+        log_debug("image view index=", i, " result=", view_result)
         if view_result != .SUCCESS {
             return false
         }
@@ -187,7 +187,7 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
     }
 
     log_debug(
-        "vk_create_swapchain: ready image_count=",
+        "ready image_count=",
         ctx.swapchain_image_count,
         " extent=",
         ctx.swapchain_extent.width,

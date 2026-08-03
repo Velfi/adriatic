@@ -63,7 +63,7 @@ gpu_profiler_init :: proc(ctx: ^Vk_Context) -> bool {
     ctx.gpu_profiler.last_sample.supported = ctx.gpu_profiler.supported
     if !ctx.gpu_profiler.supported {
         log_warn(
-            "gpu_profiler_init: timestamp queries unavailable caps=",
+            "timestamp queries unavailable caps=",
             ctx.caps.supports_timestamp_queries,
             " period=",
             ctx.caps.timestamp_period,
@@ -80,7 +80,7 @@ gpu_profiler_init :: proc(ctx: ^Vk_Context) -> bool {
     }
 
     if !gpu_profiler_env_enabled() {
-        log_debug("gpu_profiler_init: disabled; set ZELDA_ENGINE_GPU_PROFILER=1")
+        log_debug("disabled; set ZELDA_ENGINE_GPU_PROFILER=1")
         ctx.gpu_profiler.supported = false
         ctx.gpu_profiler.enabled = false
         ctx.gpu_profiler.last_sample.supported = false
@@ -95,7 +95,7 @@ gpu_profiler_init :: proc(ctx: ^Vk_Context) -> bool {
             queryCount = GPU_PROFILE_QUERY_COUNT,
         }
         if vk.CreateQueryPool(ctx.device, &info, nil, &ctx.gpu_profiler.frames[i].query_pool) != .SUCCESS {
-            log_warn("gpu_profiler_init: timestamp query pool creation failed; disabling GPU profiling")
+            log_warn("timestamp query pool creation failed; disabling GPU profiling")
             gpu_profiler_destroy(ctx)
             ctx.gpu_profiler.supported = false
             ctx.gpu_profiler.enabled = false
@@ -106,7 +106,7 @@ gpu_profiler_init :: proc(ctx: ^Vk_Context) -> bool {
     }
     ctx.gpu_profiler.enabled = true
     ctx.gpu_profiler.last_sample.enabled = true
-    log_info("gpu_profiler_init: enabled timestamp_period_ns=", ctx.gpu_profiler.timestamp_period)
+    log_info("enabled timestamp_period_ns=", ctx.gpu_profiler.timestamp_period)
     return true
 }
 

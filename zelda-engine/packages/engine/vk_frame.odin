@@ -30,21 +30,21 @@ vk_begin_frame :: proc(ctx: ^Vk_Context) -> (Vk_Frame, bool) {
     )
     ctx.last_cpu_timings.acquire_ms = vk_elapsed_ms(acquire_start)
     if acquire_result == .ERROR_OUT_OF_DATE_KHR {
-        log_warn("vk_begin_frame: acquire out of date")
+        log_warn("swapchain image acquisition out of date")
         ctx.needs_swapchain_recreate = true
         return frame, false
     }
     if acquire_result != .SUCCESS && acquire_result != .SUBOPTIMAL_KHR {
-        log_error("vk_begin_frame: acquire failed result=", acquire_result)
+        log_error("swapchain image acquisition failed result=", acquire_result)
         if acquire_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "acquiring the next swapchain image")
         return frame, false
     }
     if acquire_result == .SUBOPTIMAL_KHR {
-        log_warn("vk_begin_frame: acquire suboptimal")
+        log_warn("swapchain image acquisition suboptimal")
         ctx.needs_swapchain_recreate = true
     }
     if image_index >= ctx.swapchain_image_count || ctx.swapchain_render_finished[image_index] == vk.Semaphore(0) {
-        log_error("vk_begin_frame: acquired invalid swapchain image index=", image_index)
+        log_error("acquired invalid swapchain image index=", image_index)
         return frame, false
     }
     state.render_finished = ctx.swapchain_render_finished[image_index]
@@ -57,7 +57,7 @@ vk_begin_frame :: proc(ctx: ^Vk_Context) -> (Vk_Frame, bool) {
         flags = {.ONE_TIME_SUBMIT},
     }
     if vk.BeginCommandBuffer(state.command_buffer, &begin_info) != .SUCCESS {
-        log_error("vk_begin_frame: BeginCommandBuffer failed")
+        log_error("command buffer begin failed")
         return frame, false
     }
     ctx.last_cpu_timings.command_begin_ms = vk_elapsed_ms(command_begin_start)
@@ -78,7 +78,7 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
     end_result := vk.EndCommandBuffer(frame.command_buffer)
     if end_result != .SUCCESS {
         log_error(
-            "vk_end_frame: EndCommandBuffer failed result=",
+            "command buffer end failed result=",
             end_result,
             " image_index=",
             frame.image_index,
@@ -121,7 +121,7 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
     submit_result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit, frame.state.in_flight)
     ctx.last_cpu_timings.queue_submit_ms = vk_elapsed_ms(submit_start)
     if submit_result != .SUCCESS {
-        log_error("vk_end_frame: QueueSubmit failed result=", submit_result)
+        log_error("queue submission failed result=", submit_result)
         if submit_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "submitting GPU work")
         return false
     }
@@ -140,10 +140,10 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
     ctx.last_cpu_timings.queue_present_ms = vk_elapsed_ms(present_start)
     ctx.last_command_shape = ctx.command_shape
     if present_result == .ERROR_OUT_OF_DATE_KHR || present_result == .SUBOPTIMAL_KHR {
-        log_warn("vk_end_frame: present requires swapchain recreate result=", present_result)
+        log_warn("presentation requires swapchain recreation result=", present_result)
         ctx.needs_swapchain_recreate = true
     } else if present_result != .SUCCESS {
-        log_error("vk_end_frame: QueuePresent failed result=", present_result)
+        log_error("presentation failed result=", present_result)
         if present_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "presenting the rendered frame")
         return false
     }
