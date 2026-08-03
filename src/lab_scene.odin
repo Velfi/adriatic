@@ -943,20 +943,8 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_procedural_circulation = true,
         suppress_shadows = true,
     },
-    {
-        name = "foliage-transition",
-        configure = foliage_transition_lab_configure,
-        world_overlay = foliage_transition_lab_world,
-        process_input = foliage_transition_lab_process_input,
-        draw_ui = foliage_transition_lab_draw_ui,
-        isolate_content = true,
-        enter_gameplay = false,
-        replace_world = false,
-        suppress_hud = true,
-        suppress_infrastructure = true,
-        suppress_procedural_circulation = true,
-        suppress_shadows = true,
-    },
+    // `foliage-transition` is WIP: its implementation is not in this source
+    // tree yet, so do not register an unbuildable lab.
     {
         name = "markov-marina",
         configure = markov_marina_lab_configure,
