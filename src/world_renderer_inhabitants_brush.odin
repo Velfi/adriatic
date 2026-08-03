@@ -9,7 +9,7 @@ import third_person "../packages/third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 
-world_story_resident_home_pose :: proc(
+world_story_resident_home_pose_uncached :: proc(
     editor: ^Editor,
     resident: story.Resident,
 ) -> (
@@ -56,7 +56,7 @@ world_story_resident_home_pose :: proc(
             frontage.depth * .5 + 2.6,
             frontage.rotation,
         )
-        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
         if ground_y <= editor.project.sea_level + .35 do return {}, 0, false
         return {x, ground_y, z}, frontage.rotation, true
     }
@@ -80,7 +80,7 @@ world_story_resident_home_pose :: proc(
                 frontage.depth * .5 + 2.3,
                 frontage.rotation,
             )
-            ground_y := terrain.sample_height(&editor.project, 0, x, z)
+            ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
             if ground_y <= editor.project.sea_level + .35 do continue
             return {x, ground_y, z}, frontage.rotation, true
         }
@@ -117,11 +117,36 @@ world_story_resident_home_pose :: proc(
             lateral[resident_index],
             max(outward[resident_index] - 1.8, f32(.4)) + f32(doorway_row) * 1.25,
         )
-        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
         if ground_y <= editor.project.sea_level + .35 do continue
         return {x, ground_y, z}, frontage.rotation, true
     }
     return {}, 0, false
+}
+
+world_story_resident_home_pose :: proc(
+    editor: ^Editor,
+    resident: story.Resident,
+) -> (
+    position: third_person.Vec3,
+    rotation: f32,
+    ok: bool,
+) {
+    if editor == nil do return {}, 0, false
+    if !world_renderer.resident_home_cache_valid ||
+       world_renderer.resident_home_project_revision != editor.project.revision ||
+       world_renderer.resident_home_terrain_revision != editor.terrain_revision {
+        world_renderer.resident_home_cache = {}
+        world_renderer.resident_home_project_revision = editor.project.revision
+        world_renderer.resident_home_terrain_revision = editor.terrain_revision
+        world_renderer.resident_home_cache_valid = true
+    }
+    entry := &world_renderer.resident_home_cache[resident]
+    if !entry.valid {
+        entry.position, entry.rotation, entry.found = world_story_resident_home_pose_uncached(editor, resident)
+        entry.valid = true
+    }
+    return entry.position, entry.rotation, entry.found
 }
 
 world_story_meeting_pose :: proc(editor: ^Editor) -> (niko, iva, center: third_person.Vec3, rotation: f32, ok: bool) {
@@ -132,11 +157,11 @@ world_story_meeting_pose :: proc(editor: ^Editor) -> (niko, iva, center: third_p
     side_x, side_z := math.cos(frontage_rotation), math.sin(frontage_rotation)
     out_x, out_z := -math.sin(frontage_rotation), math.cos(frontage_rotation)
     center = {home.x - out_x * .28, 0, home.z - out_z * .28}
-    center.y = terrain.sample_height(&editor.project, 0, center.x, center.z)
+    center.y = terrain.sample_surface_height(&editor.project, 0, center.x, center.z)
     niko = {center.x - side_x * .62, 0, center.z - side_z * .62}
     iva = {center.x + side_x * .62, 0, center.z + side_z * .62}
-    niko.y = terrain.sample_height(&editor.project, 0, niko.x, niko.z)
-    iva.y = terrain.sample_height(&editor.project, 0, iva.x, iva.z)
+    niko.y = terrain.sample_surface_height(&editor.project, 0, niko.x, niko.z)
+    iva.y = terrain.sample_surface_height(&editor.project, 0, iva.x, iva.z)
     return niko, iva, center, frontage_rotation, true
 }
 
@@ -181,7 +206,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor, include_animated := true, 
             point = start * (1 - amount) + finish * amount
             tangent = finish - start
             if f32(math.sin(f64(phase * 2 * math.PI))) < 0 do tangent = -tangent
-            ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
+            ground := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
             if ground <= editor.project.sea_level + .35 do continue
             if !world_sphere_in_view(editor, {point[0], ground + .8, point[1]}, 1.4, 2) do continue
             world_mouse_model_scaled(
@@ -205,7 +230,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor, include_animated := true, 
         // Mid/far inhabitants use a tiny batched silhouette instead of a full
         // articulated mouse. It is deterministic and shares the world vertex
         // stream with other static settlement dressing.
-        ground := terrain.sample_height(&editor.project, 0, point[0], point[1])
+        ground := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
         if ground <= editor.project.sea_level + .35 do continue
         if !world_sphere_in_view(editor, {point[0], ground + .6, point[1]}, 1, 2) do continue
         tint := inhabitant.worker ? canvas2d.Color{83, 103, 111, 210} : canvas2d.Color{104, 86, 70, 205}
@@ -235,7 +260,7 @@ world_story_meeting :: proc(editor: ^Editor) {
     post_sides := [2]f32{-1, 1}
     for side in post_sides {
         post_x, post_z := world_rotate_xz(center.x, center.z, side * 1.13, -.54, rotation)
-        ground := terrain.sample_height(&editor.project, 0, post_x, post_z)
+        ground := terrain.sample_surface_height(&editor.project, 0, post_x, post_z)
         world_box_rotated(
             {post_x, ground + (canopy_y - ground) * .5, post_z},
             {.075, canopy_y - ground, .075},
@@ -292,6 +317,58 @@ world_story_meeting :: proc(editor: ^Editor) {
     }
 }
 
+world_town_mouse_placements_ensure :: proc(editor: ^Editor) {
+    if editor == nil do return
+    if world_renderer.town_mouse_placement_valid &&
+       world_renderer.town_mouse_placement_project_revision == editor.project.revision &&
+       world_renderer.town_mouse_placement_terrain_revision == editor.terrain_revision {
+        return
+    }
+    world_renderer.town_mouse_placements = {}
+    structures := editor.project.structures[:editor.project.structure_count]
+    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
+    island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
+    lateral := [8]f32{-1.0, .8, -1.3, 1.1, -.7, 1.4, -.9, 1.2}
+    outward := [8]f32{2.5, 2.2, 2.7, 2.4, 2.2, 2.6, 2.3, 2.4}
+    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
+        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
+        clear(&world_renderer.structure_candidates)
+        for structure, structure_index in structures {
+            if structure.kind != .Architecture || structure.height > 60 do continue
+            dx, dz := structure.center_x - island_center, structure.center_z - island_center
+            if dx * dx + dz * dz > island_radius * island_radius do continue
+            append(&world_renderer.structure_candidates, structure_index)
+        }
+        candidates := world_renderer.structure_candidates[:]
+        candidate_count := len(candidates)
+        if candidate_count == 0 do continue
+        for resident_index in 0 ..< 8 {
+            for attempt in 0 ..< candidate_count {
+                candidate_index := candidates[(resident_index + attempt) % candidate_count]
+                frontage := architecture.architecture_frontage_structure(structures[candidate_index])
+                doorway_row := resident_index / candidate_count
+                x, z, rotation := world_town_mouse_frontage_pose(
+                    frontage,
+                    &editor.project,
+                    lateral[resident_index],
+                    max(outward[resident_index] - 1.8, f32(.4)) + f32(doorway_row) * 1.25,
+                )
+                ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
+                if ground_y <= editor.project.sea_level + .35 do continue
+                world_renderer.town_mouse_placements[island_index][resident_index] = {
+                    position = {x, ground_y, z},
+                    rotation = rotation,
+                    valid = true,
+                }
+                break
+            }
+        }
+    }
+    world_renderer.town_mouse_placement_project_revision = editor.project.revision
+    world_renderer.town_mouse_placement_terrain_revision = editor.terrain_revision
+    world_renderer.town_mouse_placement_valid = true
+}
+
 world_town_mice :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mice")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
@@ -319,41 +396,15 @@ world_town_mice :: proc(editor: ^Editor) {
         {-.9, 2.3, .20, .96, .82, .90, .Goggles, .Chestnut, .Hooded, false, {}},
         {1.2, 2.4, -.12, .98, .90, 1.04, .Goggles, .Soot, .Piebald, true, {77, 168, 151, 255}},
     }
-    structures := editor.project.structures[:editor.project.structure_count]
-    world_structure_storage_ensure(len(structures))
-    half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
-    island_radius := half_extent * terrain.DEFAULT_ISLAND_RADIUS
-    for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
-        island_center := sign * half_extent * terrain.DEFAULT_ISLAND_OFFSET
-        clear(&world_renderer.structure_candidates)
-        for structure, structure_index in structures {
-            if structure.kind != .Architecture || structure.height > 60 do continue
-            dx, dz := structure.center_x - island_center, structure.center_z - island_center
-            if dx * dx + dz * dz > island_radius * island_radius do continue
-            append(&world_renderer.structure_candidates, structure_index)
-        }
-        candidates := world_renderer.structure_candidates[:]
-        candidate_count := len(candidates)
-        if candidate_count == 0 do continue
-
-        // Sparse towns still receive the complete cast. When there are fewer
-        // façades than residents, wrap to a second doorway position rather
-        // than silently shrinking the population with the building density.
+    world_town_mouse_placements_ensure(editor)
+    for island_index in 0 ..< 2 {
         for resident, resident_index in residents {
-            for attempt in 0 ..< candidate_count {
-                candidate_index := candidates[(resident_index + attempt) % candidate_count]
-                frontage := architecture.architecture_frontage_structure(structures[candidate_index])
-                doorway_row := resident_index / candidate_count
-                x, z, frontage_rotation := world_town_mouse_frontage_pose(
-                    frontage,
-                    &editor.project,
-                    resident.lateral,
-                    max(resident.outward - 1.8, f32(.4)) + f32(doorway_row) * 1.25,
-                )
-                ground_y := terrain.sample_height(&editor.project, 0, x, z)
-                if ground_y <= editor.project.sea_level + .35 do continue
-                named_resident: story.Resident
-                named := false
+            placement := world_renderer.town_mouse_placements[island_index][resident_index]
+            if !placement.valid do continue
+            x, ground_y, z := placement.position.x, placement.position.y, placement.position.z
+            frontage_rotation := placement.rotation
+            named_resident: story.Resident
+            named := false
                 if island_index == 0 && resident_index == 0 {
                     named_resident, named = .Niko, true
                 } else if island_index == 0 && resident_index == 2 {
@@ -374,9 +425,9 @@ world_town_mice :: proc(editor: ^Editor) {
                 if named &&
                    editor.story_state.romance == .Meeting &&
                    (named_resident == .Niko || named_resident == .Iva) {
-                    break
+                    continue
                 }
-                if named && named_resident == .Zora do break
+                if named && named_resident == .Zora do continue
                 rotation := frontage_rotation + resident.facing
                 mouse_center := third_person.Vec3{x, ground_y + .75 * resident.scale, z}
                 if !static_sphere_in_frustum(
@@ -387,9 +438,9 @@ world_town_mice :: proc(editor: ^Editor) {
                     near_plane,
                     WORLD_FAR_CLIP,
                 ) {
-                    break
+                    continue
                 }
-                world_town_mouse_model_scaled_cached(
+            world_town_mouse_model_scaled_cached(
                     editor,
                     {
                         position = {x, ground_y, z},
@@ -406,10 +457,8 @@ world_town_mice :: proc(editor: ^Editor) {
                     resident.scale,
                     island_index * len(residents) + resident_index,
                 )
-                if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
-                    world_mouse_interaction_indicator(editor, {x, ground_y, z})
-                }
-                break
+            if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
+                world_mouse_interaction_indicator(editor, {x, ground_y, z})
             }
         }
     }
@@ -483,7 +532,7 @@ world_lighthouse_keeper_pose :: proc(
         structure.depth * .5 + 1.8,
         structure.rotation,
     )
-    ground_y := terrain.sample_height(&editor.project, 0, x, z)
+    ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
     if ground_y <= editor.project.sea_level + .35 do return {}, 0, false
     return {x, ground_y, z}, structure.rotation + math.PI * .5, true
 }
@@ -533,14 +582,14 @@ world_lighthouse_keeper_model :: proc(
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: canvas2d.Color) {
     if editor == nil do return
     segments := 48
-    center := third_person.Vec3{x, terrain.sample_height(&editor.project, 0, x, z) + height_offset, z}
+    center := third_person.Vec3{x, terrain.sample_surface_height(&editor.project, 0, x, z) + height_offset, z}
     for i in 0 ..< segments {
         a0 := f32(i) * 2 * math.PI / f32(segments)
         a1 := f32(i + 1) * 2 * math.PI / f32(segments)
         p0 := third_person.Vec3{x + math.cos(a0) * radius, 0, z + math.sin(a0) * radius}
         p1 := third_person.Vec3{x + math.cos(a1) * radius, 0, z + math.sin(a1) * radius}
-        p0.y = terrain.sample_height(&editor.project, 0, p0.x, p0.z) + height_offset
-        p1.y = terrain.sample_height(&editor.project, 0, p1.x, p1.z) + height_offset
+        p0.y = terrain.sample_surface_height(&editor.project, 0, p0.x, p0.z) + height_offset
+        p1.y = terrain.sample_surface_height(&editor.project, 0, p1.x, p1.z) + height_offset
         // Ground decal fan: upward face front (CCW) so it survives culling.
         world_triangle(center, p1, p0, color)
     }
@@ -551,8 +600,8 @@ world_settlement_brush_segment :: proc(editor: ^Editor, a, b: [2]f32, color: can
     length := linalg.length(delta)
     if editor == nil || length <= .001 do return
     normal := [2]f32{-delta[1] / length, delta[0] / length} * .32
-    ah := terrain.sample_height(&editor.project, 0, a[0], a[1]) + .13
-    bh := terrain.sample_height(&editor.project, 0, b[0], b[1]) + .13
+    ah := terrain.sample_surface_height(&editor.project, 0, a[0], a[1]) + .13
+    bh := terrain.sample_surface_height(&editor.project, 0, b[0], b[1]) + .13
     points := [4]third_person.Vec3 {
         {a[0] - normal[0], ah, a[1] - normal[1]},
         {a[0] + normal[0], ah, a[1] + normal[1]},

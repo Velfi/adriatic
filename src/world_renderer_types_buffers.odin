@@ -5,6 +5,7 @@ import circulation "../packages/circulation"
 import flight "../packages/flight"
 import fountains "../packages/fountains"
 import roads "../packages/roads"
+import story "../packages/story"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import vehicles "../packages/vehicles"
@@ -64,6 +65,19 @@ World_Vertex :: struct {
 
 World_Land_Surface_Sample :: struct {
     x, z, height: f32,
+}
+
+Town_Mouse_Placement :: struct {
+    position: third_person.Vec3,
+    rotation: f32,
+    valid:    bool,
+}
+
+Resident_Home_Cache_Entry :: struct {
+    position: third_person.Vec3,
+    rotation: f32,
+    found:    bool,
+    valid:    bool,
 }
 
 Road_Geometry_Cache_Chunk :: struct {
@@ -433,6 +447,23 @@ World_Renderer :: struct {
     town_mouse_cache_reuses:                      u64,
     town_mouse_ground_cache_hits:                 u64,
     town_mouse_ground_cache_misses:               u64,
+    town_mouse_placements:                        [2][8]Town_Mouse_Placement,
+    town_mouse_placement_project_revision:         u64,
+    town_mouse_placement_terrain_revision:         u64,
+    town_mouse_placement_valid:                    bool,
+    resident_home_cache:                          [story.Resident]Resident_Home_Cache_Entry,
+    resident_home_project_revision:                u64,
+    resident_home_terrain_revision:                u64,
+    resident_home_cache_valid:                     bool,
+    ocean_geometry_cache:                         [dynamic]World_Vertex,
+    ocean_cache_center:                           [2]f32,
+    ocean_cache_project_revision:                 u64,
+    ocean_cache_terrain_revision:                 u64,
+    ocean_cache_sea_level:                        f32,
+    ocean_cache_in_map:                           bool,
+    ocean_cache_markov_island:                    bool,
+    ocean_cache_dunes:                            bool,
+    ocean_cache_valid:                            bool,
     dirty_build_ms:                               f64,
     frame_build_ms:                               f64,
     visibility_build_cpu_ms:                      f64,

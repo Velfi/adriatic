@@ -9,6 +9,7 @@ import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:slice"
+import "core:strings"
 
 configure_generated_dune_capture_camera :: proc(
     editor: ^Editor,
@@ -31,7 +32,7 @@ configure_generated_dune_capture_camera :: proc(
         found_shore := false
         for offset := f32(0); offset <= terrain.DEFAULT_GENERATED_ISLAND_HALF_Z * 1.25; offset += step {
             sample_z := center_z - offset
-            if terrain.sample_height(&editor.project, 0, candidate_x, sample_z) <= editor.project.sea_level {
+            if terrain.sample_surface_height(&editor.project, 0, candidate_x, sample_z) <= editor.project.sea_level {
                 shore_z = sample_z + step
                 found_shore = true
                 break
@@ -43,11 +44,11 @@ configure_generated_dune_capture_camera :: proc(
         for inland := f32(22); inland <= 62; inland += step {
             material := terrain.sample_material(&editor.project, 0, candidate_x, shore_z + inland)
             if material >= -.02 do continue
-            height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland)
+            height := terrain.sample_surface_height(&editor.project, 0, candidate_x, shore_z + inland)
             score: f32
             if prefer_blowout {
-                left_height := terrain.sample_height(&editor.project, 0, candidate_x - 12, shore_z + inland)
-                right_height := terrain.sample_height(&editor.project, 0, candidate_x + 12, shore_z + inland)
+                left_height := terrain.sample_surface_height(&editor.project, 0, candidate_x - 12, shore_z + inland)
+                right_height := terrain.sample_surface_height(&editor.project, 0, candidate_x + 12, shore_z + inland)
                 depression := (left_height + right_height) * .5 - height
                 seaward_material := terrain.sample_material(
                     &editor.project,
@@ -65,8 +66,8 @@ configure_generated_dune_capture_camera :: proc(
                 // is a better blowout signal than any one pale terrain cell.
                 score = depression * 3.2 - material - seaward_material * .55 - landward_material * .55
             } else {
-                seaward_height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland - step)
-                landward_height := terrain.sample_height(&editor.project, 0, candidate_x, shore_z + inland + step)
+                seaward_height := terrain.sample_surface_height(&editor.project, 0, candidate_x, shore_z + inland - step)
+                landward_height := terrain.sample_surface_height(&editor.project, 0, candidate_x, shore_z + inland + step)
                 prominence := height - (seaward_height + landward_height) * .5
                 // Prefer a locally raised sandy crest over a generally high
                 // hinterland slope. The previous absolute-height score could
@@ -83,7 +84,7 @@ configure_generated_dune_capture_camera :: proc(
     }
     focus := third_person.Vec3 {
         best_x,
-        terrain.sample_height(&editor.project, 0, best_x, best_shore_z + best_inland) + 1.2,
+        terrain.sample_surface_height(&editor.project, 0, best_x, best_shore_z + best_inland) + 1.2,
         best_shore_z + best_inland,
     }
     editor.editor_focus = focus
@@ -92,11 +93,11 @@ configure_generated_dune_capture_camera :: proc(
     // cross-shore features edge-on.
     normal_step := f32(10)
     gradient_x :=
-        terrain.sample_height(&editor.project, 0, best_x + normal_step, best_shore_z) -
-        terrain.sample_height(&editor.project, 0, best_x - normal_step, best_shore_z)
+        terrain.sample_surface_height(&editor.project, 0, best_x + normal_step, best_shore_z) -
+        terrain.sample_surface_height(&editor.project, 0, best_x - normal_step, best_shore_z)
     gradient_z :=
-        terrain.sample_height(&editor.project, 0, best_x, best_shore_z + normal_step) -
-        terrain.sample_height(&editor.project, 0, best_x, best_shore_z - normal_step)
+        terrain.sample_surface_height(&editor.project, 0, best_x, best_shore_z + normal_step) -
+        terrain.sample_surface_height(&editor.project, 0, best_x, best_shore_z - normal_step)
     gradient_length := f32(math.sqrt(f64(gradient_x * gradient_x + gradient_z * gradient_z)))
     inward := [2]f32{0, 1}
     if gradient_length > .0001 do inward = {gradient_x / gradient_length, gradient_z / gradient_length}
@@ -122,7 +123,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
                 editor.editor_focus.z + (f32(row) - 7.5) * 12,
                 7,
                 7,
-                terrain.sample_height(
+                terrain.sample_surface_height(
                     &editor.project,
                     0,
                     editor.editor_focus.x + (f32(column) - 7.5) * 12,
@@ -251,7 +252,7 @@ benchmark_land_flight_step :: proc(editor: ^Editor, benchmark_frame: int) {
     phase := f32(benchmark_frame) * .012
     x := spawn.x + math.sin(phase) * 72
     z := spawn.z + math.sin(phase * .61) * 28
-    ground := terrain.sample_height(&editor.project, 0, x, z)
+    ground := terrain.sample_surface_height(&editor.project, 0, x, z)
     editor.postale.body.position = {x, ground + 9, z}
     editor.postale.body.velocity = {-24, 0, 0}
     editor.postale.grounded = false
@@ -264,6 +265,152 @@ benchmark_percentile :: proc(sorted_samples: []f64, fraction: f64) -> f64 {
     if len(sorted_samples) <= 0 do return 0
     index := int(math.ceil(fraction * f64(len(sorted_samples)))) - 1
     return sorted_samples[clamp(index, 0, len(sorted_samples) - 1)]
+}
+
+Benchmark_Timing :: struct {
+    mean_ms, median_ms, p95_ms, p99_ms, max_ms, median_fps: f64,
+}
+
+Benchmark_Geometry :: struct {
+    world_vertices, world_unique_vertices, world_capacity: int,
+    world_utilization:                                  f64,
+    road_vertices, road_capacity:                       int,
+    road_utilization:                                   f64,
+    foliage_vertices, foliage_capacity:                 int,
+    foliage_utilization:                                f64,
+    structure_lod_world_vertices:                       int,
+    structure_lod_foliage_vertices:                     int,
+    structure_lod_counts:                               [3]int,
+    structure_lod_cache_rebuilds:                       u64,
+}
+
+Benchmark_Caches :: struct {
+    clipmap_generated, clipmap_copied:                   u64,
+    clipmap_full_rebuilds, clipmap_incremental_shifts:   u64,
+    clipmap_cells_copied, clipmap_cells_generated:       u64,
+    grass_hits, grass_misses, grass_emitted:              u64,
+    climbing_leaf_builds, climbing_leaf_reuses:           u64,
+    town_mouse_builds, town_mouse_reuses:                 u64,
+}
+
+Benchmark_Renderer :: struct {
+    dirty_build_ms, frame_build_ms:                       f64,
+    visibility_build_cpu_ms, texture_upload_ms:           f64,
+    rebuilt_objects, rebuilt_pages, static_bytes_uploaded: u64,
+    indexed_cells, visible_clusters, indirect_commands:   u64,
+    retired_bytes:                                         u64,
+}
+
+Benchmark_Result :: struct {
+    scenario:                         string,
+    samples:                          int,
+    window, world:                    [2]int,
+    timing:                           Benchmark_Timing,
+    geometry:                         Benchmark_Geometry,
+    visibility:                       Static_Visibility_Stats,
+    caches:                           Benchmark_Caches,
+    renderer:                         Benchmark_Renderer,
+}
+
+benchmark_result_write_timing :: proc(builder: ^strings.Builder, result: ^Benchmark_Result) {
+    t := result.timing
+    fmt.sbprintf(
+        builder,
+        "{{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,",
+        result.scenario,
+        result.samples,
+        result.window[0],
+        result.window[1],
+        result.world[0],
+        result.world[1],
+        t.mean_ms,
+        t.median_ms,
+        t.p95_ms,
+        t.p99_ms,
+        t.max_ms,
+        t.median_fps,
+    )
+}
+
+benchmark_result_write_geometry :: proc(builder: ^strings.Builder, g: Benchmark_Geometry) {
+    fmt.sbprintf(
+        builder,
+        "\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,",
+        g.world_vertices,
+        g.world_unique_vertices,
+        g.world_capacity,
+        g.world_utilization,
+        g.road_vertices,
+        g.road_capacity,
+        g.road_utilization,
+        g.foliage_vertices,
+        g.foliage_capacity,
+        g.foliage_utilization,
+        g.structure_lod_world_vertices,
+        g.structure_lod_foliage_vertices,
+        g.structure_lod_counts[0],
+        g.structure_lod_counts[1],
+        g.structure_lod_counts[2],
+        g.structure_lod_cache_rebuilds,
+    )
+}
+
+benchmark_result_write_visibility :: proc(builder: ^strings.Builder, v: Static_Visibility_Stats) {
+    fmt.sbprintf(
+        builder,
+        "\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},",
+        v.candidates,
+        v.frustum_culled,
+        v.occlusion_culled,
+        v.force_visible,
+        v.empty,
+        v.emitted_draws,
+        v.opaque_cost,
+        v.foliage_cost,
+        v.bougainvillea_cost,
+        v.atlas_opaque_used,
+        v.atlas_foliage_used,
+        v.atlas_bougainvillea_used,
+        v.atlas_fragmentation,
+    )
+}
+
+benchmark_result_write_caches :: proc(builder: ^strings.Builder, c: Benchmark_Caches) {
+    fmt.sbprintf(
+        builder,
+        "\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"clipmap_full_rebuilds\":%d,\"clipmap_incremental_shifts\":%d,\"clipmap_cells_copied\":%d,\"clipmap_cells_generated\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}},",
+        c.clipmap_generated,
+        c.clipmap_copied,
+        c.clipmap_full_rebuilds,
+        c.clipmap_incremental_shifts,
+        c.clipmap_cells_copied,
+        c.clipmap_cells_generated,
+        c.grass_hits,
+        c.grass_misses,
+        c.grass_emitted,
+        c.climbing_leaf_builds,
+        c.climbing_leaf_reuses,
+        c.town_mouse_builds,
+        c.town_mouse_reuses,
+    )
+}
+
+benchmark_result_write_renderer :: proc(builder: ^strings.Builder, r: Benchmark_Renderer) {
+    fmt.sbprintf(
+        builder,
+        "\"renderer\":{{\"dirty_build_ms\":%.4f,\"frame_build_ms\":%.4f,\"visibility_build_cpu_ms\":%.4f,\"texture_upload_ms\":%.4f,\"rebuilt_objects\":%d,\"rebuilt_pages\":%d,\"static_bytes_uploaded\":%d,\"indexed_cells\":%d,\"visible_clusters\":%d,\"indirect_commands\":%d,\"retired_bytes\":%d}}}}}}",
+        r.dirty_build_ms,
+        r.frame_build_ms,
+        r.visibility_build_cpu_ms,
+        r.texture_upload_ms,
+        r.rebuilt_objects,
+        r.rebuilt_pages,
+        r.static_bytes_uploaded,
+        r.indexed_cells,
+        r.visible_clusters,
+        r.indirect_commands,
+        r.retired_bytes,
+    )
 }
 
 benchmark_report :: proc(
@@ -304,74 +451,73 @@ benchmark_report :: proc(
     foliage_vertex_utilization := f64(foliage_vertex_count) / f64(max(foliage_vertex_capacity, 1))
     road_vertex_capacity := int(world_buffer_min_size(world_renderer.road_vertex[:]) / size_of(World_Vertex))
     road_vertex_utilization := f64(road_vertex_count) / f64(max(road_vertex_capacity, 1))
-    fmt.printf(
-        "BENCHMARK_RESULT {{\"scenario\":\"%s\",\"samples\":%d,\"window\":[%d,%d],\"world\":[%d,%d],\"mean_ms\":%.4f,\"median_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f,\"max_ms\":%.4f,\"median_fps\":%.2f,\"geometry\":{{\"world_vertices\":%d,\"world_unique_vertices\":%d,\"world_capacity\":%d,\"world_utilization\":%.6f,\"road_vertices\":%d,\"road_capacity\":%d,\"road_utilization\":%.6f,\"foliage_vertices\":%d,\"foliage_capacity\":%d,\"foliage_utilization\":%.6f,\"structure_lod_world_vertices\":%d,\"structure_lod_foliage_vertices\":%d,\"structure_lod_counts\":[%d,%d,%d],\"structure_lod_cache_rebuilds\":%d,\"static_visibility\":{{\"candidates\":%d,\"frustum_culled\":%d,\"occlusion_culled\":%d,\"force_visible\":%d,\"empty\":%d,\"emitted_draws\":%d,\"opaque_cost\":%d,\"foliage_cost\":%d,\"bougainvillea_cost\":%d,\"atlas_used\":[%d,%d,%d],\"atlas_fragmentation\":%.6f}},\"caches\":{{\"clipmap_generated\":%d,\"clipmap_copied\":%d,\"clipmap_full_rebuilds\":%d,\"clipmap_incremental_shifts\":%d,\"clipmap_cells_copied\":%d,\"clipmap_cells_generated\":%d,\"grass_hits\":%d,\"grass_misses\":%d,\"grass_emitted\":%d,\"climbing_leaf_builds\":%d,\"climbing_leaf_reuses\":%d,\"town_mouse_builds\":%d,\"town_mouse_reuses\":%d}},\"renderer\":{{\"dirty_build_ms\":%.4f,\"frame_build_ms\":%.4f,\"visibility_build_cpu_ms\":%.4f,\"texture_upload_ms\":%.4f,\"rebuilt_objects\":%d,\"rebuilt_pages\":%d,\"static_bytes_uploaded\":%d,\"indexed_cells\":%d,\"visible_clusters\":%d,\"indirect_commands\":%d,\"retired_bytes\":%d}}}}}}\n",
-        scenario,
-        len(sorted),
-        window_width,
-        window_height,
-        world_width,
-        world_height,
-        total / f64(len(sorted)) * 1000,
-        median * 1000,
-        p95 * 1000,
-        p99 * 1000,
-        maximum * 1000,
-        1 / max(median, f64(.000001)),
-        world_vertex_count,
-        world_unique_vertex_count,
-        world_vertex_capacity,
-        world_vertex_utilization,
-        road_vertex_count,
-        road_vertex_capacity,
-        road_vertex_utilization,
-        foliage_vertex_count,
-        foliage_vertex_capacity,
-        foliage_vertex_utilization,
-        world_renderer.structure_lod_world_vertices,
-        world_renderer.structure_lod_foliage_vertices,
-        world_renderer.structure_lod_counts[0],
-        world_renderer.structure_lod_counts[1],
-        world_renderer.structure_lod_counts[2],
-        world_renderer.structure_lod_cache_rebuilds,
-        world_renderer.static_visibility.candidates,
-        world_renderer.static_visibility.frustum_culled,
-        world_renderer.static_visibility.occlusion_culled,
-        world_renderer.static_visibility.force_visible,
-        world_renderer.static_visibility.empty,
-        world_renderer.static_visibility.emitted_draws,
-        world_renderer.static_visibility.opaque_cost,
-        world_renderer.static_visibility.foliage_cost,
-        world_renderer.static_visibility.bougainvillea_cost,
-        world_renderer.static_visibility.atlas_opaque_used,
-        world_renderer.static_visibility.atlas_foliage_used,
-        world_renderer.static_visibility.atlas_bougainvillea_used,
-        world_renderer.static_visibility.atlas_fragmentation,
-        world_renderer.clipmap_levels_generated,
-        world_renderer.clipmap_levels_copied,
-        world_renderer.clipmap_full_rebuilds,
-        world_renderer.clipmap_incremental_shifts,
-        world_renderer.clipmap_cells_copied,
-        world_renderer.clipmap_cells_generated,
-        world_renderer.grass_candidate_hits,
-        world_renderer.grass_candidate_misses,
-        world_renderer.grass_instances_emitted,
-        world_renderer.climbing_leaf_cache_builds,
-        world_renderer.climbing_leaf_cache_reuses,
-        world_renderer.town_mouse_cache_builds,
-        world_renderer.town_mouse_cache_reuses,
-        world_renderer.dirty_build_ms,
-        world_renderer.frame_build_ms,
-        world_renderer.visibility_build_cpu_ms,
-        world_renderer.texture_upload_ms,
-        world_renderer.rebuilt_static_objects,
-        world_renderer.rebuilt_static_pages,
-        world_renderer.static_bytes_uploaded,
-        world_renderer.indexed_cells,
-        world_renderer.visible_clusters,
-        world_renderer.indirect_command_count,
-        world_renderer.retired_bytes,
-    )
+    result := Benchmark_Result {
+        scenario = scenario,
+        samples = len(sorted),
+        window = {window_width, window_height},
+        world = {world_width, world_height},
+        timing = {
+            mean_ms = total / f64(len(sorted)) * 1000,
+            median_ms = median * 1000,
+            p95_ms = p95 * 1000,
+            p99_ms = p99 * 1000,
+            max_ms = maximum * 1000,
+            median_fps = 1 / max(median, f64(.000001)),
+        },
+        geometry = {
+            world_vertices = world_vertex_count,
+            world_unique_vertices = world_unique_vertex_count,
+            world_capacity = world_vertex_capacity,
+            world_utilization = world_vertex_utilization,
+            road_vertices = road_vertex_count,
+            road_capacity = road_vertex_capacity,
+            road_utilization = road_vertex_utilization,
+            foliage_vertices = foliage_vertex_count,
+            foliage_capacity = foliage_vertex_capacity,
+            foliage_utilization = foliage_vertex_utilization,
+            structure_lod_world_vertices = world_renderer.structure_lod_world_vertices,
+            structure_lod_foliage_vertices = world_renderer.structure_lod_foliage_vertices,
+            structure_lod_counts = world_renderer.structure_lod_counts,
+            structure_lod_cache_rebuilds = world_renderer.structure_lod_cache_rebuilds,
+        },
+        visibility = world_renderer.static_visibility,
+        caches = {
+            clipmap_generated = world_renderer.clipmap_levels_generated,
+            clipmap_copied = world_renderer.clipmap_levels_copied,
+            clipmap_full_rebuilds = world_renderer.clipmap_full_rebuilds,
+            clipmap_incremental_shifts = world_renderer.clipmap_incremental_shifts,
+            clipmap_cells_copied = world_renderer.clipmap_cells_copied,
+            clipmap_cells_generated = world_renderer.clipmap_cells_generated,
+            grass_hits = world_renderer.grass_candidate_hits,
+            grass_misses = world_renderer.grass_candidate_misses,
+            grass_emitted = world_renderer.grass_instances_emitted,
+            climbing_leaf_builds = world_renderer.climbing_leaf_cache_builds,
+            climbing_leaf_reuses = world_renderer.climbing_leaf_cache_reuses,
+            town_mouse_builds = world_renderer.town_mouse_cache_builds,
+            town_mouse_reuses = world_renderer.town_mouse_cache_reuses,
+        },
+        renderer = {
+            dirty_build_ms = world_renderer.dirty_build_ms,
+            frame_build_ms = world_renderer.frame_build_ms,
+            visibility_build_cpu_ms = world_renderer.visibility_build_cpu_ms,
+            texture_upload_ms = world_renderer.texture_upload_ms,
+            rebuilt_objects = world_renderer.rebuilt_static_objects,
+            rebuilt_pages = world_renderer.rebuilt_static_pages,
+            static_bytes_uploaded = world_renderer.static_bytes_uploaded,
+            indexed_cells = world_renderer.indexed_cells,
+            visible_clusters = world_renderer.visible_clusters,
+            indirect_commands = world_renderer.indirect_command_count,
+            retired_bytes = world_renderer.retired_bytes,
+        },
+    }
+    output := strings.builder_make_len_cap(0, 4096)
+    defer delete(output.buf)
+    benchmark_result_write_timing(&output, &result)
+    benchmark_result_write_geometry(&output, result.geometry)
+    benchmark_result_write_visibility(&output, result.visibility)
+    benchmark_result_write_caches(&output, result.caches)
+    benchmark_result_write_renderer(&output, result.renderer)
+    fmt.printf("BENCHMARK_RESULT %s\n", strings.to_string(output))
 }
 
 seed_road_capture :: proc(editor: ^Editor) {
@@ -387,7 +533,7 @@ seed_road_capture :: proc(editor: ^Editor) {
         {center - 15, 0, center + 135},
     }
     for &position in node_positions {
-        position.y = terrain.sample_height(&editor.project, 0, position.x, position.z)
+        position.y = terrain.sample_surface_height(&editor.project, 0, position.x, position.z)
     }
     west := roads.add_node(graph, node_positions[0], 7)
     junction := roads.add_node(graph, node_positions[1], 10)
@@ -508,7 +654,7 @@ seed_road_grip_capture :: proc(editor: ^Editor) {
     }
     contacts: [4]particle_systems.Vehicle_Contact
     for _ in 0 ..< 105 {
-        ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+        ground := terrain.sample_surface_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
         vehicles.car_drive_step(
             &editor.car_drive,
             &editor.car,
@@ -547,7 +693,7 @@ seed_terrain_grip_capture :: proc(editor: ^Editor) {
     center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     shore_x := center + half_extent * terrain.DEFAULT_ISLAND_RADIUS
     shore_z := center
-    ground := terrain.sample_height(&editor.project, 0, shore_x, shore_z)
+    ground := terrain.sample_surface_height(&editor.project, 0, shore_x, shore_z)
     editor.car.position = {shore_x, ground, shore_z}
     editor.car.yaw_radians = math.PI * .5
     sand_grip := terrain.ground_grip(.Sand)
@@ -558,7 +704,7 @@ seed_terrain_grip_capture :: proc(editor: ^Editor) {
     }
     contacts: [4]particle_systems.Vehicle_Contact
     for _ in 0 ..< 105 {
-        ground = terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+        ground = terrain.sample_surface_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
         vehicles.car_drive_step(
             &editor.car_drive,
             &editor.car,

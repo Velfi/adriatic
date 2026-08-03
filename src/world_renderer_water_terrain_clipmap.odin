@@ -19,7 +19,7 @@ world_roads_transient :: proc(editor: ^Editor) {
     if editor.cursor_hit {
         cursor := roads.Vec3 {
             editor.cursor_world_x,
-            terrain.sample_height(&editor.project, 0, editor.cursor_world_x, editor.cursor_world_z),
+            terrain.sample_surface_height(&editor.project, 0, editor.cursor_world_x, editor.cursor_world_z),
             editor.cursor_world_z,
         }
         preview_color := canvas2d.Color{101, 226, 203, 150}
@@ -64,7 +64,7 @@ world_roads_transient :: proc(editor: ^Editor) {
     } else if editor.road_selected_node >= 0 && editor.road_preview_status != .Idle {
         start := graph.nodes[editor.road_selected_node].position
         end :=
-            editor.road_preview_snap.valid ? editor.road_preview_snap.position : roads.Vec3{editor.cursor_world_x, terrain.sample_height(&editor.project, 0, editor.cursor_world_x, editor.cursor_world_z), editor.cursor_world_z}
+            editor.road_preview_snap.valid ? editor.road_preview_snap.position : roads.Vec3{editor.cursor_world_x, terrain.sample_surface_height(&editor.project, 0, editor.cursor_world_x, editor.cursor_world_z), editor.cursor_world_z}
         world_road_editor_link(start, end, .55, {229, 105, 90, 190})
     }
     if editor.road_preview_snap.valid {
@@ -141,6 +141,22 @@ world_ocean :: proc(editor: ^Editor) {
     local_divisions := int(math.ceil(f64(local_extent * 2 / local_cell)))
     local_center_x := f32(math.floor(f64(camera.position.x / local_cell))) * local_cell
     local_center_z := f32(math.floor(f64(camera.position.z / local_cell))) * local_cell
+    markov_island := lab_scene_is_active(editor, "markov-island")
+    dunes := lab_scene_is_active(editor, "dunes")
+    cache_matches :=
+        world_renderer.ocean_cache_valid &&
+        world_renderer.ocean_cache_center == [2]f32{local_center_x, local_center_z} &&
+        world_renderer.ocean_cache_project_revision == editor.project.revision &&
+        world_renderer.ocean_cache_terrain_revision == editor.terrain_revision &&
+        world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
+        world_renderer.ocean_cache_in_map == editor.in_map &&
+        world_renderer.ocean_cache_markov_island == markov_island &&
+        world_renderer.ocean_cache_dunes == dunes
+    if cache_matches {
+        append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
+        return
+    }
+    first_vertex := len(world_renderer.vertices)
     local_min_x := local_center_x - local_extent
     local_max_x := local_center_x + local_extent
     local_min_z := local_center_z - local_extent
@@ -158,7 +174,7 @@ world_ocean :: proc(editor: ^Editor) {
     // eight centimetres below allowed the gently descending generated beach
     // to protrude through the plane as dark triangulated wedges.
     ocean_y := editor.project.sea_level + (editor.in_map ? f32(.02) : f32(-2))
-    if lab_scene_is_active(editor, "markov-island") {
+    if markov_island {
         // Leave a small guaranteed gap above the lab seabed. Mixed shoreline
         // triangles then remain behind the flat water instead of drawing a
         // pale, clipmap-shaped shelf outline.
@@ -250,6 +266,16 @@ world_ocean :: proc(editor: ^Editor) {
             )
         }
     }
+    clear(&world_renderer.ocean_geometry_cache)
+    append(&world_renderer.ocean_geometry_cache, ..world_renderer.vertices[first_vertex:])
+    world_renderer.ocean_cache_center = {local_center_x, local_center_z}
+    world_renderer.ocean_cache_project_revision = editor.project.revision
+    world_renderer.ocean_cache_terrain_revision = editor.terrain_revision
+    world_renderer.ocean_cache_sea_level = editor.project.sea_level
+    world_renderer.ocean_cache_in_map = editor.in_map
+    world_renderer.ocean_cache_markov_island = markov_island
+    world_renderer.ocean_cache_dunes = dunes
+    world_renderer.ocean_cache_valid = true
 }
 
 world_river_water_spline :: proc(editor: ^Editor, spline: ^terrain.River_Water_Spline) {
@@ -345,8 +371,14 @@ world_bathymetry :: proc(editor: ^Editor) {
     camera_x, camera_z := editor.camera_pose.position.x, editor.camera_pose.position.z
     normal := third_person.Vec3{0, 1, 0}
     for &chunk in editor.project.bathymetry_chunks {
+        if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES || len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES do continue
         origin_x := f32(chunk.chunk_x) * terrain.BATHYMETRY_CHUNK_SIZE
         origin_z := f32(chunk.chunk_z) * terrain.BATHYMETRY_CHUNK_SIZE
+        if owner_index, owned := terrain.island_index(chunk.owner); owned {
+            transform := terrain.island_transform_at(&editor.project, owner_index)
+            origin_x += transform.current_x - transform.source_x
+            origin_z += transform.current_z - transform.source_z
+        }
         if abs(origin_x - camera_x) > 512 || abs(origin_z - camera_z) > 512 do continue
         for z in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
             for x in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
@@ -474,7 +506,7 @@ clipmap_grid_resolution :: #force_inline proc(level: int) -> int {
 // for aircraft because both points remain close together high above the land.
 clipmap_first_render_level :: proc(editor: ^Editor, viewport_height: i32, focal_length: f32 = 1.35) -> int {
     if editor == nil || viewport_height <= 0 do return 0
-    terrain_y := terrain.sample_height(&editor.project, 0, editor.camera_pose.target.x, editor.camera_pose.target.z)
+    terrain_y := terrain.sample_surface_height(&editor.project, 0, editor.camera_pose.target.x, editor.camera_pose.target.z)
     terrain_focus := third_person.Vec3{editor.camera_pose.target.x, terrain_y, editor.camera_pose.target.z}
     delta := editor.camera_pose.position - terrain_focus
     distance := f32(math.sqrt(f64(linalg.dot(delta, delta))))

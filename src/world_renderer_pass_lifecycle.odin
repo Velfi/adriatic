@@ -468,6 +468,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.instance_meshes)
     ground_grass_cache_clear()
     delete(world_renderer.grass_chunk_cache)
+    delete(world_renderer.grass_chunk_pool)
     delete(world_renderer.wing_trail_vertices)
     delete(world_renderer.wing_trail_indices)
     delete(world_renderer.wing_trail_optimized_indices)
@@ -500,6 +501,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.overlay_chunk_bounds)
     delete(world_renderer.structure_building_spans)
     delete(world_renderer.structure_candidates)
+    delete(world_renderer.ocean_geometry_cache)
     for &entry in world_renderer.town_mouse_geometry_cache {
         delete(entry.vertices)
     }
