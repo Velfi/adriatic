@@ -6,6 +6,7 @@ ENGINE_VERSION_PATCH :: u32(0)
 
 import "core:strings"
 import "core:time"
+import spy "../spy"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
@@ -272,7 +273,7 @@ vk_context_init :: proc(
         " type=",
         fixed_string(ctx.caps.adapter_type[:]),
     )
-    log_debug(
+    spy.debug(
         "queues graphics=",
         ctx.caps.queue_families.graphics,
         " compute=",
@@ -311,7 +312,7 @@ vk_context_init :: proc(
     }
 
     ctx.initialized = true
-    log_debug("ready")
+    spy.debug("ready")
     return true
 }
 

@@ -81,12 +81,6 @@ log_info :: proc(args: ..any, loc := #caller_location) {
     }
 }
 
-log_debug :: proc(args: ..any, loc := #caller_location) {
-    if log_enabled(.Debug) {
-        log_emit(.Debug, ..args, loc = loc)
-    }
-}
-
 log_trace :: proc(args: ..any, loc := #caller_location) {
     if log_enabled(.Trace) {
         log_emit(.Debug, ..args, loc = loc)
