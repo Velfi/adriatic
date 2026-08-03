@@ -288,31 +288,19 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         editor.camera = third_person.default_camera()
                     }
                 } else {
-                    throttle, steering := f32(0), f32(0)
-                    if canvas2d.IsKeyDown(.W) || canvas2d.IsKeyDown(.UP) do throttle += 1
-                    if canvas2d.IsKeyDown(.S) || canvas2d.IsKeyDown(.DOWN) do throttle -= 1
-                    if canvas2d.IsKeyDown(.A) || canvas2d.IsKeyDown(.LEFT) do steering -= 1
-                    if canvas2d.IsKeyDown(.D) || canvas2d.IsKeyDown(.RIGHT) do steering += 1
-                    if canvas2d.GamepadAvailable() {
-                        throttle += max(gamepad_axis(.Right_Trigger), f32(0))
-                        throttle -= max(gamepad_axis(.Left_Trigger), f32(0))
-                        steering = stronger_axis(steering, gamepad_axis(.Left_X))
-                    }
+                    control := car_controller_input()
                     if benchmark_mode && (benchmark_scenario == "road_grip" || benchmark_scenario == "terrain_grip") {
-                        throttle = 1
-                        steering = math.sin(f32(frame) * .032) * .72
+                        control.throttle = 1
+                        control.steering = math.sin(f32(frame) * .032) * .72
                     }
-                    handbrake := input_action_down(.Handbrake)
                     dust_surface, drive_surface := road_car_surface(
                         editor,
                         {editor.car.position.x, editor.car.position.y, editor.car.position.z},
                     )
                     car_impact_severity, car_impact_slide_speed, car_impact_obliqueness, car_impact_pan :=
-                        car_physics_step(
+                        car_controller_step(
                             editor,
-                            clamp(throttle, -1, 1),
-                            clamp(steering, -1, 1),
-                            handbrake,
+                            control,
                             drive_surface,
                             min(delta_seconds, .05),
                             listener_yaw,
@@ -350,7 +338,7 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         min(delta_seconds, .05),
                         vehicles.car_drive_speed(editor.car_drive),
                         editor.car_drive.steering,
-                        handbrake,
+                        control.handbrake,
                         editor.car_drive.slip_amount,
                         contacts,
                     )

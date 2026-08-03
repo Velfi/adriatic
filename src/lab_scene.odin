@@ -37,6 +37,21 @@ Lab_Scene_Request :: struct {
 
 LAB_SCENES := [?]Lab_Scene_Definition {
     {
+        name = "aircraft-transform",
+        configure = aircraft_transform_lab_configure,
+        world_overlay = aircraft_transform_lab_world,
+        process_input = aircraft_transform_lab_input,
+        draw_ui = aircraft_transform_lab_ui,
+        exit = aircraft_transform_lab_exit,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
+    {
         name = "road-pathing",
         configure = road_pathing_lab_configure,
         world_overlay = world_road_pathing_lab,

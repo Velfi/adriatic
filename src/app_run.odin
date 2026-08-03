@@ -184,6 +184,7 @@ adriatic_run :: proc(
     if capture_kind == .Mouse_Gait_Lab do capture_lab_name = "mouse-gait"
     if capture_kind == .Mouse_Theater do capture_lab_name = "mouse-theater"
     if capture_kind == .Rondine_Movement_Lab do capture_lab_name = "rondine-movement"
+    if capture_kind == .Aircraft_Transform_Lab do capture_lab_name = "aircraft-transform"
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
     if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
@@ -287,7 +288,12 @@ adriatic_run :: proc(
         _ = canvas2d.AddBodyFontFallbackPath(path)
         _ = canvas2d.AddDisplayFontFallbackPath(path)
     }
-    canvas2d.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring")
+    if !canvas2d.InitWindow(initial_width, initial_height, "Adriatic — Clipmap Terrain Authoring") {
+        fmt.eprintln("canvas window initialization failed")
+        startup_failed = true
+        canvas2d.DestroyPersistentState()
+        return .Quit
+    }
     startup_timings.window_ms = startup_checkpoint(&startup_timings)
     show_loading_screen := SHOW_STARTUP_MENU && first_start && !capture_mode && !benchmark_mode
     postcard: canvas2d.Texture

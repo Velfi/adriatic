@@ -100,6 +100,8 @@ Editor :: struct {
     console:                            Game_Console,
     flame_graph:                        dio.Flame_Graph,
     capture_world_only:                 bool,
+    capture_postale_bank_grid:          bool `fixture:"-"`,
+    capture_postale_transform_parity:   bool `fixture:"-"`,
     capture_player_walk_pose:           bool,
     capture_player_run_compress_pose:   bool,
     capture_player_turn_left_pose:      bool,

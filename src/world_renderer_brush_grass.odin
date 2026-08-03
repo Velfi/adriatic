@@ -130,13 +130,20 @@ world_ground_grass_has_land :: proc(editor: ^Editor, center_x, center_z, radius:
 ground_grass_chunk_release :: proc(key: [2]int) {
     chunk, found := world_renderer.grass_chunk_cache[key]
     if !found do return
-    free(chunk)
+    // Keep the fixed-size chunk allocation available for the next streaming
+    // miss. The cache is intentionally bounded, so evictions are common while
+    // flying and repeatedly allocating the same 28 KiB object is avoidable.
+    append(&world_renderer.grass_chunk_pool, chunk)
     delete_key(&world_renderer.grass_chunk_cache, key)
+    world_renderer.grass_stream_dirty = true
 }
 
 ground_grass_cache_clear :: proc() {
     for _, chunk in world_renderer.grass_chunk_cache do free(chunk)
     clear(&world_renderer.grass_chunk_cache)
+    for chunk in world_renderer.grass_chunk_pool do free(chunk)
+    clear(&world_renderer.grass_chunk_pool)
+    world_renderer.grass_stream_dirty = true
 }
 
 ground_grass_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
@@ -201,11 +208,17 @@ ground_grass_chunk_build :: proc(
     chunk, found := world_renderer.grass_chunk_cache[key]
     if !found {
         ground_grass_cache_make_room()
-        chunk = new(Ground_Grass_Chunk)
+        if len(world_renderer.grass_chunk_pool) > 0 {
+            chunk = pop(&world_renderer.grass_chunk_pool)
+            chunk^ = {}
+        } else {
+            chunk = new(Ground_Grass_Chunk)
+        }
         world_renderer.grass_chunk_cache[key] = chunk
         world_renderer.grass_candidate_misses += 1
     }
     chunk.last_used = world_renderer.grass_chunk_clock
+    previous_built_cells := chunk.built_cells
     base_grid_x := key[0] * GROUND_GRASS_CHUNK_CELLS
     base_grid_z := key[1] * GROUND_GRASS_CHUNK_CELLS
     total_cells := GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS
@@ -324,6 +337,7 @@ ground_grass_chunk_build :: proc(
         chunk.count += 1
     }
     chunk.built_cells = end_cell
+    if end_cell > previous_built_cells do chunk.stream_emitted = false
     return chunk
 }
 
@@ -453,6 +467,7 @@ world_ground_grass :: proc(editor: ^Editor) {
             if chunk_dx * chunk_dx + chunk_dz * chunk_dz > radius_squared do continue
             chunk := ground_grass_chunk_get({chunk_x, chunk_z})
             if chunk == nil do continue
+            if chunk.stream_emitted do continue
             for &cached in chunk.entries[:chunk.count] {
                 x, z := cached.grass.center[0], cached.grass.center[2]
                 // Patio exclusion is part of ground_grass_chunk_build and any
@@ -478,6 +493,7 @@ world_ground_grass :: proc(editor: ^Editor) {
                     )
                 }
             }
+            chunk.stream_emitted = true
         }
     }
 }

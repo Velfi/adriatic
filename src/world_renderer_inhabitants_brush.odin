@@ -156,7 +156,7 @@ world_story_resident_position :: proc(
     return home_position, found
 }
 
-world_settlement_inhabitants :: proc(editor: ^Editor) {
+world_settlement_inhabitants :: proc(editor: ^Editor, include_animated := true, include_static := true) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "settlement_inhabitants")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || editor.settlement_plan.inhabitant_count <= 0 do return
@@ -171,7 +171,7 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
         point := home
         tangent := [2]f32{0, 1}
         distance_to_camera := linalg.length(home - camera)
-        if distance_to_camera <= 135 && animated < 24 && editor.architecture_city_plan.alley_count > 0 {
+        if include_animated && distance_to_camera <= 135 && animated < 24 && editor.architecture_city_plan.alley_count > 0 {
             alley_index := int(inhabitant.seed % u32(editor.architecture_city_plan.alley_count))
             alley := editor.architecture_city_plan.alleys[alley_index]
             start := [2]f32{alley.start_x, alley.start_z}
@@ -200,7 +200,8 @@ world_settlement_inhabitants :: proc(editor: ^Editor) {
             animated += 1
             continue
         }
-        if distance_to_camera > 420 do continue
+        if !include_static do continue
+        if !world_renderer.retained_patio_rebuilding && distance_to_camera > 420 do continue
         // Mid/far inhabitants use a tiny batched silhouette instead of a full
         // articulated mouse. It is deterministic and shares the world vertex
         // stream with other static settlement dressing.

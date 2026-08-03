@@ -13,6 +13,10 @@ import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
 run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
+    if capture_flight_mode && capture_target == "postale-bank-grid" {
+        editor.capture_postale_bank_grid = true
+        editor.capture_world_only = false
+    }
     if (capture_map_mode && !capture_lab_mode) || (capture_flight_mode || capture_car_mode) && !capture_lab_mode {
         editor.player = {
             position = runway_spawn_position(editor),

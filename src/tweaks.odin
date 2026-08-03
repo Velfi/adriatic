@@ -225,6 +225,7 @@ Tweak_State :: struct {
     postale_runtime:  flight.Runtime,
     postale_tuning:   postale_game.Tuning,
     postale_vehicle:  Vehicle_Tweak,
+    postale_transform_tester_gizmo: bool `fixture:"-"`,
     presentation:     Presentation_Tweak,
 }
 
@@ -402,6 +403,7 @@ tweak_default_state :: proc() -> Tweak_State {
         postale_runtime = flight.default_runtime(),
         postale_tuning = postale_game.default_tuning(),
         postale_vehicle = {interaction_radius = 2.5, exit_distance = 2.2},
+        postale_transform_tester_gizmo = false,
         presentation = tweak_default_presentation(),
     }
 }
@@ -1111,6 +1113,7 @@ tweak_draw_postale :: proc(editor: ^Editor) {
         tweak_drag_f32("Propeller throttle rate", &editor.tweak.postale_tuning.propeller_throttle_rate, 0, 100, .1)
     }
     if tweak_section("Diagnostics") {
+        im.Checkbox("Transform tester gizmo", &editor.tweak.postale_transform_tester_gizmo)
         im.Text("Airspeed: %.2f", postale_game.selected_airspeed(&editor.postale))
         im.Text("AoA: %.2f deg", editor.postale.telemetry.angle_of_attack_degrees)
         im.Text("Stalling: %s", editor.postale.telemetry.is_stalling ? "yes" : "no")

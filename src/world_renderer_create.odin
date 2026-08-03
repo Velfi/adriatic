@@ -615,6 +615,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.retained_static_draws = make([dynamic]Retained_Static_Draw, 0, 256)
     world_renderer.static_draw_commands = make([dynamic]vk.DrawIndexedIndirectCommand, 0, 256)
     world_renderer.retained_static_dirty = true
+    world_renderer.retained_patio_vertices = make([dynamic]World_Vertex, 0, 4096)
+    world_renderer.retained_patio_indices = make([dynamic]u32, 0, 4096)
+    world_renderer.retained_patio_dirty = true
     world_renderer.road_vertices = make([dynamic]World_Vertex, 0, ROAD_VERTEX_INITIAL_CAPACITY)
     world_renderer.road_draw_commands = make([dynamic]vk.DrawIndirectCommand, 0, 256)
     world_renderer.foliage_vertices = make([dynamic]Foliage_Vertex, 0, FOLIAGE_VERTEX_INITIAL_CAPACITY)
@@ -623,6 +626,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.grass_instances = make([dynamic]Grass_Instance, 0, GRASS_INSTANCE_INITIAL_CAPACITY)
     world_renderer.wildflower_instances = make([dynamic]Grass_Instance, 0, WILDFLOWER_INSTANCE_INITIAL_CAPACITY)
     world_renderer.marsh_instances = make([dynamic]Grass_Instance, 0, MARSH_INSTANCE_INITIAL_CAPACITY)
+    world_renderer.grass_stream_dirty = true
     world_renderer.terrain_particle_vertices = make([dynamic]Foliage_Vertex, 0, 1_536)
     world_renderer.wing_trail_vertices = make([dynamic]World_Vertex, 0, WING_TRAIL_VERTEX_CAPACITY)
     world_renderer.wing_trail_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)

@@ -165,6 +165,7 @@ settlement_patio_candidate :: proc(
 
 settlement_patios_generate :: proc(editor: ^Editor) {
     if editor == nil || editor.settlement_plan.patio_count >= SETTLEMENT_PATIO_CAPACITY do return
+    world_renderer.retained_patio_dirty = true
     plan := &editor.settlement_plan
     target := 2
     switch plan.request.scale {
@@ -321,7 +322,7 @@ settlement_patio_point :: proc(patio: Settlement_Patio, x, y, z: f32) -> third_p
     return {patio.center[0] + x * cosine - z * sine, patio.base_y + y, patio.center[1] + x * sine + z * cosine}
 }
 
-world_settlement_patio :: proc(patio: Settlement_Patio) {
+world_settlement_patio :: proc(patio: Settlement_Patio, include_plants := true) {
     foundation := patio.style == .Aegean ? canvas2d.Color{190, 207, 203, 255} : canvas2d.Color{198, 165, 123, 255}
     accent := patio.style == .Aegean ? PATIO_BLUE : PATIO_RED
     secondary := patio.style == .Aegean ? PATIO_CREAM : canvas2d.Color{240, 196, 124, 255}
@@ -354,6 +355,15 @@ world_settlement_patio :: proc(patio: Settlement_Patio) {
     planter_b := settlement_patio_point(patio, planter_x, .04, -planter_z)
     patio_planter(planter_a, false)
     patio_planter(planter_b, false)
+    if !include_plants do return
+    world_settlement_patio_plants(patio, planter_a, planter_b)
+}
+
+world_settlement_patio_plants :: proc(
+    patio: Settlement_Patio,
+    planter_a: third_person.Vec3,
+    planter_b: third_person.Vec3,
+) {
     patio_species := patio.style == .Aegean ? plants.Species.Pelargonium : plants.Species.Rosemary
     _ = world_generated_plant(
         patio_species,
@@ -378,6 +388,55 @@ world_settlement_patios :: proc(editor: ^Editor) {
         if !world_sphere_in_view(editor, {patio.center[0], patio.base_y + 1.5, patio.center[1]}, radius, 2) {
             continue
         }
-        world_settlement_patio(patio)
+        planter_x := patio.width * .5 - .55
+        planter_z := patio.depth * .5 - .55
+        planter_a := settlement_patio_point(patio, -planter_x, .04, planter_z)
+        planter_b := settlement_patio_point(patio, planter_x, .04, -planter_z)
+        world_settlement_patio_plants(patio, planter_a, planter_b)
     }
+}
+
+world_retained_patio_rebuild :: proc(editor: ^Editor) {
+    if editor == nil || !world_renderer.retained_patio_dirty || world_renderer.retained_patio_rebuilding do return
+    world_renderer.retained_patio_rebuilding = true
+    defer world_renderer.retained_patio_rebuilding = false
+    clear(&world_renderer.vertices)
+    clear(&world_renderer.retained_patio_vertices)
+    clear(&world_renderer.retained_patio_indices)
+    for patio in editor.settlement_plan.patios[:editor.settlement_plan.patio_count] {
+        world_settlement_patio(patio, false)
+    }
+    world_farm_compounds(editor)
+    world_settlement_cemetery(editor)
+    world_authored_farmland(editor)
+    world_authored_wrecks(editor)
+    world_settlement_inhabitants(editor, false, true)
+    world_infrastructure(editor)
+    source_count := len(world_renderer.vertices)
+    if source_count > 0 {
+        resize(&world_renderer.retained_patio_vertices, source_count)
+        resize(&world_renderer.retained_patio_indices, source_count)
+        optimized_count := adriatic_optimize_unindexed_mesh(
+            raw_data(world_renderer.retained_patio_vertices[:]),
+            raw_data(world_renderer.retained_patio_indices[:]),
+            raw_data(world_renderer.vertices[:]),
+            u32(source_count),
+            u32(size_of(World_Vertex)),
+        )
+        if optimized_count > 0 {
+            resize(&world_renderer.retained_patio_vertices, int(optimized_count))
+            resize(&world_renderer.retained_patio_indices, int(optimized_count))
+        } else {
+            clear(&world_renderer.retained_patio_vertices)
+            clear(&world_renderer.retained_patio_indices)
+        }
+    }
+    clear(&world_renderer.vertices)
+    world_renderer.retained_patio_revision += 1
+    if world_renderer.retained_patio_revision == 0 {
+        world_renderer.retained_patio_revision = 1
+        world_renderer.retained_patio_uploaded_revision = {}
+    }
+    world_renderer.retained_patio_dirty = false
+    world_renderer.retained_static_dirty = true
 }

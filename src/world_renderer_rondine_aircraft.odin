@@ -182,12 +182,51 @@ world_rondine :: proc(editor: ^Editor) {
     world_rondine_tail_fin(editor, red, {126, 42, 36, 255})
 }
 
+postale_bank_grid :: proc(editor: ^Editor, mesh: ^vehicles.Aircraft_Mesh) {
+    base := editor.postale.body
+    base_basis := flight.basis_from_orientation(base.orientation)
+    paint_layer := f32(vehicle_paint_layer_index(.Postale))
+    rolls := [5]f32{-1.0471976, -.5235988, 0, .5235988, 1.0471976}
+    pitches := [5]f32{-.3490659, -.1745329, 0, .1745329, .3490659}
+    for row in 0 ..< 5 {
+        for column in 0 ..< 5 {
+            body := base
+            body.position += base_basis.right * (f32(column) - 2) * 13
+            body.position += base_basis.up * (f32(2 - row) * 9)
+            pitch_delta := linalg.quaternion_angle_axis(pitches[row], base_basis.right)
+            // Flight roll is defined around local +Z; Basis.forward is local
+            // -Z, so use the opposite axis to keep the grid labels truthful.
+            roll_delta := linalg.quaternion_angle_axis(rolls[column], -base_basis.forward)
+            body.orientation = flight.normalize_orientation(roll_delta * pitch_delta * base.orientation)
+            transform := world_aircraft_transform(body, POSTALE_PRESENTATION_SCALE)
+            for triangle in vehicles.mesh_triangles(mesh) {
+                a := mesh.vertices[triangle.a]
+                b := mesh.vertices[triangle.b]
+                c := mesh.vertices[triangle.c]
+                color := aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle)
+                if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
+                    world_aircraft_triangle_smooth(world_aircraft_vertex_world(transform, a.position), world_aircraft_vertex_world(transform, b.position), world_aircraft_vertex_world(transform, c.position), world_aircraft_normal_world(transform, a.normal), world_aircraft_normal_world(transform, b.normal), world_aircraft_normal_world(transform, c.normal), color, a.uv, b.uv, c.uv, paint_layer, vehicle_paint_part_is_paintable(a.part))
+                } else {
+                    world_aircraft_triangle(world_aircraft_vertex_world(transform, a.position), world_aircraft_vertex_world(transform, b.position), world_aircraft_vertex_world(transform, c.position), color, a.uv, b.uv, c.uv, paint_layer, vehicle_paint_part_is_paintable(a.part))
+                }
+            }
+        }
+    }
+}
+
 world_aircraft :: proc(editor: ^Editor) {
     world_rondine(editor)
+    if editor.capture_postale_bank_grid {
+        if world_renderer.postale_pose_mesh == nil do world_renderer.postale_pose_mesh = new(vehicles.Aircraft_Mesh)
+        mesh := world_renderer.postale_pose_mesh
+        mesh^ = editor.postale_base_mesh^
+        postale_bank_grid(editor, mesh)
+        return
+    }
     if editor.postale_visible && world_aircraft_in_view(editor, editor.postale.body.position, 18) {
         postale_paint_layer := f32(vehicle_paint_layer_index(.Postale))
         postale_propeller_blur := aircraft_propeller_blur_amount(editor.postale.throttle)
-        postale_transform := world_aircraft_transform(editor.postale.body, POSTALE_PRESENTATION_SCALE)
+        postale_transform := world_aircraft_transform(aircraft_render_body(editor), POSTALE_PRESENTATION_SCALE)
         if world_renderer.postale_pose_mesh == nil {
             world_renderer.postale_pose_mesh = new(vehicles.Aircraft_Mesh)
         }
@@ -235,6 +274,17 @@ world_aircraft :: proc(editor: ^Editor) {
                     vehicle_paint_part_is_paintable(a.part),
                 )
             }
+        }
+        if editor.capture_postale_transform_parity || editor.tweak.postale_transform_tester_gizmo {
+            body := aircraft_render_body(editor)
+            physical := flight.basis_from_orientation(body.orientation)
+            origin := third_person.Vec3{body.position.x, body.position.y, body.position.z}
+            transform := world_aircraft_transform(body, POSTALE_PRESENTATION_SCALE)
+            propeller := world_aircraft_vertex_world(transform, {0, .12, -3.42})
+            rendered_nose := linalg.normalize(propeller - origin)
+            world_tube_between(origin, origin + physical.forward * 9, {0, 1, 0}, .18, .18, {0, 210, 80, 255})
+            world_tube_between(origin, origin + rendered_nose * 9, {0, 1, 0}, .18, .18, {230, 50, 40, 255})
+            world_tube_between(origin, origin + physical.up * 7, {0, 1, 0}, .18, .18, {50, 120, 240, 255})
         }
     }
     if editor.libellula_visible && world_aircraft_in_view(editor, editor.libellula.body.position, 14) {

@@ -318,7 +318,7 @@ world_ocean_vertex :: #force_inline proc(
     land_height, _, land_found := terrain.sample_land(&editor.project, 0, point.x, point.z)
     elevation := land_height - editor.project.sea_level
     if !land_found {
-        depth := terrain.sample_water_interface(&editor.project, point.x, point.z)
+        depth := terrain.sample_water_interface(&editor.project, point.x, point.z).depth
         // Generated coastal bathymetry stores depth below sea level. Convert
         // the upper shelf into the positive shallowness signal expected by the
         // water shader and suppress broad breaking foam across that shelf.

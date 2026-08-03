@@ -68,6 +68,21 @@ run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_st
         return false
     }
     if instrument_duration_seconds > 0 && canvas2d.GetTime() - instrument_started_at >= instrument_duration_seconds {
+        if editor.flame_graph.history_count > 0 {
+            last_order := editor.flame_graph.history_count - 1
+            _ = dio.flame_graph_write_source_range(
+                &editor.flame_graph,
+                dio.FLAME_GRAPH_DUMP_PATH,
+                0,
+                last_order,
+            )
+            _ = dio.flame_graph_write_source_folded(
+                &editor.flame_graph,
+                dio.FLAME_GRAPH_DUMP_PATH,
+                0,
+                last_order,
+            )
+        }
         editor.quit_requested = true
     }
     if HOT_RELOAD && hot_reload_requested(hot_library_path, hot_library_mtime) {

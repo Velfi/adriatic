@@ -12,7 +12,7 @@ import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 
 world_frame_build_transient :: proc(editor: ^Editor) {
-    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_frame_build_transient")
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_frame_build_transient_dynamic")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
@@ -24,9 +24,13 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     clear(&world_renderer.foliage_vertices)
     clear(&world_renderer.bougainvillea_vertices)
     clear(&world_renderer.bougainvillea_instances)
-    clear(&world_renderer.grass_instances)
-    clear(&world_renderer.wildflower_instances)
-    clear(&world_renderer.marsh_instances)
+    if world_renderer.grass_stream_dirty {
+        clear(&world_renderer.grass_instances)
+        clear(&world_renderer.wildflower_instances)
+        clear(&world_renderer.marsh_instances)
+        for _, chunk in world_renderer.grass_chunk_cache do chunk.stream_emitted = false
+        world_renderer.grass_stream_dirty = false
+    }
     clear(&world_renderer.terrain_particle_vertices)
     world_renderer.structure_lod_counts = {}
     world_renderer.structure_lod_world_vertices = 0
@@ -81,8 +85,12 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     // Depth testing makes submission order independent. Put authored gameplay
     // meshes first so dense terrain can consume only the remaining capacity
     // instead of silently dropping vehicles at the end of the frame.
+    profile_water := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_water")
     world_ocean(editor)
+    world_bathymetry(editor)
     world_river_water(editor)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_water)
+    profile_infrastructure := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_infrastructure")
     infrastructure_shadow_first := len(world_renderer.vertices)
     for index in 0 ..< editor.default_marina_count {
         world_shoreline_harbor_facility(editor, &editor.default_harbors[index])
@@ -93,19 +101,22 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     if editor.marina_paint_mode && editor.marina_preview_valid {
         world_shoreline_harbor_facility(editor, &editor.harbor_preview_plan, true)
     }
-    if !lab_scene_suppresses_infrastructure(editor) do world_infrastructure(editor)
     world_register_shadow_caster(infrastructure_shadow_first)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_infrastructure)
+    profile_settlement := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_settlement")
     world_roads_transient(editor)
     world_boat_wakes(editor)
     world_ocean_ship_wake(editor)
     world_city_density_overlay(editor)
     world_climbing_leaf_density_overlay(editor)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_settlement)
     // The player and vehicles are gameplay-critical. Submit them before any
     // capacity-limited environment detail so a dense scene can never cull the
     // controlled character or the vehicle they occupy. Keeping all vehicles
     // in this protected group also prevents an enter/exit transition from
     // exposing a one-frame ordering gap.
     world_renderer.dynamic_caster_first = len(world_renderer.vertices)
+    profile_npcs := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_npcs")
     world_npc_boats(editor)
     world_ocean_ship(editor)
     world_bird_flocks(editor)
@@ -126,16 +137,22 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_marin(editor)
     world_lighthouse_keepers(editor)
     world_town_mice(editor)
-    world_settlement_inhabitants(editor)
+    world_settlement_inhabitants(editor, true, false)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_npcs)
+    profile_authored := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_authored_decorations")
     world_settlement_patios(editor)
-    world_farm_compounds(editor)
-    world_settlement_cemetery(editor)
-    world_authored_farmland(editor)
-    world_authored_wrecks(editor)
+    world_settlement_cemetery(editor, false)
+    world_authored_farmland(editor, false)
+    world_authored_wrecks(editor, false)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_authored)
+    profile_overlays := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_overlays")
     lab_scene_draw_world_overlay(editor)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_overlays)
     world_renderer.dynamic_caster_count = len(world_renderer.vertices) - world_renderer.dynamic_caster_first
     world_structures(editor)
+    profile_vegetation := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_vegetation")
     world_ground_grass(editor)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_vegetation)
     world_renderer.player_shadow_receiver = mouse_surface_height(
         editor,
         editor.player.position.x,
@@ -144,6 +161,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     // Road Planning owns its endpoint markers and route preview. The ordinary
     // terrain brush is unrelated here and otherwise reads as a third marker.
     if !lab_scene_is_active(editor, "road-planning") && !lab_scene_is_active(editor, "road-pathing") do world_brush(editor)
+    profile_effects := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_effects")
     world_vehicle_particles(editor)
     world_player_terrain_particles(editor)
     world_petal_particles(editor)
@@ -151,6 +169,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_rondine_wake_fans(editor)
     world_wind_streaks(editor)
     world_fog_shells(editor)
+    dio.flame_graph_end(dio.flame_graph_current(), profile_effects)
     // Keep transparent municipal pools contiguous at the end of the existing
     // world buffer. The render graph submits this range only after roads and
     // foliage have established receiver depth.
@@ -216,6 +235,8 @@ world_prepare :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_index: int) 
     // Retained geometry owns its cache maintenance and visible draw list.
     // The transient build may reference retained structure entries, but no
     // longer rebuilds or gathers the retained road stream.
+    if world_renderer.retained_static_dirty do world_renderer.retained_patio_dirty = true
+    world_retained_patio_rebuild(editor)
     world_retained_visibility_begin(editor)
 
     dynamic_started := time.tick_now()

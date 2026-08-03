@@ -418,6 +418,11 @@ world_retained_static_repack :: proc() {
         append(&world_renderer.static_vertices, ..entry.world_vertices[:])
         append(&world_renderer.static_indices, ..entry.world_indices[:])
     }
+    world_renderer.retained_patio_first_vertex = u32(len(world_renderer.static_vertices))
+    world_renderer.retained_patio_first_index = u32(len(world_renderer.static_indices))
+    append(&world_renderer.static_vertices, ..world_renderer.retained_patio_vertices[:])
+    append(&world_renderer.static_indices, ..world_renderer.retained_patio_indices[:])
+    world_renderer.retained_patio_index_count = u32(len(world_renderer.retained_patio_indices))
     world_renderer.retained_static_revision += 1
     if world_renderer.retained_static_revision == 0 {
         world_renderer.retained_static_revision = 1
@@ -439,6 +444,17 @@ world_static_indirect_commands_build :: proc() {
                 instanceCount = 1,
                 firstIndex = entry.retained_first_index,
                 vertexOffset = i32(entry.retained_first_vertex),
+            },
+        )
+    }
+    if world_renderer.retained_patio_index_count > 0 {
+        append(
+            &world_renderer.static_draw_commands,
+            vk.DrawIndexedIndirectCommand {
+                indexCount = world_renderer.retained_patio_index_count,
+                instanceCount = 1,
+                firstIndex = world_renderer.retained_patio_first_index,
+                vertexOffset = i32(world_renderer.retained_patio_first_vertex),
             },
         )
     }

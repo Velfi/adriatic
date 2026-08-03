@@ -764,8 +764,11 @@ flame_graph_destroy :: proc(graph: ^Flame_Graph) {
     flame_graph_export_poll(graph)
     when FLAME_AUTO_INSTRUMENT {
         if _flame_graph_current == graph do flame_graph_end_frame(graph)
-        _ = flame_graph_export_begin(graph)
-        flame_graph_export_stop(graph)
+        if graph.history_count > 0 {
+            last_order := graph.history_count - 1
+            _ = flame_graph_write_source_range(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
+            _ = flame_graph_write_source_folded(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
+        }
     } else {
         if _flame_graph_current == graph do flame_graph_end_frame(graph)
         _ = flame_graph_write_exports(graph)

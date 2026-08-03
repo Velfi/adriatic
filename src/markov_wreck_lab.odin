@@ -1659,13 +1659,14 @@ world_markov_wreck :: proc(editor: ^Editor) {
     }
 }
 
-world_authored_wrecks :: proc(editor: ^Editor) {
+world_authored_wrecks :: proc(editor: ^Editor, include_authored := true) {
     if editor == nil do return
     markov_wreck_authored_render = true
+    if include_authored {
     for &wreck in editor.wrecks[:editor.wreck_count] {
         scale := wreck.scale > 0 ? wreck.scale : f32(1)
         radius := f32(MARKOV_WRECK_LENGTH) * MARKOV_WRECK_CELL * scale * .55
-        if !world_sphere_in_view(
+        if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(
             editor,
             {wreck.origin_x, editor.project.sea_level + MARKOV_WRECK_HULL_CENTER_Y * scale, wreck.origin_z},
             radius,
@@ -1675,6 +1676,7 @@ world_authored_wrecks :: proc(editor: ^Editor) {
         }
         markov_wreck_instance_load(&wreck)
         world_markov_wreck(editor)
+    }
     }
     if editor.wreck_paint_mode && editor.wreck_preview_valid {
         scale := editor.wreck_preview.scale > 0 ? editor.wreck_preview.scale : f32(1)

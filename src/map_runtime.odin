@@ -110,10 +110,11 @@ map_artifact_capture_fixture :: proc(
     artifact.seeds = seeds
     artifact.project = fixture.project
     artifact.project.structures = nil
-    artifact.project.islands = fixture.project.islands
-    artifact.project.bathymetry_tiles = fixture.project.bathymetry_tiles
-    fixture.project.islands = nil
-    fixture.project.bathymetry_tiles = nil
+    artifact.project.terrain_pages = fixture.project.terrain_pages
+    artifact.project.terrain_level_layout = fixture.project.terrain_level_layout
+    artifact.project.bathymetry_chunks = fixture.project.bathymetry_chunks
+    fixture.project.terrain_pages = nil
+    fixture.project.bathymetry_chunks = nil
     if fixture.project.structure_count > 0 {
         structures, allocation_error := make([dynamic]terrain.Structure, fixture.project.structure_count, alloc)
         if allocation_error != nil {
@@ -163,8 +164,8 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
     terrain.destroy_project(&fixture.project)
     fixture.project = artifact.project
     artifact.project.structures = nil
-    artifact.project.islands = nil
-    artifact.project.bathymetry_tiles = nil
+    artifact.project.terrain_pages = nil
+    artifact.project.bathymetry_chunks = nil
     terrain.rebuild_default_river_water_splines(&fixture.project, artifact.seeds)
     fixture.settlement_plan = artifact.settlement_plan
     fixture.marina_authored = artifact.marina_authored
@@ -314,6 +315,10 @@ map_artifact_apply :: proc(editor: ^Editor, artifact: ^Map_Artifact) -> (Map_Art
     return {}, true
 }
 
+map_artifact_generation_progress :: proc(stage: string, current, total: int) {
+    fmt.printf("map bake: %s %d/%d\n", stage, current, total)
+}
+
 map_artifact_generate :: proc(
     seeds := terrain.DEFAULT_ISLAND_SEEDS,
     alloc := context.allocator,
@@ -328,10 +333,13 @@ map_artifact_generate :: proc(
         structure_storage_destroy(editor)
         free(editor, alloc)
     }
-    terrain.init_project_seeded(&editor.project, seeds)
+    terrain.init_project_seeded(&editor.project, seeds, map_artifact_generation_progress)
+    fmt.println("map bake: terrain complete")
     editor.terrain_revision = 1
     seed_default_island_marinas_seeded(editor, seeds)
+    fmt.println("map bake: marinas complete")
     seed_default_island_towns_seeded(editor, seeds)
+    fmt.println("map bake: towns complete")
     return map_artifact_capture(editor, seeds, alloc)
 }
 

@@ -103,6 +103,7 @@ run_frame_present :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_S
         if selector_capture_pose_set do third_person.camera_set_active(&editor.cameras, capture_camera_slot)
         capture_camera_overridden = true
     }
+    dio.flame_graph_begin_frame(&editor.flame_graph)
     canvas2d.BeginDrawing()
     if editor.default_map_regeneration_active {
         progress, message := default_map_regeneration_progress(editor)

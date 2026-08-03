@@ -55,9 +55,9 @@ active_aircraft_wing_trail_anchors :: proc(
 postale_normal_world :: #force_inline proc(runtime: ^postale_game.Runtime, normal: [3]f32) -> third_person.Vec3 {
     basis := flight.basis_from_orientation(runtime.body.orientation)
     return {
-        basis.right.x * normal[0] + basis.up.x * normal[1] - basis.forward.x * normal[2],
-        basis.right.y * normal[0] + basis.up.y * normal[1] - basis.forward.y * normal[2],
-        basis.right.z * normal[0] + basis.up.z * normal[1] - basis.forward.z * normal[2],
+        -basis.right.x * normal[0] + basis.up.x * normal[1] + basis.forward.x * normal[2],
+        -basis.right.y * normal[0] + basis.up.y * normal[1] + basis.forward.y * normal[2],
+        -basis.right.z * normal[0] + basis.up.z * normal[1] + basis.forward.z * normal[2],
     }
 }
 
@@ -95,9 +95,9 @@ aircraft_camera_target :: proc(editor: ^Editor) -> chase_camera.Target {
         // The Postale's broad parasol wing needs a low, long-lens-like rear
         // view. The generic close/high framing flattened it into a top-down
         // silhouette and made the aircraft read as a toy.
-        follow_distance = 12.5,
-        follow_height   = 3.35,
-        focus_height    = .65,
+        follow_distance = editor.capture_postale_bank_grid ? f32(82) : f32(12.5),
+        follow_height   = editor.capture_postale_bank_grid ? f32(42) : f32(3.35),
+        focus_height    = editor.capture_postale_bank_grid ? f32(0) : f32(.65),
     }
 }
 

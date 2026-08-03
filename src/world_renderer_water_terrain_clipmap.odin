@@ -340,6 +340,35 @@ world_river_water :: proc(editor: ^Editor) {
     }
 }
 
+world_bathymetry :: proc(editor: ^Editor) {
+    if editor == nil || editor.in_map do return
+    camera_x, camera_z := editor.camera_pose.position.x, editor.camera_pose.position.z
+    normal := third_person.Vec3{0, 1, 0}
+    for &chunk in editor.project.bathymetry_chunks {
+        origin_x := f32(chunk.chunk_x) * terrain.BATHYMETRY_CHUNK_SIZE
+        origin_z := f32(chunk.chunk_z) * terrain.BATHYMETRY_CHUNK_SIZE
+        if abs(origin_x - camera_x) > 512 || abs(origin_z - camera_z) > 512 do continue
+        for z in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
+            for x in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
+                center_x := origin_x + (f32(x) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
+                center_z := origin_z + (f32(z) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
+                _, _, land := terrain.sample_land(&editor.project, 0, center_x, center_z)
+                if land do continue
+                i := z * terrain.BATHYMETRY_CHUNK_RESOLUTION + x
+                i1 := i + 1
+                i2 := i + terrain.BATHYMETRY_CHUNK_RESOLUTION
+                i3 := i2 + 1
+                cell := terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
+                a := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i]), origin_z + f32(z) * cell}
+                b := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i2]), origin_z + f32(z + 1) * cell}
+                c := third_person.Vec3{origin_x + f32(x + 1) * cell, f32(chunk.heights[i3]), origin_z + f32(z + 1) * cell}
+                d := third_person.Vec3{origin_x + f32(x + 1) * cell, f32(chunk.heights[i1]), origin_z + f32(z) * cell}
+                world_quad_colored_smooth_lit(a, b, c, d, normal, normal, normal, normal, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, .94)
+            }
+        }
+    }
+}
+
 world_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
     x, y, z := size.x * .5, size.y * .5, size.z * .5
     p := [8]third_person.Vec3 {

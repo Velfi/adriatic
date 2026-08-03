@@ -17,7 +17,7 @@ MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)
 MAP_ARTIFACT_FORMAT_VERSION :: u32(1)
 // Bump whenever procedural output changes in a way that requires shipped maps
 // to be rebuilt. This is deliberately independent of Fixture schema versions.
-MAP_ARTIFACT_GENERATOR_VERSION :: u64(2)
+MAP_ARTIFACT_GENERATOR_VERSION :: u64(3)
 MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
 MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE :: "map artifact allocation failed"
@@ -175,29 +175,17 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
     if math.is_nan(artifact.project.sea_level) || math.is_inf(artifact.project.sea_level, 0) {
         return "project sea level is not finite", false
     }
-    for island, island_index in artifact.project.islands {
-        if island.id == 0 do return "island id is invalid", false
-        if !terrain.island_transform_valid(island.transform) do return "island transform is invalid", false
-        if island.local_min_x >= island.local_max_x || island.local_min_z >= island.local_max_z {
-            return "island bounds are invalid", false
-        }
-        for other in artifact.project.islands[:island_index] {
-            if island.id == other.id do return "island id is duplicated", false
-        }
-        for chunk, chunk_index in island.chunks {
-            if chunk.key.island_id != island.id do return "island chunk owner is invalid", false
-            if chunk.cell_size <= 0 || chunk.key.level >= terrain.ISLAND_MAX_CLIPMAP_LEVELS {
-                return "island chunk metadata is invalid", false
-            }
-            for other in island.chunks[:chunk_index] {
-                if terrain.island_chunk_key_equal(chunk.key, other.key) do return "island chunk key is duplicated", false
-            }
+    for page in artifact.project.terrain_pages {
+        if page.level >= terrain.CLIPMAP_LEVELS || page.page_x >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION || page.page_z >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION {
+            return "terrain page key is invalid", false
         }
     }
-    for tile, tile_index in artifact.project.bathymetry_tiles {
-        if tile.cell_size <= 0 do return "bathymetry tile cell size is invalid", false
-        for other in artifact.project.bathymetry_tiles[:tile_index] {
-            if tile.tile_x == other.tile_x && tile.tile_z == other.tile_z do return "bathymetry tile key is duplicated", false
+    for chunk, chunk_index in artifact.project.bathymetry_chunks {
+        if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES || len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES {
+            return "bathymetry chunk sample count is invalid", false
+        }
+        for other in artifact.project.bathymetry_chunks[:chunk_index] {
+            if chunk.chunk_x == other.chunk_x && chunk.chunk_z == other.chunk_z do return "bathymetry chunk key is duplicated", false
         }
     }
     for &level in artifact.project.levels {

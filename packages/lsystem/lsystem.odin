@@ -247,7 +247,13 @@ interpret :: proc(word: []u8, config: Turtle_Config) -> Interpret_Result {
     }
     random := cfg.seed
     if random == 0 do random = 1
-    stack := make([dynamic]Turtle_State)
+    // A branch push always corresponds to an opening bracket. Reserving the
+    // upper bound avoids repeated growth for the common generated-word case.
+    branch_capacity := 0
+    for symbol in word {
+        if symbol == '[' do branch_capacity += 1
+    }
+    stack := make([dynamic]Turtle_State, 0, branch_capacity)
     defer delete(stack)
 
     for symbol in word {

@@ -400,17 +400,19 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
 
 World_Aircraft_Transform :: World_Model_Transform
 
+world_aircraft_presentation_basis :: #force_inline proc(body: flight.Body_State) -> flight.Basis {
+    // Aircraft meshes and the flight model both use local -Z as forward.
+    // Preserve that shared authoring basis without a presentation-only flip.
+    return flight.basis_from_orientation(body.orientation)
+}
+
 world_aircraft_transform :: #force_inline proc(body: flight.Body_State, scale: f32) -> World_Aircraft_Transform {
-    basis := flight.basis_from_orientation(body.orientation)
+    basis := world_aircraft_presentation_basis(body)
     return world_model_transform_from_basis(
         {body.position.x, body.position.y, body.position.z},
-        // Aircraft meshes are authored facing the opposite horizontal
-        // direction from the flight basis. Rotate the presentation basis 180
-        // degrees around up so the nose follows body.forward. The occupant
-        // path performs its own convention conversion and must not inherit it.
-        {-basis.right.x * scale, -basis.right.y * scale, -basis.right.z * scale},
+        {basis.right.x * scale, basis.right.y * scale, basis.right.z * scale},
         {basis.up.x * scale, basis.up.y * scale, basis.up.z * scale},
-        {-basis.forward.x * scale, -basis.forward.y * scale, -basis.forward.z * scale},
+        {basis.forward.x * scale, basis.forward.y * scale, basis.forward.z * scale},
     )
 }
 

@@ -125,6 +125,7 @@ Ground_Grass_Chunk :: struct {
     count:       int,
     built_cells: int,
     last_used:   u64,
+    stream_emitted: bool,
 }
 
 @(no_instrumentation)

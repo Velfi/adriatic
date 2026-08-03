@@ -438,6 +438,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.static_indices)
     delete(world_renderer.retained_static_draws)
     delete(world_renderer.static_draw_commands)
+    delete(world_renderer.retained_patio_vertices)
+    delete(world_renderer.retained_patio_indices)
     delete(world_renderer.road_vertices)
     delete(world_renderer.road_draw_commands)
     delete(world_renderer.road_geometry_cache)

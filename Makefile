@@ -14,7 +14,7 @@ PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true -define:MAP_DEVEL
 PROFILE_ODIN_FLAGS_validation := -dynamic-map-calls -debug -o:none -sanitize:address
 PROFILE_DEFINE_FLAGS_validation :=
 
-PROFILE_ODIN_FLAGS_instrument := -o:speed -debug
+PROFILE_ODIN_FLAGS_instrument := -o:minimal -debug
 PROFILE_DEFINE_FLAGS_instrument := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
 PROFILE_DEFINE_FLAGS_instrument_deep := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true -define:FLAME_AUTO_SLOT_CAP=50000
 
@@ -723,7 +723,7 @@ lldb: validation-build assets-validation
 $(INSTRUMENT_APP): $(INSTRUMENT_DIR)/libadriatic_mesh.a
 $(INSTRUMENT_APP): $(PHYSICS_STAMP) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
 	@mkdir -p $(@D)
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument) -define:FLAME_GRAPH_DUMP_PATH="$(abspath $(INSTRUMENT_DIR)/flame.graph)" -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
 
 instrument-build: doctor $(INSTRUMENT_APP)
 
@@ -742,7 +742,7 @@ INSTRUMENT_DEEP_APP := $(INSTRUMENT_DEEP_DIR)/$(APP)
 
 instrument-deep: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
 	@mkdir -p "$(INSTRUMENT_DEEP_DIR)/assets" "$(INSTRUMENT_DEEP_DIR)/shaders"
-	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument_deep) -out:$(INSTRUMENT_DEEP_APP) -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_instrument) $(PROFILE_DEFINE_FLAGS_instrument_deep) -define:FLAME_GRAPH_DUMP_PATH="$(abspath $(INSTRUMENT_DEEP_DIR)/flame.graph)" -out:$(INSTRUMENT_DEEP_APP) -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
 	cp -R assets/. "$(INSTRUMENT_DEEP_DIR)/assets/"
 	cp -R build/generated/shaders/. "$(INSTRUMENT_DEEP_DIR)/shaders/"
 	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_DEEP_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"

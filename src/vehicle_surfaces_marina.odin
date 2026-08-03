@@ -267,6 +267,7 @@ seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(ter
     if editor == nil do return
     architecture.city_plan_destroy(&editor.architecture_city_plan)
     editor.settlement_plan.patio_count = 0
+    world_renderer.retained_patio_dirty = true
     settlement_regions := [len(terrain.DEFAULT_ISLAND_SIGNS)]Settlement_Region{.Adriatic, .Aegean}
     for sign, island_index in terrain.DEFAULT_ISLAND_SIGNS {
         seed := terrain.default_island_feature_seed_for(island_seeds[island_index], 0x544f574e)

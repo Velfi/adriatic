@@ -217,15 +217,36 @@ settlement_cemetery_world_point :: proc(site: Settlement_Cemetery, local_x, loca
     return world_rotate_xz(site.origin[0], site.origin[1], local_x, local_z, site.rotation)
 }
 
-world_settlement_cemetery :: proc(editor: ^Editor) {
+world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     site := settlement_cemetery_derive(editor)
     if !site.valid do return
-    if !world_sphere_in_view(
+    if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(
         editor,
         {site.origin[0], site.ground_y + 2, site.origin[1]},
         max(site.plan.width, site.plan.depth),
         2,
     ) {
+        return
+    }
+
+    if !include_stable {
+        for tree, tree_index in site.plan.trees[:site.plan.tree_count] {
+            x, z := settlement_cemetery_world_point(site, tree.x, tree.z)
+            y := terrain.sample_height(&editor.project, 0, x, z)
+            species := tree_index % 4 == 1 ? plants.Species.Olive : .Italian_Cypress
+            _ = world_generated_plant(
+                species,
+                u64(site.plan.seed) << 32 ~ u64(tree_index + 1),
+                third_person.Vec3{x, y, z},
+                species == .Olive ? f32(.72) : f32(.78),
+                site.rotation + f32(tree_index) * .73,
+                .Free_Standing,
+                nil,
+                .Medium,
+                0,
+                .86,
+            )
+        }
         return
     }
 

@@ -546,8 +546,16 @@ world_architecture_mass :: proc(
     }
     if !landmark && (roof_style == .Gable || roof_style == .Low_Gable) {
         low_gable := roof_style == .Low_Gable
-        attic_width, attic_height, rise, center_fraction, valid := world_gable_attic_opening_plan(
+        // Pitched roofs normalize the footprint into a long-axis frame before
+        // placing the ridge. Use that same frame for the attic windows so
+        // they stay on the gable ends when the roof rotates.
+        roof_width, roof_depth, roof_rotation := world_roof_long_axis_frame(
             structure.width,
+            structure.depth,
+            structure.rotation,
+        )
+        attic_width, attic_height, rise, center_fraction, valid := world_gable_attic_opening_plan(
+            roof_width,
             low_gable,
         )
         if valid {
@@ -559,18 +567,18 @@ world_architecture_mass :: proc(
             pane_color := facade_style == 2 ? canvas2d.Color{59, 96, 105, 255} : canvas2d.Color{55, 78, 82, 255}
             for gable_end in -1 ..= 1 {
                 if gable_end == 0 do continue
-                local_z := f32(gable_end) * (structure.depth * .58 + .12)
+                local_z := f32(gable_end) * (roof_depth * .58 + .12)
                 attic_x, attic_z := world_rotate_xz(
                     structure.center_x,
                     structure.center_z,
                     0,
                     local_z,
-                    structure.rotation,
+                    roof_rotation,
                 )
                 world_box_rotated(
                     {attic_x, attic_y, attic_z},
                     {attic_width, attic_height, .20},
-                    structure.rotation,
+                    roof_rotation,
                     window,
                 )
                 pane_z_local := local_z + f32(gable_end) * .115
@@ -579,12 +587,12 @@ world_architecture_mass :: proc(
                     structure.center_z,
                     0,
                     pane_z_local,
-                    structure.rotation,
+                    roof_rotation,
                 )
                 world_box_rotated(
                     {pane_x, attic_y, pane_z},
                     {attic_width - frame_width * 1.35, attic_height - frame_width * 1.35, .045},
-                    structure.rotation,
+                    roof_rotation,
                     pane_color,
                 )
 
@@ -596,12 +604,12 @@ world_architecture_mass :: proc(
                         structure.center_z,
                         f32(side) * (attic_width * .5 + frame_width * .5),
                         frame_z_local,
-                        structure.rotation,
+                        roof_rotation,
                     )
                     world_box_rotated(
                         {jamb_x, attic_y, jamb_z},
                         {frame_width, attic_height + frame_width * 2, .11},
-                        structure.rotation,
+                        roof_rotation,
                         frame_color,
                     )
                     rail_x, rail_z := world_rotate_xz(
@@ -609,12 +617,12 @@ world_architecture_mass :: proc(
                         structure.center_z,
                         0,
                         frame_z_local,
-                        structure.rotation,
+                        roof_rotation,
                     )
                     world_box_rotated(
                         {rail_x, attic_y + f32(side) * (attic_height * .5 + frame_width * .5), rail_z},
                         {attic_width + frame_width * 2, frame_width, side < 0 ? f32(.18) : f32(.11)},
-                        structure.rotation,
+                        roof_rotation,
                         side < 0 ? formation_face_color(frame_color, math.PI, 0) : frame_color,
                     )
                 }
@@ -623,19 +631,19 @@ world_architecture_mass :: proc(
                     structure.center_z,
                     0,
                     frame_z_local + f32(gable_end) * .012,
-                    structure.rotation,
+                    roof_rotation,
                 )
                 world_box_rotated(
                     {mullion_x, attic_y, mullion_z},
                     {frame_width * .46, attic_height - frame_width * 1.2, .055},
-                    structure.rotation,
+                    roof_rotation,
                     mullion_color,
                 )
                 if attic_height >= 1.05 {
                     world_box_rotated(
                         {mullion_x, attic_y, mullion_z},
                         {attic_width - frame_width * 1.2, frame_width * .42, .055},
-                        structure.rotation,
+                        roof_rotation,
                         mullion_color,
                     )
                 }

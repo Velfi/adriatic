@@ -835,9 +835,10 @@ world_markov_farmland :: proc(editor: ^Editor) {
     markov_farmland_lab_terrace_walls(editor)
 }
 
-world_authored_farmland :: proc(editor: ^Editor) {
+world_authored_farmland :: proc(editor: ^Editor, include_authored := true) {
     if editor == nil do return
     farmland_render_region = editor.settlement_plan.valid ? editor.settlement_plan.request.region : .Adriatic
+    if include_authored {
     for &instance in editor.farms[:editor.farm_count] {
         scale_x := instance.scale_x > 0 ? instance.scale_x : f32(1)
         scale_z := instance.scale_z > 0 ? instance.scale_z : f32(1)
@@ -845,7 +846,7 @@ world_authored_farmland :: proc(editor: ^Editor) {
         half_depth := f32(instance.plan.height) * farmland.CELL_METERS * scale_z * .5
         radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
         ground := terrain.sample_height(&editor.project, 0, instance.origin_x, instance.origin_z)
-        if !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
+        if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
             continue
         }
         farmland_render_origin_x = instance.origin_x
@@ -855,6 +856,7 @@ world_authored_farmland :: proc(editor: ^Editor) {
         farmland_render_scale_z = instance.scale_z > 0 ? instance.scale_z : f32(1)
         farmland_render_preview = false
         farmland_render_plan(editor, &instance.plan)
+    }
     }
     if editor.farm_paint_mode && editor.farm_preview_valid {
         preview := &editor.farm_preview

@@ -43,14 +43,14 @@ SetVSyncEnabled :: proc(enabled: bool) {
     }
     engine.vk_set_vsync_enabled(&canvas.ctx, enabled)
 }
-InitWindow :: proc(width, height: i32, title: cstring) {
+InitWindow :: proc(width, height: i32, title: cstring) -> bool {
     state_ensure()
     if state.initialized {
         vk.load_proc_addresses(cast(rawptr)sdl.Vulkan_GetVkGetInstanceProcAddr())
         vk.load_proc_addresses(state.ctx.instance)
         vk.load_proc_addresses(state.ctx.device)
         state.running = true
-        return
+        return true
     }
     state.width = width; state.height = height
     state.running = true
@@ -70,10 +70,12 @@ InitWindow :: proc(width, height: i32, title: cstring) {
         high_dpi      = .WINDOW_HIGHDPI in state.config_flags,
         not_focusable = .WINDOW_NOT_FOCUSABLE in state.config_flags,
     }
-    if !render2d.sdl_window_create(&state.platform_window, width, height, title, window_config) do return
+    if !render2d.sdl_window_create(&state.platform_window, width, height, title, window_config) do return false
     state.window = state.platform_window.handle
     state.initialized = backend_init()
-    state.running = state.initialized}
+    state.running = state.initialized
+    return state.initialized
+}
 CloseWindow :: proc() { if state != nil do backend_destroy() }
 DestroyPersistentState :: proc() {
     if state == nil do return
