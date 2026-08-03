@@ -1,5 +1,6 @@
 package main
 import "core:math"
+import "core:mem"
 
 import atmosphere "../packages/atmosphere"
 import islands "../packages/islands"
@@ -9,6 +10,31 @@ import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
+
+world_dynamic_vertex_buffer_upload :: proc(frame: int) -> bool {
+    if frame < 0 || frame >= engine.MAX_FRAMES_IN_FLIGHT do return false
+    if world_renderer.dynamic_vertex_uploaded do return true
+    ctx := world_renderer.ctx
+    if ctx == nil do return false
+    if !world_host_buffer_ensure(
+        ctx,
+        &world_renderer.vertex[frame],
+        vk.DeviceSize(len(world_renderer.vertices) * size_of(World_Vertex)),
+        {.VERTEX_BUFFER},
+        "world dynamic vertex buffer",
+    ) {
+        return false
+    }
+    if len(world_renderer.vertices) > 0 {
+        mem.copy_non_overlapping(
+            world_renderer.vertex[frame].mapped,
+            raw_data(world_renderer.vertices[:]),
+            len(world_renderer.vertices) * size_of(World_Vertex),
+        )
+    }
+    world_renderer.dynamic_vertex_uploaded = true
+    return true
+}
 
 world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
     if frame < 0 || frame >= engine.MAX_FRAMES_IN_FLIGHT do return false

@@ -67,6 +67,8 @@ Dynamic_Shadow_State :: struct {
     pipeline:          vk.Pipeline,
     transform:         Dynamic_Shadow_Uniform,
     anchor:            third_person.Vec3,
+    caster_min_depth:  f32,
+    caster_max_depth:  f32,
     enabled:           bool,
     frame_prepared:    bool,
 }
@@ -675,9 +677,36 @@ dynamic_shadow_material_casts :: #force_inline proc(kind: World_Material_Kind) -
     return true
 }
 
-shadow_append_world_range :: proc(first, count: int) {
+shadow_append_world_draw_range :: #force_inline proc(first, count: int) {
+    if count <= 0 do return
+    if len(world_renderer.shadow_world_ranges) > 0 {
+        previous := &world_renderer.shadow_world_ranges[len(world_renderer.shadow_world_ranges) - 1]
+        if previous.first + previous.count == first {
+            previous.count += count
+            return
+        }
+    }
+    append(&world_renderer.shadow_world_ranges, World_Shadow_Caster_Range{first = first, count = count})
+}
+
+shadow_depth_include :: #force_inline proc(
+    vertex: World_Vertex,
+    forward: third_person.Vec3,
+    min_depth, max_depth: ^f32,
+) {
+    depth := vertex.position[0] * forward.x + vertex.position[1] * forward.y + vertex.position[2] * forward.z
+    min_depth^ = min(min_depth^, depth)
+    max_depth^ = max(max_depth^, depth)
+}
+
+shadow_append_world_range :: proc(
+    first, count: int,
+    forward: third_person.Vec3,
+    min_depth, max_depth: ^f32,
+) {
     if first < 0 || count < 3 || first + count > len(world_renderer.vertices) do return
     end := first + count
+    run_first := -1
     for triangle := first; triangle + 2 < end; triangle += 3 {
         a, b, c :=
             world_renderer.vertices[triangle],
@@ -686,14 +715,31 @@ shadow_append_world_range :: proc(first, count: int) {
         if !dynamic_shadow_material_casts(a.kind) ||
            !dynamic_shadow_material_casts(b.kind) ||
            !dynamic_shadow_material_casts(c.kind) {
+            if run_first >= 0 {
+                shadow_append_world_draw_range(run_first, triangle - run_first)
+                run_first = -1
+            }
             continue
         }
-        append(&world_renderer.shadow_vertices, a, b, c)
+        if run_first < 0 do run_first = triangle
+        shadow_depth_include(a, forward, min_depth, max_depth)
+        shadow_depth_include(b, forward, min_depth, max_depth)
+        shadow_depth_include(c, forward, min_depth, max_depth)
     }
+    if run_first >= 0 do shadow_append_world_draw_range(run_first, end - run_first)
 }
 
 dynamic_shadow_build_casters :: proc(editor: ^Editor) {
     clear(&world_renderer.shadow_vertices)
+    clear(&world_renderer.shadow_world_ranges)
+    sky := atmosphere_sky(editor)
+    forward := third_person.Vec3{-sky.sun_direction[0], -sky.sun_direction[1], -sky.sun_direction[2]}
+    forward_length := f32(math.sqrt(f64(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z)))
+    if forward_length > .0001 {
+        forward.x /= forward_length; forward.y /= forward_length; forward.z /= forward_length
+    }
+    min_depth, max_depth := f32(1e30), f32(-1e30)
+    world_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_world")
     first := world_renderer.dynamic_caster_first
     count := world_renderer.dynamic_caster_count
     dynamic_range := World_Shadow_Caster_Range {
@@ -701,7 +747,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
         count = count,
     }
     if first >= 0 && count > 0 && first + count <= len(world_renderer.vertices) {
-        shadow_append_world_range(first, count)
+        shadow_append_world_range(first, count, forward, &min_depth, &max_depth)
     }
     // Generated plants and foliage register exact ranges because they can be
     // submitted outside the broad gameplay caster span. Avoid submitting a
@@ -713,15 +759,31 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
            caster_range.first + caster_range.count > len(world_renderer.vertices) {
             continue
         }
-        shadow_append_world_range(caster_range.first, caster_range.count)
+        shadow_append_world_range(caster_range.first, caster_range.count, forward, &min_depth, &max_depth)
     }
+    _ = dio.flame_graph_end(dio.flame_graph_current(), world_scope)
+    world_renderer.dynamic_shadow.caster_min_depth = min_depth
+    world_renderer.dynamic_shadow.caster_max_depth = max_depth
+
+    instances_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_instances")
     shadow_append_instances()
+    _ = dio.flame_graph_end(dio.flame_graph_current(), instances_scope)
+
+    roads_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_raised_roads")
     shadow_append_raised_roads(editor)
+    _ = dio.flame_graph_end(dio.flame_graph_current(), roads_scope)
+
+    terrain_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_terrain")
     shadow_append_terrain(editor)
+    _ = dio.flame_graph_end(dio.flame_graph_current(), terrain_scope)
+
+    vegetation_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_vegetation")
     shadow_append_grass_cards(editor, world_renderer.grass_instances[:], 36, .34)
     shadow_append_grass_cards(editor, world_renderer.wildflower_instances[:], 58, .68)
     shadow_append_grass_cards(editor, world_renderer.marsh_instances[:], 92, 1)
-    sky := atmosphere_sky(editor)
+    _ = dio.flame_graph_end(dio.flame_graph_current(), vegetation_scope)
+
+    structures_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_structures")
     inverse_sun_y := 1 / max(sky.sun_direction[1], f32(.08))
     for structure, structure_index in editor.project.structures[:editor.project.structure_count] {
         if structure.kind == .Foliage do continue
@@ -751,6 +813,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
         // low sun cannot reveal a missing caster at the cascade edge.
         if !exact do shadow_append_box(structure)
     }
+    _ = dio.flame_graph_end(dio.flame_graph_current(), structures_scope)
 }
 
 dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
@@ -775,12 +838,14 @@ dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
         forward.z * right.x - forward.x * right.z,
         forward.x * right.y - forward.y * right.x,
     }
-    min_depth, max_depth := f32(1e30), f32(-1e30)
+    min_depth, max_depth := state.caster_min_depth, state.caster_max_depth
+    depth_supplementary_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_depth_bounds_supplementary")
     for vertex in world_renderer.shadow_vertices {
         depth := vertex.position[0] * forward.x + vertex.position[1] * forward.y + vertex.position[2] * forward.z
         min_depth = min(min_depth, depth)
         max_depth = max(max_depth, depth)
     }
+    _ = dio.flame_graph_end(dio.flame_graph_current(), depth_supplementary_scope)
     if min_depth > max_depth {
         min_depth, max_depth = -100, 100
     }
@@ -848,12 +913,15 @@ dynamic_shadow_update_transform :: proc(editor: ^Editor, frame_index: int) {
 
 dynamic_shadow_render :: proc(pass: ^canvas2d.World_Pass_Context, frame_index: int) {
     state := &world_renderer.dynamic_shadow
-    if !state.enabled || state.transform.settings[3] <= 0 || len(world_renderer.shadow_vertices) == 0 do return
+    if !state.enabled ||
+       state.transform.settings[3] <= 0 ||
+       (len(world_renderer.shadow_vertices) == 0 && len(world_renderer.shadow_world_ranges) == 0) {
+        return
+    }
     cmd := pass.frame.command_buffer
     vk.CmdBindPipeline(cmd, .GRAPHICS, state.pipeline)
     vk.CmdBindDescriptorSets(cmd, .GRAPHICS, state.pipeline_layout, 1, 1, &state.descriptors[frame_index], 0, nil)
     offset := vk.DeviceSize(0)
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &world_renderer.shadow_vertex[frame_index].handle, &offset)
     for cascade in 0 ..< DYNAMIC_SHADOW_CASCADE_COUNT {
         image := &state.images[frame_index][cascade]
         initialized := state.image_initialized[frame_index][cascade]
@@ -903,7 +971,16 @@ dynamic_shadow_render :: proc(pass: ^canvas2d.World_Pass_Context, frame_index: i
             cascade = u32(cascade),
         }
         vk.CmdPushConstants(cmd, state.pipeline_layout, {.VERTEX}, 0, u32(size_of(Dynamic_Shadow_Push)), &push)
-        vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, 0)
+        if len(world_renderer.shadow_world_ranges) > 0 {
+            vk.CmdBindVertexBuffers(cmd, 0, 1, &world_renderer.vertex[frame_index].handle, &offset)
+            for caster_range in world_renderer.shadow_world_ranges {
+                vk.CmdDraw(cmd, u32(caster_range.count), 1, u32(caster_range.first), 0)
+            }
+        }
+        if len(world_renderer.shadow_vertices) > 0 {
+            vk.CmdBindVertexBuffers(cmd, 0, 1, &world_renderer.shadow_vertex[frame_index].handle, &offset)
+            vk.CmdDraw(cmd, u32(len(world_renderer.shadow_vertices)), 1, 0, 0)
+        }
         vk.CmdEndRendering(cmd)
         engine.vk_cmd_image_barrier2(
             pass.ctx,

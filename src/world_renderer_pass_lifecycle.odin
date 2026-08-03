@@ -27,6 +27,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     frame_index := int(pass.frame.frame_index)
     world_instances_flatten()
     if !world_frame_geometry_buffers_ensure(frame_index) do return
+    if !world_dynamic_vertex_buffer_upload(frame_index) do return
     buffer := &world_renderer.vertex[frame_index]
     static_vertex_buffer := &world_renderer.static_vertex[frame_index]
     static_index_buffer := &world_renderer.static_index[frame_index]
@@ -41,13 +42,6 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     instance_data_buffer := &world_renderer.instance_data[frame_index]
     wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[frame_index]
     wing_trail_index_buffer := &world_renderer.wing_trail_index[frame_index]
-    if len(world_renderer.vertices) > 0 {
-        mem.copy_non_overlapping(
-            buffer.mapped,
-            raw_data(world_renderer.vertices[:]),
-            len(world_renderer.vertices) * size_of(World_Vertex),
-        )
-    }
     static_upload_required :=
         world_renderer.retained_static_uploaded_revision[frame_index] != world_renderer.retained_static_revision
     if static_upload_required && len(world_renderer.static_vertices) > 0 {
@@ -474,6 +468,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.wing_trail_optimized_indices)
     delete(world_renderer.land_surface_samples)
     delete(world_renderer.shadow_vertices)
+    delete(world_renderer.shadow_world_ranges)
     delete(world_renderer.dynamic_shadow_terrain_cache.vertices)
     delete(world_renderer.explicit_shadow_caster_ranges)
     for &vertices in world_renderer.clipmap_cache_vertex do delete(vertices)

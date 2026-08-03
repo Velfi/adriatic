@@ -222,6 +222,7 @@ world_prepare :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_index: int) 
     world_renderer.indexed_cells = 0
     world_renderer.visible_clusters = 0
     world_renderer.indirect_command_count = 0
+    world_renderer.dynamic_vertex_uploaded = false
 
     texture_started := time.tick_now()
     if world_renderer.material_lab_map_revision != material_lab.map_revision {

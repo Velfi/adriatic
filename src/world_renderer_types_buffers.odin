@@ -336,6 +336,8 @@ World_Renderer :: struct {
     dynamic_shadow:                               Dynamic_Shadow_State,
     shadow_vertex:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     shadow_vertices:                              [dynamic]World_Vertex,
+    shadow_world_ranges:                          [dynamic]World_Shadow_Caster_Range,
+    dynamic_vertex_uploaded:                      bool,
     dynamic_shadow_terrain_cache:                 Dynamic_Shadow_Terrain_Cache,
     dynamic_shadow_terrain_cache_builds:          u64,
     dynamic_shadow_terrain_cache_reuses:          u64,

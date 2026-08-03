@@ -2,6 +2,7 @@ package main
 import "core:math"
 import "core:mem"
 
+import dio "../packages/dio"
 import story "../packages/story"
 import third_person "../packages/third_person"
 import vk "vendor:vulkan"
@@ -14,13 +15,16 @@ world_pre_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     if editor == nil do return
     frame_index := int(pass.frame.frame_index)
     world_prepare(editor, pass.frame.command_buffer, frame_index)
+    if !world_dynamic_vertex_buffer_upload(frame_index) do return
     world_renderer.dynamic_shadow.frame_prepared = true
     if !world_renderer.dynamic_shadow.enabled do return
     // Build before the canvas begins its color rendering scope so the same
     // animated frame can be submitted to the independent depth-only pass.
     world_renderer.dynamic_shadow.anchor = dynamic_shadow_resolve_anchor(editor)
     dynamic_shadow_build_casters(editor)
+    transform_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_transform")
     dynamic_shadow_update_transform(editor, frame_index)
+    _ = dio.flame_graph_end(dio.flame_graph_current(), transform_scope)
     if len(world_renderer.shadow_vertices) > 0 {
         required := vk.DeviceSize(len(world_renderer.shadow_vertices) * size_of(World_Vertex))
         if !world_host_buffer_ensure(
@@ -32,13 +36,17 @@ world_pre_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         ) {
             return
         }
+        upload_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_vertex_upload")
         mem.copy_non_overlapping(
             world_renderer.shadow_vertex[frame_index].mapped,
             raw_data(world_renderer.shadow_vertices[:]),
             int(required),
         )
+        _ = dio.flame_graph_end(dio.flame_graph_current(), upload_scope)
     }
+    render_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_render")
     dynamic_shadow_render(pass, frame_index)
+    _ = dio.flame_graph_end(dio.flame_graph_current(), render_scope)
 }
 
 dialogue_portrait_mouse_model :: proc(editor: ^Editor, resident: story.Resident, player: bool) -> Mouse_Model {
