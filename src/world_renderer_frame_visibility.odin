@@ -40,6 +40,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_renderer.dynamic_caster_first = 0
     world_renderer.dynamic_caster_count = 0
     clear(&world_renderer.explicit_shadow_caster_ranges)
+    clear(&world_renderer.static_shadow_caster_ranges)
     world_renderer.late_transparent_first = 0
     world_renderer.late_transparent_count = 0
     world_renderer.scene_daylight = atmosphere_sky(editor).daylight

@@ -163,6 +163,38 @@ world_business_sign_for_resident :: proc(editor: ^Editor, resident: story.Reside
 
 AIRPORT_ARCADE_CENTER_Z :: f32(5.8)
 
+@(no_instrumentation)
+airport_kiosk_geometry_cache_entry :: #force_inline proc(
+    position: third_person.Vec3,
+    rotation: f32,
+) -> ^Airport_Kiosk_Geometry_Cache {
+    for &entry in world_renderer.airport_kiosk_geometry_cache {
+        if entry.position_x == position.x && entry.position_z == position.z && entry.rotation == rotation {
+            return &entry
+        }
+    }
+    append(&world_renderer.airport_kiosk_geometry_cache, Airport_Kiosk_Geometry_Cache{})
+    entry := &world_renderer.airport_kiosk_geometry_cache[len(world_renderer.airport_kiosk_geometry_cache) - 1]
+    entry.position_x = position.x
+    entry.position_z = position.z
+    entry.rotation = rotation
+    return entry
+}
+
+airport_kiosk_plant_lods :: #force_inline proc(
+    editor: ^Editor,
+    position: third_person.Vec3,
+    ground, rotation: f32,
+) -> [4]Generated_Plant_Render_LOD {
+    lods: [4]Generated_Plant_Render_LOD
+    planter_offsets := [4][2]f32{{-11.45, 5.8}, {11.45, 5.8}, {-11.45, 11.35}, {11.45, 11.35}}
+    for offset, planter_index in planter_offsets {
+        planter_x, planter_z := world_rotate_xz(position.x, position.z, offset.x, offset.y, rotation)
+        lods[planter_index] = generated_plant_render_lod(editor.camera_pose.position, {planter_x, ground + .96, planter_z})
+    }
+    return lods
+}
+
 airport_service_position :: proc(anchor: third_person.Vec3) -> third_person.Vec3 {
     sign := anchor.x >= 0 ? f32(1) : f32(-1)
     rotation := sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5
@@ -204,6 +236,16 @@ world_attendant_kiosk_at :: proc(
     ground := terrain.sample_surface_height(&editor.project, 0, p.x, p.z)
     sign := p.x >= 0 ? f32(1) : f32(-1)
     rotation := use_authored_rotation ? authored_rotation : (sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5)
+    cache := airport_kiosk_geometry_cache_entry(p, rotation)
+    plant_lods := airport_kiosk_plant_lods(editor, p, ground, rotation)
+    windsock_x, windsock_z := world_rotate_xz(p.x, p.z, 16.8, 14.2, rotation)
+    if cache.valid && cache.terrain_revision == editor.terrain_revision && cache.plant_lods == plant_lods {
+        append(&world_renderer.vertices, ..cache.prefix_vertices[:])
+        world_procedural_windsock(editor, {windsock_x, ground, windsock_z}, (p.x + p.z) * .017)
+        append(&world_renderer.vertices, ..cache.suffix_vertices[:])
+        return
+    }
+    first_vertex := len(world_renderer.vertices)
     // A broad forecourt meets the asphalt access-road node at reception.
     world_airport_land_surface_rotated(editor, p.x, p.z, 42, 30, rotation, .10, .Exterior_Forecourt_Paving)
     forecourt_x, forecourt_z := world_rotate_xz(p.x, p.z, 0, -17, rotation)
@@ -285,8 +327,9 @@ world_attendant_kiosk_at :: proc(
     // A real wind-reading instrument belongs on the open airfield side of
     // each terminal. Its six articulated bands follow the same authoritative
     // weather vector used by aircraft, foliage, clouds, and water.
-    windsock_x, windsock_z := world_rotate_xz(p.x, p.z, 16.8, 14.2, rotation)
+    windsock_first := len(world_renderer.vertices)
     world_procedural_windsock(editor, {windsock_x, ground, windsock_z}, (p.x + p.z) * .017)
+    windsock_end := len(world_renderer.vertices)
 
     // A circular check-in counter makes reception an island within the open
     // arcade rather than a second roofed building. Overlapping tangent facets
@@ -433,6 +476,13 @@ world_attendant_kiosk_at :: proc(
         leg_x, leg_z := world_rotate_xz(p.x, p.z, offset.x, AIRPORT_ARCADE_CENTER_Z + offset.y, rotation)
         world_airport_box_rotated({leg_x, ground + .295, leg_z}, {.10, .27, .10}, rotation, .Painted_Steel)
     }
+    clear(&cache.prefix_vertices)
+    append(&cache.prefix_vertices, ..world_renderer.vertices[first_vertex:windsock_first])
+    clear(&cache.suffix_vertices)
+    append(&cache.suffix_vertices, ..world_renderer.vertices[windsock_end:])
+    cache.terrain_revision = editor.terrain_revision
+    cache.plant_lods = plant_lods
+    cache.valid = true
 }
 
 world_marta :: proc(editor: ^Editor) {

@@ -35,8 +35,26 @@ Generated_Plant_Transform :: struct {
     scale, along_grade: f32,
 }
 
+Generated_Plant_World_Cache_Entry :: struct {
+    species:           plants.Species,
+    seed:              u64,
+    detail:            plants.Detail_Level,
+    render_lod:        Generated_Plant_Render_LOD,
+    habit:             plants.Growth_Habit,
+    support_signature: u64,
+    maturity_step:     u8,
+    base:              third_person.Vec3,
+    scale, yaw:        f32,
+    along_grade:       f32,
+    vertices:          [dynamic]World_Vertex,
+    shadow_min:        third_person.Vec3,
+    shadow_max:        third_person.Vec3,
+    shadow_all_cast:   bool,
+}
+
 generated_plant_cache: [GENERATED_PLANT_CACHE_CAPACITY]Generated_Plant_Cache_Entry
 generated_plant_cache_count: int
+generated_plant_world_cache: [dynamic]Generated_Plant_World_Cache_Entry
 
 Generated_Plant_Render_LOD :: enum u8 {
     Hero,
@@ -134,6 +152,105 @@ generated_plant_cache_destroy :: proc() {
     }
     generated_plant_cache = {}
     generated_plant_cache_count = 0
+}
+
+@(no_instrumentation)
+generated_plant_world_cache_find :: proc(
+    species: plants.Species,
+    seed: u64,
+    detail: plants.Detail_Level,
+    render_lod: Generated_Plant_Render_LOD,
+    habit: plants.Growth_Habit,
+    support_signature: u64,
+    maturity_step: u8,
+    base: third_person.Vec3,
+    scale, yaw, along_grade: f32,
+) -> ^Generated_Plant_World_Cache_Entry {
+    for index in 0 ..< len(generated_plant_world_cache) {
+        entry := &generated_plant_world_cache[index]
+        if entry.species == species &&
+           entry.seed == seed &&
+           entry.detail == detail &&
+           entry.render_lod == render_lod &&
+           entry.habit == habit &&
+           entry.support_signature == support_signature &&
+           entry.maturity_step == maturity_step &&
+           entry.base == base &&
+           entry.scale == scale &&
+           entry.yaw == yaw &&
+           entry.along_grade == along_grade {
+            return entry
+        }
+    }
+    return nil
+}
+
+@(no_instrumentation)
+generated_plant_world_cache_store :: proc(
+    species: plants.Species,
+    seed: u64,
+    detail: plants.Detail_Level,
+    render_lod: Generated_Plant_Render_LOD,
+    habit: plants.Growth_Habit,
+    support_signature: u64,
+    maturity_step: u8,
+    base: third_person.Vec3,
+    scale, yaw, along_grade: f32,
+    vertices: []World_Vertex,
+) {
+    if len(vertices) == 0 do return
+    entry := Generated_Plant_World_Cache_Entry {
+        species           = species,
+        seed              = seed,
+        detail            = detail,
+        render_lod        = render_lod,
+        habit             = habit,
+        support_signature = support_signature,
+        maturity_step     = maturity_step,
+        base              = base,
+        scale             = scale,
+        yaw               = yaw,
+        along_grade       = along_grade,
+        vertices          = make([dynamic]World_Vertex, 0, len(vertices)),
+    }
+    append(&entry.vertices, ..vertices)
+    entry.shadow_min = {1e30, 1e30, 1e30}
+    entry.shadow_max = {-1e30, -1e30, -1e30}
+    entry.shadow_all_cast = true
+    for vertex in vertices {
+        entry.shadow_min.x = min(entry.shadow_min.x, vertex.position[0])
+        entry.shadow_min.y = min(entry.shadow_min.y, vertex.position[1])
+        entry.shadow_min.z = min(entry.shadow_min.z, vertex.position[2])
+        entry.shadow_max.x = max(entry.shadow_max.x, vertex.position[0])
+        entry.shadow_max.y = max(entry.shadow_max.y, vertex.position[1])
+        entry.shadow_max.z = max(entry.shadow_max.z, vertex.position[2])
+        if !dynamic_shadow_material_casts(vertex.kind) do entry.shadow_all_cast = false
+    }
+    append(&generated_plant_world_cache, entry)
+}
+
+generated_plant_world_cache_clear :: proc() {
+    for &entry in generated_plant_world_cache do delete(entry.vertices)
+    clear(&generated_plant_world_cache)
+}
+
+generated_plant_world_cache_destroy :: proc() {
+    generated_plant_world_cache_clear()
+    delete(generated_plant_world_cache)
+}
+
+generated_plant_world_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
+    write := 0
+    for entry in generated_plant_world_cache {
+        if entry.base.x >= min_x && entry.base.x <= max_x &&
+           entry.base.z >= min_z && entry.base.z <= max_z {
+            delete(entry.vertices)
+            continue
+        }
+        generated_plant_world_cache[write] = entry
+        write += 1
+    }
+    resize(&generated_plant_world_cache, write)
 }
 
 @(no_instrumentation)
@@ -745,6 +862,7 @@ world_generated_plant :: proc(
     detail_floor: plants.Detail_Level = .Near,
     along_grade: f32 = 0,
     maturity: f32 = 1,
+    cache_geometry: bool = false,
 ) -> bool {
     render_lod := Generated_Plant_Render_LOD.Hero
     if world_renderer.editor != nil {
@@ -753,12 +871,35 @@ world_generated_plant :: proc(
     hero_geometry := generated_plant_uses_hero_geometry(render_lod)
     detail := generated_plant_catalog_detail(render_lod)
     detail = generated_plant_apply_detail_floor(detail, detail_floor)
+    support_signature: u64
+    if support != nil do support_signature = plants.support_hash(support^)
+    maturity_step := generated_plant_maturity_step(maturity)
+    shadow_first := len(world_renderer.vertices)
+    if cache_geometry {
+        cached := generated_plant_world_cache_find(
+            species, seed, detail, render_lod, habit, support_signature, maturity_step,
+            base, scale, yaw, along_grade,
+        )
+        if cached != nil {
+            append(&world_renderer.vertices, ..cached.vertices[:])
+            if cached.shadow_all_cast {
+                world_register_static_shadow_caster(
+                    shadow_first,
+                    len(cached.vertices),
+                    cached.shadow_min,
+                    cached.shadow_max,
+                )
+            } else {
+                world_register_shadow_caster(shadow_first)
+            }
+            return true
+        }
+    }
     generated_entry := generated_plant_cached(species, seed, detail, habit, support, maturity)
     if generated_entry == nil do return false
     generated := &generated_entry.result
     transform := generated_plant_transform_make(base, yaw, scale, along_grade)
 
-    shadow_first := len(world_renderer.vertices)
     _, leaf_color, accent := plant_generator_colors(species)
     bark := plant_bark.profile(species)
     bark_detail_strength: f32 = 1
@@ -898,6 +1039,12 @@ world_generated_plant :: proc(
         shape := u32(attachment.leaf.shape)
         world_generated_leaf_textured_facet(a, b, c, {.32, 0}, {0, .42}, {.5, 1}, up, color, shape)
         world_generated_leaf_textured_facet(a, c, d, {.32, 0}, {.5, 1}, {1, .42}, up, color, shape)
+    }
+    if cache_geometry {
+        generated_plant_world_cache_store(
+            species, seed, detail, render_lod, habit, support_signature, maturity_step,
+            base, scale, yaw, along_grade, world_renderer.vertices[shadow_first:],
+        )
     }
     world_register_shadow_caster(shadow_first)
     return true

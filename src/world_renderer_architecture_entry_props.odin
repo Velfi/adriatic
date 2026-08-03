@@ -78,6 +78,7 @@ world_architecture_residence_planter :: proc(
     seed: u32,
     side: int,
     pot_height: f32 = .46,
+    cache_geometry: bool = false,
 ) {
     if project == nil do return
     ground_y := terrain.sample_surface_height(project, 0, x, z)
@@ -113,5 +114,6 @@ world_architecture_residence_planter :: proc(
         .42 + f32((seed >> 9) & 3) * .035,
         rotation + f32(side) * .38,
         maturity = .86,
+        cache_geometry = cache_geometry,
     )
 }

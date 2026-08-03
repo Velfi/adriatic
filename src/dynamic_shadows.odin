@@ -661,6 +661,22 @@ world_register_shadow_caster :: #force_inline proc(first: int) {
     append(&world_renderer.explicit_shadow_caster_ranges, candidate)
 }
 
+world_register_static_shadow_caster :: #force_inline proc(
+    first, count: int,
+    minimum, maximum: third_person.Vec3,
+) {
+    if first < 0 || count < 3 do return
+    append(
+        &world_renderer.static_shadow_caster_ranges,
+        World_Static_Shadow_Caster_Range {
+            first = first,
+            count = count,
+            minimum = minimum,
+            maximum = maximum,
+        },
+    )
+}
+
 dynamic_shadow_material_casts :: #force_inline proc(kind: World_Material_Kind) -> bool {
     #partial switch kind {
     case .Unshaded,
@@ -697,6 +713,25 @@ shadow_depth_include :: #force_inline proc(
     depth := vertex.position[0] * forward.x + vertex.position[1] * forward.y + vertex.position[2] * forward.z
     min_depth^ = min(min_depth^, depth)
     max_depth^ = max(max_depth^, depth)
+}
+
+shadow_depth_include_bounds :: #force_inline proc(
+    minimum, maximum: third_person.Vec3,
+    forward: third_person.Vec3,
+    min_depth, max_depth: ^f32,
+) {
+    xs := [2]f32{minimum.x, maximum.x}
+    ys := [2]f32{minimum.y, maximum.y}
+    zs := [2]f32{minimum.z, maximum.z}
+    for x in xs {
+        for y in ys {
+            for z in zs {
+                depth := x * forward.x + y * forward.y + z * forward.z
+                min_depth^ = min(min_depth^, depth)
+                max_depth^ = max(max_depth^, depth)
+            }
+        }
+    }
 }
 
 shadow_append_world_range :: proc(
@@ -760,6 +795,22 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
             continue
         }
         shadow_append_world_range(caster_range.first, caster_range.count, forward, &min_depth, &max_depth)
+    }
+    for caster_range in world_renderer.static_shadow_caster_ranges {
+        if dynamic_shadow_range_is_covered(
+            {first = caster_range.first, count = caster_range.count},
+            dynamic_range,
+        ) {
+            continue
+        }
+        shadow_append_world_draw_range(caster_range.first, caster_range.count)
+        shadow_depth_include_bounds(
+            caster_range.minimum,
+            caster_range.maximum,
+            forward,
+            &min_depth,
+            &max_depth,
+        )
     }
     _ = dio.flame_graph_end(dio.flame_graph_current(), world_scope)
     world_renderer.dynamic_shadow.caster_min_depth = min_depth

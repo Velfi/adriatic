@@ -127,6 +127,7 @@ world_settlement_gardens :: proc(editor: ^Editor) {
                     .Medium,
                     0,
                     .72 + f32((mixed >> 8) & 31) / 100,
+                    true,
                 )
             } else {
                 palette := [4]canvas2d.Color {

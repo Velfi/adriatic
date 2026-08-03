@@ -548,7 +548,7 @@ world_lighthouse_keepers :: proc(editor: ^Editor) {
             keeper_index += 1
             continue
         }
-        world_lighthouse_keeper_model(editor, position, rotation, keeper_index == 0)
+        world_lighthouse_keeper_model_cached(editor, position, rotation, keeper_index == 0, keeper_index)
         keeper_index += 1
     }
 }
@@ -577,6 +577,33 @@ world_lighthouse_keeper_model :: proc(
             grounded = grounded,
         },
         scale,
+    )
+}
+
+world_lighthouse_keeper_model_cached :: proc(
+    editor: ^Editor,
+    position: third_person.Vec3,
+    rotation: f32,
+    west_keeper: bool,
+    keeper_index: int,
+) {
+    if editor == nil do return
+    world_town_mouse_model_scaled_cached(
+        editor,
+        {
+            position = position,
+            rotation = rotation,
+            build = west_keeper ? f32(1.08) : f32(.94),
+            snout_length = west_keeper ? f32(.94) : f32(1.08),
+            accessory = .Bottle_Cap,
+            fur = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
+            pattern = .Pale_Belly,
+            scarf_enabled = true,
+            scarf_color = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
+            grounded = true,
+        },
+        1,
+        TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + keeper_index,
     )
 }
 

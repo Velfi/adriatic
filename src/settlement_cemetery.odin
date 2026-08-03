@@ -247,6 +247,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true, inclu
                 .Medium,
                 0,
                 .86,
+                true,
             )
         }
         return
@@ -330,6 +331,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true, inclu
             .Medium,
             0,
             .86,
+            true,
         )
     }
 }

@@ -128,76 +128,110 @@ world_roads_transient :: proc(editor: ^Editor) {
     }
 }
 
-world_ocean :: proc(editor: ^Editor) {
+OCEAN_LOCAL_CELL :: f32(24)
+OCEAN_LOCAL_EXTENT :: f32(1800)
+OCEAN_LOCAL_DIVISIONS :: int(OCEAN_LOCAL_EXTENT * 2 / OCEAN_LOCAL_CELL)
+OCEAN_LOCAL_GRID_RESOLUTION :: OCEAN_LOCAL_DIVISIONS + 1
+
+@(no_instrumentation)
+world_ocean_sample_grid_index :: #force_inline proc(x, z: int) -> int {
+    return z * OCEAN_LOCAL_GRID_RESOLUTION + x
+}
+
+world_ocean_sample_grid_rebuild :: proc(
+    editor: ^Editor,
+    center: [2]f32,
+    ocean_y: f32,
+    color: canvas2d.Color,
+) {
+    sample_count := OCEAN_LOCAL_GRID_RESOLUTION * OCEAN_LOCAL_GRID_RESOLUTION
+    if len(world_renderer.ocean_sample_grid) != sample_count {
+        resize(&world_renderer.ocean_sample_grid, sample_count)
+    }
+    for z in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
+        world_z := center[1] - OCEAN_LOCAL_EXTENT + f32(z) * OCEAN_LOCAL_CELL
+        for x in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
+            world_x := center[0] - OCEAN_LOCAL_EXTENT + f32(x) * OCEAN_LOCAL_CELL
+            world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)] = world_ocean_vertex(
+                editor,
+                {world_x, ocean_y, world_z},
+                color,
+            )
+        }
+    }
+    world_renderer.ocean_sample_grid_center = center
+    world_renderer.ocean_sample_grid_valid = true
+}
+
+world_ocean_sample_grid_shift :: proc(
+    editor: ^Editor,
+    center: [2]f32,
+    ocean_y: f32,
+    color: canvas2d.Color,
+) -> bool {
+    old_center := world_renderer.ocean_sample_grid_center
+    raw_x := (center[0] - old_center[0]) / OCEAN_LOCAL_CELL
+    raw_z := (center[1] - old_center[1]) / OCEAN_LOCAL_CELL
+    offset := [2]int{int(math.round(f64(raw_x))), int(math.round(f64(raw_z)))}
+    aligned := abs(raw_x - f32(offset[0])) <= .001 && abs(raw_z - f32(offset[1])) <= .001
+    within_grid := abs(offset[0]) < OCEAN_LOCAL_GRID_RESOLUTION && abs(offset[1]) < OCEAN_LOCAL_GRID_RESOLUTION
+    if !aligned || !within_grid do return false
+
+    sample_count := OCEAN_LOCAL_GRID_RESOLUTION * OCEAN_LOCAL_GRID_RESOLUTION
+    if len(world_renderer.ocean_sample_grid_scratch) != sample_count {
+        resize(&world_renderer.ocean_sample_grid_scratch, sample_count)
+    }
+    for z in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
+        world_z := center[1] - OCEAN_LOCAL_EXTENT + f32(z) * OCEAN_LOCAL_CELL
+        for x in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
+            source_x, source_z := x + offset[0], z + offset[1]
+            destination := world_ocean_sample_grid_index(x, z)
+            if source_x >= 0 && source_x < OCEAN_LOCAL_GRID_RESOLUTION &&
+               source_z >= 0 && source_z < OCEAN_LOCAL_GRID_RESOLUTION {
+                world_renderer.ocean_sample_grid_scratch[destination] =
+                    world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(source_x, source_z)]
+                continue
+            }
+            world_x := center[0] - OCEAN_LOCAL_EXTENT + f32(x) * OCEAN_LOCAL_CELL
+            world_renderer.ocean_sample_grid_scratch[destination] = world_ocean_vertex(
+                editor,
+                {world_x, ocean_y, world_z},
+                color,
+            )
+        }
+    }
+    world_renderer.ocean_sample_grid, world_renderer.ocean_sample_grid_scratch =
+        world_renderer.ocean_sample_grid_scratch, world_renderer.ocean_sample_grid
+    world_renderer.ocean_sample_grid_center = center
+    return true
+}
+
+world_ocean_cache_build :: proc(
+    editor: ^Editor,
+    local_center: [2]f32,
+    local_min_x, local_max_x, local_min_z, local_max_z, ocean_y: f32,
+    color: canvas2d.Color,
+) {
+    first_vertex := len(world_renderer.vertices)
+    extent := editor.in_map ? f32(12000) : f32(15000)
+    divisions := editor.in_map ? 48 : 32
+    cell := extent * 2 / f32(divisions)
     camera := perspective_camera(
         editor.camera_pose,
         editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
     )
-    // Bathymetry owns this exact camera-local rectangle. The far ocean is
-    // clipped around it below, so the two water meshes never overlap and
-    // therefore cannot z-fight regardless of camera distance or depth-buffer
-    // precision.
-    local_cell := f32(24)
-    local_extent := f32(1800)
-    local_divisions := int(math.ceil(f64(local_extent * 2 / local_cell)))
-    local_center_x := f32(math.floor(f64(camera.position.x / local_cell))) * local_cell
-    local_center_z := f32(math.floor(f64(camera.position.z / local_cell))) * local_cell
-    markov_island := lab_scene_is_active(editor, "markov-island")
-    dunes := lab_scene_is_active(editor, "dunes")
-    cache_matches :=
-        world_renderer.ocean_cache_valid &&
-        world_renderer.ocean_cache_center == [2]f32{local_center_x, local_center_z} &&
-        world_renderer.ocean_cache_project_revision == editor.project.revision &&
-        world_renderer.ocean_cache_terrain_revision == editor.terrain_revision &&
-        world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
-        world_renderer.ocean_cache_in_map == editor.in_map &&
-        world_renderer.ocean_cache_markov_island == markov_island &&
-        world_renderer.ocean_cache_dunes == dunes
-    if cache_matches {
-        append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
-        return
-    }
-    first_vertex := len(world_renderer.vertices)
-    local_min_x := local_center_x - local_extent
-    local_max_x := local_center_x + local_extent
-    local_min_z := local_center_z - local_extent
-    local_max_z := local_center_z + local_extent
-
-    extent := editor.in_map ? f32(12000) : f32(15000)
-    divisions := editor.in_map ? 48 : 32
-    cell := extent * 2 / f32(divisions)
-    // A snapped tiled field surrounds the camera in every direction. Unlike the
-    // former forward slab, it has no near edge for a high, downward-looking
-    // camera to expose at the bottom of the viewport.
     center_x := f32(math.floor(f64(camera.position.x / cell))) * cell
     center_z := f32(math.floor(f64(camera.position.z / cell))) * cell
-    // Gameplay water sits just above the mathematical sea datum. Placing it
-    // eight centimetres below allowed the gently descending generated beach
-    // to protrude through the plane as dark triangulated wedges.
-    ocean_y := editor.project.sea_level + (editor.in_map ? f32(.02) : f32(-2))
-    if markov_island {
-        // Leave a small guaranteed gap above the lab seabed. Mixed shoreline
-        // triangles then remain behind the flat water instead of drawing a
-        // pale, clipmap-shaped shelf outline.
-        ocean_y = editor.project.sea_level - 1.9
-    }
-    color := canvas2d.Color{48, 112, 142, 255}
     for z_index in 0 ..< divisions {
         z0 := center_z - extent + f32(z_index) * cell
         z1 := z0 + cell
         for x_index in 0 ..< divisions {
             x0 := center_x - extent + f32(x_index) * cell
             x1 := x0 + cell
-            // Reverse winding so the ocean's upward face is the front (CCW) face
-            // and survives back-face culling from a downward-looking camera.
             if x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
                 world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
                 continue
             }
-
-            // Clip a coarse far-ocean cell into four non-overlapping strips
-            // around the local rectangle. Their shared boundary is harmless:
-            // no fragment has two water surfaces competing for its depth.
             overlap_min_x := max(x0, local_min_x)
             overlap_max_x := min(x1, local_max_x)
             overlap_min_z := max(z0, local_min_z)
@@ -240,43 +274,86 @@ world_ocean :: proc(editor: ^Editor) {
             }
         }
     }
-
-    // Sample terrain-dependent shallowness on a camera-local grid. The former
-    // full-world layer used 125 m cells, making its interpolated depth signal
-    // expose enormous square triangles around every generated shoreline.
-    // A 24 m local field is inexpensive enough for immediate geometry, follows
-    // the active coast, and fades naturally into the uniform far ocean once
-    // its boundary reaches deep water.
-    // A small height difference remains useful for hiding the shared boundary,
-    // but correctness no longer depends on it: the two meshes have no area
-    // overlap.
-    local_ocean_y := ocean_y + f32(.004)
-    for z_index in 0 ..< local_divisions {
-        z0 := local_center_z - local_extent + f32(z_index) * local_cell
-        z1 := z0 + local_cell
-        for x_index in 0 ..< local_divisions {
-            x0 := local_center_x - local_extent + f32(x_index) * local_cell
-            x1 := x0 + local_cell
-            world_ocean_quad(
-                editor,
-                {x0, local_ocean_y, z0},
-                {x0, local_ocean_y, z1},
-                {x1, local_ocean_y, z1},
-                {x1, local_ocean_y, z0},
-                color,
-            )
+    for z in 0 ..< OCEAN_LOCAL_DIVISIONS {
+        for x in 0 ..< OCEAN_LOCAL_DIVISIONS {
+            a := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)]
+            b := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z + 1)]
+            c := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z + 1)]
+            d := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z)]
+            append(&world_renderer.vertices, a, b, c, a, c, d)
         }
     }
     clear(&world_renderer.ocean_geometry_cache)
     append(&world_renderer.ocean_geometry_cache, ..world_renderer.vertices[first_vertex:])
-    world_renderer.ocean_cache_center = {local_center_x, local_center_z}
+    world_renderer.ocean_cache_center = local_center
     world_renderer.ocean_cache_project_revision = editor.project.revision
     world_renderer.ocean_cache_terrain_revision = editor.terrain_revision
     world_renderer.ocean_cache_sea_level = editor.project.sea_level
     world_renderer.ocean_cache_in_map = editor.in_map
-    world_renderer.ocean_cache_markov_island = markov_island
-    world_renderer.ocean_cache_dunes = dunes
+    world_renderer.ocean_cache_markov_island = lab_scene_is_active(editor, "markov-island")
+    world_renderer.ocean_cache_dunes = lab_scene_is_active(editor, "dunes")
     world_renderer.ocean_cache_valid = true
+}
+
+world_ocean :: proc(editor: ^Editor) {
+    camera := perspective_camera(
+        editor.camera_pose,
+        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
+    )
+    // Bathymetry owns this exact camera-local rectangle. The far ocean is
+    // clipped around it below, so the two water meshes never overlap and
+    // therefore cannot z-fight regardless of camera distance or depth-buffer
+    // precision.
+    local_center_x := f32(math.floor(f64(camera.position.x / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
+    local_center_z := f32(math.floor(f64(camera.position.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
+    markov_island := lab_scene_is_active(editor, "markov-island")
+    dunes := lab_scene_is_active(editor, "dunes")
+    cache_state_matches :=
+        world_renderer.ocean_cache_valid &&
+        world_renderer.ocean_cache_project_revision == editor.project.revision &&
+        world_renderer.ocean_cache_terrain_revision == editor.terrain_revision &&
+        world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
+        world_renderer.ocean_cache_in_map == editor.in_map &&
+        world_renderer.ocean_cache_markov_island == markov_island &&
+        world_renderer.ocean_cache_dunes == dunes
+    local_center := [2]f32{local_center_x, local_center_z}
+    if cache_state_matches &&
+       world_renderer.ocean_cache_center == local_center &&
+       world_renderer.ocean_sample_grid_valid &&
+       world_renderer.ocean_sample_grid_center == local_center {
+        append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
+        return
+    }
+    // Gameplay water sits just above the mathematical sea datum. Placing it
+    // eight centimetres below allowed the gently descending generated beach
+    // to protrude through the plane as dark triangulated wedges.
+    ocean_y := editor.project.sea_level + (editor.in_map ? f32(.02) : f32(-2))
+    if markov_island {
+        // Leave a small guaranteed gap above the lab seabed. Mixed shoreline
+        // triangles then remain behind the flat water instead of drawing a
+        // pale, clipmap-shaped shelf outline.
+        ocean_y = editor.project.sea_level - 1.9
+    }
+    color := canvas2d.Color{48, 112, 142, 255}
+    // Shift overlapping samples when camera crosses one local-ocean cell.
+    // Only the newly exposed row or column asks terrain again; rebuilding the
+    // old 150x150 field did 135,000 identical terrain queries per pan step.
+    local_ocean_y := ocean_y + f32(.004)
+    if !cache_state_matches ||
+       !world_renderer.ocean_sample_grid_valid ||
+       !world_ocean_sample_grid_shift(editor, local_center, local_ocean_y, color) {
+        world_ocean_sample_grid_rebuild(editor, local_center, local_ocean_y, color)
+    }
+    world_ocean_cache_build(
+        editor,
+        local_center,
+        local_center_x - OCEAN_LOCAL_EXTENT,
+        local_center_x + OCEAN_LOCAL_EXTENT,
+        local_center_z - OCEAN_LOCAL_EXTENT,
+        local_center_z + OCEAN_LOCAL_EXTENT,
+        ocean_y,
+        color,
+    )
 }
 
 world_river_water_spline :: proc(editor: ^Editor, spline: ^terrain.River_Water_Spline) {

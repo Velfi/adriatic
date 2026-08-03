@@ -319,6 +319,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 structure.seed ~ 0x9e3779b9,
                 pot_side,
                 .44,
+                cache_geometry = true,
             )
         }
     }
@@ -607,6 +608,7 @@ world_settlement_landscape :: proc(editor: ^Editor) {
                 .Medium,
                 0,
                 tree ? .86 : .74,
+                true,
             )
         }
     }

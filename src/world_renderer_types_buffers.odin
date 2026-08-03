@@ -217,7 +217,8 @@ TOWN_MOUSE_CACHE_ZORA         :: TOWN_MOUSE_CACHE_TOWN_FIRST + TOWN_MOUSE_CACHE_
 TOWN_MOUSE_CACHE_POSTAL_FIRST :: TOWN_MOUSE_CACHE_ZORA + 1
 TOWN_MOUSE_CACHE_MEETING_NIKO :: TOWN_MOUSE_CACHE_POSTAL_FIRST + 2
 TOWN_MOUSE_CACHE_MEETING_IVA  :: TOWN_MOUSE_CACHE_MEETING_NIKO + 1
-TOWN_MOUSE_CACHE_COUNT        :: TOWN_MOUSE_CACHE_MEETING_IVA + 1
+TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST :: TOWN_MOUSE_CACHE_MEETING_IVA + 1
+TOWN_MOUSE_CACHE_COUNT            :: TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + len(terrain.DEFAULT_ISLAND_SIGNS)
 TOWN_MOUSE_PORTRAIT_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
@@ -283,6 +284,16 @@ Settlement_Fountain_Geometry_Cache :: struct {
     vertices:         [dynamic]World_Vertex,
 }
 
+Airport_Kiosk_Geometry_Cache :: struct {
+    position_x, position_z: f32,
+    rotation:               f32,
+    terrain_revision:       u64,
+    plant_lods:             [4]Generated_Plant_Render_LOD,
+    valid:                  bool,
+    prefix_vertices:        [dynamic]World_Vertex,
+    suffix_vertices:        [dynamic]World_Vertex,
+}
+
 World_Push :: struct {
     camera_position: [4]f32,
     camera_right:    [4]f32,
@@ -308,6 +319,11 @@ Sky_Push :: struct {
 World_Shadow_Caster_Range :: struct {
     first: int,
     count: int,
+}
+
+World_Static_Shadow_Caster_Range :: struct {
+    first, count:     int,
+    minimum, maximum: third_person.Vec3,
 }
 
 Dynamic_Shadow_Terrain_Cache :: struct {
@@ -344,6 +360,7 @@ World_Renderer :: struct {
     dynamic_caster_first:                         int,
     dynamic_caster_count:                         int,
     explicit_shadow_caster_ranges:                [dynamic]World_Shadow_Caster_Range,
+    static_shadow_caster_ranges:                  [dynamic]World_Static_Shadow_Caster_Range,
     road_pipelines:                               [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     sky_pipelines:                                [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     particle_pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
@@ -491,6 +508,10 @@ World_Renderer :: struct {
     ocean_cache_markov_island:                    bool,
     ocean_cache_dunes:                            bool,
     ocean_cache_valid:                            bool,
+    ocean_sample_grid:                            [dynamic]World_Vertex,
+    ocean_sample_grid_scratch:                    [dynamic]World_Vertex,
+    ocean_sample_grid_center:                     [2]f32,
+    ocean_sample_grid_valid:                      bool,
     bathymetry_geometry_cache:                    [dynamic]Bathymetry_Geometry_Cache_Entry,
     bathymetry_geometry_cache_builds:             u64,
     bathymetry_geometry_cache_reuses:             u64,
@@ -529,6 +550,7 @@ World_Renderer :: struct {
     architecture_alley_overlap_plan:              [dynamic]architecture.City_Alley,
     architecture_street_area_cache:               [dynamic]Architecture_Street_Area_Cache,
     settlement_fountain_geometry_cache:           [dynamic]Settlement_Fountain_Geometry_Cache,
+    airport_kiosk_geometry_cache:                 [dynamic]Airport_Kiosk_Geometry_Cache,
     laundry_geometry_cache:                       [dynamic]World_Vertex,
     laundry_geometry_revision:                    u64,
     laundry_geometry_terrain_revision:            u64,

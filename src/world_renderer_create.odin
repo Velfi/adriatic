@@ -637,6 +637,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.dynamic_shadow_terrain_cache.vertices =
         make([dynamic]World_Vertex, 0, DYNAMIC_SHADOW_TERRAIN_VERTEX_COUNT)
     world_renderer.explicit_shadow_caster_ranges = make([dynamic]World_Shadow_Caster_Range, 0, 256)
+    world_renderer.static_shadow_caster_ranges = make([dynamic]World_Static_Shadow_Caster_Range, 0, 256)
     world_spatial_index_init(&world_renderer.spatial_index)
     world_renderer.ctx = ctx
     world_renderer.initialized = true

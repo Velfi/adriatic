@@ -354,6 +354,7 @@ world_renderer_attach :: proc(editor: ^Editor) {
 world_renderer_destroy :: proc() {
     if !world_renderer.initialized do return
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
+    generated_plant_world_cache_destroy()
     generated_plant_cache_destroy()
     world_spatial_index_destroy(&world_renderer.spatial_index)
     imgui_destroy()
@@ -447,6 +448,11 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.architecture_street_area_cache)
     for &entry in world_renderer.settlement_fountain_geometry_cache do delete(entry.vertices)
     delete(world_renderer.settlement_fountain_geometry_cache)
+    for &entry in world_renderer.airport_kiosk_geometry_cache {
+        delete(entry.prefix_vertices)
+        delete(entry.suffix_vertices)
+    }
+    delete(world_renderer.airport_kiosk_geometry_cache)
     delete(world_renderer.laundry_geometry_cache)
     delete(world_renderer.foliage_vertices)
     delete(world_renderer.bougainvillea_vertices)
@@ -471,6 +477,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.shadow_world_ranges)
     delete(world_renderer.dynamic_shadow_terrain_cache.vertices)
     delete(world_renderer.explicit_shadow_caster_ranges)
+    delete(world_renderer.static_shadow_caster_ranges)
     for &vertices in world_renderer.clipmap_cache_vertex do delete(vertices)
     for &vertices in world_renderer.clipmap_scratch_vertex do delete(vertices)
     for &entry in world_renderer.foliage_geometry_cache {
@@ -498,6 +505,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.structure_building_spans)
     delete(world_renderer.structure_candidates)
     delete(world_renderer.ocean_geometry_cache)
+    delete(world_renderer.ocean_sample_grid)
+    delete(world_renderer.ocean_sample_grid_scratch)
     for &entry in world_renderer.bathymetry_geometry_cache do delete(entry.vertices)
     delete(world_renderer.bathymetry_geometry_cache)
     for &entry in world_renderer.town_mouse_geometry_cache {
