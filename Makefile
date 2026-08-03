@@ -17,7 +17,9 @@ PROFILE_ODIN_FLAGS_validation := -dynamic-map-calls -debug -o:none -sanitize:add
 PROFILE_DEFINE_FLAGS_validation :=
 
 PROFILE_ODIN_FLAGS_instrument := -o:minimal -debug
-PROFILE_DEFINE_FLAGS_instrument := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
+PROFILE_ODIN_FLAGS_spike := -o:minimal -debug
+PROFILE_DEFINE_FLAGS_instrument := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_FULL_SESSION=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
+PROFILE_DEFINE_FLAGS_spike := -define:DIO_FLAME_GRAPH=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true
 PROFILE_DEFINE_FLAGS_instrument_deep := -define:FLAME_AUTO_INSTRUMENT=true -define:DIO_FLAME_GRAPH_DEVELOPER_EXPORTS=true -define:BACK_OTHER_CUSTOM_INSTRUMENTATION=true -define:FLAME_AUTO_SLOT_CAP=50000
 
 VALIDATION_PROFILE_RUNTIME_ENV := env \
@@ -33,6 +35,7 @@ PROFILE_RUNTIME_ENV_release := $(NON_VALIDATION_PROFILE_RUNTIME_ENV)
 PROFILE_RUNTIME_ENV_validation := $(VALIDATION_PROFILE_RUNTIME_ENV)
 PROFILE_RUNTIME_ENV_instrument := $(NON_VALIDATION_PROFILE_RUNTIME_ENV) \
 	ZELDA_ENGINE_GPU_PROFILER=1
+PROFILE_RUNTIME_ENV_spike := $(PROFILE_RUNTIME_ENV_instrument)
 
 DEV_APP_ODIN_FLAGS := -dynamic-map-calls -o:minimal
 
@@ -91,15 +94,18 @@ DEV_DIR := $(BUILD_DIR)/dev
 RELEASE_DIR := $(BUILD_DIR)/release
 VALIDATION_DIR := $(BUILD_DIR)/validation
 INSTRUMENT_DIR := $(BUILD_DIR)/instrument
+SPIKE_DIR := $(BUILD_DIR)/spike
 DEBUG_TEST_DIR := $(BUILD_DIR)/debug
 DEV_APP := $(DEV_DIR)/$(APP)
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
 INSTRUMENT_APP := $(INSTRUMENT_DIR)/$(APP)
+SPIKE_APP := $(SPIKE_DIR)/$(APP)
 FIXTURE_LIFECYCLE_DEBUG_BINARY := $(DEBUG_TEST_DIR)/fixture-lifecycle-test
 FIXTURE_LIFECYCLE_TEST_NAMES := main.fixture_lifecycle_detach_derives_all_identities_without_allocation,main.fixture_lifecycle_prepare_and_bind_use_destination_owned_addresses,main.fixture_lifecycle_hostile_states_fail_atomically,main.fixture_lifecycle_hot_state_round_trips_all_identities
 FIXTURE_LIFECYCLE_DEBUG_ODIN_FLAGS := -debug -o:none -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=$(FIXTURE_LIFECYCLE_TEST_NAMES)
 INSTRUMENT_RUNTIME_STAMP := $(INSTRUMENT_DIR)/runtime-assets.stamp
+SPIKE_RUNTIME_STAMP := $(SPIKE_DIR)/runtime-assets.stamp
 INSTRUMENT_ASSET_SOURCES := $(shell find assets -type f 2>/dev/null)
 PHYSICS_STAMP := $(BUILD_DIR)/physics.stamp
 PHYSICS_SOURCES := \
@@ -151,7 +157,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-lifecycle-lldb fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep spike spike-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
 
 all: build
 
@@ -602,11 +608,11 @@ cgltf-build: doctor $(CGLTF_LIB)
 
 profile-info:
 	@case "$(PROFILE)" in \
-		hot|release|validation|instrument) \
+		hot|release|validation|instrument|spike) \
 			echo "Profile: $(PROFILE)"; \
 			echo "Odin flags: $(PROFILE_ODIN_FLAGS_$(PROFILE))"; \
 			;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, or instrument" >&2; exit 2 ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, instrument, or spike" >&2; exit 2 ;; \
 	esac
 
 profile:
@@ -615,7 +621,8 @@ profile:
 		release) $(MAKE) release ;; \
 		validation) $(MAKE) validation-build ;; \
 		instrument) $(MAKE) instrument-build ;; \
-		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, or instrument" >&2; exit 2 ;; \
+		spike) $(MAKE) spike-build ;; \
+		*) echo "error: unknown PROFILE=$(PROFILE); expected hot, release, validation, instrument, or spike" >&2; exit 2 ;; \
 	esac
 
 dev: PROFILE=hot
@@ -744,6 +751,23 @@ instrument: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
 	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
 
 INSTRUMENT_SECONDS ?= 0
+
+$(SPIKE_APP): $(INSTRUMENT_DIR)/libadriatic_mesh.a
+$(SPIKE_APP): $(PHYSICS_STAMP) $(CGLTF_LIB) $(HOT_ODIN_SOURCES) Makefile toolchain.mk $(INSTRUMENT_DIR)/libgfx_signposts.a
+	@mkdir -p $(@D)
+	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_spike) $(PROFILE_DEFINE_FLAGS_spike) -define:FLAME_GRAPH_DUMP_PATH="$(abspath $(SPIKE_DIR)/flame.graph)" -out:$@ -extra-linker-flags:"$(call link_flags,$(INSTRUMENT_DIR))"
+
+spike-build: doctor $(SPIKE_APP)
+
+$(SPIKE_RUNTIME_STAMP): shaders $(INSTRUMENT_ASSET_SOURCES)
+	@mkdir -p "$(SPIKE_DIR)/assets" "$(SPIKE_DIR)/shaders"
+	cp -R assets/. "$(SPIKE_DIR)/assets/"
+	cp -R build/generated/shaders/. "$(SPIKE_DIR)/shaders/"
+	touch $@
+
+spike: spike-build $(SPIKE_RUNTIME_STAMP)
+	$(PROFILE_RUNTIME_ENV_spike) "$(SPIKE_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
+
 INSTRUMENT_DEEP_DIR := $(BUILD_DIR)/instrument-deep
 INSTRUMENT_DEEP_APP := $(INSTRUMENT_DEEP_DIR)/$(APP)
 
