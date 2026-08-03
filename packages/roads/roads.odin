@@ -81,6 +81,7 @@ Pavement :: enum u8 {
 Pavement_Hit :: struct {
     pavement:   Pavement,
     edge_index: int,
+    amount:     f32,
     distance:   f32,
     height:     f32,
     on_surface: bool,
@@ -712,6 +713,7 @@ pavement_query_node :: proc(
                 state.best_distance_squared = distance_squared
                 state.hit.pavement = edge.pavement
                 state.hit.edge_index = edge_index
+                state.hit.amount = (f32(segment - 1) + amount) / PAVEMENT_QUERY_SEGMENTS
                 state.hit.height = closest_y
                 state.hit.on_surface = on_surface
             }
@@ -725,6 +727,7 @@ pavement_query_node :: proc(
                 state.best_surface_distance_squared = distance_squared
                 state.surface_hit.pavement = edge.pavement
                 state.surface_hit.edge_index = edge_index
+                state.surface_hit.amount = (f32(segment - 1) + amount) / PAVEMENT_QUERY_SEGMENTS
                 state.surface_hit.height = closest_y
                 state.surface_hit.on_surface = true
             }

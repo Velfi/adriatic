@@ -45,10 +45,14 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
     if editor.in_map &&
        editor.active_lab_scene == "" &&
        !pause_menu_is_open(editor) &&
+       simulation_delta > 0 &&
        !capture_car_mode &&
        !cinematic_is_playing(editor) &&
        !crash_recovery_active(editor) {
-        delta_seconds := frame_delta
+        // A menu can close while input is processed. Keep the frame that
+        // began paused frozen so its closing click or held controls cannot
+        // leak into gameplay.
+        delta_seconds := simulation_delta
         if editor.vehicle_paint_scene {
             vehicle_paint_process_input(editor, width, height, min(delta_seconds, .05))
         } else if editor.vehicle_showcase_scene {

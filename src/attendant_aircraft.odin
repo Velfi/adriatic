@@ -282,6 +282,7 @@ attendant_dialogue_process_input :: proc(editor: ^Editor, width, height: i32, de
             min(editor.attendant_dialogue_view.first_choice + visible_rows - 1, choice_count - 1),
         )
     }
+    dialogue_speech_scroll_animate(editor, delta_seconds)
     if !revealing && direction != 0 {
         editor.attendant_dialogue_focus = clamp(
             editor.attendant_dialogue_focus + direction,

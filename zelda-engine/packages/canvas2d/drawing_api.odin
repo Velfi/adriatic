@@ -174,9 +174,7 @@ IsMouseButtonPressed :: proc(button: MouseButton) -> bool {assert(button != .COU
 // respond to the same click during the current frame.
 ConsumeMouseButtonPressed :: proc(button: MouseButton) {assert(button != .COUNT)
     state.mouse_pressed[int(button)] = false}
-IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT); return(
-        state.mouse_down[int(button)] \
-    ) }
+IsMouseButtonDown :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return state.mouse_down[int(button)]}
 IsMouseButtonReleased :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_released[int(button)] \
     )}
@@ -258,6 +256,10 @@ keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alte
         return .LEFT, .UNKNOWN
     case .RIGHT:
         return .RIGHT, .UNKNOWN
+    case .LEFT_BRACKET:
+        return .LEFTBRACKET, .UNKNOWN
+    case .RIGHT_BRACKET:
+        return .RIGHTBRACKET, .UNKNOWN
     case .ONE:
         return ._1, .KP_1
     case .TWO:
@@ -466,10 +468,7 @@ EndScissorMode :: proc() { state.clip_enabled = false; state.clip = {} }
 ButtonBehavior :: proc(id: int, r: Rectangle, enabled: bool) -> Button_Interaction {gui_id := ui.Gui_Id(id + 1)
     activated := ui.gui_button_behavior(&state.gui, gui_id, {r.x, r.y, r.width, r.height}, enabled)
     return {activated, state.gui.hot == gui_id, state.gui.focused == gui_id}}
-DrawRectangle :: proc(x, y, width, height: i32, color: Color) { rect(
-        {f32(x), f32(y), f32(width), f32(height)},
-        color,
-    ) }
+DrawRectangle :: proc(x, y, width, height: i32, color: Color) {rect({f32(x), f32(y), f32(width), f32(height)}, color)}
 DrawRectangleRec :: proc(r: Rectangle, color: Color) { rect(r, color) }
 // A material-space quad for projected procedural geometry. UVs remain attached
 // to the supplied corners while the hatch offset/rotation can be aligned to a

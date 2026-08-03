@@ -15,6 +15,16 @@ rocky_beach_config: rocky.Config
 rocky_beach_tide_phase := f32(.12)
 rocky_beach_tide_running := true
 
+Rocky_Beach_Lab_View :: enum u8 {
+    Coast,
+    Marine_Overview,
+    Seagrass,
+    Macroalgae,
+    Coralligenous,
+}
+
+rocky_beach_lab_view := Rocky_Beach_Lab_View.Coast
+
 rocky_beach_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> Lab_Terrain_Sample {
     cell := rocky.sample(&rocky_beach_plan, world_x, world_z)
     material: f32
@@ -61,7 +71,19 @@ rocky_beach_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     rocky_beach_config.seed = ROCKY_BEACH_DEFAULT_SEED
     rocky_beach_tide_phase = .035
     rocky_beach_tide_running = true
-    if target != "" {
+    rocky_beach_lab_view = .Coast
+    switch target {
+    case "marine", "marine-overview", "overview":
+        rocky_beach_lab_view = .Marine_Overview
+    case "seagrass", "posidonia":
+        rocky_beach_lab_view = .Seagrass
+    case "macroalgae", "algae":
+        rocky_beach_lab_view = .Macroalgae
+    case "coralligenous", "gorgonian":
+        rocky_beach_lab_view = .Coralligenous
+    case:
+    }
+    if target != "" && rocky_beach_lab_view == .Coast {
         if parsed, ok := strconv.parse_u64(target, 0); ok do rocky_beach_config.seed = u32(parsed)
     }
     rocky_beach_regenerate(editor)
@@ -72,7 +94,13 @@ rocky_beach_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     atmosphere.set_weather_override(&editor.atmosphere, .Clear)
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
-    editor.camera_pose = third_person.camera_look_at({108, 72, -102}, {0, 1.5, 4})
+    if rocky_beach_lab_view == .Coast {
+        editor.camera_pose = third_person.camera_look_at({108, 72, -102}, {0, 1.5, 4})
+    } else {
+        // A low oblique view keeps roots visible through the water while still
+        // showing enough seabed to judge density and transitions.
+        editor.camera_pose = third_person.camera_look_at({43, 18, -42}, {0, -2.0, 7})
+    }
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
     set_pointer_locked(false)
@@ -233,46 +261,37 @@ rocky_beach_draw_organism :: proc(organism: rocky.Organism, submerged: bool) {
     }
 }
 
-world_rocky_beach_lab :: proc(_: ^Editor) {
+world_rocky_beach_lab :: proc(editor: ^Editor) {
     ocean := rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase)
-    step_x := rocky_beach_config.width / f32(rocky.GRID_X - 1)
-    step_z := rocky_beach_config.depth / f32(rocky.GRID_Z - 1)
-    water := canvas.Color{42, 166, 190, 214}
+    presentation_x := rocky.GRID_X - 1
+    presentation_z := rocky.GRID_Z - 1
+    step_x := rocky_beach_config.width / f32(presentation_x)
+    step_z := rocky_beach_config.depth / f32(presentation_z)
+    water_alpha := rocky_beach_lab_view == .Coast ? u8(214) : u8(150)
+    water := canvas.Color{42, 166, 190, water_alpha}
     up := third_person.Vec3{0, 1, 0}
     // A shared triangle surface replaces the old per-cell water blocks. The
     // simulation grid now drives an organic-looking sheet without being drawn.
-    for z in 0 ..< rocky.GRID_Z - 1 {
-        for x in 0 ..< rocky.GRID_X - 1 {
-            indices := [4]int {
-                z * rocky.GRID_X + x,
-                z * rocky.GRID_X + x + 1,
-                (z + 1) * rocky.GRID_X + x,
-                (z + 1) * rocky.GRID_X + x + 1,
-            }
+    for z in 0 ..< presentation_z {
+        for x in 0 ..< presentation_x {
             points: [4]third_person.Vec3
             levels: [4]f32
             visible := true
             level_min, level_max := f32(1e9), f32(-1e9)
             average_depth := f32(0)
             for corner in 0 ..< 4 {
-                cell := rocky_beach_plan.cells[indices[corner]]
-                level, wet := rocky.water_level(cell, rocky_beach_config, rocky_beach_tide_phase)
-                // Very shallow dampness belongs in the rock material, not as a
-                // disconnected square of water.
-                if !wet || (ocean <= cell.height && cell.water_trap < .50) do visible = false
                 cx := x + (corner & 1)
                 cz := z + (corner >> 1)
+                world_x := f32(cx) * step_x - rocky_beach_config.width * .5
+                world_z := f32(cz) * step_z - rocky_beach_config.depth * .5
+                cell := rocky.sample(&rocky_beach_plan, world_x, world_z)
+                level, wet := rocky.water_level(cell, rocky_beach_config, rocky_beach_tide_phase)
+                if !wet || (ocean <= cell.height && cell.water_trap < .50) do visible = false
                 levels[corner] = level
                 level_min, level_max = min(level_min, level), max(level_max, level)
                 average_depth += max(level - cell.height, f32(0)) * .25
-                points[corner] = {
-                    f32(cx) * step_x - rocky_beach_config.width * .5,
-                    level,
-                    f32(cz) * step_z - rocky_beach_config.depth * .5,
-                }
+                points[corner] = {world_x, level, world_z}
             }
-            // Never bridge adjacent basins that retain water at very
-            // different elevations: they are separate pools, not a ramp.
             if level_max - level_min > .38 do visible = false
             if !visible do continue
             surface := (levels[0] + levels[1] + levels[2] + levels[3]) * .25 + .045
@@ -328,7 +347,8 @@ rocky_beach_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     panel := canvas.Rectangle{24, 24, 660, 174}
     canvas.DrawRectangleRounded(panel, .09, 8, {10, 27, 34, 235})
     canvas.DrawRectangleRoundedLinesEx(panel, .09, 8, 1, {99, 163, 158, 255})
-    canvas.DrawTextEx(canvas.Font{}, "COASTAL ECOLOGY GENERATOR LAB", {40, 40}, 19, 1, {239, 224, 179, 255})
+    title: cstring = rocky_beach_lab_view == .Coast ? "COASTAL ECOLOGY GENERATOR LAB" : "MARINE HABITAT CAPTURE LAB"
+    canvas.DrawTextEx(canvas.Font{}, title, {40, 40}, 19, 1, {239, 224, 179, 255})
     tide := rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase)
     state: cstring = tide < 0 ? "LOW" : (tide > rocky_beach_config.tide_range * .48 ? "HIGH" : "MID")
     canvas.DrawTextEx(

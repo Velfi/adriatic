@@ -27,6 +27,7 @@ Dialogue_View_State :: struct {
     reveal_timer:       f32,
     first_choice:       int,
     first_speech_line:  int,
+    speech_scroll_line: f32,
     speech_line_count:  int,
     speech_scroll_axis: game_input.Axis_Repeater,
     reaction_seconds:   f32,
@@ -426,22 +427,28 @@ dialogue_draw_glossed_wrapped :: proc(
     color: canvas2d.Color,
     mouse: canvas2d.Vector2,
     centered: bool = false,
-    first_line: int = 0,
+    scroll_line: f32 = 0,
 ) -> string {
     if len(text) == 0 do return ""
     lines := make([dynamic]canvas2d.Text_Wrapped_Line, 0, 8, context.temp_allocator)
     canvas2d.LayoutTextWrappedEx(dialogue_font(), fmt.ctprintf("%s", text), size, spacing, bounds.width, .Auto, &lines)
     hovered_english := ""
     visible_capacity := max(int(bounds.height / line_height), 0)
-    clamped_first_line := clamp(first_line, 0, max(len(lines) - visible_capacity, 0))
-    visible := min(len(lines) - clamped_first_line, visible_capacity)
-    first_line_y := bounds.y
-    if centered && visible > 0 {
+    max_scroll_line := f32(max(len(lines) - visible_capacity, 0))
+    clamped_scroll_line := clamp(scroll_line, 0, max_scroll_line)
+    first_line := int(clamped_scroll_line)
+    fractional_line := clamped_scroll_line - f32(first_line)
+    // Include the next row while transitioning so a line can move through the
+    // viewport continuously instead of snapping one full line at a time.
+    visible := min(len(lines) - first_line, visible_capacity + (fractional_line > 0 ? 1 : 0))
+    first_line_y := bounds.y - fractional_line * line_height
+    if centered && visible > 0 && max_scroll_line == 0 {
         first_line_y = canvas2d.TextBlockCenteredY(dialogue_font(), bounds, size, line_height, visible)
     }
-    for line, line_index in lines[clamped_first_line:clamped_first_line + visible] {
+    canvas2d.BeginScissorMode(bounds)
+    for line, line_index in lines[first_line:first_line + visible] {
         x := bounds.x
-        y := first_line_y + f32(line_index - clamped_first_line) * line_height
+        y := first_line_y + f32(line_index) * line_height
         cursor := line.start
         for cursor < line.end {
             start := cursor
@@ -478,7 +485,9 @@ dialogue_draw_glossed_wrapped :: proc(
                         word_width :=
                             canvas2d.MeasureTextEx(dialogue_font(), fmt.ctprintf("%s", word), size, spacing).x
                         word_bounds := canvas2d.Rectangle{x + prefix_width, y, word_width, line_height}
-                        hovered := canvas2d.CheckCollisionPointRec(mouse, word_bounds)
+                        hovered :=
+                            canvas2d.CheckCollisionPointRec(mouse, bounds) &&
+                            canvas2d.CheckCollisionPointRec(mouse, word_bounds)
                         underline_color := hovered ? ui_theme_focus() : ui_theme_accent(190)
                         canvas2d.DrawRectangle(
                             i32(word_bounds.x),
@@ -494,6 +503,7 @@ dialogue_draw_glossed_wrapped :: proc(
             x += measured.x
         }
     }
+    canvas2d.EndScissorMode()
     return hovered_english
 }
 
@@ -513,6 +523,15 @@ dialogue_speech_scroll_sync :: proc(editor: ^Editor, line_count, visible_lines: 
     if view.first_speech_line >= old_max do view.first_speech_line = new_max
     view.first_speech_line = clamp(view.first_speech_line, 0, new_max)
     view.speech_line_count = line_count
+}
+
+dialogue_speech_scroll_animate :: proc(editor: ^Editor, delta_seconds: f32) {
+    if editor == nil do return
+    view := &editor.attendant_dialogue_view
+    target := f32(view.first_speech_line)
+    response := 1 - f32(math.exp(f64(-18 * max(delta_seconds, 0))))
+    view.speech_scroll_line += (target - view.speech_scroll_line) * response
+    if math.abs(target - view.speech_scroll_line) < .001 do view.speech_scroll_line = target
 }
 
 dialogue_draw_glossary_tooltip :: proc(english: string, mouse: canvas2d.Vector2, width, height: i32, scale: f32) {
@@ -737,7 +756,7 @@ dialogue_tv_draw :: proc(editor: ^Editor, width, height: i32) {
         speech_line_height,
         ui_theme_text_inverse(u8(255 * speech_opacity)),
         mouse,
-        first_line = editor.attendant_dialogue_view.first_speech_line,
+        scroll_line = editor.attendant_dialogue_view.speech_scroll_line,
     )
     if speech_max_first > 0 {
         track := canvas2d.Rectangle {

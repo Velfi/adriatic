@@ -58,6 +58,12 @@ world_brush :: proc(editor: ^Editor) {
     x, z := editor.cursor_world_x, editor.cursor_world_z
     color: canvas2d.Color = {230, 244, 218, 76}
     radius, hardness := editor.radius, editor.hardness
+    if editor.authoring_tool == .Sculpt {
+        settings := editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+        radius = settings.size + settings.feather
+        hardness = settings.inner_core
+        color = settings.affect_seabed ? canvas2d.Color{105, 205, 214, 92} : canvas2d.Color{244, 214, 122, 88}
+    }
     switch editor.tool {
     case .Raise:
         color = {244, 214, 122, 88}
@@ -101,10 +107,19 @@ world_brush :: proc(editor: ^Editor) {
     // A denser inner disc makes the hardness setting legible at the cursor:
     // harder brushes have a larger, more opaque core while the outer disc
     // continues to show the full affected radius.
-    inner_radius := radius * (.25 + hardness * .65)
+    inner_radius :=
+        editor.authoring_tool == .Sculpt ? editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].size * hardness : radius * (.25 + hardness * .65)
     core := color
     core.a = u8(min(int(color.a) + 34, 180))
     world_brush_disc(editor, x, z, inner_radius, .105, core)
+    if editor.authoring_tool == .Sculpt &&
+       terrain_action_is_spline(editor.terrain_sculpt.action) &&
+       editor.terrain_sculpt.session.active {
+        path_radius := max(editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].size * .5, f32(1))
+        for point in editor.terrain_sculpt.session.path[:editor.terrain_sculpt.session.path_count] {
+            world_brush_disc(editor, point.x, point.z, path_radius, .115, core)
+        }
+    }
 }
 
 world_ground_grass_has_land :: proc(editor: ^Editor, center_x, center_z, radius: f32) -> bool {

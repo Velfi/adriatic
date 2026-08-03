@@ -29,6 +29,9 @@ four_wheel_vehicle_suspends_and_moves :: proc(t: ^testing.T) {
     world := create_world(128, 1)
     testing.expect(t, world != nil)
     defer destroy_world(world)
+    // Vehicle bodies and suspension queries must use the dedicated vehicle
+    // layer rather than inheriting the generic moving-body collision policy.
+    set_layer_mask(world, .Moving, 0xfffe)
     floor := add_box(world, {20, .5, 20}, {0, -.5, 0}, .Static)
     testing.expect(t, floor != INVALID_BODY)
     vehicle := create_vehicle(world, {

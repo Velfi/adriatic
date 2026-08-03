@@ -78,6 +78,8 @@ KeyboardKey :: enum {
     DOWN,
     LEFT,
     RIGHT,
+    LEFT_BRACKET,
+    RIGHT_BRACKET,
     ONE,
     TWO,
     THREE,
@@ -302,7 +304,8 @@ GLYPH_ATLAS_CELL_64 :: 88
 GLYPH_ATLAS_CELL_128 :: 168
 GLYPH_ATLAS_SLOTS_32 :: (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_32) * (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_32)
 GLYPH_ATLAS_SLOTS_64 :: (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_64) * (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_64)
-GLYPH_ATLAS_SLOTS_128 :: (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_128) * (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_128)
+GLYPH_ATLAS_SLOTS_128 ::
+    (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_128) * (GLYPH_ATLAS_PAGE_SIZE / GLYPH_ATLAS_CELL_128)
 GLYPH_CACHE_SLOT_COUNT :: GLYPH_ATLAS_SLOTS_32 + GLYPH_ATLAS_SLOTS_64 + GLYPH_ATLAS_SLOTS_128 * 2
 TEXT_INPUT_CAPACITY :: 1024
 TEXT_COMPOSITION_CAPACITY :: 1024
@@ -314,15 +317,15 @@ Glyph_Cache_Key :: struct {
 }
 
 Glyph_Cache_Entry :: struct {
-    key:          Glyph_Cache_Key,
-    occupied:     bool,
-    page:         u8,
-    generation:   u32,
-    x, y:         i32,
-    width, height:i32,
-    left, top:    i32,
-    last_used:    u64,
-    pinned_until: u64,
+    key:           Glyph_Cache_Key,
+    occupied:      bool,
+    page:          u8,
+    generation:    u32,
+    x, y:          i32,
+    width, height: i32,
+    left, top:     i32,
+    last_used:     u64,
+    pinned_until:  u64,
 }
 
 State :: struct {

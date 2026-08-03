@@ -160,13 +160,18 @@ terrain_sampling_lookup_rebuild :: proc(project: ^Project) {
     if project == nil do return
     delete(project.terrain_page_lookup)
     delete(project.bathymetry_chunk_lookup)
+    delete(project.marine_habitat_lookup)
     project.terrain_page_lookup = make(map[[3]i32]int, len(project.terrain_pages))
     project.bathymetry_chunk_lookup = make(map[[3]i32]int, len(project.bathymetry_chunks))
+    project.marine_habitat_lookup = make(map[[3]i32]int, len(project.marine_habitat_chunks))
     for page, index in project.terrain_pages {
         project.terrain_page_lookup[[3]i32{i32(page.level), i32(page.page_x), i32(page.page_z)}] = index
     }
     for chunk, index in project.bathymetry_chunks {
         project.bathymetry_chunk_lookup[[3]i32{i32(chunk.owner), chunk.chunk_x, chunk.chunk_z}] = index
+    }
+    for chunk, index in project.marine_habitat_chunks {
+        project.marine_habitat_lookup[[3]i32{i32(chunk.owner), chunk.chunk_x, chunk.chunk_z}] = index
     }
 }
 

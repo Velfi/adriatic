@@ -26,6 +26,8 @@ struct Push {
 [[vk::binding(13, 0)]] SamplerState material_lab_roughness_sampler;
 [[vk::binding(14, 0)]] Texture2D<float4> material_lab_normal;
 [[vk::binding(15, 0)]] SamplerState material_lab_normal_sampler;
+[[vk::binding(16, 0)]] Texture2D<float4> marine_ecology_atlas;
+[[vk::binding(17, 0)]] SamplerState marine_ecology_sampler;
 
 struct DynamicShadowCascade {
     // Light-space basis vectors. The fourth components contain the snapped
@@ -120,6 +122,7 @@ static const uint MATERIAL_SETTLEMENT = 23;
 static const uint MATERIAL_FOG_SHELL = 24;
 static const uint MATERIAL_ROCK = 25;
 static const uint MATERIAL_BARK = 26;
+static const uint MATERIAL_MARINE_WATER = 27;
 
 float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
     float2 offset = p.xz - a.xy;
@@ -2905,6 +2908,46 @@ float3 shade_water(VertexOutput input) {
     return saturate(color);
 }
 
+float3 shade_marine_water(VertexOutput input, float4 habitat) {
+    float3 water = shade_water(input);
+    float2 p = input.world_position.xz;
+    float broad = value_noise(rotate2(p, .31) / 58.0);
+    float channel = value_noise(rotate2(p + float2(37, -19), -.22) / 23.0);
+    float grain = value_noise(rotate2(p, .67) / 7.5);
+    float seagrass = habitat.r * lerp(.68, 1.18, broad) * lerp(.72, 1.12, channel);
+    float algae = habitat.g * lerp(.78, 1.10, grain) * lerp(1.10, .82, broad);
+    float reef = habitat.b * lerp(.76, 1.12, broad);
+    float disturbance = habitat.a;
+    float coverage = max(seagrass, max(algae, reef)) * (1.0 - disturbance);
+    // Break the interpolated suitability field into broad natural masses. The
+    // field remains continuous across chunk edges; this only moves its visual
+    // boundary at several world-space scales.
+    float meadow = smoothstep(.12, .46, coverage + (broad - .5) * .16 + (channel - .5) * .09);
+
+    float3 seagrass_color = srgb_to_linear(float3(48, 91, 58) / 255.0);
+    float3 algae_color = srgb_to_linear(float3(47, 72, 55) / 255.0);
+    float3 reef_color = srgb_to_linear(float3(132, 91, 78) / 255.0);
+    float weight_sum = max(seagrass + algae + reef, .0001);
+    float3 ecology_color =
+        (seagrass_color * seagrass + algae_color * algae + reef_color * reef) /
+        weight_sum;
+
+    // At foot level, a wind-aligned fine signal suggests a moving canopy.
+    // From the air it collapses into stable meadow masses instead of resolving
+    // into repeated instances or a chunk lattice.
+    float2 wind = push.water.zw;
+    float wind_length = max(length(wind), .001);
+    float2 wind_axis = wind / wind_length;
+    float canopy_wave = sin(dot(p, wind_axis) * .19 - push.water.x * (.34 + wind_length * .012));
+    float camera_height = abs(push.camera_position.y - input.world_position.y);
+    float near_canopy = 1.0 - smoothstep(32.0, 150.0, camera_height);
+    ecology_color *= lerp(.96, 1.04, (canopy_wave * .5 + .5) * near_canopy);
+    // Ecology belongs beneath the water response, not in place of it. Keeping
+    // most of the shaded ocean preserves reflections, depth, and atmosphere.
+    float ecology_strength = meadow * lerp(.18, .30, saturate(seagrass + algae));
+    return lerp(water, ecology_color, ecology_strength);
+}
+
 float3 shade_fountain_water(VertexOutput input) {
     float2 p = input.world_position.xz;
     float time = push.water.x;
@@ -3091,6 +3134,13 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         case MATERIAL_WATER:
             base = shade_water(input);
             break;
+        case MATERIAL_MARINE_WATER: {
+            float4 habitat = marine_ecology_atlas.Sample(marine_ecology_sampler, input.uv);
+            float coverage = max(habitat.r, max(habitat.g, habitat.b)) * (1.0 - habitat.a);
+            if (coverage < .018) discard;
+            base = shade_marine_water(input, habitat);
+            break;
+        }
         case MATERIAL_FOUNTAIN_WATER:
             base = shade_fountain_water(input);
             break;
@@ -3303,6 +3353,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         base *= lerp(.72, 1.0, visibility);
     }
     if (input.kind == MATERIAL_WATER ||
+        input.kind == MATERIAL_MARINE_WATER ||
         input.kind == MATERIAL_FOUNTAIN_WATER) {
         // Nearby boats and aircraft use the mapped caster pass. Let the water
         // receive their softened silhouettes without crushing its animated

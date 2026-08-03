@@ -940,8 +940,10 @@ Project :: struct {
     terrain_pages:           [dynamic]Terrain_Page `fixture:"-"`,
     terrain_level_layout:    [CLIPMAP_LEVELS]Terrain_Level_Layout `fixture:"-"`,
     bathymetry_chunks:       [dynamic]Bathymetry_Chunk `fixture:"-"`,
+    marine_habitat_chunks:   [dynamic]Marine_Habitat_Chunk `fixture:"-"`,
     terrain_page_lookup:     map[[3]i32]int `fixture:"-" map:"-"`,
     bathymetry_chunk_lookup: map[[3]i32]int `fixture:"-" map:"-"`,
+    marine_habitat_lookup:   map[[3]i32]int `fixture:"-" map:"-"`,
     island_transforms:       [ISLAND_COUNT]Island_Transform,
 }
 
@@ -1042,14 +1044,18 @@ project_replace :: proc(project, loaded: ^Project) {
     delete(project.structures)
     delete(project.terrain_pages)
     bathymetry_destroy(&project.bathymetry_chunks)
+    marine_habitat_destroy(&project.marine_habitat_chunks)
     delete(project.terrain_page_lookup)
     delete(project.bathymetry_chunk_lookup)
+    delete(project.marine_habitat_lookup)
     project^ = loaded^
     loaded.structures = nil
     loaded.terrain_pages = nil
     loaded.bathymetry_chunks = nil
+    loaded.marine_habitat_chunks = nil
     loaded.terrain_page_lookup = nil
     loaded.bathymetry_chunk_lookup = nil
+    loaded.marine_habitat_lookup = nil
     terrain_sampling_lookup_rebuild(project)
 }
 
@@ -1750,7 +1756,7 @@ formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
     case .Spire:
         return .Mountain
     case .Mountain:
-        return .Ridge
+        return .Foliage
     case .Ridge:
         return .Foliage
     case .Cliff:
@@ -1769,7 +1775,7 @@ formation_kind_for_gesture :: proc(width, depth, height: f32) -> Formation_Kind 
     wide := max(width, depth)
     narrow := max(min(width, depth), BASE_CELL_SIZE)
     aspect := wide / narrow
-    if aspect >= 2.4 do return .Ridge
+    if aspect >= 2.4 do return .Rock
     if height >= wide * 1.65 do return .Spire
     if height >= narrow * 1.15 do return .Mountain
     return .Rock
@@ -1949,8 +1955,10 @@ destroy_project :: proc(project: ^Project) {
     project.structure_count = 0
     delete(project.terrain_pages)
     bathymetry_destroy(&project.bathymetry_chunks)
+    marine_habitat_destroy(&project.marine_habitat_chunks)
     delete(project.terrain_page_lookup)
     delete(project.bathymetry_chunk_lookup)
+    delete(project.marine_habitat_lookup)
 }
 
 free_project :: proc(project: ^Project) {

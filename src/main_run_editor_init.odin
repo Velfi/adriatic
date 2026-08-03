@@ -28,6 +28,7 @@ run_initialize_editor_defaults :: proc(
     editor.radius = 48
     editor.strength = .10
     editor.hardness = .5
+    terrain_authoring_defaults(&editor.terrain_sculpt, editor.project.sea_level)
     editor.structure_selected = -1
     editor.structure_kind = .Box
     editor.structure_auto_kind = true

@@ -122,8 +122,10 @@ map_artifact_capture_fixture :: proc(
     artifact.project.structures = nil
     artifact.project.terrain_pages = nil
     artifact.project.bathymetry_chunks = nil
+    artifact.project.marine_habitat_chunks = nil
     artifact.project.terrain_page_lookup = nil
     artifact.project.bathymetry_chunk_lookup = nil
+    artifact.project.marine_habitat_lookup = nil
     terrain.island_transforms_initialize(&artifact.project)
     if fixture.project.structure_count > 0 {
         structures, allocation_error := make([dynamic]terrain.Structure, fixture.project.structure_count, alloc)
@@ -179,6 +181,32 @@ map_artifact_capture_fixture :: proc(
             }
         }
     }
+    if len(fixture.project.marine_habitat_chunks) > 0 {
+        chunks, allocation_error := make(
+            [dynamic]terrain.Marine_Habitat_Chunk,
+            len(fixture.project.marine_habitat_chunks),
+            alloc,
+        )
+        if allocation_error != nil {
+            map_artifact_destroy(artifact, alloc)
+            return nil, map_artifact_allocation_error(), false
+        }
+        artifact.project.marine_habitat_chunks = chunks
+        for &source, index in fixture.project.marine_habitat_chunks {
+            target := &artifact.project.marine_habitat_chunks[index]
+            target^ = source
+            target.cells = nil
+            if len(source.cells) > 0 {
+                cells, cells_error := make([dynamic]terrain.Marine_Habitat_Cell, len(source.cells), alloc)
+                if cells_error != nil {
+                    map_artifact_destroy(artifact, alloc)
+                    return nil, map_artifact_allocation_error(), false
+                }
+                copy(cells[:], source.cells[:])
+                target.cells = cells
+            }
+        }
+    }
     artifact.settlement_plan = fixture.settlement_plan
     artifact.marina_authored = fixture.marina_authored
     artifact.marina_authored_plan = fixture.marina_authored_plan
@@ -222,9 +250,14 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
     artifact.project.structures = nil
     artifact.project.terrain_pages = nil
     artifact.project.bathymetry_chunks = nil
+    artifact.project.marine_habitat_chunks = nil
     artifact.project.terrain_page_lookup = nil
     artifact.project.bathymetry_chunk_lookup = nil
+    artifact.project.marine_habitat_lookup = nil
     terrain.terrain_sampling_lookup_rebuild(&fixture.project)
+    if len(fixture.project.marine_habitat_chunks) == 0 {
+        terrain.marine_habitat_rebuild_all(&fixture.project)
+    }
     fixture.project.river_water_splines = artifact.river_water_splines
     if fixture.project.river_water_splines[0].point_count == 0 ||
        fixture.project.river_water_splines[1].point_count == 0 {
@@ -406,6 +439,9 @@ map_artifact_generate :: proc(
     fmt.println("map bake: terrain complete")
     editor.terrain_revision = 1
     seed_default_island_marinas_seeded(editor, seeds)
+    // Harbor generation may dredge or fill the seabed. Habitat is derived
+    // only after those authoritative coastal edits have settled.
+    marine_habitat_rebuild_world(editor)
     fmt.println("map bake: marinas complete")
     seed_default_island_towns_seeded(editor, seeds)
     fmt.println("map bake: towns complete")

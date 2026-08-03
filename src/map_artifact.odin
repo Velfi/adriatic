@@ -14,13 +14,13 @@ import "core:strings"
 
 MAP_ARTIFACT_MAGIC :: [8]byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
 MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)
-MAP_ARTIFACT_FORMAT_VERSION :: u32(4)
-MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION :: u32(3)
+MAP_ARTIFACT_FORMAT_VERSION :: u32(5)
+MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION :: u32(4)
 MAP_ARTIFACT_LEGACY_FORMAT_VERSION :: u32(1)
 // Bump whenever procedural output changes in a way that requires shipped maps
 // to be rebuilt. This is deliberately independent of Fixture schema versions.
-MAP_ARTIFACT_GENERATOR_VERSION :: u64(6)
-MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(5)
+MAP_ARTIFACT_GENERATOR_VERSION :: u64(7)
+MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(6)
 MAP_ARTIFACT_LEGACY_GENERATOR_VERSION :: u64(3)
 // The committed Dunes fixture predates the initial generator bump.
 MAP_ARTIFACT_INITIAL_GENERATOR_VERSION :: u64(1)
@@ -252,6 +252,11 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
            page.page_x >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION ||
            page.page_z >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION {
             return "terrain page key is invalid", false
+        }
+    }
+    for chunk in artifact.project.marine_habitat_chunks {
+        if len(chunk.cells) != terrain.BATHYMETRY_CHUNK_SAMPLES {
+            return "marine habitat chunk is incomplete", false
         }
     }
     for chunk, chunk_index in artifact.project.bathymetry_chunks {

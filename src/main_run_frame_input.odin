@@ -200,8 +200,12 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                     editor.plant_stamp_mode = .Ground
                     authoring_select_tool(editor, .Foliage)
                 }
-                if !control_key_down() && canvas2d.IsKeyPressed(.Z) do authoring_select_tool(editor, .Ridge)
-                if !control_key_down() && canvas2d.IsKeyPressed(.C) do authoring_select_tool(editor, .Cliff)
+                if !control_key_down() && canvas2d.IsKeyPressed(.Z) {
+                    authoring_select_tool(editor, .Ridge)
+                }
+                if !control_key_down() && canvas2d.IsKeyPressed(.C) {
+                    authoring_select_tool(editor, .Cliff)
+                }
                 if !control_key_down() && canvas2d.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
                 if !control_key_down() && canvas2d.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
                 if !control_key_down() && !editor.road_mode && canvas2d.IsKeyPressed(.K) {
@@ -213,6 +217,11 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                 if !control_key_down() && canvas2d.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
             }
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
+            if !imgui_captures_keyboard() && editor.authoring_tool == .Sculpt {
+                settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+                if canvas2d.IsKeyPressed(.LEFT_BRACKET) do settings.size = max(settings.size - max(settings.size * .1, f32(1)), f32(4))
+                if canvas2d.IsKeyPressed(.RIGHT_BRACKET) do settings.size = min(settings.size + max(settings.size * .1, f32(1)), f32(500))
+            }
             if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.S) {
                 if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
                 map_editor_save(editor)
@@ -334,6 +343,10 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             }
         } else if editor.tool == .Structure && (shift_key_down() || alt_key_down()) {
             structure_adjust_with_wheel(editor, viewport_wheel)
+        } else if editor.authoring_tool == .Sculpt && (shift_key_down() || alt_key_down()) {
+            settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+            if shift_key_down() do settings.flow = clamp(settings.flow + viewport_wheel * .04, f32(.01), f32(1))
+            if alt_key_down() do settings.feather = clamp(settings.feather + viewport_wheel * 2, f32(0), f32(250))
         } else if alt_key_down() && (editor.tool == .Raise || editor.tool == .Smooth || editor.tool == .Paint) {
             editor.hardness = clamp(editor.hardness + viewport_wheel * .02, 0, 1)
         } else if shift_key_down() && (editor.tool == .Raise || editor.tool == .Smooth || editor.tool == .Paint) {
@@ -374,9 +387,13 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     editor.cursor_hit = cursor_hit && !ui_hit && !editor.in_map
     if editor.cursor_hit {
         cursor_height, cursor_material, land_found := terrain.sample_land(&editor.project, 0, world_x, world_z)
-        if !land_found {
+        terrain_seabed_target :=
+            editor.authoring_tool == .Sculpt &&
+            editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].affect_seabed
+        if !land_found && !terrain_seabed_target {
             editor.cursor_hit = false
         } else {
+            if !land_found do cursor_height = terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
             editor.cursor_height = cursor_height
             editor.cursor_material = cursor_material
         }
@@ -394,23 +411,29 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             editor.tweak_teleport_on_click = false
         }
     }
-    note_placement_consumes_input :=
-        teleport_consumes_input || fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
-    terrain_sculpt_consumes_input :=
-        teleport_consumes_input || terrain_sculpt_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-    sdf_obstacle_consumes_input :=
-        !teleport_consumes_input &&
-        !note_placement_consumes_input &&
-        !terrain_sculpt_consumes_input &&
-        sdf_obstacle_process_input(
-            editor,
-            editor_view_camera,
-            world_mouse,
-            world_render_width,
-            world_render_height,
-            world_mouse_inside && !ui_hit,
-        )
-    if !teleport_consumes_input &&
+    note_placement_consumes_input := teleport_consumes_input
+    terrain_sculpt_consumes_input := teleport_consumes_input
+    sdf_obstacle_consumes_input := false
+    if !editor.in_map {
+        note_placement_consumes_input =
+            teleport_consumes_input || fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
+        terrain_sculpt_consumes_input =
+            teleport_consumes_input || terrain_sculpt_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        sdf_obstacle_consumes_input =
+            !teleport_consumes_input &&
+            !note_placement_consumes_input &&
+            !terrain_sculpt_consumes_input &&
+            sdf_obstacle_process_input(
+                editor,
+                editor_view_camera,
+                world_mouse,
+                world_render_width,
+                world_render_height,
+                world_mouse_inside && !ui_hit,
+            )
+    }
+    if !editor.in_map &&
+       !teleport_consumes_input &&
        !note_placement_consumes_input &&
        !terrain_sculpt_consumes_input &&
        !sdf_obstacle_consumes_input {
@@ -436,7 +459,8 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
-    if !note_placement_consumes_input &&
+    if !editor.in_map &&
+       !note_placement_consumes_input &&
        !sdf_obstacle_consumes_input &&
        !editor.architecture_paint_mode &&
        !editor.marina_paint_mode &&
@@ -452,7 +476,10 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
        editor.curve_point_count == 0 {
         structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
-    if !note_placement_consumes_input && !sdf_obstacle_consumes_input && editor.selection_tool_active {
+    if !editor.in_map &&
+       !note_placement_consumes_input &&
+       !sdf_obstacle_consumes_input &&
+       editor.selection_tool_active {
         structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
 }

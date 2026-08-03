@@ -837,7 +837,7 @@ World::Vehicle *zelda_physics_vehicle_create(
         Vec3(0, settings->center_of_mass_offset_y, 0),
         new BoxShape(Vec3(settings->half_width, settings->half_height, settings->half_length))
     ).Create().Get();
-    BodyCreationSettings body_settings(shape, position(p), rotation(q), EMotionType::Dynamic, MOVING_LAYER);
+    BodyCreationSettings body_settings(shape, position(p), rotation(q), EMotionType::Dynamic, VEHICLE_LAYER);
     body_settings.mUserData = user_data;
     body_settings.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
     body_settings.mMassPropertiesOverride.mMass = settings->mass;
@@ -911,7 +911,7 @@ World::Vehicle *zelda_physics_vehicle_create(
                 lateral = vehicle->lateral_grip[index] * lateral_friction * suspension;
             });
     vehicle->constraint->SetVehicleCollisionTester(
-        new VehicleCollisionTesterCastCylinder(MOVING_LAYER, 0.5f)
+        new VehicleCollisionTesterCastCylinder(VEHICLE_LAYER, 0.5f)
     );
     world->system.AddConstraint(vehicle->constraint);
     world->system.AddStepListener(vehicle->constraint);

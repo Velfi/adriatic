@@ -515,6 +515,13 @@ when ODIN_TEST {
     }
 }
 
+marine_bed_base_color :: #force_inline proc(material: i8) -> canvas2d.Color {
+    rock := clamp(f32(material) / 63, f32(0), f32(1))
+    sand := clamp(-f32(material) / 63, f32(0), f32(1))
+    color := color_lerp(canvas2d.Color{145, 137, 111, 255}, {107, 110, 99, 255}, rock)
+    return color_lerp(color, {183, 164, 116, 255}, sand)
+}
+
 world_bathymetry :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map do return
     world_bathymetry_geometry_cache_ensure(len(editor.project.bathymetry_chunks))
@@ -564,6 +571,11 @@ world_bathymetry :: proc(editor: ^Editor) {
                     origin_z + f32(z + 1) * cell,
                 }
                 d := third_person.Vec3{origin_x + f32(x + 1) * cell, f32(chunk.heights[i1]), origin_z + f32(z) * cell}
+                materials := [4]i8{chunk.material[i], chunk.material[i2], chunk.material[i3], chunk.material[i1]}
+                colors: [4]canvas2d.Color
+                for corner in 0 ..< 4 {
+                    colors[corner] = marine_bed_base_color(materials[corner])
+                }
                 world_quad_colored_smooth_lit(
                     a,
                     b,
@@ -573,10 +585,10 @@ world_bathymetry :: proc(editor: ^Editor) {
                     normal,
                     normal,
                     normal,
-                    canvas2d.Color{151, 137, 99, 255},
-                    canvas2d.Color{151, 137, 99, 255},
-                    canvas2d.Color{151, 137, 99, 255},
-                    canvas2d.Color{151, 137, 99, 255},
+                    colors[0],
+                    colors[1],
+                    colors[2],
+                    colors[3],
                     .94,
                 )
             }

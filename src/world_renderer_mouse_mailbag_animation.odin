@@ -623,6 +623,25 @@ mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
         &world_renderer.pavement_query,
         {x, height, z},
     )
-    if surface.on_surface do height = max(height + .12, surface.height + .12)
+    if surface.on_surface {
+        road_height := height
+        if surface.from_authored &&
+           surface.edge_index >= 0 &&
+           surface.edge_index < editor.project.road_graph.edge_count {
+            edge := editor.project.road_graph.edges[surface.edge_index]
+            // Ordinary roads are rendered as terrain overlays. Their stored
+            // spline Y can be stale (especially on generated island links),
+            // so it must not create an invisible support plane above the
+            // visible road. Designed profiles and bridge decks are the two
+            // cases where the renderer deliberately departs from terrain.
+            if edge.engineering_designed && edge.authored_profile {
+                road_height = surface.height
+            }
+            if deck_height, bridge := road_bridge_deck_height(editor, surface.edge_index, surface.amount); bridge {
+                road_height = deck_height
+            }
+        }
+        height = max(height + .12, road_height + .12)
+    }
     return height
 }

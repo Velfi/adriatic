@@ -39,14 +39,11 @@ Plant_Stamp_Mode :: enum u8 {
 // GreekAssets remains as a frozen enum value for historical Fixture decoding,
 // but is no longer part of the live editor tool palette.
 AUTHORING_TOOL_COUNT :: 14
-AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 1
+AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 4
 AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_DISPLAY_COUNT + 2
 AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Sculpt,
-    .Smooth,
     .Paint,
-    .Ridge,
-    .Cliff,
     .Roads,
     .Formations,
     .Foliage,
@@ -138,6 +135,61 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     return "TOOL"
 }
 
+terrain_family_name :: #force_inline proc(family: Terrain_Family) -> cstring {
+    switch family {case .Landmass:
+        return "LANDMASS"; case .Primary_Forms:
+        return "FORMS"; case .Surface:
+        return "SURFACE"; case .Built_Terrain:
+        return "BUILT"}
+    return "TERRAIN"
+}
+
+terrain_action_name :: #force_inline proc(action: Terrain_Action) -> cstring {
+    switch action {
+    case .Coast:
+        return "COAST"
+    case .Shelf:
+        return "SHELF"
+    case .Ridge:
+        return "RIDGE"
+    case .Valley:
+        return "VALLEY"
+    case .Slope:
+        return "SLOPE"
+    case .Grade:
+        return "GRADE"
+    case .Relax:
+        return "RELAX"
+    case .Erode:
+        return "ERODE"
+    case .Deposit:
+        return "DEPOSIT"
+    case .Roughen:
+        return "ROUGHEN"
+    case .Terrace:
+        return "TERRACE"
+    case .Pad:
+        return "PAD"
+    case .Cut_Fill:
+        return "CUT/FILL"
+    }
+    return "TERRAIN"
+}
+
+terrain_family_actions :: proc(family: Terrain_Family) -> ([4]Terrain_Action, int) {
+    switch family {
+    case .Landmass:
+        return {.Coast, .Shelf, .Shelf, .Shelf}, 2
+    case .Primary_Forms:
+        return {.Ridge, .Valley, .Slope, .Grade}, 4
+    case .Surface:
+        return {.Relax, .Erode, .Deposit, .Roughen}, 4
+    case .Built_Terrain:
+        return {.Terrace, .Pad, .Cut_Fill, .Cut_Fill}, 3
+    }
+    return {}, 0
+}
+
 @(no_instrumentation)
 authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
     switch tool {
@@ -212,7 +264,10 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     case .Sculpt:
         editor.tool = .Raise
     case .Smooth:
-        editor.tool = .Smooth
+        editor.authoring_tool = .Sculpt
+        editor.tool = .Raise
+        editor.terrain_sculpt.family = .Surface
+        editor.terrain_sculpt.action = .Relax
     case .Paint:
         editor.tool = .Paint
     case .Formations:
@@ -221,13 +276,17 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.tool = .Structure
         editor.climbing_leaf_paint_mode = editor.plant_stamp_mode == .Climbing
     case .Ridge:
-        editor.tool = .Structure
-        editor.curve_mode = true
-        editor.curve_cliff_mode = false
+        editor.authoring_tool = .Sculpt
+        editor.tool = .Raise
+        editor.terrain_sculpt.family = .Primary_Forms
+        editor.terrain_sculpt.action = .Ridge
+        editor.terrain_sculpt.settings[int(Terrain_Action.Ridge)].profile = .Round
     case .Cliff:
-        editor.tool = .Structure
-        editor.curve_mode = true
-        editor.curve_cliff_mode = true
+        editor.authoring_tool = .Sculpt
+        editor.tool = .Raise
+        editor.terrain_sculpt.family = .Primary_Forms
+        editor.terrain_sculpt.action = .Ridge
+        editor.terrain_sculpt.settings[int(Terrain_Action.Ridge)].profile = .Cliff
     case .Building:
         editor.tool = .Structure
         editor.architecture_paint_mode = true
@@ -451,12 +510,7 @@ editor_ui_draw_tool_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canv
 editor_ui_draw_sculpt_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canvas2d.Rectangle) {
     if editor == nil || !editor.sculpt_tool_atlas.ready do return
     cell_width := f32(editor.sculpt_tool_atlas.width) / 5
-    source := canvas2d.Rectangle {
-        f32(atlas_index) * cell_width,
-        0,
-        cell_width,
-        f32(editor.sculpt_tool_atlas.height),
-    }
+    source := canvas2d.Rectangle{f32(atlas_index) * cell_width, 0, cell_width, f32(editor.sculpt_tool_atlas.height)}
     size := min(bounds.width - 8, bounds.height - 6)
     destination := canvas2d.Rectangle {
         bounds.x + (bounds.width - size) * .5,
@@ -677,23 +731,55 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     switch editor.authoring_tool {
     case .Sculpt:
         if editor.terrain_sculpt.session.active {
+            if editor.terrain_sculpt.action == .Grade && !editor.terrain_sculpt.session.grade_valid {
+                return "Grade is too steep. Adjust the path or maximum grade."
+            }
+            if editor.terrain_sculpt.action == .Pad {
+                return fmt.ctprintf(
+                    "Cut %.0f m³ · Fill %.0f m³. Release to commit.",
+                    editor.terrain_sculpt.session.cut_volume,
+                    editor.terrain_sculpt.session.fill_volume,
+                )
+            }
+            if editor.terrain_sculpt.session.effective_resolution > terrain.FINE_CELL_SIZE {
+                return fmt.ctprintf(
+                    "Editing at %.0f m resolution. Release to commit.",
+                    editor.terrain_sculpt.session.effective_resolution,
+                )
+            }
             return(
                 editor.terrain_sculpt.session.valid ? "Release to commit. Esc cancels." : "Keep the gesture on one island." \
             )
         }
-        switch editor.terrain_sculpt.mode {
-        case .Shape:
-            return "[Left] to raise   [Right] to lower   [Wheel] to zoom"
-        case .Level:
-            return "Drag up or down to set the level; release to commit."
+        switch editor.terrain_sculpt.action {
+        case .Coast:
+            return "Left pushes the coast out; right pulls it in."
+        case .Shelf:
+            return "Brush a shallow coastal shelf."
+        case .Ridge:
+            return "Draw a ridge spine; release to commit."
+        case .Valley:
+            return "Draw a valley path; release to commit."
+        case .Slope:
+            return "Draw the slope boundary; the left side is high."
         case .Grade:
-            return "Drag a path on one island; release to commit the grade."
-        case .Terrace:
-            return "Drag up or down to terrace the selected ground."
+            return "Draw a grade between sampled endpoint elevations."
+        case .Relax:
+            return "Brush to relax steep ground."
         case .Erode:
-            return "Drag up or down to relax steep ground."
+            return "Brush to erode and transport loose ground."
+        case .Deposit:
+            return "Brush to deposit material in local lows."
+        case .Roughen:
+            return "Brush deterministic surface variation."
+        case .Terrace:
+            return "Brush terrain into elevation steps."
+        case .Pad:
+            return "Drag a rectangular level pad."
+        case .Cut_Fill:
+            return "Brush toward the target elevation."
         }
-        return "[Left] to raise   [Right] to lower   [Wheel] to zoom"
+        return "Drag terrain to edit it."
     case .Smooth:
         return "[Left or Right] to smooth   [Wheel] to zoom"
     case .Paint:
@@ -869,53 +955,279 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     row := 0
     switch editor.authoring_tool {
     case .Sculpt:
-        bounds := editor_ui_slider_bounds(layout, row)
-        gap := f32(4)
-        button_size := f32(30)
-        row_width := button_size * 5 + gap * 4
-        row_x := bounds.x + (bounds.width - row_width) * .5
-        labels := [5]cstring{"SHAPE", "LEVEL", "GRADE", "TERRACE", "ERODE"}
-        for mode in 0 ..< len(labels) {
-            button_bounds := canvas2d.Rectangle {
-                row_x + f32(mode) * (button_size + gap),
-                bounds.y + 12,
-                button_size,
-                button_size,
-            }
+        family_bounds := editor_ui_slider_bounds(layout, row)
+        family_width := (family_bounds.width - 9) * .25
+        for family_index in 0 ..< 4 {
+            family := Terrain_Family(family_index)
             editor_ui_panel_button(
-                button_bounds,
-                "",
-                int(editor.terrain_sculpt.mode) == mode,
+                {family_bounds.x + f32(family_index) * (family_width + 3), family_bounds.y + 20, family_width, 30},
+                terrain_family_name(family),
+                editor.terrain_sculpt.family == family,
             )
-            editor_ui_draw_sculpt_icon(editor, mode, button_bounds)
         }
         row += 1
-        if editor.terrain_sculpt.mode == .Level ||
-           editor.terrain_sculpt.mode == .Terrace ||
-           editor.terrain_sculpt.mode == .Erode {
-            area_bounds := editor_ui_slider_bounds(layout, row)
-            half := (area_bounds.width - 6) * .5
-            editor_ui_panel_button({area_bounds.x, area_bounds.y + 24, half, 30}, "BRUSH", !editor.terrain_sculpt.area)
+        actions, action_count := terrain_family_actions(editor.terrain_sculpt.family)
+        action_bounds := editor_ui_slider_bounds(layout, row)
+        action_width := (action_bounds.width - f32(action_count - 1) * 4) / f32(action_count)
+        for action_index in 0 ..< action_count {
+            action := actions[action_index]
             editor_ui_panel_button(
-                {area_bounds.x + half + 6, area_bounds.y + 24, half, 30},
-                "AREA",
-                editor.terrain_sculpt.area,
+                {action_bounds.x + f32(action_index) * (action_width + 4), action_bounds.y + 20, action_width, 30},
+                terrain_action_name(action),
+                editor.terrain_sculpt.action == action,
+            )
+        }
+        row += 1
+        settings := editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SIZE (m)", settings.size, 4, 500, 0)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "FEATHER (m)", settings.feather, 0, 250, 0)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "FLOW", settings.flow, 0, 1, 2)
+        row += 1
+        switch editor.terrain_sculpt.action {
+        case .Coast:
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "BEACH (m)",
+                settings.beach_elevation,
+                -5,
+                20,
+                1,
+            )
+            row += 1
+        case .Shelf:
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", settings.shelf_depth, -80, 0, 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SLOPE", settings.shelf_slope, .1, 4, 2)
+            row += 1
+        case .Ridge, .Valley, .Slope:
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                editor.terrain_sculpt.action == .Valley ? "DEPTH (m)" : "HEIGHT (m)",
+                settings.height,
+                1,
+                200,
+                0,
+            )
+            row += 1
+        case .Grade:
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "MAX GRADE", settings.maximum_grade, 0, .5, 2)
+            row += 1
+            grade_mode_bounds := editor_ui_slider_bounds(layout, row)
+            editor_ui_panel_button(
+                {grade_mode_bounds.x, grade_mode_bounds.y + 20, grade_mode_bounds.width, 30},
+                settings.elevation_mode == .Sampled ? "ENDPOINTS: SAMPLED" : "ENDPOINTS: EXPLICIT",
+                settings.elevation_mode == .Explicit,
+            )
+            row += 1
+            if settings.elevation_mode == .Explicit {
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "START (m)",
+                    settings.grade_start_elevation,
+                    -50,
+                    300,
+                    1,
+                ); row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "END (m)",
+                    settings.grade_end_elevation,
+                    -50,
+                    300,
+                    1,
+                ); row += 1
+            }
+        case .Relax, .Erode, .Deposit:
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "ITERATIONS",
+                f32(settings.iterations),
+                1,
+                96,
+                0,
+            )
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "TALUS", settings.talus, 0, 4, 2)
+            row += 1
+        case .Roughen:
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "AMPLITUDE (m)", settings.amplitude, 0, 40, 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SCALE (m)", settings.noise_scale, 2, 200, 0)
+            row += 1
+        case .Terrace:
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "STEP HEIGHT",
+                settings.terrace_height,
+                .5,
+                20,
+                1,
+            )
+            row += 1
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "REFERENCE",
+                settings.terrace_reference,
+                -50,
+                200,
+                1,
+            )
+            row += 1
+        case .Pad, .Cut_Fill:
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "ELEVATION",
+                settings.target_elevation,
+                -50,
+                300,
+                1,
             )
             row += 1
         }
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "RADIUS (m)",
-            editor.radius,
-            terrain.BASE_CELL_SIZE,
-            400,
-            0,
+        advanced_bounds := editor_ui_slider_bounds(layout, row)
+        editor_ui_panel_button(
+            {advanced_bounds.x, advanced_bounds.y + 20, advanced_bounds.width, 30},
+            editor.terrain_sculpt.advanced ? "ADVANCED −" : "ADVANCED +",
+            editor.terrain_sculpt.advanced,
         )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
-        row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.hardness, 0, 1, 2)
-        row += 1
+        if editor.terrain_sculpt.advanced {
+            seabed_bounds := editor_ui_slider_bounds(layout, row)
+            editor_ui_panel_button(
+                {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30},
+                settings.affect_seabed ? "AFFECT SEABED: YES" : "AFFECT SEABED: NO",
+                settings.affect_seabed,
+            )
+            row += 1
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "SPACING",
+                settings.spacing,
+                .05,
+                1,
+                2,
+            ); row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CORE", settings.inner_core, 0, 1, 2); row += 1
+            #partial switch editor.terrain_sculpt.action {
+            case .Ridge, .Valley:
+                profile_bounds := editor_ui_slider_bounds(layout, row)
+                third := (profile_bounds.width - 8) / 3
+                editor_ui_panel_button(
+                    {profile_bounds.x, profile_bounds.y + 20, third, 30},
+                    "ROUND",
+                    settings.profile == .Round,
+                )
+                editor_ui_panel_button(
+                    {profile_bounds.x + third + 4, profile_bounds.y + 20, third, 30},
+                    "SHARP",
+                    settings.profile == .Sharp,
+                )
+                editor_ui_panel_button(
+                    {profile_bounds.x + (third + 4) * 2, profile_bounds.y + 20, third, 30},
+                    "CLIFF",
+                    settings.profile == .Cliff,
+                )
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "SIDE BIAS",
+                    settings.side_bias,
+                    -1,
+                    1,
+                    2,
+                ); row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "ROUGHNESS",
+                    settings.roughness,
+                    0,
+                    20,
+                    1,
+                ); row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "END TAPER",
+                    settings.endpoint_taper,
+                    0,
+                    .5,
+                    2,
+                ); row += 1
+            case .Slope:
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SIDE BIAS", settings.side_bias, -1, 1, 2)
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "PRESERVE DETAIL",
+                    settings.preserve_detail,
+                    0,
+                    1,
+                    2,
+                )
+                row += 1
+            case .Erode:
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "RAINFALL", settings.rainfall, .01, 2, 2)
+                row += 1
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "SEDIMENT", settings.sediment, .01, 2, 2)
+                row += 1
+            case .Roughen:
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "OCTAVES", f32(settings.octaves), 1, 6, 0)
+                row += 1
+            case .Terrace:
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "STEP DEPTH",
+                    settings.terrace_depth,
+                    1,
+                    50,
+                    1,
+                )
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "RETAINING SLOPE",
+                    settings.retaining_slope,
+                    0,
+                    1,
+                    2,
+                )
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "IRREGULARITY",
+                    settings.irregularity,
+                    0,
+                    1,
+                    2,
+                )
+                row += 1
+            case .Pad:
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "EDGE SLOPE", settings.edge_slope, 0, 1, 2)
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "CORNER RADIUS",
+                    settings.corner_radius,
+                    0,
+                    50,
+                    1,
+                )
+                row += 1
+            case .Cut_Fill:
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CUT LIMIT", settings.cut_limit, 0, 100, 1)
+                row += 1
+                editor_ui_slider_draw(
+                    editor_ui_slider_bounds(layout, row),
+                    "FILL LIMIT",
+                    settings.fill_limit,
+                    0,
+                    100,
+                    1,
+                )
+                row += 1
+            }
+        }
     case .Smooth, .Paint:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
@@ -1698,45 +2010,138 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     row := 0
     switch editor.authoring_tool {
     case .Sculpt:
-        bounds := editor_ui_slider_bounds(layout, row)
-        gap := f32(4)
-        button_size := f32(30)
-        row_width := button_size * 5 + gap * 4
-        row_x := bounds.x + (bounds.width - row_width) * .5
+        family_bounds := editor_ui_slider_bounds(layout, row)
+        family_width := (family_bounds.width - 9) * .25
         if pressed {
-            for mode in 0 ..< 5 {
+            for family_index in 0 ..< 4 {
                 button := canvas2d.Rectangle {
-                    row_x + f32(mode) * (button_size + gap),
-                    bounds.y + 12,
-                    button_size,
-                    button_size,
+                    family_bounds.x + f32(family_index) * (family_width + 3),
+                    family_bounds.y + 20,
+                    family_width,
+                    30,
                 }
                 if canvas2d.CheckCollisionPointRec(mouse, button) {
-                    if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
-                    editor.terrain_sculpt.mode = Terrain_Sculpt_Mode(mode)
+                    family := Terrain_Family(family_index)
+                    actions, _ := terrain_family_actions(family)
+                    terrain_authoring_select(editor, family, actions[0])
                 }
             }
         }
         row += 1
-        if editor.terrain_sculpt.mode == .Level ||
-           editor.terrain_sculpt.mode == .Terrace ||
-           editor.terrain_sculpt.mode == .Erode {
-            area_bounds := editor_ui_slider_bounds(layout, row)
-            half := (area_bounds.width - 6) * .5
-            if pressed && canvas2d.CheckCollisionPointRec(mouse, {area_bounds.x, area_bounds.y + 24, half, 30}) {
-                editor.terrain_sculpt.area = false
-            } else if pressed &&
-               canvas2d.CheckCollisionPointRec(mouse, {area_bounds.x + half + 6, area_bounds.y + 24, half, 30}) {
-                editor.terrain_sculpt.area = true
+        actions, action_count := terrain_family_actions(editor.terrain_sculpt.family)
+        action_bounds := editor_ui_slider_bounds(layout, row)
+        action_width := (action_bounds.width - f32(action_count - 1) * 4) / f32(action_count)
+        if pressed {
+            for action_index in 0 ..< action_count {
+                button := canvas2d.Rectangle {
+                    action_bounds.x + f32(action_index) * (action_width + 4),
+                    action_bounds.y + 20,
+                    action_width,
+                    30,
+                }
+                if canvas2d.CheckCollisionPointRec(mouse, button) {
+                    terrain_authoring_select(editor, editor.terrain_sculpt.family, actions[action_index])
+                }
             }
-            row += 1
         }
-        _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
         row += 1
-        _ = editor_ui_slider_input(editor, layout, 2, row, &editor.strength, 0, 1, .01)
+        settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+        _ = editor_ui_slider_input(editor, layout, 301, row, &settings.size, 4, 500, 1); row += 1
+        _ = editor_ui_slider_input(editor, layout, 302, row, &settings.feather, 0, 250, 1); row += 1
+        _ = editor_ui_slider_input(editor, layout, 303, row, &settings.flow, 0, 1, .01); row += 1
+        switch editor.terrain_sculpt.action {
+        case .Coast:
+            _ = editor_ui_slider_input(editor, layout, 304, row, &settings.beach_elevation, -5, 20, .1); row += 1
+        case .Shelf:
+            _ = editor_ui_slider_input(editor, layout, 305, row, &settings.shelf_depth, -80, 0, .5); row += 1
+            _ = editor_ui_slider_input(editor, layout, 306, row, &settings.shelf_slope, .1, 4, .05); row += 1
+        case .Ridge, .Valley, .Slope:
+            _ = editor_ui_slider_input(editor, layout, 307, row, &settings.height, 1, 200, 1); row += 1
+        case .Grade:
+            _ = editor_ui_slider_input(editor, layout, 308, row, &settings.maximum_grade, 0, .5, .01); row += 1
+            grade_mode_bounds := editor_ui_slider_bounds(layout, row)
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, {grade_mode_bounds.x, grade_mode_bounds.y + 20, grade_mode_bounds.width, 30}) do settings.elevation_mode = settings.elevation_mode == .Sampled ? .Explicit : .Sampled
+            row += 1
+            if settings.elevation_mode == .Explicit {
+                _ = editor_ui_slider_input(
+                    editor,
+                    layout,
+                    318,
+                    row,
+                    &settings.grade_start_elevation,
+                    -50,
+                    300,
+                    .5,
+                ); row += 1
+                _ = editor_ui_slider_input(
+                    editor,
+                    layout,
+                    319,
+                    row,
+                    &settings.grade_end_elevation,
+                    -50,
+                    300,
+                    .5,
+                ); row += 1
+            }
+        case .Relax, .Erode, .Deposit:
+            iterations := f32(settings.iterations)
+            if editor_ui_slider_input(editor, layout, 309, row, &iterations, 1, 96, 1) do settings.iterations = int(iterations + .5)
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 310, row, &settings.talus, 0, 4, .05); row += 1
+        case .Roughen:
+            _ = editor_ui_slider_input(editor, layout, 311, row, &settings.amplitude, 0, 40, .25); row += 1
+            _ = editor_ui_slider_input(editor, layout, 312, row, &settings.noise_scale, 2, 200, 1); row += 1
+        case .Terrace:
+            _ = editor_ui_slider_input(editor, layout, 313, row, &settings.terrace_height, .5, 20, .5); row += 1
+            _ = editor_ui_slider_input(editor, layout, 314, row, &settings.terrace_reference, -50, 200, .5); row += 1
+        case .Pad, .Cut_Fill:
+            _ = editor_ui_slider_input(editor, layout, 315, row, &settings.target_elevation, -50, 300, .5); row += 1
+        }
+        advanced_bounds := editor_ui_slider_bounds(layout, row)
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {advanced_bounds.x, advanced_bounds.y + 20, advanced_bounds.width, 30}) do editor.terrain_sculpt.advanced = !editor.terrain_sculpt.advanced
         row += 1
-        _ = editor_ui_slider_input(editor, layout, 3, row, &editor.hardness, 0, 1, .01)
-        row += 1
+        if editor.terrain_sculpt.advanced {
+            seabed_bounds := editor_ui_slider_bounds(layout, row)
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30}) do settings.affect_seabed = !settings.affect_seabed
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 316, row, &settings.spacing, .05, 1, .01); row += 1
+            _ = editor_ui_slider_input(editor, layout, 317, row, &settings.inner_core, 0, 1, .01); row += 1
+            #partial switch editor.terrain_sculpt.action {
+            case .Ridge, .Valley:
+                profile_bounds := editor_ui_slider_bounds(layout, row)
+                third := (profile_bounds.width - 8) / 3
+                if pressed {
+                    if canvas2d.CheckCollisionPointRec(mouse, {profile_bounds.x, profile_bounds.y + 20, third, 30}) do settings.profile = .Round
+                    if canvas2d.CheckCollisionPointRec(mouse, {profile_bounds.x + third + 4, profile_bounds.y + 20, third, 30}) do settings.profile = .Sharp
+                    if canvas2d.CheckCollisionPointRec(mouse, {profile_bounds.x + (third + 4) * 2, profile_bounds.y + 20, third, 30}) do settings.profile = .Cliff
+                }
+                row += 1
+                _ = editor_ui_slider_input(editor, layout, 320, row, &settings.side_bias, -1, 1, .05); row += 1
+                _ = editor_ui_slider_input(editor, layout, 321, row, &settings.roughness, 0, 20, .25); row += 1
+                _ = editor_ui_slider_input(editor, layout, 322, row, &settings.endpoint_taper, 0, .5, .01); row += 1
+            case .Slope:
+                _ = editor_ui_slider_input(editor, layout, 323, row, &settings.side_bias, -1, 1, .05); row += 1
+                _ = editor_ui_slider_input(editor, layout, 324, row, &settings.preserve_detail, 0, 1, .01); row += 1
+            case .Erode:
+                _ = editor_ui_slider_input(editor, layout, 325, row, &settings.rainfall, .01, 2, .01); row += 1
+                _ = editor_ui_slider_input(editor, layout, 326, row, &settings.sediment, .01, 2, .01); row += 1
+            case .Roughen:
+                octaves := f32(settings.octaves)
+                if editor_ui_slider_input(editor, layout, 327, row, &octaves, 1, 6, 1) do settings.octaves = int(octaves + .5)
+                row += 1
+            case .Terrace:
+                _ = editor_ui_slider_input(editor, layout, 328, row, &settings.terrace_depth, 1, 50, .5); row += 1
+                _ = editor_ui_slider_input(editor, layout, 329, row, &settings.retaining_slope, 0, 1, .01); row += 1
+                _ = editor_ui_slider_input(editor, layout, 330, row, &settings.irregularity, 0, 1, .01); row += 1
+            case .Pad:
+                _ = editor_ui_slider_input(editor, layout, 331, row, &settings.edge_slope, 0, 1, .01); row += 1
+                _ = editor_ui_slider_input(editor, layout, 332, row, &settings.corner_radius, 0, 50, .5); row += 1
+            case .Cut_Fill:
+                _ = editor_ui_slider_input(editor, layout, 333, row, &settings.cut_limit, 0, 100, 1); row += 1
+                _ = editor_ui_slider_input(editor, layout, 334, row, &settings.fill_limit, 0, 100, 1); row += 1
+            }
+        }
     case .Smooth, .Paint:
         _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
         row += 1

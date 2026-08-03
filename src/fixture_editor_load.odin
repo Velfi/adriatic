@@ -456,6 +456,7 @@ fixture_editor_stage_destroy :: proc(stage: ^Editor, paint_allocator: mem.Alloca
 }
 
 fixture_editor_reset_runtime :: proc(editor: ^Editor) {
+    terrain_authoring_normalize_legacy_selection(editor)
     surface_weather.initialize(&editor.surface_weather, terrain.WORLD_SIZE_METERS * .5)
     editor.selection_tool_active = false
     editor.structure_placing = false
