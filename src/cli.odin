@@ -62,9 +62,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("modes:")
     fmt.println("  editor, formation, map, flight, car, vehicle-showcase, paint-mode")
     fmt.println("  road, road-dust, road-grip, terrain-grip, building, story-meeting")
-    fmt.println("  foliage, foliage-forest, foliage-forest-low, foliage-understory")
-    fmt.println("  foliage-forest-golden, foliage-forest-wind-a, foliage-forest-wind-b")
-    fmt.println("  foliage-forest-low-wind-a, foliage-forest-low-wind-b, foliage-stress")
+    fmt.println("  foliage, foliage-forest")
     fmt.println(
         "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, rock-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, window-generator, bridge-generator, fountain-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
     )
@@ -631,6 +629,14 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
             for name in targets do fmt.printf("  %s\n", name)
         }
         return true, true
+    }
+    if kind == .Foliage || kind == .Foliage_Forest {
+        resolved_kind, target_known := capture_foliage_target_kind(kind, target)
+        if !target_known {
+            fmt.eprintf("adriatic: unknown %s target: %s (use --list-targets)\n", mode, target)
+            return true, false
+        }
+        kind = resolved_kind
     }
     if requested_output == "" {
         fmt.eprintf("adriatic: capture %s requires an output path\n", mode)

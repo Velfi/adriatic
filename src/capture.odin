@@ -125,6 +125,17 @@ cinematic_export_time: f32
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunrise, .Sky_Sunset, .Sky_Storm, .Sky_Night}
 CAPTURE_BOAT_LAB_TARGETS := [?]string{"dinghy", "tanker", "cruise"}
+CAPTURE_FOLIAGE_TARGETS := [?]string{"overview", "stress"}
+CAPTURE_FOLIAGE_FOREST_TARGETS := [?]string {
+    "canopy",
+    "low",
+    "understory",
+    "golden",
+    "wind-a",
+    "wind-b",
+    "low-wind-a",
+    "low-wind-b",
+}
 CAPTURE_FOLIAGE_FOREST_KINDS :: bit_set[Capture_Kind] {
     .Foliage_Forest,
     .Foliage_Forest_Low,
@@ -417,6 +428,10 @@ CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
 
 capture_targets :: proc(kind: Capture_Kind) -> []string {
     #partial switch kind {
+    case .Foliage:
+        return CAPTURE_FOLIAGE_TARGETS[:]
+    case .Foliage_Forest:
+        return CAPTURE_FOLIAGE_FOREST_TARGETS[:]
     case .Editor:
         return CAPTURE_EDITOR_TARGETS[:]
     case .Map:
@@ -461,6 +476,40 @@ capture_targets :: proc(kind: Capture_Kind) -> []string {
         return CAPTURE_SKY_TARGETS[:]
     }
     return nil
+}
+
+// Keep foliage as two public capture modes. The specialized enum values remain
+// implementation details so old command lines can continue to resolve.
+capture_foliage_target_kind :: proc(kind: Capture_Kind, target: string) -> (Capture_Kind, bool) {
+    #partial switch kind {
+    case .Foliage:
+        switch target {
+        case "", "overview":
+            return .Foliage, true
+        case "stress":
+            return .Foliage_Stress, true
+        }
+    case .Foliage_Forest:
+        switch target {
+        case "", "canopy":
+            return .Foliage_Forest, true
+        case "low":
+            return .Foliage_Forest_Low, true
+        case "understory":
+            return .Foliage_Understory, true
+        case "golden":
+            return .Foliage_Golden, true
+        case "wind-a":
+            return .Foliage_Wind_A, true
+        case "wind-b":
+            return .Foliage_Wind_B, true
+        case "low-wind-a":
+            return .Foliage_Low_Wind_A, true
+        case "low-wind-b":
+            return .Foliage_Low_Wind_B, true
+        }
+    }
+    return kind, false
 }
 
 capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
