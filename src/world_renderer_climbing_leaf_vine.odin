@@ -38,17 +38,33 @@ world_climbing_leaf_vine :: proc(
     }
     skeleton_detail :=
         detail_tier >= 2 ? plants.Detail_Level.Near : detail_tier == 1 ? plants.Detail_Level.Medium : plants.Detail_Level.Far
-    skeleton := plants.generate(
-        {
-            species = .Bougainvillea,
-            seed = u64(plant_seed),
-            maturity = vine_maturity,
-            detail = skeleton_detail,
-            habit = .Wall_Trained,
-            support = &support,
-        },
+    skeleton_entry := generated_plant_cached(
+        .Bougainvillea,
+        u64(plant_seed),
+        skeleton_detail,
+        .Wall_Trained,
+        &support,
+        vine_maturity,
     )
-    defer plants.destroy(&skeleton)
+    uncached_skeleton: plants.Generate_Result
+    skeleton: ^plants.Generate_Result
+    if skeleton_entry != nil {
+        skeleton = &skeleton_entry.result
+    } else {
+        // Preserve rendering if the fixed-capacity world cache is exhausted.
+        uncached_skeleton = plants.generate(
+            {
+                species = .Bougainvillea,
+                seed = u64(plant_seed),
+                maturity = vine_maturity,
+                detail = skeleton_detail,
+                habit = .Wall_Trained,
+                support = &support,
+            },
+        )
+        skeleton = &uncached_skeleton
+    }
+    defer if skeleton_entry == nil do plants.destroy(&uncached_skeleton)
     root_scale := .78 + vine_maturity * .42
     stem_start := structure.base_y + .12 + f32(seed % 5) * .28
     planter_rooted := false

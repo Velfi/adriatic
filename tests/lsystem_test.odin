@@ -40,6 +40,8 @@ lsystem_interpreter_restores_branch_state_and_emits_leaves :: proc(t: ^testing.T
     testing.expect_value(t, result.error, lsystem.Interpret_Error.None)
     testing.expect_value(t, len(result.plant.segments), 4)
     testing.expect_value(t, len(result.plant.leaves), 3)
+    testing.expect_value(t, cap(result.plant.segments), len(result.plant.segments))
+    testing.expect_value(t, cap(result.plant.leaves), len(result.plant.leaves))
     testing.expect_value(t, result.plant.segments[0].start, lsystem.Vec3{0, 0, 0})
     testing.expect_value(t, result.plant.segments[0].end, lsystem.Vec3{0, 2, 0})
     testing.expect_value(t, result.plant.segments[3].start, lsystem.Vec3{0, 2, 0})

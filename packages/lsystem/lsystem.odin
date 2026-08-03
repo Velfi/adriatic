@@ -247,14 +247,22 @@ interpret :: proc(word: []u8, config: Turtle_Config) -> Interpret_Result {
     }
     random := cfg.seed
     if random == 0 do random = 1
-    // A branch push always corresponds to an opening bracket. Reserving the
-    // upper bound avoids repeated growth for the common generated-word case.
+    // Count the emitted data while finding the branch-stack upper bound so all
+    // three interpreter arrays allocate once instead of growing during append.
     branch_capacity := 0
+    segment_capacity := 0
+    leaf_capacity := 0
     for symbol in word {
-        if symbol == '[' do branch_capacity += 1
+        switch symbol {
+        case '[': branch_capacity += 1
+        case 'F': segment_capacity += 1
+        case 'L': leaf_capacity += 1
+        }
     }
     stack := make([dynamic]Turtle_State, 0, branch_capacity)
     defer delete(stack)
+    result.plant.segments = make([dynamic]Segment, 0, segment_capacity)
+    result.plant.leaves = make([dynamic]Leaf, 0, leaf_capacity)
 
     for symbol in word {
         switch symbol {

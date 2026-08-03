@@ -63,7 +63,7 @@ generated_plant_cached :: proc(
     maturity: f32 = 1,
 ) -> ^Generated_Plant_Cache_Entry {
     support_signature: u64
-    if support != nil do support_signature = support.signature
+    if support != nil do support_signature = plants.support_hash(support^)
     maturity_step := generated_plant_maturity_step(maturity)
     for index in 0 ..< generated_plant_cache_count {
         entry := &generated_plant_cache[index]
