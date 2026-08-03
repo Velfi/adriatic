@@ -146,7 +146,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
 
 all: build
 
@@ -792,7 +792,9 @@ fmt:
 module-size-check:
 	sh tools/check_module_sizes.sh
 
-check: fixture-schema-check module-size-check
+vet: module-size-check
+
+check: fixture-schema-check
 	$(ODIN) check src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
 	$(ODIN) check packages/flight $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point
 	$(ODIN) check packages/third_person $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -no-entry-point

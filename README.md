@@ -233,7 +233,8 @@ checkout when building, releasing, or testing Adriatic.
 | Command | Purpose |
 | --- | --- |
 | `make fmt` | Format all project Odin sources. |
-| `make check` | Type-check the application. |
+| `make check` | Check the application, core packages, and fixture schema. |
+| `make vet` | Enforce module-size limits. |
 | `make test` | Run starter tests. |
 | `make run` | Build and run the development executable. |
 | `make mcp` | Run the Adriatic MCP control server over stdio. |
