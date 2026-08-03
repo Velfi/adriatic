@@ -255,6 +255,12 @@ fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION -
         wrapper = fixture_migration_step_v0019_to_v0020,
         change_id = "field-add:adriatic:src.Fixture.car_handling_model",
     },
+    {
+        from_version = FIXTURE_MIGRATION_V0020_TO_V0021_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0020_TO_V0021_TO_VERSION,
+        wrapper = fixture_migration_step_v0020_to_v0021,
+        change_id = "field-add:adriatic:src.Tweak_State.postale_ace_tuning",
+    },
 }
 
 fixture_migration_production_registry :: proc() -> Fixture_Migration_Registry {

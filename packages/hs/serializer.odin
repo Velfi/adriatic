@@ -285,6 +285,9 @@ deserialize :: proc(t: ^$T, data: []byte, options: Options = {}, alloc := contex
 
     data := data
 
+    // Keep serialized descriptors relative and immutable: hot-state loading
+    // preflights a payload before decoding it into the live editor.
+
     header := transmute(^SaveHeader)(&split_ref(&data, size_of(SaveHeader))[0])
 
     extract_slice(&header.types, &data)
@@ -580,18 +583,18 @@ deserialize_raw :: proc(
             saved_dynamic_array := (&saved_type.variant.(TypeInfo_Dynamic_Array)) or_break
 
             raw_src := transmute(^mem.Raw_Dynamic_Array)src
-            raw_src.data = rawptr(uintptr(raw_src.data) + header.data_base)
-            raw_src.cap = raw_src.len
+            source_data := rawptr(uintptr(raw_src.data) + header.data_base)
+            source_len := raw_src.len
 
-            copy := make([]byte, raw_src.len * v.elem_size)
+            copy := make([]byte, source_len * v.elem_size)
 
             raw_dst := transmute(^mem.Raw_Dynamic_Array)dst
             raw_dst.data = &copy[0]
-            raw_dst.len = raw_src.len
-            raw_dst.cap = raw_src.cap
+            raw_dst.len = source_len
+            raw_dst.cap = source_len
 
-            for i in 0 ..< raw_src.len {
-                elem_src := uintptr(raw_src.data) + uintptr(i * saved_dynamic_array.elem_size)
+            for i in 0 ..< source_len {
+                elem_src := uintptr(source_data) + uintptr(i * saved_dynamic_array.elem_size)
                 elem_dst := uintptr(raw_dst.data) + uintptr(i * v.elem_size)
                 deserialize_raw(header, elem_src, elem_dst, saved_dynamic_array.elem, v.elem, alloc)
             }
@@ -613,13 +616,13 @@ deserialize_raw :: proc(
                 return saved_type.identical
             }
 
-            raw_src.data = transmute([^]byte)(uintptr(raw_src.data) + header.data_base)
+            source_ptr := transmute([^]byte)(uintptr(raw_src.data) + header.data_base)
             src_len := raw_src.len
             if saved_string.is_cstring {
-                src_len = len(cstring(raw_src.data))
+                src_len = len(cstring(source_ptr))
             }
 
-            source_data := raw_src.data[:src_len]
+            source_data := source_ptr[:src_len]
 
             output_size: int = src_len
             if v.is_cstring {
@@ -646,7 +649,7 @@ deserialize_raw :: proc(
 
             saved_slice := (&saved_type.variant.(TypeInfo_Slice)) or_break
             raw_src := transmute(^mem.Raw_Slice)src
-            raw_src.data = rawptr(uintptr(raw_src.data) + header.data_base)
+            source_data := rawptr(uintptr(raw_src.data) + header.data_base)
 
             copy := make([]byte, raw_src.len * v.elem_size)
 
@@ -655,7 +658,7 @@ deserialize_raw :: proc(
             raw_dst.len = raw_src.len
 
             for i in 0 ..< raw_src.len {
-                elem_src := uintptr(raw_src.data) + uintptr(i * saved_slice.elem_size)
+                elem_src := uintptr(source_data) + uintptr(i * saved_slice.elem_size)
                 elem_dst := uintptr(raw_dst.data) + uintptr(i * v.elem_size)
                 deserialize_raw(header, elem_src, elem_dst, saved_slice.elem, v.elem, alloc)
             }

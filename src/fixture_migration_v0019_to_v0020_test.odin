@@ -26,9 +26,9 @@ fixture_migration_v0019_to_v0020_defaults_car_model_runtime_and_tuning :: proc(t
 
     registry := fixture_migration_production_registry()
     testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].from_version == 19)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].to_version == 20)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].wrapper == fixture_migration_step_v0019_to_v0020)
+    testing.expect(t, registry.steps[18].from_version == 19)
+    testing.expect(t, registry.steps[18].to_version == 20)
+    testing.expect(t, registry.steps[18].wrapper == fixture_migration_step_v0019_to_v0020)
     for resolution in FIXTURE_MIGRATION_V0019_TO_V0020_RESOLUTIONS {
         testing.expect(t, resolution.kind == .Scripted)
     }

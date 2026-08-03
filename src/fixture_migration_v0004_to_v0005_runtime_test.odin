@@ -529,7 +529,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 20 &&
+            FIXTURE_SCHEMA_VERSION == 21 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
@@ -558,7 +558,11 @@ when ODIN_TEST {
             production.steps[18].from_version == 19 &&
             production.steps[18].to_version == 20 &&
             production.steps[18].wrapper == fixture_migration_step_v0019_to_v0020 &&
-            production.steps[18].change_id == "field-add:adriatic:src.Fixture.car_handling_model",
+            production.steps[18].change_id == "field-add:adriatic:src.Fixture.car_handling_model" &&
+            production.steps[19].from_version == 20 &&
+            production.steps[19].to_version == 21 &&
+            production.steps[19].wrapper == fixture_migration_step_v0020_to_v0021 &&
+            production.steps[19].change_id == "field-add:adriatic:src.Tweak_State.postale_ace_tuning",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(

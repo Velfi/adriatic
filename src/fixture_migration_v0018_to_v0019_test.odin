@@ -167,9 +167,9 @@ when ODIN_TEST {
         testing.expect(
             t,
             len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
-            registry.steps[len(registry.steps) - 1].from_version == 18 &&
-            registry.steps[len(registry.steps) - 1].to_version == 19 &&
-            registry.steps[len(registry.steps) - 1].wrapper == fixture_migration_step_v0018_to_v0019,
+            registry.steps[17].from_version == 18 &&
+            registry.steps[17].to_version == 19 &&
+            registry.steps[17].wrapper == fixture_migration_step_v0018_to_v0019,
         )
     }
 
