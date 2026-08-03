@@ -663,6 +663,83 @@ editor_ui_slider_input :: proc(
     return changed
 }
 
+SDF_OBSTACLE_INSPECTOR_CONTROL_HEIGHT :: f32(26)
+SDF_OBSTACLE_INSPECTOR_CONTROL_GAP :: f32(2)
+SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP :: f32(4)
+SDF_OBSTACLE_INSPECTOR_SLIDER_BASE :: 600
+
+editor_ui_obstacle_control_bounds :: #force_inline proc(
+    layout: Editor_UI_Layout,
+    first_row, control_row: int,
+) -> canvas2d.Rectangle {
+    bounds := editor_ui_slider_bounds(layout, first_row)
+    bounds.y += f32(control_row) * (SDF_OBSTACLE_INSPECTOR_CONTROL_HEIGHT + SDF_OBSTACLE_INSPECTOR_CONTROL_GAP)
+    bounds.height = SDF_OBSTACLE_INSPECTOR_CONTROL_HEIGHT
+    return bounds
+}
+
+editor_ui_obstacle_component_bounds :: #force_inline proc(
+    bounds: canvas2d.Rectangle,
+    component, component_count: int,
+) -> canvas2d.Rectangle {
+    width := (bounds.width - f32(component_count - 1) * SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP) / f32(component_count)
+    return {
+        bounds.x + f32(component) * (width + SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP),
+        bounds.y,
+        width,
+        bounds.height,
+    }
+}
+
+editor_ui_obstacle_slider_draw :: proc(
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    value, minimum, maximum: f32,
+    decimals: int = 1,
+) {
+    normalized := clamp((value - minimum) / max(maximum - minimum, f32(.0001)), 0, 1)
+    value_text := decimals <= 0 ? fmt.ctprintf("%.0f", value) : fmt.ctprintf("%.1f", value)
+    ui_draw_text(.Label, label, {bounds.x, bounds.y}, .4, {209, 215, 222, 255})
+    value_size := ui_measure_text(.Data, value_text, .4)
+    ui_draw_text(.Data, value_text, {bounds.x + bounds.width - value_size.x, bounds.y}, .4, {134, 224, 216, 255})
+    track := canvas2d.Rectangle{bounds.x, bounds.y + 17, bounds.width, 4}
+    canvas2d.DrawRectangleRounded(track, 1, 3, {50, 56, 64, 255})
+    canvas2d.DrawRectangleRounded(
+        {track.x, track.y, track.width * normalized, track.height},
+        1,
+        2,
+        {60, 164, 157, 255},
+    )
+    canvas2d.DrawCircleV({track.x + track.width * normalized, track.y + 2}, 4, {221, 238, 237, 255})
+}
+
+editor_ui_obstacle_slider_input :: proc(
+    editor: ^Editor,
+    bounds: canvas2d.Rectangle,
+    slider_id: int,
+    value: ^f32,
+    minimum, maximum, step: f32,
+) -> bool {
+    if editor == nil || value == nil do return false
+    mouse := canvas2d.GetMousePosition()
+    if canvas2d.IsMouseButtonPressed(.LEFT) && canvas2d.CheckCollisionPointRec(mouse, bounds) {
+        editor.editor_ui.active_slider = slider_id
+    }
+    if editor.editor_ui.active_slider != slider_id do return false
+    if canvas2d.IsMouseButtonReleased(.LEFT) {
+        editor.editor_ui.active_slider = 0
+        return false
+    }
+    if !canvas2d.IsMouseButtonDown(.LEFT) do return false
+    normalized := clamp((mouse.x - bounds.x) / bounds.width, 0, 1)
+    next := minimum + normalized * (maximum - minimum)
+    if step > 0 do next = f32(int(next / step + .5)) * step
+    next = clamp(next, minimum, maximum)
+    changed := next != value^
+    value^ = next
+    return changed
+}
+
 @(no_instrumentation)
 editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
     gap := f32(6)
@@ -953,6 +1030,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     }
 
     row := 0
+    show_world_summary := true
     switch editor.authoring_tool {
     case .Sculpt:
         family_bounds := editor_ui_slider_bounds(layout, row)
@@ -1698,6 +1776,87 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor_ui_panel_button(entry, fmt.ctprintf("TORUS %02d", index + 1), index == editor.sdf_obstacle_selected)
         }
         row += max(visible, 1)
+        obstacle := sdf_obstacle_selected_ptr(editor)
+        if obstacle == nil {
+            bounds := editor_ui_obstacle_control_bounds(layout, row, 0)
+            ui_draw_text(.Data, "SELECT A TORUS", {bounds.x, bounds.y + 8}, .5, {139, 149, 160, 255})
+            break
+        }
+        if !editor.sdf_obstacle_interaction.inspector_euler_valid do _ = sdf_obstacle_inspector_euler_refresh(editor)
+
+        bounds := editor_ui_obstacle_control_bounds(layout, row, 0)
+        labels := [3]cstring{"POS X", "Y", "Z"}
+        position := obstacle.position
+        for component in 0 ..< len(labels) {
+            editor_ui_obstacle_slider_draw(
+                editor_ui_obstacle_component_bounds(bounds, component, len(labels)),
+                labels[component],
+                position[component],
+                -SDF_OBSTACLE_POSITION_LIMIT,
+                SDF_OBSTACLE_POSITION_LIMIT,
+                0,
+            )
+        }
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 1)
+        labels = {"ROT X", "Y", "Z"}
+        euler := editor.sdf_obstacle_interaction.inspector_euler
+        for component in 0 ..< len(labels) {
+            editor_ui_obstacle_slider_draw(
+                editor_ui_obstacle_component_bounds(bounds, component, len(labels)),
+                labels[component],
+                euler[component],
+                -SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                0,
+            )
+        }
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 2)
+        labels = {"SCALE X", "Y", "Z"}
+        scale := obstacle.scale
+        for component in 0 ..< len(labels) {
+            editor_ui_obstacle_slider_draw(
+                editor_ui_obstacle_component_bounds(bounds, component, len(labels)),
+                labels[component],
+                scale[component],
+                SDF_OBSTACLE_MINIMUM_SCALE,
+                SDF_OBSTACLE_MAXIMUM_SCALE,
+                1,
+            )
+        }
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 3)
+        editor_ui_obstacle_slider_draw(
+            editor_ui_obstacle_component_bounds(bounds, 0, 2),
+            "RING",
+            obstacle.major_radius,
+            SDF_OBSTACLE_MINIMUM_RADIUS,
+            SDF_OBSTACLE_MAXIMUM_RADIUS,
+            1,
+        )
+        editor_ui_obstacle_slider_draw(
+            editor_ui_obstacle_component_bounds(bounds, 1, 2),
+            "TUBE",
+            obstacle.tube_radius,
+            SDF_OBSTACLE_MINIMUM_RADIUS,
+            SDF_OBSTACLE_MAXIMUM_RADIUS,
+            1,
+        )
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 4)
+        labels = {"R", "G", "B"}
+        for component in 0 ..< len(labels) {
+            editor_ui_obstacle_slider_draw(
+                editor_ui_obstacle_component_bounds(bounds, component, len(labels)),
+                labels[component],
+                f32(obstacle.color[component]),
+                0,
+                255,
+                0,
+            )
+        }
+        show_world_summary = !fixture_editor_sdf_obstacle_valid(obstacle^)
     case .Roads:
         top_bounds := editor_ui_slider_bounds(layout, row)
         editor_ui_panel_button(
@@ -1827,26 +1986,28 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
     }
 
-    world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 174)
-    editor_ui_section_title("WORLD", panel.x + 14, world_y, panel.width - 28)
-    data_y := world_y + 32
-    if editor.cursor_hit {
-        ui_draw_text(
-            .Data,
-            fmt.ctprintf("CURSOR   X %.0f   Z %.0f", editor.cursor_world_x, editor.cursor_world_z),
-            {panel.x + 14, data_y},
-            .4,
-            {209, 215, 222, 255},
-        )
-        ui_draw_text(
-            .Data,
-            fmt.ctprintf("HEIGHT   %.2f m   MAT %.2f", editor.cursor_height, editor.cursor_material),
-            {panel.x + 14, data_y + 24},
-            .4,
-            {209, 215, 222, 255},
-        )
-    } else {
-        ui_draw_text(.Data, "CURSOR   —", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
+    if show_world_summary {
+        world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 174)
+        editor_ui_section_title("WORLD", panel.x + 14, world_y, panel.width - 28)
+        data_y := world_y + 32
+        if editor.cursor_hit {
+            ui_draw_text(
+                .Data,
+                fmt.ctprintf("CURSOR   X %.0f   Z %.0f", editor.cursor_world_x, editor.cursor_world_z),
+                {panel.x + 14, data_y},
+                .4,
+                {209, 215, 222, 255},
+            )
+            ui_draw_text(
+                .Data,
+                fmt.ctprintf("HEIGHT   %.2f m   MAT %.2f", editor.cursor_height, editor.cursor_material),
+                {panel.x + 14, data_y + 24},
+                .4,
+                {209, 215, 222, 255},
+            )
+        } else {
+            ui_draw_text(.Data, "CURSOR   —", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
+        }
     }
     undo_enabled := editor.tool == .Structure ? editor.structure_undo_count > 0 : editor.terrain_undo_count > 0
     redo_enabled := editor.tool == .Structure ? editor.structure_redo_count > 0 : editor.terrain_redo_count > 0
@@ -2556,6 +2717,103 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             }
         }
         row += max(visible, 1)
+        obstacle := sdf_obstacle_selected_ptr(editor)
+        if obstacle == nil do break
+        if !editor.sdf_obstacle_interaction.inspector_euler_valid do _ = sdf_obstacle_inspector_euler_refresh(editor)
+
+        bounds := editor_ui_obstacle_control_bounds(layout, row, 0)
+        position := obstacle.position
+        position_changed := false
+        for component in 0 ..< len(position) {
+            position_changed = editor_ui_obstacle_slider_input(
+                editor,
+                editor_ui_obstacle_component_bounds(bounds, component, len(position)),
+                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + component,
+                &position[component],
+                -SDF_OBSTACLE_POSITION_LIMIT,
+                SDF_OBSTACLE_POSITION_LIMIT,
+                1,
+            ) || position_changed
+        }
+        if position_changed do _ = sdf_obstacle_set_position(editor, position)
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 1)
+        euler := editor.sdf_obstacle_interaction.inspector_euler
+        euler_changed := false
+        for component in 0 ..< len(euler) {
+            euler_changed = editor_ui_obstacle_slider_input(
+                editor,
+                editor_ui_obstacle_component_bounds(bounds, component, len(euler)),
+                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 3 + component,
+                &euler[component],
+                -SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                1,
+            ) || euler_changed
+        }
+        if euler_changed do _ = sdf_obstacle_set_rotation_euler_degrees(editor, euler)
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 2)
+        scale := obstacle.scale
+        scale_changed := false
+        for component in 0 ..< len(scale) {
+            scale_changed = editor_ui_obstacle_slider_input(
+                editor,
+                editor_ui_obstacle_component_bounds(bounds, component, len(scale)),
+                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 6 + component,
+                &scale[component],
+                SDF_OBSTACLE_MINIMUM_SCALE,
+                SDF_OBSTACLE_MAXIMUM_SCALE,
+                .05,
+            ) || scale_changed
+        }
+        if scale_changed do _ = sdf_obstacle_set_scale(editor, scale)
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 3)
+        major_radius := obstacle.major_radius
+        if editor_ui_obstacle_slider_input(
+            editor,
+            editor_ui_obstacle_component_bounds(bounds, 0, 2),
+            SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 9,
+            &major_radius,
+            SDF_OBSTACLE_MINIMUM_RADIUS,
+            SDF_OBSTACLE_MAXIMUM_RADIUS,
+            .05,
+        ) {
+            _ = sdf_obstacle_set_major_radius(editor, major_radius)
+        }
+        tube_radius := obstacle.tube_radius
+        if editor_ui_obstacle_slider_input(
+            editor,
+            editor_ui_obstacle_component_bounds(bounds, 1, 2),
+            SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 10,
+            &tube_radius,
+            SDF_OBSTACLE_MINIMUM_RADIUS,
+            SDF_OBSTACLE_MAXIMUM_RADIUS,
+            .05,
+        ) {
+            _ = sdf_obstacle_set_tube_radius(editor, tube_radius)
+        }
+
+        bounds = editor_ui_obstacle_control_bounds(layout, row, 4)
+        color := [3]u8{obstacle.color[0], obstacle.color[1], obstacle.color[2]}
+        color_changed := false
+        for component in 0 ..< len(color) {
+            value := f32(color[component])
+            if editor_ui_obstacle_slider_input(
+                editor,
+                editor_ui_obstacle_component_bounds(bounds, component, len(color)),
+                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 11 + component,
+                &value,
+                0,
+                255,
+                1,
+            ) {
+                color[component] = u8(value)
+                color_changed = true
+            }
+        }
+        if color_changed do _ = sdf_obstacle_set_color_rgb(editor, color)
     }
 
     if pressed {

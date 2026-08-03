@@ -857,7 +857,7 @@ fixture-codec-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadria
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_codec_real_fixture_round_trip_and_failures,main.fixture_codec_owned_decode_allocation_failures_and_preflight -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 sdf-obstacle-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
-	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.sdf_obstacle_crud_preserves_the_compact_fixture_array,main.sdf_obstacle_sdf_and_ray_pick_choose_the_nearest_torus -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
+	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.sdf_obstacle_crud_preserves_the_compact_fixture_array,main.sdf_obstacle_sdf_and_ray_pick_choose_the_nearest_torus,main.sdf_obstacle_selected_property_edits_are_bounded_and_stable -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 
 fixture-editor-load-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES=main.fixture_editor_load_current_rebuilds_runtime_and_releases_replaced_state,main.fixture_editor_load_golden_v1_migrates_and_binds_destination,main.fixture_editor_load_v0018_applies_inline_map_without_leaking,main.fixture_editor_load_failures_are_atomic_and_release_every_allocation -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"

@@ -15,6 +15,12 @@ SDF_OBSTACLE_RAY_MAX_STEPS :: 192
 
 SDF_OBSTACLE_DEFAULT_MAJOR_RADIUS :: f32(3)
 SDF_OBSTACLE_DEFAULT_TUBE_RADIUS :: f32(.75)
+SDF_OBSTACLE_MINIMUM_SCALE :: f32(.05)
+SDF_OBSTACLE_MAXIMUM_SCALE :: f32(32)
+SDF_OBSTACLE_MINIMUM_RADIUS :: f32(.05)
+SDF_OBSTACLE_MAXIMUM_RADIUS :: f32(64)
+SDF_OBSTACLE_POSITION_LIMIT :: f32(terrain.WORLD_SIZE_METERS * .5)
+SDF_OBSTACLE_EULER_LIMIT_DEGREES :: f32(180)
 
 SDF_OBSTACLE_DEFAULT_COLORS := [6][4]u8 {
     {224, 94, 76, 255},
@@ -30,6 +36,90 @@ sdf_obstacle_active_count :: #force_inline proc(editor: ^Editor) -> int {
         return 0
     }
     return editor.sdf_obstacle_count
+}
+
+sdf_obstacle_selected_ptr :: #force_inline proc(editor: ^Editor) -> ^SDF_Torus_Obstacle {
+    count := sdf_obstacle_active_count(editor)
+    if editor == nil || editor.sdf_obstacle_selected < 0 || editor.sdf_obstacle_selected >= count do return nil
+    return &editor.sdf_obstacles[editor.sdf_obstacle_selected]
+}
+
+sdf_obstacle_inspector_euler_refresh :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return false
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_orientation_valid(obstacle.rotation) {
+        editor.sdf_obstacle_interaction.inspector_euler_valid = false
+        return false
+    }
+    x, y, z := linalg.euler_angles_from_quaternion(flight.normalize_orientation(obstacle.rotation), .XYZ)
+    degrees := flight.Vec3{x, y, z} * (180 / f32(math.PI))
+    if !fixture_editor_vec3_finite(degrees) {
+        editor.sdf_obstacle_interaction.inspector_euler_valid = false
+        return false
+    }
+    editor.sdf_obstacle_interaction.inspector_euler = degrees
+    editor.sdf_obstacle_interaction.inspector_euler_valid = true
+    return true
+}
+
+sdf_obstacle_set_position :: proc(editor: ^Editor, position: flight.Vec3) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_vec3_finite(position) do return false
+    obstacle.position = {
+        clamp(position.x, -SDF_OBSTACLE_POSITION_LIMIT, SDF_OBSTACLE_POSITION_LIMIT),
+        clamp(position.y, -SDF_OBSTACLE_POSITION_LIMIT, SDF_OBSTACLE_POSITION_LIMIT),
+        clamp(position.z, -SDF_OBSTACLE_POSITION_LIMIT, SDF_OBSTACLE_POSITION_LIMIT),
+    }
+    return true
+}
+
+sdf_obstacle_set_scale :: proc(editor: ^Editor, scale: flight.Vec3) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_vec3_finite(scale) do return false
+    obstacle.scale = {
+        clamp(scale.x, SDF_OBSTACLE_MINIMUM_SCALE, SDF_OBSTACLE_MAXIMUM_SCALE),
+        clamp(scale.y, SDF_OBSTACLE_MINIMUM_SCALE, SDF_OBSTACLE_MAXIMUM_SCALE),
+        clamp(scale.z, SDF_OBSTACLE_MINIMUM_SCALE, SDF_OBSTACLE_MAXIMUM_SCALE),
+    }
+    return true
+}
+
+sdf_obstacle_set_major_radius :: proc(editor: ^Editor, radius: f32) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_scalar_finite(radius) do return false
+    obstacle.major_radius = clamp(radius, SDF_OBSTACLE_MINIMUM_RADIUS, SDF_OBSTACLE_MAXIMUM_RADIUS)
+    return true
+}
+
+sdf_obstacle_set_tube_radius :: proc(editor: ^Editor, radius: f32) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_scalar_finite(radius) do return false
+    obstacle.tube_radius = clamp(radius, SDF_OBSTACLE_MINIMUM_RADIUS, SDF_OBSTACLE_MAXIMUM_RADIUS)
+    return true
+}
+
+sdf_obstacle_set_color_rgb :: proc(editor: ^Editor, color: [3]u8) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil do return false
+    obstacle.color = {color[0], color[1], color[2], 255}
+    return true
+}
+
+sdf_obstacle_set_rotation_euler_degrees :: proc(editor: ^Editor, degrees: flight.Vec3) -> bool {
+    obstacle := sdf_obstacle_selected_ptr(editor)
+    if obstacle == nil || !fixture_editor_vec3_finite(degrees) do return false
+    bounded := flight.Vec3 {
+        clamp(degrees.x, -SDF_OBSTACLE_EULER_LIMIT_DEGREES, SDF_OBSTACLE_EULER_LIMIT_DEGREES),
+        clamp(degrees.y, -SDF_OBSTACLE_EULER_LIMIT_DEGREES, SDF_OBSTACLE_EULER_LIMIT_DEGREES),
+        clamp(degrees.z, -SDF_OBSTACLE_EULER_LIMIT_DEGREES, SDF_OBSTACLE_EULER_LIMIT_DEGREES),
+    }
+    radians := bounded * (f32(math.PI) / 180)
+    rotation := linalg.quaternion_from_euler_angles(radians.x, radians.y, radians.z, .XYZ)
+    if !fixture_editor_orientation_valid(rotation) do return false
+    obstacle.rotation = flight.normalize_orientation(rotation)
+    editor.sdf_obstacle_interaction.inspector_euler = bounded
+    editor.sdf_obstacle_interaction.inspector_euler_valid = true
+    return true
 }
 
 sdf_obstacle_default :: proc(position: flight.Vec3, color_index: int) -> SDF_Torus_Obstacle {
@@ -49,6 +139,7 @@ sdf_obstacle_select :: proc(editor: ^Editor, index: int) -> bool {
     count := sdf_obstacle_active_count(editor)
     if editor == nil || index < 0 || index >= count do return false
     editor.sdf_obstacle_selected = index
+    _ = sdf_obstacle_inspector_euler_refresh(editor)
     sdf_obstacle_list_reveal_selected(editor)
     return true
 }
@@ -116,6 +207,11 @@ sdf_obstacle_delete_selected :: proc(editor: ^Editor) -> bool {
     editor.sdf_obstacle_count = count - 1
     editor.sdf_obstacle_selected = editor.sdf_obstacle_count > 0 ? min(removed, editor.sdf_obstacle_count - 1) : -1
     editor.sdf_obstacle_interaction.hovered = -1
+    if editor.sdf_obstacle_selected >= 0 {
+        _ = sdf_obstacle_inspector_euler_refresh(editor)
+    } else {
+        editor.sdf_obstacle_interaction.inspector_euler_valid = false
+    }
     sdf_obstacle_list_reveal_selected(editor)
     return true
 }

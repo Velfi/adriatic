@@ -13,9 +13,8 @@ the playground in code.
 
 ## Current phase
 
-Phase 3 — Milestones 1 and 2 are accepted. Milestone 3 property controls is
-the active slice. The next checkpoint is sis validation of one torus with
-changed color, radii, position, rotation, and non-uniform scale.
+Phase 4 — Milestones 1 through 3 are accepted. Milestone 4 translation gizmo
+is the active slice.
 
 The feature is split into seven ordered milestones. A subagent implements one
 milestone at a time in the current workspace. The primary agent reviews the
@@ -362,6 +361,34 @@ now; manual color edits are intentionally Milestone 3.
 
 Build at least three visibly different tori. Edit every field, exercise awkward
 Euler orientations, save, reload, and confirm the same transforms and colors.
+
+### Implementation evidence
+
+M3 is accepted after focused sis validation of the property inspector and its
+compact layout.
+
+- `src/sdf_obstacles.odin` now owns selected-index-guarded setters. Position
+  clamps to the terrain world half extent, scale to `0.05..32`, and each radius
+  to `0.05..64`; non-finite inputs leave durable state unchanged. RGB writes
+  always set alpha to 255.
+- Rotation uses core `linalg` Euler `.XYZ` order in UI degrees, converts to the
+  existing `quaternion128`, validates and normalizes it, then preserves the
+  exact edited degrees in the transient inspector cache. Selection and compact
+  deletion refresh or clear that cache.
+- The custom inspector adds five compact rows below the five-entry list:
+  position XYZ, rotation XYZ, scale XYZ, ring/tube radii, and RGB. They remain
+  above the shared bottom actions at 1280×720 and call the selected setters, so
+  current render and pick paths observe edits immediately.
+- `make sdf-obstacle-test` passes 3/3 in 3.919 ms with no leak report. The new
+  direct test covers selected-only mutation, position/size/radius bounds,
+  opaque RGB, identity and near-singular compound Euler paths, and invalid
+  Euler preservation.
+- `make fixture-schema-check`, `make check`, and `make build` pass. M3 changes
+  no fixture-reachable type, version, manifest, history, or migration.
+- M3 layout repair suppresses the unrelated generic WORLD summary only while
+  valid selected-torus property controls occupy the compact panel. It remains
+  available for every other tool and Obstacles with no selected torus, while
+  the shared bottom actions remain visible at 1280×720.
 
 ## Milestone 4 — Translation gizmo
 
