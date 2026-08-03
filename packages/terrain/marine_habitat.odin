@@ -178,3 +178,74 @@ marine_habitat_dominant :: proc(sample: Marine_Habitat_Sample) -> Marine_Habitat
     if sample.coralligenous > .12 do return .Coralligenous
     return .Bare
 }
+
+marine_habitat_paint :: proc(
+    project: ^Project,
+    world_x, world_z, radius, strength, hardness: f32,
+    kind: Marine_Habitat_Kind,
+    erase: bool = false,
+) -> bool {
+    if project == nil || radius <= 0 || strength <= 0 do return false
+    changed := false
+    exponent := 1 + (1 - clamp(hardness, f32(0), f32(1))) * 3
+    cell_size := BATHYMETRY_CHUNK_SIZE / f32(BATHYMETRY_CHUNK_RESOLUTION - 1)
+    for &chunk in project.marine_habitat_chunks {
+        if len(chunk.cells) != BATHYMETRY_CHUNK_SAMPLES do continue
+        translation_x, translation_z: f32
+        if owner_index, owned := island_index(chunk.owner); owned {
+            transform := island_transform_at(project, owner_index)
+            translation_x = transform.current_x - transform.source_x
+            translation_z = transform.current_z - transform.source_z
+        }
+        origin_x := f32(chunk.chunk_x) * BATHYMETRY_CHUNK_SIZE + translation_x
+        origin_z := f32(chunk.chunk_z) * BATHYMETRY_CHUNK_SIZE + translation_z
+        closest_x := clamp(world_x, origin_x, origin_x + BATHYMETRY_CHUNK_SIZE)
+        closest_z := clamp(world_z, origin_z, origin_z + BATHYMETRY_CHUNK_SIZE)
+        ox, oz := world_x - closest_x, world_z - closest_z
+        if ox * ox + oz * oz > radius * radius do continue
+        chunk_changed := false
+        for z in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
+            sample_z := origin_z + f32(z) * cell_size
+            for x in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
+                sample_x := origin_x + f32(x) * cell_size
+                dx, dz := sample_x - world_x, sample_z - world_z
+                distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                if distance > radius do continue
+                falloff := f32(math.pow(f64(1 - distance / radius), f64(exponent)))
+                delta := int(math.round(f64(strength * falloff * 255)))
+                if delta <= 0 do continue
+                cell := &chunk.cells[z * BATHYMETRY_CHUNK_RESOLUTION + x]
+                before := cell^
+                if kind == .Bare {
+                    signed := erase ? -delta : delta
+                    cell.disturbance = u8(clamp(int(cell.disturbance) + signed, 0, 255))
+                    if !erase {
+                        cell.seagrass = u8(max(int(cell.seagrass) - delta, 0))
+                        cell.macroalgae = u8(max(int(cell.macroalgae) - delta, 0))
+                        cell.coralligenous = u8(max(int(cell.coralligenous) - delta, 0))
+                    }
+                } else {
+                    target: ^u8
+                    switch kind {
+                    case .Seagrass: target = &cell.seagrass
+                    case .Macroalgae: target = &cell.macroalgae
+                    case .Coralligenous: target = &cell.coralligenous
+                    case .Bare:
+                    }
+                    if target != nil {
+                        signed := erase ? -delta : delta
+                        target^ = u8(clamp(int(target^) + signed, 0, 255))
+                        if !erase do cell.disturbance = u8(max(int(cell.disturbance) - delta, 0))
+                    }
+                }
+                if cell^ != before do chunk_changed = true
+            }
+        }
+        if chunk_changed {
+            chunk.revision += 1
+            changed = true
+        }
+    }
+    if changed do project.revision += 1
+    return changed
+}

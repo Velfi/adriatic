@@ -31,6 +31,21 @@ Authoring_Tool :: enum {
     Obstacles,
 }
 
+Land_Paint_Kind :: enum u8 {
+    Natural,
+    Sand,
+    Soil,
+}
+
+land_paint_target :: #force_inline proc(kind: Land_Paint_Kind) -> f32 {
+    switch kind {
+    case .Natural: return 0
+    case .Sand:    return -1
+    case .Soil:    return 1
+    }
+    return 0
+}
+
 Plant_Stamp_Mode :: enum u8 {
     Ground,
     Climbing,
@@ -575,7 +590,13 @@ editor_ui_panel_button :: proc(
     }
     canvas2d.DrawRectangleRounded(bounds, .12, 6, fill)
     canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 6, selected ? 2 : 1, border)
-    size := ui_measure_text(.Label, label, .5)
+    text_scale := f32(.5)
+    size := ui_measure_text(.Label, label, text_scale)
+    available_text_width := max(bounds.width - 12, f32(1))
+    if size.x > available_text_width {
+        text_scale *= available_text_width / size.x
+        size = ui_measure_text(.Label, label, text_scale)
+    }
     ui_draw_text(
         .Label,
         label,
@@ -583,7 +604,7 @@ editor_ui_panel_button :: proc(
             bounds.x + (bounds.width - size.x) * .5,
             bounds.y + (bounds.height - size.y) * .5 + EDITOR_UI_BUTTON_TEXT_Y_OFFSET,
         },
-        .5,
+        text_scale,
         text,
     )
 }
@@ -860,7 +881,10 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     case .Smooth:
         return "[Left or Right] to smooth   [Wheel] to zoom"
     case .Paint:
-        return "[Left] to paint   [Right] to erase   [Wheel] to zoom"
+        if editor.marine_ecology_paint {
+            return "Left paints marine ecology; right erases it."
+        }
+        return "Left paints the selected surface; right restores natural cover."
     case .Formations:
         return "[Left] to stamp   [Right] to erase   [Wheel] to zoom"
     case .Foliage:
@@ -1306,7 +1330,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 row += 1
             }
         }
-    case .Smooth, .Paint:
+    case .Smooth:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "RADIUS (m)",
@@ -1315,6 +1339,45 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             400,
             0,
         )
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.hardness, 0, 1, 2)
+        row += 1
+    case .Paint:
+        mode_bounds := editor_ui_slider_bounds(layout, row)
+        half := (mode_bounds.width - 6) * .5
+        editor_ui_panel_button({mode_bounds.x, mode_bounds.y + 20, half, 30}, "LAND", !editor.marine_ecology_paint)
+        editor_ui_panel_button({mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}, "MARINE", editor.marine_ecology_paint)
+        row += 1
+        if editor.marine_ecology_paint {
+            kind_bounds := editor_ui_slider_bounds(layout, row)
+            quarter := (kind_bounds.width - 9) * .25
+            labels := [4]cstring{"BARE", "GRASS", "ALGAE", "REEF"}
+            kinds := [4]terrain.Marine_Habitat_Kind{.Bare, .Seagrass, .Macroalgae, .Coralligenous}
+            for kind, index in kinds {
+                editor_ui_panel_button(
+                    {kind_bounds.x + f32(index) * (quarter + 3), kind_bounds.y + 20, quarter, 30},
+                    labels[index],
+                    editor.marine_ecology_paint_kind == kind,
+                )
+            }
+            row += 1
+        } else {
+            kind_bounds := editor_ui_slider_bounds(layout, row)
+            third := (kind_bounds.width - 6) / 3
+            labels := [3]cstring{"NATURAL", "SAND", "SOIL"}
+            kinds := [3]Land_Paint_Kind{.Natural, .Sand, .Soil}
+            for kind, index in kinds {
+                editor_ui_panel_button(
+                    {kind_bounds.x + f32(index) * (third + 3), kind_bounds.y + 20, third, 30},
+                    labels[index],
+                    editor.land_paint_kind == kind,
+                )
+            }
+            row += 1
+        }
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "RADIUS (m)", editor.radius, terrain.BASE_CELL_SIZE, 400, 0)
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
         row += 1
@@ -2303,7 +2366,54 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
                 _ = editor_ui_slider_input(editor, layout, 334, row, &settings.fill_limit, 0, 100, 1); row += 1
             }
         }
-    case .Smooth, .Paint:
+    case .Smooth:
+        _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 2, row, &editor.strength, 0, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 3, row, &editor.hardness, 0, 1, .01)
+        row += 1
+    case .Paint:
+        mode_bounds := editor_ui_slider_bounds(layout, row)
+        half := (mode_bounds.width - 6) * .5
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {mode_bounds.x, mode_bounds.y + 20, half, 30}) {
+            editor.marine_ecology_paint = false
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}) {
+            editor.marine_ecology_paint = true
+            if editor.marine_ecology_paint_kind == .Bare do editor.marine_ecology_paint_kind = .Seagrass
+        }
+        row += 1
+        if editor.marine_ecology_paint {
+            kind_bounds := editor_ui_slider_bounds(layout, row)
+            quarter := (kind_bounds.width - 9) * .25
+            kinds := [4]terrain.Marine_Habitat_Kind{.Bare, .Seagrass, .Macroalgae, .Coralligenous}
+            if pressed {
+                for kind, index in kinds {
+                    if canvas2d.CheckCollisionPointRec(
+                        mouse,
+                        {kind_bounds.x + f32(index) * (quarter + 3), kind_bounds.y + 20, quarter, 30},
+                    ) {
+                        editor.marine_ecology_paint_kind = kind
+                    }
+                }
+            }
+            row += 1
+        } else {
+            kind_bounds := editor_ui_slider_bounds(layout, row)
+            third := (kind_bounds.width - 6) / 3
+            kinds := [3]Land_Paint_Kind{.Natural, .Sand, .Soil}
+            if pressed {
+                for kind, index in kinds {
+                    if canvas2d.CheckCollisionPointRec(
+                        mouse,
+                        {kind_bounds.x + f32(index) * (third + 3), kind_bounds.y + 20, third, 30},
+                    ) {
+                        editor.land_paint_kind = kind
+                    }
+                }
+            }
+            row += 1
+        }
         _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
         row += 1
         _ = editor_ui_slider_input(editor, layout, 2, row, &editor.strength, 0, 1, .01)

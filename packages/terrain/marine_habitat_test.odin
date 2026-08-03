@@ -64,3 +64,32 @@ marine_habitat_is_deterministic :: proc(t: ^testing.T) {
     marine_habitat_rebuild_all(project)
     testing.expect_value(t, project.marine_habitat_chunks[0].cells[17], first)
 }
+
+@(test)
+marine_habitat_paint_changes_only_the_selected_ecology :: proc(t: ^testing.T) {
+    project := marine_habitat_test_project()
+    defer free_project(project)
+    marine_habitat_rebuild_all(project)
+    before, found := sample_marine_habitat(project, 24, 24)
+    testing.expect(t, found)
+    changed := marine_habitat_paint(project, 24, 24, 20, 1, 1, .Coralligenous)
+    after, after_found := sample_marine_habitat(project, 24, 24)
+    testing.expect(t, changed && after_found)
+    testing.expect(t, after.coralligenous > before.coralligenous)
+    testing.expect(t, project.marine_habitat_chunks[0].revision > 1)
+}
+
+@(test)
+marine_habitat_bare_paint_clears_life_and_is_erasable :: proc(t: ^testing.T) {
+    project := marine_habitat_test_project()
+    defer free_project(project)
+    marine_habitat_rebuild_all(project)
+    before, _ := sample_marine_habitat(project, 24, 24)
+    testing.expect(t, marine_habitat_paint(project, 24, 24, 20, 1, 1, .Bare))
+    bare, _ := sample_marine_habitat(project, 24, 24)
+    testing.expect(t, bare.disturbance > before.disturbance)
+    testing.expect(t, bare.seagrass < before.seagrass)
+    testing.expect(t, marine_habitat_paint(project, 24, 24, 20, 1, 1, .Bare, true))
+    restored, _ := sample_marine_habitat(project, 24, 24)
+    testing.expect(t, restored.disturbance < bare.disturbance)
+}

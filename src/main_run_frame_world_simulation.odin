@@ -109,50 +109,76 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
     if !editor.in_map &&
        editor.tool != .Structure &&
        !terrain_sculpt_owns_direct_brush(editor) &&
-       cursor_hit &&
-       !ui_hit {
+       editor.cursor_hit {
         if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
             terrain_history_push_undo(editor)
         }
         stroke_strength := editor.strength * min(frame_delta, f32(.05)) * 4
         if canvas2d.IsMouseButtonDown(.LEFT) {
-            terrain.apply_stroke_with_hardness(
-                &editor.project,
-                editor.tool,
-                world_x,
-                world_z,
-                editor.radius,
-                stroke_strength,
-                1,
-                editor.hardness,
-            )
-            _ = terrain.bathymetry_refresh_generated_bounds(
-                &editor.project,
-                world_x - editor.radius,
-                world_z - editor.radius,
-                world_x + editor.radius,
-                world_z + editor.radius,
-            )
+            if editor.tool == .Paint && editor.marine_ecology_paint {
+                _ = terrain.marine_habitat_paint(
+                    &editor.project,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    editor.hardness,
+                    editor.marine_ecology_paint_kind,
+                )
+            } else {
+                terrain.apply_stroke_with_hardness(
+                    &editor.project,
+                    editor.tool,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    1,
+                    editor.hardness,
+                    land_paint_target(editor.land_paint_kind),
+                )
+                _ = terrain.bathymetry_refresh_generated_bounds(
+                    &editor.project,
+                    world_x - editor.radius,
+                    world_z - editor.radius,
+                    world_x + editor.radius,
+                    world_z + editor.radius,
+                )
+            }
             world_terrain_changed(editor, world_x, world_z, editor.radius)
         }
         if canvas2d.IsMouseButtonDown(.RIGHT) {
-            terrain.apply_stroke_with_hardness(
-                &editor.project,
-                editor.tool,
-                world_x,
-                world_z,
-                editor.radius,
-                stroke_strength,
-                -1,
-                editor.hardness,
-            )
-            _ = terrain.bathymetry_refresh_generated_bounds(
-                &editor.project,
-                world_x - editor.radius,
-                world_z - editor.radius,
-                world_x + editor.radius,
-                world_z + editor.radius,
-            )
+            if editor.tool == .Paint && editor.marine_ecology_paint {
+                _ = terrain.marine_habitat_paint(
+                    &editor.project,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    editor.hardness,
+                    editor.marine_ecology_paint_kind,
+                    true,
+                )
+            } else {
+                terrain.apply_stroke_with_hardness(
+                    &editor.project,
+                    editor.tool,
+                    world_x,
+                    world_z,
+                    editor.radius,
+                    stroke_strength,
+                    -1,
+                    editor.hardness,
+                    land_paint_target(.Natural),
+                )
+                _ = terrain.bathymetry_refresh_generated_bounds(
+                    &editor.project,
+                    world_x - editor.radius,
+                    world_z - editor.radius,
+                    world_x + editor.radius,
+                    world_z + editor.radius,
+                )
+            }
             world_terrain_changed(editor, world_x, world_z, editor.radius)
         }
     }

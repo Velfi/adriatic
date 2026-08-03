@@ -2987,6 +2987,7 @@ apply_stroke_with_hardness :: proc(
     project: ^Project,
     tool: Tool,
     world_x, world_z, radius, strength, direction, hardness: f32,
+    paint_target: f32 = 2,
 ) {
     if project == nil || radius <= 0 || strength <= 0 do return
     edit_x, edit_z := world_x, world_z
@@ -3032,7 +3033,12 @@ apply_stroke_with_hardness :: proc(
             case .Raise:
                 data.heights[index] += direction * strength * falloff
             case .Paint:
-                data.material[index] = clamp(data.material[index] + direction * strength * falloff, 0, 1)
+                if paint_target >= -1 && paint_target <= 1 {
+                    blend := clamp(strength * falloff, f32(0), f32(1))
+                    data.material[index] += (paint_target - data.material[index]) * blend
+                } else {
+                    data.material[index] = clamp(data.material[index] + direction * strength * falloff, 0, 1)
+                }
             case .Smooth:
                 left := data.heights[sample_index(max(x - 1, 0), z)]
                 right := data.heights[sample_index(min(x + 1, TERRAIN_RESOLUTION - 1), z)]
