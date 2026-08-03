@@ -253,7 +253,7 @@ customization_adjust_scarf_component :: proc(editor: ^Editor, component, directi
         if next > 1 do next -= 1
     }
     customization_set_scarf_component(editor, component, next)
-    _ = mouse_preference_save(editor)
+    _ = player_settings_save(editor)
 }
 
 customization_activate :: proc(editor: ^Editor, focus: int) {
@@ -276,7 +276,7 @@ customization_activate :: proc(editor: ^Editor, focus: int) {
     } else {
         changed = false
     }
-    if changed do _ = mouse_preference_save(editor)
+    if changed do _ = player_settings_save(editor)
 }
 
 customization_move_focus :: proc(editor: ^Editor, horizontal, vertical: int) {
@@ -462,7 +462,7 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
         track := customization_color_track_bounds(bounds)
         normalized := clamp((mouse.x - track.x) / track.width, 0, 1)
         customization_set_scarf_component(editor, component, normalized)
-        _ = mouse_preference_save(editor)
+        _ = player_settings_save(editor)
     }
 }
 

@@ -1,5 +1,8 @@
 package main
 
+// Legacy binary preference reader retained only for one-way migration into
+// player-settings.toml. New runtime code must not write this format.
+
 import "core:mem"
 import "core:os"
 import "core:strings"
@@ -303,12 +306,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
             show_hud            = payload.show_hud,
+            controller_stick_deadzone = .16,
+            controller_trigger_deadzone = .04,
             crunchiness         = Crunchiness(payload.crunchiness),
             visual_style        = mouse_preference_legacy_style(Dither_Mode(payload.dither_mode)),
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
             anti_aliasing       = .MSAA_4X,
+            vsync                = true,
         }
         return true
     }
@@ -351,12 +357,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
             show_hud            = payload.show_hud,
+            controller_stick_deadzone = .16,
+            controller_trigger_deadzone = .04,
             crunchiness         = Crunchiness(payload.crunchiness),
             visual_style        = mouse_preference_legacy_style(Dither_Mode(payload.dither_mode)),
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
             anti_aliasing       = .MSAA_4X,
+            vsync                = true,
         }
         return true
     }
@@ -398,12 +407,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
             show_hud            = payload.show_hud,
+            controller_stick_deadzone = .16,
+            controller_trigger_deadzone = .04,
             crunchiness         = Crunchiness(payload.crunchiness),
             visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
             anti_aliasing       = .MSAA_4X,
+            vsync                = true,
         }
         return true
     }
@@ -446,12 +458,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
             show_hud            = payload.show_hud,
+            controller_stick_deadzone = .16,
+            controller_trigger_deadzone = .04,
             crunchiness         = Crunchiness(payload.crunchiness),
             visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
             anti_aliasing       = .MSAA_4X,
+            vsync                = true,
         }
         return true
     }
@@ -494,12 +509,15 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         invert_look_y       = payload.invert_look_y,
         invert_flight_pitch = payload.invert_flight_pitch,
         show_hud            = payload.show_hud,
+        controller_stick_deadzone = .16,
+        controller_trigger_deadzone = .04,
         crunchiness         = Crunchiness(payload.crunchiness),
         visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
         dither_mode         = Dither_Mode(payload.dither_mode),
         hdr_exposure        = payload.hdr_exposure,
         theme_mode          = UI_Theme_Mode(payload.theme_mode),
         anti_aliasing       = Anti_Aliasing(payload.anti_aliasing),
+        vsync                = true,
     }
     return true
 }

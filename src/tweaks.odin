@@ -14,6 +14,8 @@ import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import spy "zelda_engine:spy"
+import canvas2d "zelda_engine:canvas2d"
 
 TWEAK_FILE_PATH :: "adriatic.tweak.toml"
 TWEAK_FILE_VERSION :: i64(1)
@@ -30,6 +32,7 @@ Tweak_Page :: enum {
     Weather_Time,
     Ocean_Fog,
     Lighting_Materials,
+    Player,
     Mouse,
     Car,
     Postale,
@@ -912,6 +915,90 @@ tweak_draw_player :: proc(editor: ^Editor) {
     }
 }
 
+tweak_draw_player_settings :: proc(editor: ^Editor) {
+    if editor == nil do return
+
+    before := editor.gameplay_options
+    options := &editor.gameplay_options
+
+    if tweak_section("Sound", true) {
+        im.SliderFloat("Sound FX level", &options.sound_fx_level, 0, 1, "%.2f", im.SliderFlags_AlwaysClamp)
+    }
+    if tweak_section("Controller", true) {
+        im.SliderFloat("Stick deadzone", &options.controller_stick_deadzone, 0, .5, "%.2f", im.SliderFlags_AlwaysClamp)
+        im.SliderFloat("Trigger deadzone", &options.controller_trigger_deadzone, 0, .5, "%.2f", im.SliderFlags_AlwaysClamp)
+        im.SliderFloat("Look sensitivity", &options.look_sensitivity, .004, .024, "%.3f", im.SliderFlags_AlwaysClamp)
+        im.Checkbox("Invert horizontal look", &options.invert_look_x)
+        im.Checkbox("Invert vertical look", &options.invert_look_y)
+        im.Checkbox("Invert flight pitch", &options.invert_flight_pitch)
+    }
+    if tweak_section("Graphics", true) {
+        im.Checkbox("Show on-screen info", &options.show_hud)
+        im.TextUnformatted("Crunchiness")
+        if im.RadioButton("240P", options.crunchiness == .P240) do options.crunchiness = .P240
+        im.SameLine()
+        if im.RadioButton("480P", options.crunchiness == .P480) do options.crunchiness = .P480
+        im.SameLine()
+        if im.RadioButton("720P", options.crunchiness == .P720) do options.crunchiness = .P720
+        im.SameLine()
+        if im.RadioButton("Full", options.crunchiness == .Full) do options.crunchiness = .Full
+
+        im.TextUnformatted("Render style")
+        for index in 0 ..< VISUAL_STYLE_COUNT {
+            value := Visual_Style(index)
+            if index > 0 do im.SameLine()
+            if im.RadioButton(visual_style_label(value), options.visual_style == value) {
+                visual_style_set(editor, value)
+            }
+        }
+
+        dither_enabled := options.visual_style == .Dither
+        im.BeginDisabled(!dither_enabled)
+        im.TextUnformatted("Dither pattern")
+        for index in 1 ..= 3 {
+            value := Dither_Mode(index)
+            if index > 1 do im.SameLine()
+            if im.RadioButton(dither_mode_label(value), options.dither_mode == value) {
+                options.dither_mode = value
+            }
+        }
+        im.EndDisabled()
+
+        im.Checkbox("HDR exposure", &options.hdr_exposure)
+        im.TextUnformatted("Theme")
+        if im.RadioButton("Light", options.theme_mode == .Light) do options.theme_mode = .Light
+        im.SameLine()
+        if im.RadioButton("Dark", options.theme_mode == .Dark) do options.theme_mode = .Dark
+        im.Checkbox("VSync", &options.vsync)
+        im.TextUnformatted("Anti-aliasing")
+        for index in 0 ..< 3 {
+            value := Anti_Aliasing(index)
+            samples := anti_aliasing_samples(value)
+            supported := samples == 1 || canvas2d.WorldSampleCountSupported(samples)
+            im.BeginDisabled(!supported)
+            if index > 0 do im.SameLine()
+            if im.RadioButton(index == 0 ? "Off" : index == 1 ? "2X" : "4X", options.anti_aliasing == value) {
+                options.anti_aliasing = value
+            }
+            im.EndDisabled()
+        }
+    }
+
+    if im.Button("Restore player defaults") {
+        editor.gameplay_options = gameplay_options_default()
+    }
+    im.SameLine()
+    if im.Button("Open mouse customization") {
+        menu_scene_set(editor, .Customization)
+        editor.customization_focus = 0
+    }
+
+    if editor.gameplay_options != before {
+        player_settings_apply(editor)
+        if !player_settings_save(editor) do spy.warn("adriatic could not save player settings")
+    }
+}
+
 tweak_draw_camera :: proc(editor: ^Editor) {
     c := &editor.tweak.camera
     im.SeparatorText("Editor camera")
@@ -1375,10 +1462,15 @@ tweak_draw_navigation :: proc() {
     im.Spacing()
     if im.TextFilter_PassFilter(
         &tweak_filter,
-        "Mouse player teleport vehicle car aircraft movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
+        "Player settings sound graphics controller look sensitivity invert HUD deadzone trigger stick crunchiness render style dither HDR theme anti-aliasing VSync mouse customization",
     ) {
-        im.TextDisabled("CHARACTERS")
+        im.TextDisabled("PLAYER")
     }
+    _ = tweak_page_select(
+        "Player",
+        "Player settings sound graphics controller look sensitivity invert HUD deadzone trigger stick crunchiness render style dither HDR theme anti-aliasing VSync mouse customization",
+        .Player,
+    )
     _ = tweak_page_select(
         "Mouse",
         "Mouse player teleport vehicle car aircraft movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
@@ -1623,6 +1715,9 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
             case .Lighting_Materials:
                 im.SeparatorText("Lighting & Materials")
                 tweak_draw_presentation(editor)
+            case .Player:
+                im.SeparatorText("Player")
+                tweak_draw_player_settings(editor)
             case .Mouse:
                 im.SeparatorText("Mouse")
                 tweak_draw_player(editor)

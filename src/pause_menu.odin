@@ -103,18 +103,21 @@ menu_scene_pop :: proc(editor: ^Editor) {
 }
 
 Gameplay_Options :: struct {
-    look_sensitivity:    f32,
-    sound_fx_level:      f32,
-    invert_look_x:       bool,
-    invert_look_y:       bool,
-    invert_flight_pitch: bool,
-    show_hud:            bool,
-    crunchiness:         Crunchiness,
-    visual_style:        Visual_Style,
-    dither_mode:         Dither_Mode,
-    hdr_exposure:        bool,
-    theme_mode:          UI_Theme_Mode,
-    anti_aliasing:       Anti_Aliasing,
+    look_sensitivity:             f32,
+    sound_fx_level:               f32,
+    invert_look_x:                bool,
+    invert_look_y:                bool,
+    invert_flight_pitch:          bool,
+    show_hud:                     bool,
+    controller_stick_deadzone:    f32,
+    controller_trigger_deadzone:  f32,
+    crunchiness:                  Crunchiness,
+    visual_style:                 Visual_Style,
+    dither_mode:                  Dither_Mode,
+    hdr_exposure:                 bool,
+    theme_mode:                   UI_Theme_Mode,
+    anti_aliasing:                Anti_Aliasing,
+    vsync:                        bool,
 }
 
 Anti_Aliasing :: enum u8 {
@@ -138,12 +141,15 @@ gameplay_options_default :: proc() -> Gameplay_Options {
         invert_look_y = false,
         invert_flight_pitch = false,
         show_hud = true,
+        controller_stick_deadzone = .16,
+        controller_trigger_deadzone = .04,
         crunchiness = .P480,
         visual_style = .Standard,
         dither_mode = .Off,
         hdr_exposure = true,
         theme_mode = .Light,
         anti_aliasing = .MSAA_4X,
+        vsync = true,
     }
 }
 
@@ -293,10 +299,10 @@ world_select_start_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> ca
     return {panel.x + panel.width - 254, panel.y + panel.height - 108, 220, 44}
 }
 
-OPTIONS_ROW_COUNT :: 13
+OPTIONS_ROW_COUNT :: 16
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(1000)
+OPTIONS_CONTENT_HEIGHT :: f32(1240)
 
 @(no_instrumentation)
 options_menu_viewport :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
@@ -321,7 +327,7 @@ options_menu_row_bounds :: #force_inline proc(
 @(no_instrumentation)
 options_menu_restore_bounds :: #force_inline proc(panel: canvas2d.Rectangle, scroll_y: f32 = 0) -> canvas2d.Rectangle {
     viewport := options_menu_viewport(panel)
-    return {panel.x + 44, viewport.y + 874 - scroll_y, panel.width - 88, 46}
+    return {panel.x + 44, viewport.y + 10 + f32(OPTIONS_ROW_COUNT) * 72 - scroll_y, panel.width - 88, 46}
 }
 
 @(no_instrumentation)
@@ -911,22 +917,39 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
     case 5:
         editor.gameplay_options.show_hud = direction > 0
     case 6:
+        editor.gameplay_options.controller_stick_deadzone = clamp(
+            editor.gameplay_options.controller_stick_deadzone + f32(direction) * .01,
+            0,
+            .5,
+        )
+        controller_deadzone_apply(editor.gameplay_options)
+    case 7:
+        editor.gameplay_options.controller_trigger_deadzone = clamp(
+            editor.gameplay_options.controller_trigger_deadzone + f32(direction) * .01,
+            0,
+            .5,
+        )
+        controller_deadzone_apply(editor.gameplay_options)
+    case 8:
         selected := clamp(int(editor.gameplay_options.crunchiness) + direction, 0, 3)
         editor.gameplay_options.crunchiness = Crunchiness(selected)
         crunchiness_apply(editor.gameplay_options.crunchiness)
-    case 7:
+    case 9:
         visual_style_set(editor, visual_style_adjust(editor.gameplay_options.visual_style, direction))
-    case 8:
+    case 10:
         if editor.gameplay_options.visual_style != .Dither do return
         editor.gameplay_options.dither_mode = dither_adjust_variant(editor.gameplay_options.dither_mode, direction)
         dither_apply(editor)
-    case 9:
+    case 11:
         editor.gameplay_options.hdr_exposure = direction > 0
         dither_apply(editor)
-    case 10:
+    case 12:
         editor.gameplay_options.theme_mode = direction > 0 ? .Dark : .Light
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
-    case 11:
+    case 13:
+        editor.gameplay_options.vsync = direction > 0
+        canvas2d.SetVSyncEnabled(editor.gameplay_options.vsync)
+    case 14:
         editor.gameplay_options.anti_aliasing = anti_aliasing_adjust(editor.gameplay_options.anti_aliasing, direction)
         anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
     }
@@ -935,8 +958,8 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
 options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seconds: f32) {
     options_before := editor.gameplay_options
     defer {
-        if editor.gameplay_options != options_before && !mouse_preference_save(editor) {
-            fmt.eprintln("adriatic could not save gameplay preferences")
+        if editor.gameplay_options != options_before && !player_settings_save(editor) {
+            fmt.eprintln("adriatic could not save player settings")
         }
     }
     panel := pause_menu_panel(width, height, true)
@@ -988,29 +1011,29 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
             editor.gameplay_options.invert_flight_pitch = !editor.gameplay_options.invert_flight_pitch
         case 5:
             editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
-        case 7:
+        case 9:
             visual_style_set(editor, visual_style_next(editor.gameplay_options.visual_style))
-        case 8:
+        case 10:
             if editor.gameplay_options.visual_style == .Dither {
                 editor.gameplay_options.dither_mode = dither_next_variant(editor.gameplay_options.dither_mode)
                 dither_apply(editor)
             }
-        case 9:
+        case 11:
             editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
             dither_apply(editor)
-        case 10:
+        case 12:
             editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
-        case 11:
+        case 13:
+            editor.gameplay_options.vsync = !editor.gameplay_options.vsync
+            canvas2d.SetVSyncEnabled(editor.gameplay_options.vsync)
+        case 14:
             editor.gameplay_options.anti_aliasing = anti_aliasing_adjust(editor.gameplay_options.anti_aliasing, 1)
             anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
-            crunchiness_apply(editor.gameplay_options.crunchiness)
-            dither_apply(editor)
-            ui_theme_set_mode(editor.gameplay_options.theme_mode)
-            anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
-        case 12:
+            player_settings_apply(editor)
+        case 15:
             menu_scene_push(editor, .Customization)
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
@@ -1024,7 +1047,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
            editor.options_focus != 8 &&
            editor.options_focus != 9 &&
            editor.options_focus != 10 &&
-           editor.options_focus != 11 {
+           editor.options_focus != 11 &&
+           editor.options_focus != 12 &&
+           editor.options_focus != 13 &&
+           editor.options_focus != 14 {
             return
         }
     }
@@ -1124,7 +1150,33 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         editor.gameplay_options.show_hud = !editor.gameplay_options.show_hud
         return
     }
-    crunchiness := options_menu_row_bounds(panel, 6, scroll_y)
+    stick_deadzone := options_menu_row_bounds(panel, 6, scroll_y)
+    stick_deadzone_track := options_menu_slider_track(stick_deadzone)
+    if content_hovered &&
+       canvas2d.IsMouseButtonDown(.LEFT) &&
+       canvas2d.CheckCollisionPointRec(
+           mouse,
+           {stick_deadzone_track.x - 8, stick_deadzone_track.y - 12, stick_deadzone_track.width + 16, 30},
+       ) {
+        editor.options_focus = 6
+        editor.gameplay_options.controller_stick_deadzone =
+            clamp((mouse.x - stick_deadzone_track.x) / stick_deadzone_track.width * .5, 0, .5)
+        controller_deadzone_apply(editor.gameplay_options)
+    }
+    trigger_deadzone := options_menu_row_bounds(panel, 7, scroll_y)
+    trigger_deadzone_track := options_menu_slider_track(trigger_deadzone)
+    if content_hovered &&
+       canvas2d.IsMouseButtonDown(.LEFT) &&
+       canvas2d.CheckCollisionPointRec(
+           mouse,
+           {trigger_deadzone_track.x - 8, trigger_deadzone_track.y - 12, trigger_deadzone_track.width + 16, 30},
+       ) {
+        editor.options_focus = 7
+        editor.gameplay_options.controller_trigger_deadzone =
+            clamp((mouse.x - trigger_deadzone_track.x) / trigger_deadzone_track.width * .5, 0, .5)
+        controller_deadzone_apply(editor.gameplay_options)
+    }
+    crunchiness := options_menu_row_bounds(panel, 8, scroll_y)
     segment_gap := f32(6)
     segment_width := (crunchiness.width - segment_gap * 3) / 4
     if content_hovered && pressed {
@@ -1136,7 +1188,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
                 30,
             }
             if canvas2d.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 6
+                editor.options_focus = 8
                 editor.gameplay_options.crunchiness = Crunchiness(index)
                 crunchiness_apply(editor.gameplay_options.crunchiness)
                 return
@@ -1148,13 +1200,10 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
        canvas2d.CheckCollisionPointRec(mouse, options_menu_restore_bounds(panel, scroll_y)) {
         editor.options_focus = OPTIONS_RESTORE_FOCUS
         editor.gameplay_options = gameplay_options_default()
-        crunchiness_apply(editor.gameplay_options.crunchiness)
-        dither_apply(editor)
-        ui_theme_set_mode(editor.gameplay_options.theme_mode)
-        anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
+        player_settings_apply(editor)
         return
     }
-    style := options_menu_row_bounds(panel, 7, scroll_y)
+    style := options_menu_row_bounds(panel, 9, scroll_y)
     style_gap := f32(6)
     style_segment_width := (style.width - style_gap * f32(VISUAL_STYLE_COUNT - 1)) / f32(VISUAL_STYLE_COUNT)
     if content_hovered && pressed {
@@ -1166,13 +1215,13 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
                 30,
             }
             if canvas2d.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 7
+                editor.options_focus = 9
                 visual_style_set(editor, Visual_Style(index))
                 return
             }
         }
     }
-    dither := options_menu_row_bounds(panel, 8, scroll_y)
+    dither := options_menu_row_bounds(panel, 10, scroll_y)
     dither_gap := f32(6)
     dither_segment_width := (dither.width - dither_gap * 2) / 3
     if editor.gameplay_options.visual_style == .Dither && content_hovered && pressed {
@@ -1184,7 +1233,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
                 30,
             }
             if canvas2d.CheckCollisionPointRec(mouse, segment) {
-                editor.options_focus = 8
+                editor.options_focus = 10
                 editor.gameplay_options.dither_mode = Dither_Mode(index)
                 dither_apply(editor)
                 return
@@ -1193,26 +1242,34 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     if content_hovered &&
        pressed &&
-       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 9, scroll_y)) {
-        editor.options_focus = 9
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 11, scroll_y)) {
+        editor.options_focus = 11
         editor.gameplay_options.hdr_exposure = !editor.gameplay_options.hdr_exposure
         dither_apply(editor)
         return
     }
     if content_hovered &&
        pressed &&
-       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 10, scroll_y)) {
-        editor.options_focus = 10
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 12, scroll_y)) {
+        editor.options_focus = 12
         editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
         return
     }
     if content_hovered &&
        pressed &&
-       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 11, scroll_y)) {
-        editor.options_focus = 11
-        x := mouse.x - options_menu_row_bounds(panel, 11, scroll_y).x
-        selected := Anti_Aliasing(clamp(int(x / max(options_menu_row_bounds(panel, 11, scroll_y).width / 3, 1)), 0, 2))
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 13, scroll_y)) {
+        editor.options_focus = 13
+        editor.gameplay_options.vsync = !editor.gameplay_options.vsync
+        canvas2d.SetVSyncEnabled(editor.gameplay_options.vsync)
+        return
+    }
+    if content_hovered &&
+       pressed &&
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 14, scroll_y)) {
+        editor.options_focus = 14
+        x := mouse.x - options_menu_row_bounds(panel, 14, scroll_y).x
+        selected := Anti_Aliasing(clamp(int(x / max(options_menu_row_bounds(panel, 14, scroll_y).width / 3, 1)), 0, 2))
         samples := anti_aliasing_samples(selected)
         if samples == 1 || canvas2d.WorldSampleCountSupported(samples) {
             editor.gameplay_options.anti_aliasing = selected
@@ -1222,8 +1279,8 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     if content_hovered &&
        pressed &&
-       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 12, scroll_y)) {
-        editor.options_focus = 12
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 15, scroll_y)) {
+        editor.options_focus = 15
         menu_scene_push(editor, .Customization)
         editor.customization_focus = 0
         return
@@ -1677,6 +1734,46 @@ options_menu_draw_scrollbar :: proc(panel: canvas2d.Rectangle, scroll_y: f32) {
     canvas2d.DrawRectangleRounded(thumb, 1, 8, thumb_color)
 }
 
+options_menu_draw_deadzone :: proc(
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    value: f32,
+    focused: bool,
+) {
+    hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
+    fill := hovered ? ui_theme_control_hover() : ui_theme_control()
+    border := hovered ? ui_theme_border_strong() : ui_theme_border()
+    if focused {
+        fill = ui_theme_surface_elevated()
+        border = ui_theme_focus()
+    }
+    canvas2d.DrawRectangleRounded(bounds, .1, 8, fill)
+    canvas2d.DrawRectangleRoundedLinesEx(bounds, .1, 8, focused ? 2 : 1, border)
+    ui_draw_text(.Label, label, {bounds.x + 14, bounds.y + 8}, .4, ui_theme_text())
+    value_text := fmt.ctprintf("%d%%", int(value * 200 + .5))
+    value_size := ui_measure_text(.Data, value_text, .3)
+    ui_draw_text(
+        .Data,
+        value_text,
+        {bounds.x + bounds.width - value_size.x - 14, bounds.y + 8},
+        .3,
+        ui_theme_accent(),
+    )
+    track := options_menu_slider_track(bounds)
+    canvas2d.DrawRectangleRounded(track, 1, 6, ui_theme_border(180))
+    normalized := clamp(value / .5, 0, 1)
+    canvas2d.DrawRectangleRounded(
+        {track.x, track.y, track.width * normalized, track.height},
+        1,
+        6,
+        ui_theme_accent(),
+    )
+    knob := canvas2d.Vector2{track.x + track.width * normalized, track.y + track.height * .5}
+    canvas2d.DrawCircleV({knob.x, knob.y + 2}, 9, ui_theme_scrim(80))
+    canvas2d.DrawCircleV(knob, 9, ui_theme_surface_elevated())
+    canvas2d.DrawCircleV(knob, 3, ui_theme_accent())
+}
+
 options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     pause_menu_draw_header(panel, "", "OPTIONS")
     navigation_hint: cstring = "ARROWS SELECT + ADJUST"
@@ -1771,6 +1868,19 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     canvas2d.DrawCircleV(sound_fx_knob, 9, ui_theme_surface_elevated())
     canvas2d.DrawCircleV(sound_fx_knob, 3, ui_theme_accent())
 
+    options_menu_draw_deadzone(
+        options_menu_row_bounds(panel, 6, scroll_y),
+        "STICK DEADZONE",
+        editor.gameplay_options.controller_stick_deadzone,
+        editor.options_focus == 6,
+    )
+    options_menu_draw_deadzone(
+        options_menu_row_bounds(panel, 7, scroll_y),
+        "TRIGGER DEADZONE",
+        editor.gameplay_options.controller_trigger_deadzone,
+        editor.options_focus == 7,
+    )
+
     options_menu_draw_toggle(
         options_menu_row_bounds(panel, 2, scroll_y),
         "INVERT HORIZONTAL LOOK",
@@ -1796,8 +1906,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
         editor.options_focus == 5,
     )
 
-    crunchiness := options_menu_row_bounds(panel, 6, scroll_y)
-    if editor.options_focus == 6 {
+    crunchiness := options_menu_row_bounds(panel, 8, scroll_y)
+    if editor.options_focus == 8 {
         canvas2d.DrawRectangleRounded(
             {crunchiness.x - 4, crunchiness.y - 4, crunchiness.width + 8, crunchiness.height + 8},
             .08,
@@ -1824,8 +1934,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
         )
     }
 
-    style := options_menu_row_bounds(panel, 7, scroll_y)
-    if editor.options_focus == 7 {
+    style := options_menu_row_bounds(panel, 9, scroll_y)
+    if editor.options_focus == 9 {
         canvas2d.DrawRectangleRounded(
             {style.x - 4, style.y - 4, style.width + 8, style.height + 8},
             .08,
@@ -1852,8 +1962,8 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
         )
     }
 
-    dither := options_menu_row_bounds(panel, 8, scroll_y)
-    if editor.options_focus == 8 && editor.gameplay_options.visual_style == .Dither {
+    dither := options_menu_row_bounds(panel, 10, scroll_y)
+    if editor.options_focus == 10 && editor.gameplay_options.visual_style == .Dither {
         canvas2d.DrawRectangleRoundedLinesEx(
             {dither.x - 4, dither.y - 4, dither.width + 8, dither.height + 8},
             .08,
@@ -1876,20 +1986,27 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     }
 
     options_menu_draw_toggle(
-        options_menu_row_bounds(panel, 9, scroll_y),
+        options_menu_row_bounds(panel, 11, scroll_y),
         "HDR EXPOSURE",
         editor.gameplay_options.hdr_exposure,
-        editor.options_focus == 9,
+        editor.options_focus == 11,
     )
 
     options_menu_draw_toggle(
-        options_menu_row_bounds(panel, 10, scroll_y),
+        options_menu_row_bounds(panel, 12, scroll_y),
         "DARK MODE",
         editor.gameplay_options.theme_mode == .Dark,
-        editor.options_focus == 10,
+        editor.options_focus == 12,
     )
 
-    aa := options_menu_row_bounds(panel, 11, scroll_y)
+    options_menu_draw_toggle(
+        options_menu_row_bounds(panel, 13, scroll_y),
+        "VSYNC",
+        editor.gameplay_options.vsync,
+        editor.options_focus == 13,
+    )
+
+    aa := options_menu_row_bounds(panel, 14, scroll_y)
     ui_draw_text(.Label, "ANTI-ALIASING", {aa.x, aa.y + 2}, .4, ui_theme_text())
     aa_gap := f32(6)
     aa_width := (aa.width - aa_gap * 2) / 3
@@ -1906,10 +2023,10 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
     }
 
     pause_menu_button(
-        options_menu_row_bounds(panel, 12, scroll_y),
+        options_menu_row_bounds(panel, 15, scroll_y),
         "CUSTOMIZE MOUSE",
         true,
-        editor.options_focus == 12,
+        editor.options_focus == 15,
     )
 
     pause_menu_button(

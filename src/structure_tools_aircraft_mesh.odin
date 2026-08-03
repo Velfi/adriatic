@@ -310,8 +310,15 @@ Screen_Point :: struct {
     visible:  bool,
 }
 
-shape_flight_axis :: proc(value: f32) -> f32 {
-    dead_zone := f32(.16)
+controller_stick_deadzone_active := f32(.16)
+controller_trigger_deadzone_active := f32(.04)
+
+controller_deadzone_apply :: proc(settings: Gameplay_Options) {
+    controller_stick_deadzone_active = clamp(settings.controller_stick_deadzone, 0, .5)
+    controller_trigger_deadzone_active = clamp(settings.controller_trigger_deadzone, 0, .5)
+}
+
+shape_flight_axis :: proc(value: f32, dead_zone: f32 = .16) -> f32 {
     magnitude := math.abs(value)
     if magnitude <= dead_zone do return 0
     return math.sign(value) * clamp((magnitude - dead_zone) / (1 - dead_zone), 0, 1)
@@ -319,7 +326,11 @@ shape_flight_axis :: proc(value: f32) -> f32 {
 
 gamepad_axis :: proc(axis: canvas2d.Gamepad_Axis) -> f32 {
     if !canvas2d.GamepadAvailable() do return 0
-    return shape_flight_axis(canvas2d.GetGamepadAxis(axis))
+    dead_zone := controller_stick_deadzone_active
+    if axis == .Left_Trigger || axis == .Right_Trigger {
+        dead_zone = controller_trigger_deadzone_active
+    }
+    return shape_flight_axis(canvas2d.GetGamepadAxis(axis), dead_zone)
 }
 
 gamepad_pressed :: proc(button: canvas2d.Gamepad_Button) -> bool {

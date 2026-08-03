@@ -529,19 +529,27 @@ adriatic_run_impl :: proc(
     }
     run_initialize_editor_defaults(editor, request, capture_mode, capture_target)
     if !capture_mode {
-        _ = mouse_preference_load(editor)
+        if !player_settings_load(editor) {
+            // Read old binary preferences once, then immediately convert them
+            // to the TOML document used by all future runs.
+            if mouse_preference_load(editor) {
+                legacy_defaults := gameplay_options_default()
+                editor.gameplay_options.controller_stick_deadzone = legacy_defaults.controller_stick_deadzone
+                editor.gameplay_options.controller_trigger_deadzone = legacy_defaults.controller_trigger_deadzone
+                editor.gameplay_options.vsync = legacy_defaults.vsync
+                _ = player_settings_save(editor)
+            }
+        }
+        player_settings_apply(editor)
         // Persist final values on every exit, including window close and hot reload;
         // preference durability must not depend on a particular menu input path.
         defer {
-            if !mouse_preference_save(editor) {
-                fmt.eprintln("adriatic could not save gameplay preferences")
+            if !player_settings_save(editor) {
+                fmt.eprintln("adriatic could not save player settings")
             }
         }
     }
-    crunchiness_apply(editor.gameplay_options.crunchiness)
-    anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
-    dither_apply(editor)
-    ui_theme_set_mode(editor.gameplay_options.theme_mode)
+    if capture_mode do player_settings_apply(editor)
     editor.runtime_input = game_input.default_state()
     editor.vehicle_paint_tool_icons = canvas2d.LoadTexture("assets/icons/control-hints/keyboard-mouse.png")
     if !editor.vehicle_paint_tool_icons.ready {
