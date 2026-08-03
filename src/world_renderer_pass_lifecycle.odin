@@ -409,7 +409,6 @@ world_renderer_destroy :: proc() {
     resources.image_destroy(&world_renderer.soda_cap_logo, world_renderer.ctx)
     resources.image_destroy(&world_renderer.architecture_material_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.business_sign_atlas, world_renderer.ctx)
-    resources.image_destroy(&world_renderer.marine_ecology_atlas, world_renderer.ctx)
     for &material_map in world_renderer.material_lab_maps {
         resources.image_destroy(&material_map, world_renderer.ctx)
     }

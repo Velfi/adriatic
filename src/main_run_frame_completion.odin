@@ -30,7 +30,15 @@ import physics "zelda_engine:physics"
 run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) -> bool {
     // Player captures wait long enough for the Verlet tail and pose blends
     // to settle; frame two only showed the first few links as a short nub.
-    if capture_mode && request != nil && request.seed_frames > 0 {
+    if capture_mode && request != nil && request.plant_sheet_views {
+        next_capture_frame := plant_sheet_view_index == 0 ? capture_frame : plant_sheet_last_capture_frame + 2
+        if plant_sheet_view_index < 3 && frame >= next_capture_frame {
+            names := [3]string{"front", "side", "top"}
+            canvas2d.TakeScreenshot(fmt.ctprintf("%s/%s.png", capture_output, names[plant_sheet_view_index]))
+            plant_sheet_last_capture_frame = frame
+            plant_sheet_view_index += 1
+        }
+    } else if capture_mode && request != nil && request.seed_frames > 0 {
         next_capture_frame := seed_frame_index == 0 ? capture_frame : seed_last_capture_frame + 2
         if seed_frame_index < request.seed_frames && frame >= next_capture_frame {
             seed := request.seed_start + u64(seed_frame_index)
@@ -62,6 +70,13 @@ run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_st
     // presented frames after the request so capture mode always writes its PNG.
     if capture_mode &&
        request != nil &&
+       request.plant_sheet_views &&
+       plant_sheet_view_index >= 3 &&
+       frame >= plant_sheet_last_capture_frame + 12 {
+        return false
+    }
+    if capture_mode &&
+       request != nil &&
        request.seed_frames > 0 &&
        seed_frame_index >= request.seed_frames &&
        frame >= seed_last_capture_frame + 12 {
@@ -82,7 +97,11 @@ run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_st
         return false
     }
     if capture_mode &&
-       (request == nil || (request.turntable_frames == 0 && request.sequence_frames == 0 && request.seed_frames == 0)) &&
+       (request == nil ||
+               (!request.plant_sheet_views &&
+                       request.turntable_frames == 0 &&
+                       request.sequence_frames == 0 &&
+                       request.seed_frames == 0)) &&
        frame >= max(32, capture_frame + 12) {
         return false
     }

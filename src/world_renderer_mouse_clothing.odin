@@ -12,7 +12,7 @@ Mouse_Clothing_Render_Context :: struct {
     using render:                                                                         Mouse_Render_Context,
     animation:                                                                            ^Player_Animation_Tweak,
     emote_pose:                                                                           Mouse_Emote_Pose,
-    skeleton:                                                                             [5]Mouse_Bone_Pose,
+    architecture:                                                                             [5]Mouse_Bone_Pose,
     fur_dark, fur_light, paw:                                                             canvas2d.Color,
     stride_phase:                                                                         f32,
     gait:                                                                                 mouse_gait.Weights,
@@ -27,7 +27,7 @@ world_mouse_clothing_and_limbs :: proc(ctx: Mouse_Clothing_Render_Context) {
     editor, model, p, rotation := ctx.editor, ctx.model, ctx.p, ctx.rotation
     animation := ctx.animation
     emote_pose := ctx.emote_pose
-    skeleton := ctx.skeleton
+    architecture := ctx.architecture
     fur, fur_dark, fur_light, paw, ear, tooth := ctx.fur, ctx.fur_dark, ctx.fur_light, ctx.paw, ctx.ear, ctx.tooth
     stride_phase, gait := ctx.stride_phase, ctx.gait
     model_forward, model_right := ctx.model_forward, ctx.model_right
@@ -96,8 +96,8 @@ world_mouse_clothing_and_limbs :: proc(ctx: Mouse_Clothing_Render_Context) {
             }
             front_vertex := rear_vertex
             front_vertex.bind_position.z = SCARF_NECK_Z + SCARF_HALF_WIDTH
-            collar_rear_local[segment] = mouse_skin_vertex(rear_vertex, &skeleton)
-            collar_front_local[segment] = mouse_skin_vertex(front_vertex, &skeleton)
+            collar_rear_local[segment] = mouse_skin_vertex(rear_vertex, &architecture)
+            collar_front_local[segment] = mouse_skin_vertex(front_vertex, &architecture)
             rear := collar_rear_local[segment]
             front := collar_front_local[segment]
             collar_rear[segment] = local_point(p, rotation, rear.x, rear.y, rear.z)
@@ -159,7 +159,7 @@ world_mouse_clothing_and_limbs :: proc(ctx: Mouse_Clothing_Render_Context) {
                     math.sin(tail_phase) * flap * .026 * amount
                 local_y := root_local.y - .070 * amount + math.sin(tail_phase * 1.13) * flap * .050 * amount
                 local_z := root_local.z - (.500 + flap * .200) * amount + wind_forward * .014 * eased
-                if body_y, push_up, body_hit := mouse_body_surface_height(&skeleton, local_x, local_y, local_z);
+                if body_y, push_up, body_hit := mouse_body_surface_height(&architecture, local_x, local_y, local_z);
                    body_hit {
                     if push_up {
                         local_y = max(local_y, body_y + SCARF_BODY_CLEARANCE)
@@ -313,7 +313,7 @@ world_mouse_clothing_and_limbs :: proc(ctx: Mouse_Clothing_Render_Context) {
         fore_socket_bind := third_person.Vec3{side_f * .12, .31, .04}
         posed_fore_socket := mouse_skin_vertex(
             {bind_position = fore_socket_bind, groups = {{.Chest, .68}, {.Spine, .32}}},
-            &skeleton,
+            &architecture,
         )
         posed_fore_socket += mouse_body_softness_sample(softness, fore_socket_bind)
         fore_shoulder := local_point(p, rotation, posed_fore_socket.x, posed_fore_socket.y, posed_fore_socket.z)
@@ -508,7 +508,7 @@ world_mouse_clothing_and_limbs :: proc(ctx: Mouse_Clothing_Render_Context) {
         hind_socket_bind := third_person.Vec3{side_f * .16, .30, -.47}
         posed_hind_socket := mouse_skin_vertex(
             {bind_position = hind_socket_bind, groups = {{.Pelvis, .82}, {.Spine, .18}}},
-            &skeleton,
+            &architecture,
         )
         posed_hind_socket += mouse_body_softness_sample(softness, hind_socket_bind)
         hind_hip := local_point(p, rotation, posed_hind_socket.x, posed_hind_socket.y, posed_hind_socket.z)

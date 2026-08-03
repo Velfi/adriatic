@@ -68,9 +68,7 @@ fixture_map_sidecar_derive :: proc(encoded_adrmap: []byte) -> (Fixture_Map_Sidec
 fixture_map_sidecar_matches_encoded :: proc(sidecar: Fixture_Map_Sidecar, encoded_adrmap: []byte) -> bool {
     if !fixture_map_sidecar_valid(sidecar) || len(encoded_adrmap) == 0 do return false
     format_version, generator_version, header_ok := map_artifact_header_version_pair(encoded_adrmap)
-    if !header_ok ||
-       format_version != sidecar.format_version ||
-       generator_version != sidecar.generator_version {
+    if !header_ok || format_version != sidecar.format_version || generator_version != sidecar.generator_version {
         return false
     }
     derived, derived_ok := fixture_map_sidecar_derive(encoded_adrmap)

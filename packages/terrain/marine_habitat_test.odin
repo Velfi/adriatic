@@ -7,9 +7,9 @@ marine_habitat_test_project :: proc() -> ^Project {
     project.sea_level = 0
     project.island_transforms = default_island_transforms()
     bed := Bathymetry_Chunk {
-        owner = .World,
+        owner    = .World,
         revision = 4,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for &height in bed.heights do height = -5

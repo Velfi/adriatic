@@ -868,14 +868,20 @@ sample_signed_distance :: proc(plan: ^Plan, normalized_x, normalized_z: f32) -> 
     raw_gz := (normalized_z * .5 + .5) * f32(GRID_HEIGHT - 1)
     gx := clamp(raw_gx, f32(0), f32(GRID_WIDTH - 1))
     gz := clamp(raw_gz, f32(0), f32(GRID_HEIGHT - 1))
-    x0, z0 := int(gx), int(gz)
-    x1, z1 := min(x0 + 1, GRID_WIDTH - 1), min(z0 + 1, GRID_HEIGHT - 1)
-    tx, tz := gx - f32(x0), gz - f32(z0)
-    a := plan.signed_distance[index_of(x0, z0)]
-    b := plan.signed_distance[index_of(x1, z0)]
-    c := plan.signed_distance[index_of(x0, z1)]
-    d := plan.signed_distance[index_of(x1, z1)]
-    sampled := (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * tz
+    x1, z1 := int(gx), int(gz)
+    tx, tz := gx - f32(x1), gz - f32(z1)
+    rows: [4]f32
+    for row in 0 ..< 4 {
+        z := clamp(z1 + row - 1, 0, GRID_HEIGHT - 1)
+        rows[row] = sample_cubic(
+            plan.signed_distance[index_of(clamp(x1 - 1, 0, GRID_WIDTH - 1), z)],
+            plan.signed_distance[index_of(x1, z)],
+            plan.signed_distance[index_of(clamp(x1 + 1, 0, GRID_WIDTH - 1), z)],
+            plan.signed_distance[index_of(clamp(x1 + 2, 0, GRID_WIDTH - 1), z)],
+            tx,
+        )
+    }
+    sampled := sample_cubic(rows[0], rows[1], rows[2], rows[3], tz)
     // The generated field only covers the silhouette grid. Continue its
     // positive (water-side) distance beyond that grid so callers can form a
     // continuous seabed instead of clamping the whole outer world to the

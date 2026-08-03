@@ -228,7 +228,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         head_z += drive_reaction * .065
     }
     head_turn_x := spine_side * .24
-    skeleton := [5]Mouse_Bone_Pose {
+    architecture := [5]Mouse_Bone_Pose {
         {
             parent = -1,
             bind_position = {0, .40, -.48},
@@ -305,27 +305,27 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         // Ease the pelvis-to-neck chain into the same upright arc as the head.
         // These small graded offsets avoid a hinge at the neck while retaining
         // the low haunches that visibly settle into the bucket seat.
-        skeleton[1].position.y += .010
-        skeleton[1].position.z -= .020
-        skeleton[2].position.y += .020
-        skeleton[2].position.z -= .045
-        skeleton[3].position.y += .030
-        skeleton[3].position.z -= .065
+        architecture[1].position.y += .010
+        architecture[1].position.z -= .020
+        architecture[2].position.y += .020
+        architecture[2].position.z -= .045
+        architecture[3].position.y += .030
+        architecture[3].position.z -= .065
     }
     for bone_offset, bone_index in emote_pose.bones {
         weight := clamp(bone_offset.weight, 0, 1)
-        skeleton[bone_index].position += bone_offset.position * weight
-        skeleton[bone_index].position.y += emote_pose.body_height - emote_pose.body_compression
-        skeleton[bone_index].pitch += bone_offset.pitch * weight
-        skeleton[bone_index].yaw += bone_offset.yaw * weight
-        skeleton[bone_index].roll += bone_offset.roll * weight
+        architecture[bone_index].position += bone_offset.position * weight
+        architecture[bone_index].position.y += emote_pose.body_height - emote_pose.body_compression
+        architecture[bone_index].pitch += bone_offset.pitch * weight
+        architecture[bone_index].yaw += bone_offset.yaw * weight
+        architecture[bone_index].roll += bone_offset.roll * weight
     }
-    mouse_skeleton_keep_joints_connected(&skeleton)
+    mouse_architecture_keep_joints_connected(&architecture)
     if model.player_controlled {
         tail_attachment_bind := third_person.Vec3{0, .28, -.78}
         tail_attachment_local := mouse_skin_vertex(
             {bind_position = tail_attachment_bind, groups = {{.Pelvis, 1}, {.Spine, 0}}},
-            &skeleton,
+            &architecture,
         )
         editor.player_tail.evaluated_attachment = local_point(
             p,
@@ -337,8 +337,8 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         editor.player_tail.attachment_valid = true
     }
     softness := model.player_controlled ? &editor.player_body_softness : nil
-    world_mouse_skinned_hull(p, rotation, &skeleton, fur, fur_dark, fur_light, model.pattern, breathing, softness)
-    if model.mailbag_enabled do world_mouse_mailbag(editor, p, rotation, &skeleton)
+    world_mouse_skinned_hull(p, rotation, &architecture, fur, fur_dark, fur_light, model.pattern, breathing, softness)
+    if model.mailbag_enabled do world_mouse_mailbag(editor, p, rotation, &architecture)
 
     ear_offsets := [2]f32{-.125, .125}
     for ear_x, ear_index in ear_offsets {
@@ -379,7 +379,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     // so the nose floated above the snout during the gathered bound pose.
     posed_muzzle_tip := mouse_skin_vertex(
         {bind_position = {0, .62, .58}, groups = {{.Head, 1}, {.Neck, 0}}},
-        &skeleton,
+        &architecture,
     )
     muzzle_x := posed_muzzle_tip.x
     muzzle_y := posed_muzzle_tip.y + .010
@@ -450,7 +450,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
             {editor, model, p, rotation, model_forward, fur, ear, tooth},
             animation,
             emote_pose,
-            skeleton,
+            architecture,
             fur_dark,
             fur_light,
             paw,
@@ -554,7 +554,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
         tail_bind_root := third_person.Vec3{0, .28, -.78}
         tail_posed_root := mouse_skin_vertex(
             {bind_position = tail_bind_root, groups = {{.Pelvis, 1}, {.Spine, 0}}},
-            &skeleton,
+            &architecture,
         )
         tail_root_delta := tail_posed_root - tail_bind_root
         tail_points[0] = local_point(p, rotation, tail_posed_root.x, tail_posed_root.y, tail_posed_root.z)

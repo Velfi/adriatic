@@ -429,7 +429,8 @@ window_lab_draw :: proc(
     // six purpose comparisons remain geometrically matched.
     room_form_offset := (f32((seed >> 9) & 255) / 255 - .5) * .12
     room_depth := clamp(base_room_depth + room_form_offset, f32(.35), f32(.95))
-    interior_light := interior_variant >= 0 ? (window_lab_daylight ? f32(.18) : f32(1)) : (seed % 5 == 1 ? f32(.72) : f32(0))
+    interior_light :=
+        interior_variant >= 0 ? (window_lab_daylight ? f32(.18) : f32(1)) : (seed % 5 == 1 ? f32(.72) : f32(0))
     world_glass_panel(
         {center.x, center.y, center.z + .025},
         plan.width,

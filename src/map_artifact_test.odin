@@ -207,9 +207,9 @@ when ODIN_TEST {
         testing.expect(
             t,
             decoded.fixture.map_source.kind == .Sidecar &&
-                fixture_map_sidecar_valid(sidecar) &&
-                sidecar.format_version == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
-                sidecar.generator_version == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION,
+            fixture_map_sidecar_valid(sidecar) &&
+            sidecar.format_version == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
+            sidecar.generator_version == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION,
         )
 
         sidecar_path, resolved := fixture_map_sidecar_resolve("fixtures/labs/dunes.fixture", sidecar)

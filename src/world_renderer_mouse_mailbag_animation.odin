@@ -10,13 +10,13 @@ import canvas2d "zelda_engine:canvas2d"
 import gltf "zelda_engine:gltf"
 
 mouse_mailbag_body_surface_local :: proc(
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
     local_z, angle: f32,
 ) -> (
     point: third_person.Vec3,
     hit: bool,
 ) {
-    if skeleton == nil do return
+    if architecture == nil do return
     profile := MOUSE_BODY_PROFILE
     if local_z < profile.ring_z[0] || local_z > profile.ring_z[MOUSE_BODY_RING_COUNT - 1] do return
 
@@ -38,24 +38,24 @@ mouse_mailbag_body_surface_local :: proc(
         center_y + math.sin(angle) * body_radius_y,
         local_z,
     }
-    return mouse_body_profile_skin(bind_point, skeleton, lower, upper, amount), true
+    return mouse_body_profile_skin(bind_point, architecture, lower, upper, amount), true
 }
 
 mouse_mailbag_body_surface_sample :: proc(
     origin: third_person.Vec3,
     rotation: f32,
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
     local_z, angle, clearance: f32,
 ) -> (
     point, normal: third_person.Vec3,
     hit: bool,
 ) {
-    local, local_hit := mouse_mailbag_body_surface_local(skeleton, local_z, angle)
+    local, local_hit := mouse_mailbag_body_surface_local(architecture, local_z, angle)
     if !local_hit do return
-    angle_before, _ := mouse_mailbag_body_surface_local(skeleton, local_z, angle - .025)
-    angle_after, _ := mouse_mailbag_body_surface_local(skeleton, local_z, angle + .025)
-    z_before, _ := mouse_mailbag_body_surface_local(skeleton, max(local_z - .010, f32(-.859)), angle)
-    z_after, _ := mouse_mailbag_body_surface_local(skeleton, min(local_z + .010, f32(.579)), angle)
+    angle_before, _ := mouse_mailbag_body_surface_local(architecture, local_z, angle - .025)
+    angle_after, _ := mouse_mailbag_body_surface_local(architecture, local_z, angle + .025)
+    z_before, _ := mouse_mailbag_body_surface_local(architecture, max(local_z - .010, f32(-.859)), angle)
+    z_after, _ := mouse_mailbag_body_surface_local(architecture, min(local_z + .010, f32(.579)), angle)
     local_normal := linalg.normalize0(linalg.cross(angle_after - angle_before, z_after - z_before))
     if linalg.length(local_normal) <= .0001 {
         local_normal = {math.cos(angle), math.sin(angle), 0}
@@ -143,14 +143,14 @@ world_mouse_mailbag_imported_pouch :: proc(
     editor: ^Editor,
     origin: third_person.Vec3,
     rotation: f32,
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
 ) {
-    if editor == nil || skeleton == nil || !editor.mailbag_pouch_asset.ready do return
+    if editor == nil || architecture == nil || !editor.mailbag_pouch_asset.ready do return
     asset := &editor.mailbag_pouch_asset
     anchor, _, hit := mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         MOUSE_POSTAL_HARNESS.rear_loop_z,
         math.PI / 2,
         MOUSE_POSTAL_HARNESS.saddle_clearance + .018,
@@ -184,8 +184,8 @@ world_mouse_mailbag_imported_pouch :: proc(
     }
 }
 
-world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation: f32, skeleton: ^[5]Mouse_Bone_Pose) {
-    if editor == nil || skeleton == nil || !editor.mailbag_pouch_asset.ready do return
+world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation: f32, architecture: ^[5]Mouse_Bone_Pose) {
+    if editor == nil || architecture == nil || !editor.mailbag_pouch_asset.ready do return
     canvas_dark := canvas2d.Color{91, 57, 31, 255}
     leather := canvas2d.Color{67, 39, 27, 255}
     brass := canvas2d.Color{176, 126, 51, 255}
@@ -206,7 +206,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
         for column in 0 ..< COLUMNS {
             x := column_x[column]
             z := row_z[row]
-            surface_y, _, hit := mouse_body_surface_height(skeleton, x, 1.2, z)
+            surface_y, _, hit := mouse_body_surface_height(architecture, x, 1.2, z)
             if !hit do surface_y = .64
             // Keep a genuine air-filled pouch volume above the fitted saddle.
             // Previously the crown began almost on the fur and disappeared
@@ -222,7 +222,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
             posed[row][column] = mouse_mailbag_world_point(origin, rotation, local)
         }
     }
-    world_mouse_mailbag_imported_pouch(editor, origin, rotation, skeleton)
+    world_mouse_mailbag_imported_pouch(editor, origin, rotation, architecture)
 
     // Four named, body-fitted anchors form the leather saddle beneath the
     // canvas pouch. Harness pieces attach here instead of targeting arbitrary
@@ -230,7 +230,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     saddle_front_left, saddle_front_left_normal, _ := mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         -.105,
         math.PI - .60,
         saddle_clearance,
@@ -238,7 +238,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     saddle_front_right, saddle_front_right_normal, _ := mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         -.105,
         .60,
         saddle_clearance,
@@ -246,7 +246,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     saddle_rear_left, saddle_rear_left_normal, _ := mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         harness_design.rear_loop_z,
         math.PI - .72,
         saddle_clearance,
@@ -254,7 +254,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     saddle_rear_right, saddle_rear_right_normal, _ := mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         harness_design.rear_loop_z,
         .72,
         saddle_clearance,
@@ -284,7 +284,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
         left_branch[index], left_normals[index], _ = mouse_mailbag_body_surface_sample(
             origin,
             rotation,
-            skeleton,
+            architecture,
             harness_design.branch_z[index],
             left_angle[index],
             harness_clearance,
@@ -292,7 +292,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
         right_branch[index], right_normals[index], _ = mouse_mailbag_body_surface_sample(
             origin,
             rotation,
-            skeleton,
+            architecture,
             harness_design.branch_z[index],
             harness_design.right_branch_angle[index],
             harness_clearance,
@@ -354,7 +354,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     sternum_outer[0], _, _ = mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         .075,
         -1.86,
         harness_clearance + .006,
@@ -362,7 +362,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     sternum_outer[1], _, _ = mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         .075,
         -1.28,
         harness_clearance + .006,
@@ -370,7 +370,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     sternum_outer[2], _, _ = mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         .145,
         -1.34,
         harness_clearance + .006,
@@ -378,7 +378,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
     sternum_outer[3], _, _ = mouse_mailbag_body_surface_sample(
         origin,
         rotation,
-        skeleton,
+        architecture,
         .145,
         -1.80,
         harness_clearance + .006,
@@ -395,7 +395,7 @@ world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation
         girth[index], girth_normals[index], _ = mouse_mailbag_body_surface_sample(
             origin,
             rotation,
-            skeleton,
+            architecture,
             harness_design.rear_loop_z,
             angle,
             harness_clearance,

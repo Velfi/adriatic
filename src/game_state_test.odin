@@ -322,7 +322,10 @@ when ODIN_TEST {
         }
         editor.architecture_city_plan.parcel_count = 1
         editor.architecture_city_plan.lamps = make([dynamic]architecture.City_Lamp, 1)
-        editor.architecture_city_plan.lamps[0] = {x = east_x + 62, z = east_z + 62}
+        editor.architecture_city_plan.lamps[0] = {
+            x = east_x + 62,
+            z = east_z + 62,
+        }
         editor.architecture_city_plan.lamp_count = 1
         defer architecture.city_plan_destroy(&editor.architecture_city_plan)
         editor.curve_points[0] = {east_x + 66, east_z + 66}
@@ -331,20 +334,22 @@ when ODIN_TEST {
         editor.sdf_obstacle_count = 1
         editor.boat_traffic.count = 2
         editor.boat_traffic.agents[0] = {
-            class = .Fishing,
-            position = {east_x + 70, east_z + 71},
-            route_count = 2,
-            loiter_center = {east_x + 76, east_z + 77},
+            class          = .Fishing,
+            position       = {east_x + 70, east_z + 71},
+            route_count    = 2,
+            loiter_center  = {east_x + 76, east_z + 77},
             schedule_count = 1,
-            wake_count = 1,
+            wake_count     = 1,
         }
         editor.boat_traffic.agents[0].route[0] = {east_x + 72, east_z + 73}
         editor.boat_traffic.agents[0].route[1] = {east_x + 74, east_z + 75}
         editor.boat_traffic.agents[0].schedule[0] = {0, 1440, .Patrol, .75}
-        editor.boat_traffic.agents[0].wake[0] = {position = {east_x + 68, east_z + 69}}
+        editor.boat_traffic.agents[0].wake[0] = {
+            position = {east_x + 68, east_z + 69},
+        }
         editor.boat_traffic.agents[1] = boats.Agent {
-            class = .Motor,
-            position = {-east_x, -east_z},
+            class       = .Motor,
+            position    = {-east_x, -east_z},
             route_count = 1,
         }
         editor.boat_traffic.agents[1].route[0] = {-east_x, -east_z}

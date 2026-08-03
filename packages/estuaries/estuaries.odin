@@ -712,3 +712,22 @@ sample_wetland :: proc(plan: ^Plan, x, z: f32) -> Wetland_Class {
     gz := clamp(int(math.round(f64((nz * .5 + .5) * f32(GRID_HEIGHT - 1)))), 0, GRID_HEIGHT - 1)
     return plan.wetland[index_of(gx, gz)]
 }
+
+// Reconstruct a continuous coverage mask for a classified wetland region.
+// Consumers baking into a finer terrain grid should use this instead of
+// treating the nearest simulation cell as a hard-edged polygon.
+sample_wetland_weight :: proc(plan: ^Plan, x, z: f32, class: Wetland_Class) -> f32 {
+    if plan == nil || len(plan.wetland) != CELL_COUNT do return 0
+    nx, nz := rotate_sample(plan.config.orientation, x, z)
+    gx := clamp((nx * .5 + .5) * f32(GRID_WIDTH - 1), f32(0), f32(GRID_WIDTH - 1))
+    gz := clamp((nz * .5 + .5) * f32(GRID_HEIGHT - 1), f32(0), f32(GRID_HEIGHT - 1))
+    x0, z0 := int(gx), int(gz)
+    x1, z1 := min(x0 + 1, GRID_WIDTH - 1), min(z0 + 1, GRID_HEIGHT - 1)
+    tx, tz := gx - f32(x0), gz - f32(z0)
+    a := plan.wetland[index_of(x0, z0)] == class ? f32(1) : f32(0)
+    b := plan.wetland[index_of(x1, z0)] == class ? f32(1) : f32(0)
+    c := plan.wetland[index_of(x0, z1)] == class ? f32(1) : f32(0)
+    d := plan.wetland[index_of(x1, z1)] == class ? f32(1) : f32(0)
+    top, bottom := a + (b - a) * tx, c + (d - c) * tx
+    return top + (bottom - top) * tz
+}

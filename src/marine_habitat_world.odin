@@ -1,7 +1,7 @@
 package main
 
-import terrain "../packages/terrain"
 import harbor "../packages/harbor"
+import terrain "../packages/terrain"
 
 marine_habitat_append_plan_exclusions :: proc(
     exclusions: ^[dynamic]terrain.Marine_Habitat_Exclusion,
@@ -15,7 +15,14 @@ marine_habitat_append_plan_exclusions :: proc(
         append(exclusions, terrain.Marine_Habitat_Exclusion{center_x = point.x, center_z = point.z, radius = 14})
     }
     for edit in plan.terrain_edits[:plan.terrain_edit_count] {
-        append(exclusions, terrain.Marine_Habitat_Exclusion{center_x = edit.center.x, center_z = edit.center.z, radius = edit.radius + 4})
+        append(
+            exclusions,
+            terrain.Marine_Habitat_Exclusion {
+                center_x = edit.center.x,
+                center_z = edit.center.z,
+                radius = edit.radius + 4,
+            },
+        )
     }
 }
 

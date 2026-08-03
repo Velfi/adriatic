@@ -14,8 +14,8 @@ import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import spy "zelda_engine:spy"
 import canvas2d "zelda_engine:canvas2d"
+import spy "zelda_engine:spy"
 
 TWEAK_FILE_PATH :: "adriatic.tweak.toml"
 TWEAK_FILE_VERSION :: i64(1)
@@ -214,23 +214,23 @@ Presentation_Tweak :: struct {
 }
 
 Tweak_State :: struct {
-    terrain:            Terrain_Tweak,
-    atmosphere:         atmosphere.Atmosphere,
-    player:             third_person.Config,
-    player_animation:   Player_Animation_Tweak,
-    player_tail:        mouse_tail.Config,
-    camera:             Camera_Tweak,
-    world:              World_Tweak,
-    particles:          Particle_Tweak,
-    car:                vehicles.Car_Drive_Tune,
-    car_vehicle:        Vehicle_Tweak,
-    postale_airframe:   flight.Airframe,
-    postale_runtime:    flight.Runtime,
-    postale_ace_tuning: flight.Ace_Tuning,
-    postale_tuning:     postale_game.Tuning,
-    postale_vehicle:    Vehicle_Tweak,
+    terrain:                        Terrain_Tweak,
+    atmosphere:                     atmosphere.Atmosphere,
+    player:                         third_person.Config,
+    player_animation:               Player_Animation_Tweak,
+    player_tail:                    mouse_tail.Config,
+    camera:                         Camera_Tweak,
+    world:                          World_Tweak,
+    particles:                      Particle_Tweak,
+    car:                            vehicles.Car_Drive_Tune,
+    car_vehicle:                    Vehicle_Tweak,
+    postale_airframe:               flight.Airframe,
+    postale_runtime:                flight.Runtime,
+    postale_ace_tuning:             flight.Ace_Tuning,
+    postale_tuning:                 postale_game.Tuning,
+    postale_vehicle:                Vehicle_Tweak,
     postale_transform_tester_gizmo: bool `fixture:"-"`,
-    presentation:       Presentation_Tweak,
+    presentation:                   Presentation_Tweak,
 }
 
 tweak_default_player :: proc() -> third_person.Config {
@@ -926,7 +926,14 @@ tweak_draw_player_settings :: proc(editor: ^Editor) {
     }
     if tweak_section("Controller", true) {
         im.SliderFloat("Stick deadzone", &options.controller_stick_deadzone, 0, .5, "%.2f", im.SliderFlags_AlwaysClamp)
-        im.SliderFloat("Trigger deadzone", &options.controller_trigger_deadzone, 0, .5, "%.2f", im.SliderFlags_AlwaysClamp)
+        im.SliderFloat(
+            "Trigger deadzone",
+            &options.controller_trigger_deadzone,
+            0,
+            .5,
+            "%.2f",
+            im.SliderFlags_AlwaysClamp,
+        )
         im.SliderFloat("Look sensitivity", &options.look_sensitivity, .004, .024, "%.3f", im.SliderFlags_AlwaysClamp)
         im.Checkbox("Invert horizontal look", &options.invert_look_x)
         im.Checkbox("Invert vertical look", &options.invert_look_y)

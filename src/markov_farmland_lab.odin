@@ -406,7 +406,7 @@ farmland_render_vineyard :: proc(
                     maturity,
                 )
             } else if !missing && render_mode == .Generated_Far {
-                // Preserve the botanical skeleton beyond the near vineyard
+                // Preserve the botanical architecture beyond the near vineyard
                 // range. Reducing catalog topology is much less conspicuous
                 // than replacing a whole branched vine with five leaf fans.
                 _ = world_generated_plant(

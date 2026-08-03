@@ -106,10 +106,7 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
     if benchmark_scenario == "land_flight_cold" && frame >= benchmark_warmup {
         editor.benchmark_ground_grass_disabled = false
     }
-    if !editor.in_map &&
-       editor.tool != .Structure &&
-       !terrain_sculpt_owns_direct_brush(editor) &&
-       editor.cursor_hit {
+    if !editor.in_map && editor.tool != .Structure && !terrain_sculpt_owns_direct_brush(editor) && editor.cursor_hit {
         if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
             terrain_history_push_undo(editor)
         }

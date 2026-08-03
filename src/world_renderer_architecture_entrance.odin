@@ -7,7 +7,7 @@ import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
 world_architecture_entrance :: proc(
-    structure: terrain.Structure,
+    source_structure: terrain.Structure,
     project: ^terrain.Project,
     opening_layout: ^architecture.Opening_Layout,
     identity: buildings.Identity,
@@ -16,6 +16,29 @@ world_architecture_entrance :: proc(
     facade_style: int,
 ) {
     if has_entrance && habitable {
+        structure := source_structure
+        facade_structure := structure
+        door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
+        door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
+        step_height: f32 = .20
+        door_center_local_y := step_height + door_height * .5
+        door_horizontal := f32(0)
+        if opening, found := architecture.opening_layout_find(opening_layout, .Front, .Door, 0, 0); found {
+            door_width, door_height, door_center_local_y = opening.width, opening.height, opening.y
+            door_horizontal = opening.horizontal
+        }
+        // Render the complete entrance assembly around the generated opening,
+        // not merely with its generated dimensions. Compact storefronts move
+        // their door to one jamb so a useful display pane can occupy the
+        // opposite side; discarding this offset puts the rendered leaf and all
+        // of its hardware back through the pane.
+        structure.center_x, structure.center_z = world_rotate_xz(
+            structure.center_x,
+            structure.center_z,
+            door_horizontal,
+            0,
+            structure.rotation,
+        )
         door_x, door_z := world_rotate_xz(
             structure.center_x,
             structure.center_z,
@@ -31,13 +54,6 @@ world_architecture_entrance :: proc(
             door = {119, 71, 55, 255}
         }
         if mixed_use do door = {43, 77, 76, 255}
-        door_width := clamp(structure.width * .13, f32(1.8), f32(2.8))
-        door_height := clamp(structure.height * .075, f32(3.0), f32(4.0))
-        step_height: f32 = .20
-        door_center_local_y := step_height + door_height * .5
-        if opening, found := architecture.opening_layout_find(opening_layout, .Front, .Door, 0, 0); found {
-            door_width, door_height, door_center_local_y = opening.width, opening.height, opening.y
-        }
         door_center_y := structure.base_y + door_center_local_y
         world_box_rotated({door_x, door_center_y, door_z}, {door_width, door_height, .24}, structure.rotation, door)
         panel_color := mixed_use ? canvas2d.Color{58, 99, 96, 255} : formation_face_color(door, math.PI, 0)
@@ -587,7 +603,7 @@ world_architecture_entrance :: proc(
         // A handful of low-rise blocks read as village shops: a shallow
         // canvas canopy over the entrance adds the lived-in 1940s street
         // rhythm without turning every façade into a storefront.
-        world_architecture_storefront(structure, identity, door_width, door_height, step_height)
+        world_architecture_storefront(facade_structure, identity, door_width, door_height, step_height)
 
     }
 }

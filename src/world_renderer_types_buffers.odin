@@ -61,6 +61,11 @@ World_Vertex :: struct {
     // Vehicle: paintable, atlas layer.
     material: [2]f32,
     uv:       [2]f32,
+    // Generated plants carry their root and the exact woody attachment point
+    // so wind deformation cannot pull leaf stems away from their branches.
+    wind_origin:  [3]f32,
+    wind_anchor:  [3]f32,
+    wind_enabled: f32,
 }
 
 World_Land_Surface_Sample :: struct {
@@ -211,14 +216,14 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     cards:                  [dynamic]Bougainvillea_Card_Descriptor,
 }
 
-TOWN_MOUSE_CACHE_TOWN_FIRST   :: 0
-TOWN_MOUSE_CACHE_TOWN_COUNT   :: len(terrain.DEFAULT_ISLAND_SIGNS) * 8
-TOWN_MOUSE_CACHE_ZORA         :: TOWN_MOUSE_CACHE_TOWN_FIRST + TOWN_MOUSE_CACHE_TOWN_COUNT
+TOWN_MOUSE_CACHE_TOWN_FIRST :: 0
+TOWN_MOUSE_CACHE_TOWN_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 8
+TOWN_MOUSE_CACHE_ZORA :: TOWN_MOUSE_CACHE_TOWN_FIRST + TOWN_MOUSE_CACHE_TOWN_COUNT
 TOWN_MOUSE_CACHE_POSTAL_FIRST :: TOWN_MOUSE_CACHE_ZORA + 1
 TOWN_MOUSE_CACHE_MEETING_NIKO :: TOWN_MOUSE_CACHE_POSTAL_FIRST + 2
-TOWN_MOUSE_CACHE_MEETING_IVA  :: TOWN_MOUSE_CACHE_MEETING_NIKO + 1
+TOWN_MOUSE_CACHE_MEETING_IVA :: TOWN_MOUSE_CACHE_MEETING_NIKO + 1
 TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST :: TOWN_MOUSE_CACHE_MEETING_IVA + 1
-TOWN_MOUSE_CACHE_COUNT            :: TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + len(terrain.DEFAULT_ISLAND_SIGNS)
+TOWN_MOUSE_CACHE_COUNT :: TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + len(terrain.DEFAULT_ISLAND_SIGNS)
 TOWN_MOUSE_PORTRAIT_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
@@ -334,13 +339,13 @@ Dynamic_Shadow_Terrain_Cache :: struct {
 }
 
 Bathymetry_Geometry_Cache_Entry :: struct {
-    vertices:              [dynamic]World_Vertex,
-    chunk_x, chunk_z:      i32,
-    owner:                 terrain.Island_ID,
-    source:                terrain.Water_Source_Kind,
-    chunk_revision:        u64,
-    origin_x, origin_z:    f32,
-    valid:                 bool,
+    vertices:           [dynamic]World_Vertex,
+    chunk_x, chunk_z:   i32,
+    owner:              terrain.Island_ID,
+    source:             terrain.Water_Source_Kind,
+    chunk_revision:     u64,
+    origin_x, origin_z: f32,
+    valid:              bool,
 }
 
 World_Renderer :: struct {
@@ -389,9 +394,6 @@ World_Renderer :: struct {
     soda_cap_logo:                                resources.Image,
     architecture_material_atlas:                  resources.Image,
     business_sign_atlas:                          resources.Image,
-    marine_ecology_atlas:                         resources.Image,
-    marine_ecology_atlas_signature:               u64,
-    marine_ecology_atlas_chunk_count:             int,
     material_lab_maps:                            [MATERIAL_LAB_MAP_COUNT]resources.Image,
     material_lab_map_revision:                    u64,
     vehicle_paint_staging:                        [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,

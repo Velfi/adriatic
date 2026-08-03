@@ -86,6 +86,19 @@ config_clamps_and_sampling_rotates :: proc(t: ^testing.T) {
 }
 
 @(test)
+wetland_weights_reconstruct_boundaries_continuously :: proc(t: ^testing.T) {
+    plan := allocate_plan(default_config(), context.allocator)
+    defer destroy(&plan)
+    x, z := 47, 83
+    plan.wetland[index_of(x, z)] = .Marsh
+    plan.wetland[index_of(x + 1, z)] = .Channel
+    sample_x := (f32(x) + .5) / f32(GRID_WIDTH - 1) * 2 - 1
+    sample_z := f32(z) / f32(GRID_HEIGHT - 1) * 2 - 1
+    testing.expect(t, math.abs(sample_wetland_weight(&plan, sample_x, sample_z, .Marsh) - .5) < .001)
+    testing.expect(t, math.abs(sample_wetland_weight(&plan, sample_x, sample_z, .Channel) - .5) < .001)
+}
+
+@(test)
 river_mouth_drives_estuary_inputs_and_opens_the_inland_channel :: proc(t: ^testing.T) {
     mouth := spring_river.Mouth {
         position      = {12, 90},

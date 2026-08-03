@@ -1,19 +1,19 @@
 package main
 
+import toml "../packages/toml"
 import "core:os"
 import "core:strings"
-import toml "../packages/toml"
 import canvas2d "zelda_engine:canvas2d"
 
 PLAYER_SETTINGS_FILENAME :: "player-settings.toml"
 PLAYER_SETTINGS_VERSION :: i64(1)
 
 Player_Mouse_Settings :: struct {
-    fur:            Mouse_Fur,
-    pattern:        Mouse_Fur_Pattern,
-    headgear:       Mouse_Accessory,
-    scarf_enabled:  bool,
-    scarf_color:    [4]u8,
+    fur:           Mouse_Fur,
+    pattern:       Mouse_Fur_Pattern,
+    headgear:      Mouse_Accessory,
+    scarf_enabled: bool,
+    scarf_color:   [4]u8,
 }
 
 Player_Settings_Document :: struct {
@@ -28,11 +28,11 @@ player_settings_capture :: proc(editor: ^Editor) -> Player_Settings_Document {
         version = PLAYER_SETTINGS_VERSION,
         gameplay = editor.gameplay_options,
         mouse = {
-            fur            = editor.mouse_fur,
-            pattern        = editor.mouse_pattern,
-            headgear       = editor.mouse_headgear,
-            scarf_enabled  = editor.mouse_scarf_enabled,
-            scarf_color    = {
+            fur = editor.mouse_fur,
+            pattern = editor.mouse_pattern,
+            headgear = editor.mouse_headgear,
+            scarf_enabled = editor.mouse_scarf_enabled,
+            scarf_color = {
                 editor.mouse_scarf_color.r,
                 editor.mouse_scarf_color.g,
                 editor.mouse_scarf_color.b,
@@ -45,10 +45,14 @@ player_settings_capture :: proc(editor: ^Editor) -> Player_Settings_Document {
 player_settings_valid :: proc(settings: ^Gameplay_Options) -> bool {
     if settings == nil do return false
     return(
-        settings.look_sensitivity >= .004 && settings.look_sensitivity <= .024 &&
-        settings.sound_fx_level >= 0 && settings.sound_fx_level <= 1 &&
-        settings.controller_stick_deadzone >= 0 && settings.controller_stick_deadzone <= .5 &&
-        settings.controller_trigger_deadzone >= 0 && settings.controller_trigger_deadzone <= .5 &&
+        settings.look_sensitivity >= .004 &&
+        settings.look_sensitivity <= .024 &&
+        settings.sound_fx_level >= 0 &&
+        settings.sound_fx_level <= 1 &&
+        settings.controller_stick_deadzone >= 0 &&
+        settings.controller_stick_deadzone <= .5 &&
+        settings.controller_trigger_deadzone >= 0 &&
+        settings.controller_trigger_deadzone <= .5 &&
         int(settings.crunchiness) >= int(Crunchiness.P240) &&
         int(settings.crunchiness) <= int(Crunchiness.Full) &&
         int(settings.visual_style) >= int(Visual_Style.Standard) &&
@@ -59,16 +63,19 @@ player_settings_valid :: proc(settings: ^Gameplay_Options) -> bool {
         int(settings.theme_mode) >= int(UI_Theme_Mode.Light) &&
         int(settings.theme_mode) <= int(UI_Theme_Mode.Dark) &&
         int(settings.anti_aliasing) >= int(Anti_Aliasing.Off) &&
-        int(settings.anti_aliasing) <= int(Anti_Aliasing.MSAA_4X)
+        int(settings.anti_aliasing) <= int(Anti_Aliasing.MSAA_4X) \
     )
 }
 
 player_settings_valid_mouse :: proc(settings: ^Player_Mouse_Settings) -> bool {
     if settings == nil do return false
     return(
-        int(settings.fur) >= 0 && int(settings.fur) < CUSTOMIZATION_COLOR_COUNT &&
-        int(settings.pattern) >= 0 && int(settings.pattern) < CUSTOMIZATION_PATTERN_COUNT &&
-        int(settings.headgear) >= 0 && int(settings.headgear) < CUSTOMIZATION_HEADGEAR_COUNT
+        int(settings.fur) >= 0 &&
+        int(settings.fur) < CUSTOMIZATION_COLOR_COUNT &&
+        int(settings.pattern) >= 0 &&
+        int(settings.pattern) < CUSTOMIZATION_PATTERN_COUNT &&
+        int(settings.headgear) >= 0 &&
+        int(settings.headgear) < CUSTOMIZATION_HEADGEAR_COUNT \
     )
 }
 

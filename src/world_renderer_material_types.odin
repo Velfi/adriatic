@@ -38,5 +38,4 @@ World_Material_Kind :: enum u32 {
     Fog_Shell,
     Rock,
     Bark,
-    Marine_Water,
 }

@@ -41,19 +41,22 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(World_Vertex)),
         inputRate = .VERTEX,
     }
-    attrs := [6]vk.VertexInputAttributeDescription {
+    attrs := [9]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, format = .R32_UINT, offset = u32(offset_of(World_Vertex, kind))},
         {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
         {location = 4, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
         {location = 5, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
+        {location = 6, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_origin))},
+        {location = 7, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_anchor))},
+        {location = 8, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_enabled))},
     }
     vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &binding,
-        vertexAttributeDescriptionCount = 6,
+        vertexAttributeDescriptionCount = 9,
         pVertexAttributeDescriptions    = raw_data(attrs[:]),
     }
     ia := vk.PipelineInputAssemblyStateCreateInfo {
@@ -634,8 +637,11 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.land_surface_samples = make([dynamic]World_Land_Surface_Sample, 0, 256)
     world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_INITIAL_CAPACITY)
     world_renderer.shadow_world_ranges = make([dynamic]World_Shadow_Caster_Range, 0, 256)
-    world_renderer.dynamic_shadow_terrain_cache.vertices =
-        make([dynamic]World_Vertex, 0, DYNAMIC_SHADOW_TERRAIN_VERTEX_COUNT)
+    world_renderer.dynamic_shadow_terrain_cache.vertices = make(
+        [dynamic]World_Vertex,
+        0,
+        DYNAMIC_SHADOW_TERRAIN_VERTEX_COUNT,
+    )
     world_renderer.explicit_shadow_caster_ranges = make([dynamic]World_Shadow_Caster_Range, 0, 256)
     world_renderer.static_shadow_caster_ranges = make([dynamic]World_Static_Shadow_Caster_Range, 0, 256)
     world_spatial_index_init(&world_renderer.spatial_index)

@@ -5275,10 +5275,7 @@ generated_plants_select_detail_from_camera_distance :: proc(t: ^testing.T) {
     testing.expect(t, !generated_plant_uses_hero_geometry(.Distant))
     testing.expect_value(t, generated_plant_apply_detail_floor(.Near, .Medium), plants.Detail_Level.Medium)
     testing.expect_value(t, generated_plant_apply_detail_floor(.Far, .Medium), plants.Detail_Level.Far)
-    graded := generated_plant_point(
-        generated_plant_transform_make({4, 10, 7}, 0, 1, .25),
-        {2, 1, 0},
-    )
+    graded := generated_plant_point(generated_plant_transform_make({4, 10, 7}, 0, 1, .25), {2, 1, 0})
     testing.expect(t, abs(graded.x - 6) < .001)
     testing.expect(t, abs(graded.y - 11.5) < .001)
     testing.expect(t, abs(graded.z - 7) < .001)

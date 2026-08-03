@@ -103,21 +103,21 @@ menu_scene_pop :: proc(editor: ^Editor) {
 }
 
 Gameplay_Options :: struct {
-    look_sensitivity:             f32,
-    sound_fx_level:               f32,
-    invert_look_x:                bool,
-    invert_look_y:                bool,
-    invert_flight_pitch:          bool,
-    show_hud:                     bool,
-    controller_stick_deadzone:    f32,
-    controller_trigger_deadzone:  f32,
-    crunchiness:                  Crunchiness,
-    visual_style:                 Visual_Style,
-    dither_mode:                  Dither_Mode,
-    hdr_exposure:                 bool,
-    theme_mode:                   UI_Theme_Mode,
-    anti_aliasing:                Anti_Aliasing,
-    vsync:                        bool,
+    look_sensitivity:            f32,
+    sound_fx_level:              f32,
+    invert_look_x:               bool,
+    invert_look_y:               bool,
+    invert_flight_pitch:         bool,
+    show_hud:                    bool,
+    controller_stick_deadzone:   f32,
+    controller_trigger_deadzone: f32,
+    crunchiness:                 Crunchiness,
+    visual_style:                Visual_Style,
+    dither_mode:                 Dither_Mode,
+    hdr_exposure:                bool,
+    theme_mode:                  UI_Theme_Mode,
+    anti_aliasing:               Anti_Aliasing,
+    vsync:                       bool,
 }
 
 Anti_Aliasing :: enum u8 {
@@ -1159,8 +1159,11 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
            {stick_deadzone_track.x - 8, stick_deadzone_track.y - 12, stick_deadzone_track.width + 16, 30},
        ) {
         editor.options_focus = 6
-        editor.gameplay_options.controller_stick_deadzone =
-            clamp((mouse.x - stick_deadzone_track.x) / stick_deadzone_track.width * .5, 0, .5)
+        editor.gameplay_options.controller_stick_deadzone = clamp(
+            (mouse.x - stick_deadzone_track.x) / stick_deadzone_track.width * .5,
+            0,
+            .5,
+        )
         controller_deadzone_apply(editor.gameplay_options)
     }
     trigger_deadzone := options_menu_row_bounds(panel, 7, scroll_y)
@@ -1172,8 +1175,11 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
            {trigger_deadzone_track.x - 8, trigger_deadzone_track.y - 12, trigger_deadzone_track.width + 16, 30},
        ) {
         editor.options_focus = 7
-        editor.gameplay_options.controller_trigger_deadzone =
-            clamp((mouse.x - trigger_deadzone_track.x) / trigger_deadzone_track.width * .5, 0, .5)
+        editor.gameplay_options.controller_trigger_deadzone = clamp(
+            (mouse.x - trigger_deadzone_track.x) / trigger_deadzone_track.width * .5,
+            0,
+            .5,
+        )
         controller_deadzone_apply(editor.gameplay_options)
     }
     crunchiness := options_menu_row_bounds(panel, 8, scroll_y)
@@ -1734,12 +1740,7 @@ options_menu_draw_scrollbar :: proc(panel: canvas2d.Rectangle, scroll_y: f32) {
     canvas2d.DrawRectangleRounded(thumb, 1, 8, thumb_color)
 }
 
-options_menu_draw_deadzone :: proc(
-    bounds: canvas2d.Rectangle,
-    label: cstring,
-    value: f32,
-    focused: bool,
-) {
+options_menu_draw_deadzone :: proc(bounds: canvas2d.Rectangle, label: cstring, value: f32, focused: bool) {
     hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     fill := hovered ? ui_theme_control_hover() : ui_theme_control()
     border := hovered ? ui_theme_border_strong() : ui_theme_border()
@@ -1752,22 +1753,11 @@ options_menu_draw_deadzone :: proc(
     ui_draw_text(.Label, label, {bounds.x + 14, bounds.y + 8}, .4, ui_theme_text())
     value_text := fmt.ctprintf("%d%%", int(value * 200 + .5))
     value_size := ui_measure_text(.Data, value_text, .3)
-    ui_draw_text(
-        .Data,
-        value_text,
-        {bounds.x + bounds.width - value_size.x - 14, bounds.y + 8},
-        .3,
-        ui_theme_accent(),
-    )
+    ui_draw_text(.Data, value_text, {bounds.x + bounds.width - value_size.x - 14, bounds.y + 8}, .3, ui_theme_accent())
     track := options_menu_slider_track(bounds)
     canvas2d.DrawRectangleRounded(track, 1, 6, ui_theme_border(180))
     normalized := clamp(value / .5, 0, 1)
-    canvas2d.DrawRectangleRounded(
-        {track.x, track.y, track.width * normalized, track.height},
-        1,
-        6,
-        ui_theme_accent(),
-    )
+    canvas2d.DrawRectangleRounded({track.x, track.y, track.width * normalized, track.height}, 1, 6, ui_theme_accent())
     knob := canvas2d.Vector2{track.x + track.width * normalized, track.y + track.height * .5}
     canvas2d.DrawCircleV({knob.x, knob.y + 2}, 9, ui_theme_scrim(80))
     canvas2d.DrawCircleV(knob, 9, ui_theme_surface_elevated())

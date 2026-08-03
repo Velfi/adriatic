@@ -103,7 +103,7 @@ world_architecture_residence_planter :: proc(
         {75, 58, 42, 255},
     )
 
-    // Reuse a bounded set of botanical skeletons across residences while
+    // Reuse a bounded set of botanical architectures across residences while
     // retaining per-pot scale, orientation, and flowering variation.
     plant_seed := u64(seed & 31) ~ u64(side + 1) << 8 ~ 0x5245535f504f54
     pot_species := seed & 3 == 0 ? plants.Species.Agapanthus : .Pelargonium

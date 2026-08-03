@@ -138,12 +138,7 @@ world_ocean_sample_grid_index :: #force_inline proc(x, z: int) -> int {
     return z * OCEAN_LOCAL_GRID_RESOLUTION + x
 }
 
-world_ocean_sample_grid_rebuild :: proc(
-    editor: ^Editor,
-    center: [2]f32,
-    ocean_y: f32,
-    color: canvas2d.Color,
-) {
+world_ocean_sample_grid_rebuild :: proc(editor: ^Editor, center: [2]f32, ocean_y: f32, color: canvas2d.Color) {
     sample_count := OCEAN_LOCAL_GRID_RESOLUTION * OCEAN_LOCAL_GRID_RESOLUTION
     if len(world_renderer.ocean_sample_grid) != sample_count {
         resize(&world_renderer.ocean_sample_grid, sample_count)
@@ -232,8 +227,10 @@ world_ocean_sample_grid_shift :: proc(
         for x in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
             source_x, source_z := x + offset[0], z + offset[1]
             destination := world_ocean_sample_grid_index(x, z)
-            if source_x >= 0 && source_x < OCEAN_LOCAL_GRID_RESOLUTION &&
-               source_z >= 0 && source_z < OCEAN_LOCAL_GRID_RESOLUTION {
+            if source_x >= 0 &&
+               source_x < OCEAN_LOCAL_GRID_RESOLUTION &&
+               source_z >= 0 &&
+               source_z < OCEAN_LOCAL_GRID_RESOLUTION {
                 world_renderer.ocean_sample_grid_scratch[destination] =
                     world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(source_x, source_z)]
                 continue
@@ -547,11 +544,11 @@ when ODIN_TEST {
     @(test)
     world_bathymetry_geometry_cache_keys_chunk_content_and_world_origin :: proc(t: ^testing.T) {
         chunk := terrain.Bathymetry_Chunk {
-            chunk_x = -2,
-            chunk_z = 3,
-            owner   = .West,
+            chunk_x  = -2,
+            chunk_z  = 3,
+            owner    = .West,
             revision = 7,
-            source  = .Ocean,
+            source   = .Ocean,
         }
         entry := Bathymetry_Geometry_Cache_Entry {
             valid          = true,
@@ -580,7 +577,13 @@ marine_bed_base_color :: #force_inline proc(material: i8) -> canvas2d.Color {
 }
 
 world_bathymetry :: proc(editor: ^Editor) {
-    if editor == nil || editor.in_map do return
+    if editor == nil || editor.in_map || editor.selection_tool_active || editor.authoring_tool != .Sculpt do return
+    settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
+    // Bathymetry is an authoring diagnostic, not part of the finished marine
+    // presentation. Only expose its finite chunk mesh while the active sculpt
+    // action can actually edit the seabed; otherwise its outer edge reads as
+    // a giant sand shelf through the water.
+    if !settings.affect_seabed do return
     world_bathymetry_geometry_cache_ensure(len(editor.project.bathymetry_chunks))
     camera_x, camera_z := editor.camera_pose.position.x, editor.camera_pose.position.z
     normal := third_person.Vec3{0, 1, 0}

@@ -190,7 +190,10 @@ airport_kiosk_plant_lods :: #force_inline proc(
     planter_offsets := [4][2]f32{{-11.45, 5.8}, {11.45, 5.8}, {-11.45, 11.35}, {11.45, 11.35}}
     for offset, planter_index in planter_offsets {
         planter_x, planter_z := world_rotate_xz(position.x, position.z, offset.x, offset.y, rotation)
-        lods[planter_index] = generated_plant_render_lod(editor.camera_pose.position, {planter_x, ground + .96, planter_z})
+        lods[planter_index] = generated_plant_render_lod(
+            editor.camera_pose.position,
+            {planter_x, ground + .96, planter_z},
+        )
     }
     return lods
 }

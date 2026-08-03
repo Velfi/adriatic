@@ -168,73 +168,272 @@ lab_mouse_key_label :: proc(key: canvas2d.KeyboardKey) -> cstring {
 lab_mouse_action_label :: proc(name: string, key: canvas2d.KeyboardKey) -> cstring {
     switch name {
     case "arch-wall-generator":
-        #partial switch key {case .S: return "Next shape"; case .LEFT: return "Lower wall"; case .RIGHT: return "Raise wall"; case .DOWN: return "Thinner wall"; case .UP: return "Thicker wall"; case .A: return "Fewer arches"; case .D: return "More arches"}
+        #partial switch key {case .S:
+            return "Next shape"; case .LEFT:
+            return "Lower wall"; case .RIGHT:
+            return "Raise wall"; case .DOWN:
+            return "Thinner wall"; case .UP:
+            return "Thicker wall"; case .A:
+            return "Fewer arches"; case .D:
+            return "More arches"}
     case "boid":
-        #partial switch key {case .SPACE: return boid_lab_paused ? "Resume" : "Pause"; case .R: return "Reset flock"; case .V: return boid_lab_show_vectors ? "Hide vectors" : "Show vectors"; case .W: return "Next wind"; case .C: return boid_lab_follow ? "Show overview" : "Follow boid"; case .N: return "Next boid"; case .ONE: return "Harbor flock"; case .TWO: return "Fishing flock"; case .THREE: return "Both flocks"}
+        #partial switch key {case .SPACE:
+            return boid_lab_paused ? "Resume" : "Pause"; case .R:
+            return "Reset flock"; case .V:
+            return boid_lab_show_vectors ? "Hide vectors" : "Show vectors"; case .W:
+            return "Next wind"; case .C:
+            return boid_lab_follow ? "Show overview" : "Follow boid"; case .N:
+            return "Next boid"; case .ONE:
+            return "Harbor flock"; case .TWO:
+            return "Fishing flock"; case .THREE:
+            return "Both flocks"}
     case "bridge-generator":
-        #partial switch key {case .A: return "Previous seed"; case .D: return "Next seed"; case .S: return "Next style"; case .R: return "Next region"; case .LEFT: return "Shorter bridge"; case .RIGHT: return "Longer bridge"; case .DOWN: return "Fewer spans"; case .UP: return "More spans"; case .ONE: return "Less clearance"; case .TWO: return "More clearance"; case .Q: return "Narrower cleft"; case .E: return "Wider cleft"; case .Z: return "Shallower cleft"; case .X: return "Deeper cleft"; case .C: return "Toggle cutwaters"; case .U: return "Toggle shops"}
+        #partial switch key {case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .S:
+            return "Next style"; case .R:
+            return "Next region"; case .LEFT:
+            return "Shorter bridge"; case .RIGHT:
+            return "Longer bridge"; case .DOWN:
+            return "Fewer spans"; case .UP:
+            return "More spans"; case .ONE:
+            return "Less clearance"; case .TWO:
+            return "More clearance"; case .Q:
+            return "Narrower cleft"; case .E:
+            return "Wider cleft"; case .Z:
+            return "Shallower cleft"; case .X:
+            return "Deeper cleft"; case .C:
+            return "Toggle cutwaters"; case .U:
+            return "Toggle shops"}
     case "car-generator":
-        #partial switch key {case .G: return "Show gallery"; case .R: return "New design"; case .ONE: return "Saloon"; case .TWO: return "Coupe"; case .THREE: return "Roadster"; case .FOUR: return "Van"; case .W: return "Wagon"}
+        #partial switch key {case .G:
+            return "Show gallery"; case .R:
+            return "New design"; case .ONE:
+            return "Saloon"; case .TWO:
+            return "Coupe"; case .THREE:
+            return "Roadster"; case .FOUR:
+            return "Van"; case .W:
+            return "Wagon"}
     case "car":
-        #partial switch key {case .ONE: return "Asphalt"; case .TWO: return "Gravel"; case .THREE: return "Cobblestone"; case .FOUR: return "Dirt"; case .R: return "Reset car"}
+        #partial switch key {case .ONE:
+            return "Asphalt"; case .TWO:
+            return "Gravel"; case .THREE:
+            return "Cobblestone"; case .FOUR:
+            return "Dirt"; case .R:
+            return "Reset car"}
     case "cemetery-generator":
-        #partial switch key {case .A: return "Previous seed"; case .D: return "Next seed"; case .S: return "Next style"; case .M: return "Next memorial"; case .N: return "No memorial"; case .V: return cemetery_lab_memorial_view ? "Close memorial" : "Memorial view"; case .G: return cemetery_lab_marker_view ? "Close marker" : "Marker view"; case .LEFT: return "Lower density"; case .RIGHT: return "Higher density"; case .DOWN: return "Smaller grounds"; case .UP: return "Larger grounds"}
+        #partial switch key {case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .S:
+            return "Next style"; case .M:
+            return "Next memorial"; case .N:
+            return "No memorial"; case .V:
+            return cemetery_lab_memorial_view ? "Close memorial" : "Memorial view"; case .G:
+            return cemetery_lab_marker_view ? "Close marker" : "Marker view"; case .LEFT:
+            return "Lower density"; case .RIGHT:
+            return "Higher density"; case .DOWN:
+            return "Smaller grounds"; case .UP:
+            return "Larger grounds"}
     case "coastal-ecology":
-        #partial switch key {case .LEFT: return "Previous seed"; case .RIGHT: return "Next seed"; case .R: return "New coastline"; case .SPACE: return rocky_beach_tide_running ? "Pause tide" : "Resume tide"; case .Q: return "Earlier tide"; case .E: return "Later tide"; case .DOWN: return "Lower tide range"; case .UP: return "Higher tide range"; case .B: return rocky_beach_config.biology > .45 ? "Reduce biology" : "Restore biology"; case .ONE: return "Rocky headlands"; case .TWO: return "Embayed coast"; case .THREE: return "Low coast"}
+        #partial switch key {case .LEFT:
+            return "Previous seed"; case .RIGHT:
+            return "Next seed"; case .R:
+            return "New coastline"; case .SPACE:
+            return rocky_beach_tide_running ? "Pause tide" : "Resume tide"; case .Q:
+            return "Earlier tide"; case .E:
+            return "Later tide"; case .DOWN:
+            return "Lower tide range"; case .UP:
+            return "Higher tide range"; case .B:
+            return rocky_beach_config.biology > .45 ? "Reduce biology" : "Restore biology"; case .ONE:
+            return "Rocky headlands"; case .TWO:
+            return "Embayed coast"; case .THREE:
+            return "Low coast"}
     case "dialogue-sound", "material":
         return "Exit lab"
     case "dunes":
-        #partial switch key {case .LEFT: return "Previous seed"; case .RIGHT: return "Next seed"; case .R: return "New dunes"; case .A: return "Turn wind left"; case .D: return "Turn wind right"; case .G: return "Less vegetation"; case .H: return "More vegetation"}
+        #partial switch key {case .LEFT:
+            return "Previous seed"; case .RIGHT:
+            return "Next seed"; case .R:
+            return "New dunes"; case .A:
+            return "Turn wind left"; case .D:
+            return "Turn wind right"; case .G:
+            return "Less vegetation"; case .H:
+            return "More vegetation"}
     case "flower-generator":
-        #partial switch key {case .LEFT: return "Previous petal"; case .RIGHT: return "Next petal"; case .A: return "Change arrangement"; case .W: return "Change whorls"; case .ONE: return "Fewer petals"; case .TWO: return "More petals"; case .G: return flower_generator_isolated ? "Show gallery" : "Isolate flower"; case .L: return "Next life stage"; case .F: return flower_generator_lifecycle_gallery ? "Close lifecycle" : "Lifecycle gallery"; case .C: return flower_generator_clustered ? "Separate flowers" : "Cluster flowers"}
+        #partial switch key {case .LEFT:
+            return "Previous petal"; case .RIGHT:
+            return "Next petal"; case .A:
+            return "Change arrangement"; case .W:
+            return "Change whorls"; case .ONE:
+            return "Fewer petals"; case .TWO:
+            return "More petals"; case .G:
+            return flower_generator_isolated ? "Show gallery" : "Isolate flower"; case .L:
+            return "Next life stage"; case .F:
+            return flower_generator_lifecycle_gallery ? "Close lifecycle" : "Lifecycle gallery"; case .C:
+            return flower_generator_clustered ? "Separate flowers" : "Cluster flowers"}
     case "fountain-generator":
-        #partial switch key {case .A: return "Previous seed"; case .D: return "Next seed"; case .S: return "Next style"; case .LEFT: return "Smaller basin"; case .RIGHT: return "Larger basin"; case .DOWN: return "Fewer jets"; case .UP: return "More jets"; case .ONE: return "Lower jets"; case .TWO: return "Higher jets"}
+        #partial switch key {case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .S:
+            return "Next style"; case .LEFT:
+            return "Smaller basin"; case .RIGHT:
+            return "Larger basin"; case .DOWN:
+            return "Fewer jets"; case .UP:
+            return "More jets"; case .ONE:
+            return "Lower jets"; case .TWO:
+            return "Higher jets"}
     case "garden":
-        #partial switch key {case .R: return "Regenerate"; case .ONE: return "Courtyard"; case .TWO: return "Kitchen garden"; case .THREE: return "Wild garden"; case .FOUR: return "Stone garden"}
+        #partial switch key {case .R:
+            return "Regenerate"; case .ONE:
+            return "Courtyard"; case .TWO:
+            return "Kitchen garden"; case .THREE:
+            return "Wild garden"; case .FOUR:
+            return "Stone garden"}
     case "hero-building":
-        #partial switch key {case .K: return "Next building"; case .A: return "Previous seed"; case .D: return "Next seed"; case .LEFT: return "Narrower front"; case .RIGHT: return "Wider front"; case .DOWN: return "Shallower arcade"; case .UP: return "Deeper arcade"; case .ONE: return "Fewer bays"; case .TWO: return "More bays"}
+        #partial switch key {case .K:
+            return "Next building"; case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .LEFT:
+            return "Narrower front"; case .RIGHT:
+            return "Wider front"; case .DOWN:
+            return "Shallower arcade"; case .UP:
+            return "Deeper arcade"; case .ONE:
+            return "Fewer bays"; case .TWO:
+            return "More bays"}
     case "leaf-generator":
-        #partial switch key {case .LEFT: return "Previous shape"; case .RIGHT: return "Next shape"; case .S: return leaf_generator_serration > 0 ? "Smooth edge" : "Serrated edge"; case .C: return "Change curl"; case .G: return leaf_generator_isolated ? "Show gallery" : "Isolate leaf"; case .V: return leaf_generator_veins ? "Hide veins" : "Show veins"}
+        #partial switch key {case .LEFT:
+            return "Previous shape"; case .RIGHT:
+            return "Next shape"; case .S:
+            return leaf_generator_serration > 0 ? "Smooth edge" : "Serrated edge"; case .C:
+            return "Change curl"; case .G:
+            return leaf_generator_isolated ? "Show gallery" : "Isolate leaf"; case .V:
+            return leaf_generator_veins ? "Hide veins" : "Show veins"}
     case "lighthouse":
-        #partial switch key {case .A: return "Previous seed"; case .D: return "Next seed"; case .R: return "Next region"; case .L: return lighthouse_lab_night ? "Use daylight" : "Use night light"; case .ONE: return "Short tower"; case .TWO: return "Medium tower"; case .THREE: return "Tall tower"}
+        #partial switch key {case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .R:
+            return "Next region"; case .L:
+            return lighthouse_lab_night ? "Use daylight" : "Use night light"; case .ONE:
+            return "Short tower"; case .TWO:
+            return "Medium tower"; case .THREE:
+            return "Tall tower"}
     case "markov-island":
-        #partial switch key {case .LEFT: return "Previous seed"; case .RIGHT: return "Next seed"}
+        #partial switch key {case .LEFT:
+            return "Previous seed"; case .RIGHT:
+            return "Next seed"}
     case "markov-farmland":
-        #partial switch key {case .ONE: return "Flat"; case .TWO: return "Terrace"; case .THREE: return "Cliff"; case .FOUR: return "Incline"}
+        #partial switch key {case .ONE:
+            return "Flat"; case .TWO:
+            return "Terrace"; case .THREE:
+            return "Cliff"; case .FOUR:
+            return "Incline"}
     case "mouse-wheel":
-        #partial switch key {case .R: return "Reset sequence"; case .ONE: return "Press 1"; case .TWO: return "Press 2"; case .THREE: return "Press 3"; case .FOUR: return "Press 4"; case .F: return "Toggle follow"}
+        #partial switch key {case .R:
+            return "Reset sequence"; case .ONE:
+            return "Press 1"; case .TWO:
+            return "Press 2"; case .THREE:
+            return "Press 3"; case .FOUR:
+            return "Press 4"; case .F:
+            return "Toggle follow"}
     case "plant-generator":
         #partial switch key {
-        case .R: return "Regenerate"
-        case .LEFT: return "Younger plant"
-        case .RIGHT: return "Older plant"
-        case .ONE: return "Near detail"
-        case .TWO: return "Medium detail"
-        case .THREE: return "Far detail"
-        case .FOUR: return "Show gallery"
+        case .R:
+            return "Regenerate"
+        case .LEFT:
+            return "Younger plant"
+        case .RIGHT:
+            return "Older plant"
+        case .ONE:
+            return "Near detail"
+        case .TWO:
+            return "Medium detail"
+        case .THREE:
+            return "Far detail"
+        case .FOUR:
+            return "Show gallery"
         case .UP:
-            return plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ? "Scroll up" : "Next species"
+            return(
+                plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ? "Scroll up" : "Next species" \
+            )
         case .DOWN:
-            return plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ? "Scroll down" : "Previous species"
+            return(
+                plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ? "Scroll down" : "Previous species" \
+            )
         }
     case "rainbow":
-        #partial switch key {case .LEFT: return "Earlier sun"; case .RIGHT: return "Later sun"; case .DOWN: return "Less rain"; case .UP: return "More rain"; case .ONE: return "Dry"; case .TWO: return "Shower"; case .THREE: return "Double bow"}
+        #partial switch key {case .LEFT:
+            return "Earlier sun"; case .RIGHT:
+            return "Later sun"; case .DOWN:
+            return "Less rain"; case .UP:
+            return "More rain"; case .ONE:
+            return "Dry"; case .TWO:
+            return "Shower"; case .THREE:
+            return "Double bow"}
     case "road-planning":
-        #partial switch key {case .R: return "New terrain"; case .SPACE: return "Rebuild route"; case .S: return "Next pavement"; case .ONE: return "Recommended"; case .TWO: return "Cheapest"; case .THREE: return "Fastest"; case .FOUR: return "Lightest impact"; case .P: return road_planning_lab.paused ? "Resume optimizer" : "Pause optimizer"; case .O: return road_planning_lab.show_all ? "Hide other routes" : "Show all routes"; case .ENTER: return "Commit route"}
+        #partial switch key {case .R:
+            return "New terrain"; case .SPACE:
+            return "Rebuild route"; case .S:
+            return "Next pavement"; case .ONE:
+            return "Recommended"; case .TWO:
+            return "Cheapest"; case .THREE:
+            return "Fastest"; case .FOUR:
+            return "Lightest impact"; case .P:
+            return road_planning_lab.paused ? "Resume optimizer" : "Pause optimizer"; case .O:
+            return road_planning_lab.show_all ? "Hide other routes" : "Show all routes"; case .ENTER:
+            return "Commit route"}
     case "rock":
-        #partial switch key {case .E: return rock_lab.edge_strength > .01 ? "Hide edge wear" : "Show edge wear"; case .M: return "Next material"; case .ESCAPE: return "Exit lab"}
+        #partial switch key {case .E:
+            return rock_lab.edge_strength > .01 ? "Hide edge wear" : "Show edge wear"; case .M:
+            return "Next material"; case .ESCAPE:
+            return "Exit lab"}
     case "estuary-delta":
-        #partial switch key {case .LEFT: return "Previous seed"; case .RIGHT: return "Next seed"; case .R: return "New estuary"; case .D: return "Next data layer"; case .C: return "Change view"}
+        #partial switch key {case .LEFT:
+            return "Previous seed"; case .RIGHT:
+            return "Next seed"; case .R:
+            return "New estuary"; case .D:
+            return "Next data layer"; case .C:
+            return "Change view"}
     case "ruins":
-        #partial switch key {case .R: return "Regenerate"; case .ONE: return "Small ruins"; case .TWO: return "Large ruins"; case .C: return "Next culture"; case .T: return "Next terrain"; case .D: return "Next decay"; case .G: return "Change growth"; case .B: return "Change boundary"; case .P: return ruins_lab_show_props ? "Hide props" : "Show props"; case .V: return ruins_lab_show_paths ? "Hide paths" : "Show paths"; case .F: return "Change fog"}
+        #partial switch key {case .R:
+            return "Regenerate"; case .ONE:
+            return "Small ruins"; case .TWO:
+            return "Large ruins"; case .C:
+            return "Next culture"; case .T:
+            return "Next terrain"; case .D:
+            return "Next decay"; case .G:
+            return "Change growth"; case .B:
+            return "Change boundary"; case .P:
+            return ruins_lab_show_props ? "Hide props" : "Show props"; case .V:
+            return ruins_lab_show_paths ? "Hide paths" : "Show paths"; case .F:
+            return "Change fog"}
     case "screen-pops":
-        #partial switch key {case .SPACE: return "Spawn pop"; case .R: return "Spawn atlas"; case .T: return "Next style"; case .ESCAPE: return "Exit lab"}
+        #partial switch key {case .SPACE:
+            return "Spawn pop"; case .R:
+            return "Spawn atlas"; case .T:
+            return "Next style"; case .ESCAPE:
+            return "Exit lab"}
     case "shadow":
-        #partial switch key {case .TAB: return "Next test"; case .L: return "Toggle light"}
+        #partial switch key {case .TAB:
+            return "Next test"; case .L:
+            return "Toggle light"}
     case "spring-river":
-        #partial switch key {case .LEFT: return "Previous seed"; case .RIGHT: return "Next seed"; case .R: return "New river"; case .A: return "Less meander"; case .D: return "More meander"; case .DOWN: return "Less discharge"; case .UP: return "More discharge"}
+        #partial switch key {case .LEFT:
+            return "Previous seed"; case .RIGHT:
+            return "Next seed"; case .R:
+            return "New river"; case .A:
+            return "Less meander"; case .D:
+            return "More meander"; case .DOWN:
+            return "Less discharge"; case .UP:
+            return "More discharge"}
     case "markov-city", "markov-town", "markov-village", "aegean-city", "aegean-town", "aegean-village":
-        #partial switch key {case .LEFT: return "Previous option"; case .RIGHT: return "Next option"; case .DOWN: return "Previous setting"; case .UP: return "Next setting"; case .R: return "Regenerate"; case .ENTER: return "Apply"; case .TAB: return "Next panel"}
+        #partial switch key {case .LEFT:
+            return "Previous option"; case .RIGHT:
+            return "Next option"; case .DOWN:
+            return "Previous setting"; case .UP:
+            return "Next setting"; case .R:
+            return "Regenerate"; case .ENTER:
+            return "Apply"; case .TAB:
+            return "Next panel"}
     }
     return lab_mouse_key_label(key)
 }
@@ -251,35 +450,86 @@ lab_mouse_control_enabled :: proc(name: string, key: canvas2d.KeyboardKey) -> bo
 lab_mouse_control_selected :: proc(name: string, key: canvas2d.KeyboardKey) -> bool {
     switch name {
     case "boid":
-        #partial switch key {case .SPACE: return boid_lab_paused; case .V: return boid_lab_show_vectors; case .C: return boid_lab_follow; case .ONE: return boid_lab_mode == 1; case .TWO: return boid_lab_mode == 2; case .THREE: return boid_lab_mode == 0}
+        #partial switch key {case .SPACE:
+            return boid_lab_paused; case .V:
+            return boid_lab_show_vectors; case .C:
+            return boid_lab_follow; case .ONE:
+            return boid_lab_mode == 1; case .TWO:
+            return boid_lab_mode == 2; case .THREE:
+            return boid_lab_mode == 0}
     case "car-generator":
-        #partial switch key {case .G: return car_generator_lab_selected < 0; case .ONE: return car_generator_lab_selected == 0; case .TWO: return car_generator_lab_selected == 1; case .THREE: return car_generator_lab_selected == 2; case .FOUR: return car_generator_lab_selected == 3; case .W: return car_generator_lab_selected == 4}
+        #partial switch key {case .G:
+            return car_generator_lab_selected < 0; case .ONE:
+            return car_generator_lab_selected == 0; case .TWO:
+            return car_generator_lab_selected == 1; case .THREE:
+            return car_generator_lab_selected == 2; case .FOUR:
+            return car_generator_lab_selected == 3; case .W:
+            return car_generator_lab_selected == 4}
     case "car":
-        #partial switch key {case .ONE: return car_lab_pavement == .Asphalt; case .TWO: return car_lab_pavement == .Gravel; case .THREE: return car_lab_pavement == .Cobblestone; case .FOUR: return car_lab_pavement == .Dirt}
+        #partial switch key {case .ONE:
+            return car_lab_pavement == .Asphalt; case .TWO:
+            return car_lab_pavement == .Gravel; case .THREE:
+            return car_lab_pavement == .Cobblestone; case .FOUR:
+            return car_lab_pavement == .Dirt}
     case "cemetery-generator":
-        #partial switch key {case .V: return cemetery_lab_memorial_view; case .G: return cemetery_lab_marker_view}
+        #partial switch key {case .V:
+            return cemetery_lab_memorial_view; case .G:
+            return cemetery_lab_marker_view}
     case "coastal-ecology":
         if key == .SPACE do return !rocky_beach_tide_running
     case "flower-generator":
-        #partial switch key {case .G: return flower_generator_isolated; case .F: return flower_generator_lifecycle_gallery; case .C: return flower_generator_clustered}
+        #partial switch key {case .G:
+            return flower_generator_isolated; case .F:
+            return flower_generator_lifecycle_gallery; case .C:
+            return flower_generator_clustered}
     case "garden":
-        #partial switch key {case .ONE: return garden_lab_style == .Courtyard; case .TWO: return garden_lab_style == .Kitchen; case .THREE: return garden_lab_style == .Wild; case .FOUR: return garden_lab_style == .Stone}
+        #partial switch key {case .ONE:
+            return garden_lab_style == .Courtyard; case .TWO:
+            return garden_lab_style == .Kitchen; case .THREE:
+            return garden_lab_style == .Wild; case .FOUR:
+            return garden_lab_style == .Stone}
     case "leaf-generator":
-        #partial switch key {case .S: return leaf_generator_serration > 0; case .G: return leaf_generator_isolated; case .V: return leaf_generator_veins}
+        #partial switch key {case .S:
+            return leaf_generator_serration > 0; case .G:
+            return leaf_generator_isolated; case .V:
+            return leaf_generator_veins}
     case "lighthouse":
-        #partial switch key {case .L: return lighthouse_lab_night; case .ONE: return lighthouse_lab_height_index == 0; case .TWO: return lighthouse_lab_height_index == 1; case .THREE: return lighthouse_lab_height_index == 2}
+        #partial switch key {case .L:
+            return lighthouse_lab_night; case .ONE:
+            return lighthouse_lab_height_index == 0; case .TWO:
+            return lighthouse_lab_height_index == 1; case .THREE:
+            return lighthouse_lab_height_index == 2}
     case "markov-farmland":
-        #partial switch key {case .ONE: return markov_farmland_lab_terrain == .Flat; case .TWO: return markov_farmland_lab_terrain == .Terrace; case .THREE: return markov_farmland_lab_terrain == .Cliff; case .FOUR: return markov_farmland_lab_terrain == .Incline}
+        #partial switch key {case .ONE:
+            return markov_farmland_lab_terrain == .Flat; case .TWO:
+            return markov_farmland_lab_terrain == .Terrace; case .THREE:
+            return markov_farmland_lab_terrain == .Cliff; case .FOUR:
+            return markov_farmland_lab_terrain == .Incline}
     case "plant-generator":
-        #partial switch key {case .ONE: return plant_generator_detail == .Near; case .TWO: return plant_generator_detail == .Medium; case .THREE: return plant_generator_detail == .Far; case .FOUR: return plant_generator_isolated < 0}
+        #partial switch key {case .ONE:
+            return plant_generator_detail == .Near; case .TWO:
+            return plant_generator_detail == .Medium; case .THREE:
+            return plant_generator_detail == .Far; case .FOUR:
+            return plant_generator_isolated < 0}
     case "rainbow":
-        #partial switch key {case .ONE: return rainbow_lab_rain == 0; case .TWO: return rainbow_lab_rain == .68; case .THREE: return rainbow_lab_rain == .94}
+        #partial switch key {case .ONE:
+            return rainbow_lab_rain == 0; case .TWO:
+            return rainbow_lab_rain == .68; case .THREE:
+            return rainbow_lab_rain == .94}
     case "road-planning":
-        #partial switch key {case .ONE: return road_planning_lab.alternative == .Recommended; case .TWO: return road_planning_lab.alternative == .Cheapest; case .THREE: return road_planning_lab.alternative == .Fastest; case .FOUR: return road_planning_lab.alternative == .Lightest_Impact; case .P: return road_planning_lab.paused; case .O: return road_planning_lab.show_all}
+        #partial switch key {case .ONE:
+            return road_planning_lab.alternative == .Recommended; case .TWO:
+            return road_planning_lab.alternative == .Cheapest; case .THREE:
+            return road_planning_lab.alternative == .Fastest; case .FOUR:
+            return road_planning_lab.alternative == .Lightest_Impact; case .P:
+            return road_planning_lab.paused; case .O:
+            return road_planning_lab.show_all}
     case "rock":
         if key == .E do return rock_lab.edge_strength > .01
     case "ruins":
-        #partial switch key {case .P: return ruins_lab_show_props; case .V: return ruins_lab_show_paths}
+        #partial switch key {case .P:
+            return ruins_lab_show_props; case .V:
+            return ruins_lab_show_paths}
     }
     return false
 }
@@ -287,7 +537,13 @@ lab_mouse_control_selected :: proc(name: string, key: canvas2d.KeyboardKey) -> b
 lab_mouse_action_page := 0
 lab_mouse_action_lab := ""
 
-lab_mouse_control_layout :: proc(name: string, count, width, height: int) -> (columns, rows, capacity: int, button_width, left: f32) {
+lab_mouse_control_layout :: proc(
+    name: string,
+    count, width, height: int,
+) -> (
+    columns, rows, capacity: int,
+    button_width, left: f32,
+) {
     columns = clamp((width - 28) / 160, 1, 4)
     rows = clamp((height - 92) / 31, 1, 10)
     capacity = max(columns * rows, 1)
@@ -339,7 +595,10 @@ lab_mouse_controls_process :: proc(name: string) {
     visible := min(capacity, count - first)
     for local_index in 0 ..< visible {
         index := first + local_index
-        if canvas2d.CheckCollisionPointRec(mouse, lab_mouse_control_bounds(name, local_index, visible, int(width), int(height))) {
+        if canvas2d.CheckCollisionPointRec(
+            mouse,
+            lab_mouse_control_bounds(name, local_index, visible, int(width), int(height)),
+        ) {
             if lab_mouse_control_enabled(name, keys[index]) do canvas2d.InjectKeyPressed(keys[index])
             canvas2d.ConsumeMouseButtonPressed(.LEFT)
             return
@@ -372,7 +631,14 @@ lab_mouse_controls_draw :: proc(name: string, width, height: int) {
             bounds := lab_mouse_page_button_bounds(next, width)
             canvas2d.DrawRectangleRounded(bounds, .18, 6, {39, 47, 44, 244})
             canvas2d.DrawRectangleRoundedLinesEx(bounds, .18, 6, 1, {107, 121, 104, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, next ? ">" : "<", {bounds.x + 10, bounds.y + 5}, 11, 1, {232, 224, 189, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                next ? ">" : "<",
+                {bounds.x + 10, bounds.y + 5},
+                11,
+                1,
+                {232, 224, 189, 255},
+            )
         }
     }
     mouse := canvas2d.GetMousePosition()
@@ -382,9 +648,11 @@ lab_mouse_controls_draw :: proc(name: string, width, height: int) {
         hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
         enabled := lab_mouse_control_enabled(name, keys[index])
         selected := lab_mouse_control_selected(name, keys[index])
-        fill := !enabled ? canvas2d.Color{25, 29, 28, 205} : (hovered ? canvas2d.Color{67, 78, 71, 242} : (selected ? canvas2d.Color{52, 72, 61, 242} : canvas2d.Color{29, 35, 33, 226}))
+        fill :=
+            !enabled ? canvas2d.Color{25, 29, 28, 205} : (hovered ? canvas2d.Color{67, 78, 71, 242} : (selected ? canvas2d.Color{52, 72, 61, 242} : canvas2d.Color{29, 35, 33, 226}))
         canvas2d.DrawRectangleRounded(bounds, .14, 6, fill)
-        border := selected ? canvas2d.Color{184, 207, 174, 255} : (enabled ? canvas2d.Color{137, 151, 126, 255} : canvas2d.Color{75, 82, 77, 220})
+        border :=
+            selected ? canvas2d.Color{184, 207, 174, 255} : (enabled ? canvas2d.Color{137, 151, 126, 255} : canvas2d.Color{75, 82, 77, 220})
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .14, 6, 1, border)
         label := lab_mouse_action_label(name, keys[index])
         canvas2d.DrawTextEx(

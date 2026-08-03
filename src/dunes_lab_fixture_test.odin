@@ -271,7 +271,7 @@ when ODIN_TEST {
         source := fixture_editor_test_source()
         defer fixture_editor_test_source_destroy(source)
         source.lab = {
-            kind  = .Dunes,
+            kind = .Dunes,
             dunes = {wind_angle = math.nan_f32(), vegetation = .5},
         }
         data, encode_error, encoded := fixture_codec_encode(source, context.allocator)

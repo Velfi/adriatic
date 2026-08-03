@@ -375,9 +375,9 @@ shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
     color := world_color(canvas2d.Color{255, 255, 255, 255})
     append(
         &world_renderer.shadow_vertices,
-        World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
-        World_Vertex{{b.x, b.y, b.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
-        World_Vertex{{c.x, c.y, c.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
+        World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
+        World_Vertex{{b.x, b.y, b.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
+        World_Vertex{{c.x, c.y, c.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
     )
 }
 
@@ -661,19 +661,11 @@ world_register_shadow_caster :: #force_inline proc(first: int) {
     append(&world_renderer.explicit_shadow_caster_ranges, candidate)
 }
 
-world_register_static_shadow_caster :: #force_inline proc(
-    first, count: int,
-    minimum, maximum: third_person.Vec3,
-) {
+world_register_static_shadow_caster :: #force_inline proc(first, count: int, minimum, maximum: third_person.Vec3) {
     if first < 0 || count < 3 do return
     append(
         &world_renderer.static_shadow_caster_ranges,
-        World_Static_Shadow_Caster_Range {
-            first = first,
-            count = count,
-            minimum = minimum,
-            maximum = maximum,
-        },
+        World_Static_Shadow_Caster_Range{first = first, count = count, minimum = minimum, maximum = maximum},
     )
 }
 
@@ -734,11 +726,7 @@ shadow_depth_include_bounds :: #force_inline proc(
     }
 }
 
-shadow_append_world_range :: proc(
-    first, count: int,
-    forward: third_person.Vec3,
-    min_depth, max_depth: ^f32,
-) {
+shadow_append_world_range :: proc(first, count: int, forward: third_person.Vec3, min_depth, max_depth: ^f32) {
     if first < 0 || count < 3 || first + count > len(world_renderer.vertices) do return
     end := first + count
     run_first := -1
@@ -797,20 +785,11 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
         shadow_append_world_range(caster_range.first, caster_range.count, forward, &min_depth, &max_depth)
     }
     for caster_range in world_renderer.static_shadow_caster_ranges {
-        if dynamic_shadow_range_is_covered(
-            {first = caster_range.first, count = caster_range.count},
-            dynamic_range,
-        ) {
+        if dynamic_shadow_range_is_covered({first = caster_range.first, count = caster_range.count}, dynamic_range) {
             continue
         }
         shadow_append_world_draw_range(caster_range.first, caster_range.count)
-        shadow_depth_include_bounds(
-            caster_range.minimum,
-            caster_range.maximum,
-            forward,
-            &min_depth,
-            &max_depth,
-        )
+        shadow_depth_include_bounds(caster_range.minimum, caster_range.maximum, forward, &min_depth, &max_depth)
     }
     _ = dio.flame_graph_end(dio.flame_graph_current(), world_scope)
     world_renderer.dynamic_shadow.caster_min_depth = min_depth

@@ -612,7 +612,7 @@ settlement_access_append_public_path :: proc(
     }
 }
 
-// Lay a public circulation skeleton before private doorstep access exists.
+// Lay a public circulation architecture before private doorstep access exists.
 // Begin with a grade- and obstacle-aware route from one building apron to the
 // road, then grow new routes through previously unserved open space toward
 // other sampled aprons. Door generation can subsequently attach short private

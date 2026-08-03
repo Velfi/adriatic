@@ -47,6 +47,7 @@ run_frame_present :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_S
                request.camera_orbit_set ||
                request.camera_distance_set ||
                request.camera_offset_set ||
+               request.plant_sheet_views ||
                request.turntable_frames > 0) {
         pose := selector_capture_pose_set ? selector_capture_pose : capture_camera_original
         if selector_capture_pose_set {
@@ -77,6 +78,16 @@ run_frame_present :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_S
             pitch := math.atan2(delta.y, horizontal)
             if request.turntable_frames > 0 {
                 yaw += f32(turntable_frame_index) / f32(request.turntable_frames) * f32(math.PI * 2)
+            }
+            if request.plant_sheet_views {
+                degrees_to_radians := f32(math.PI / 180)
+                switch plant_sheet_view_index {
+                case 1:
+                    yaw += 90 * degrees_to_radians
+                case 2:
+                    pitch += 65 * degrees_to_radians
+                    pitch = clamp(pitch, f32(-math.PI * .495), f32(math.PI * .495))
+                }
             }
             if request.camera_orbit_set {
                 degrees_to_radians := f32(math.PI / 180)

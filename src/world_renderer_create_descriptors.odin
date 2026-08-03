@@ -8,7 +8,7 @@ import engine "zelda_engine:engine"
 import resources "zelda_engine:render_resources"
 
 world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage: ^string) -> bool {
-    paint_bindings := [18]vk.DescriptorSetLayoutBinding {
+    paint_bindings := [16]vk.DescriptorSetLayoutBinding {
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -25,12 +25,10 @@ world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage
         {binding = 13, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 14, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 15, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-        {binding = 16, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-        {binding = 17, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }
     paint_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 18,
+        bindingCount = 16,
         pBindings    = raw_data(paint_bindings[:]),
     }
     if vk.CreateDescriptorSetLayout(ctx.device, &paint_layout_info, nil, &world_renderer.vehicle_paint_descriptor_layout) != .SUCCESS do return false
@@ -41,8 +39,8 @@ world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage
         "vehicle paint descriptor set layout",
     )
     paint_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = 9},
-        {type = .SAMPLER, descriptorCount = 9},
+        {type = .SAMPLED_IMAGE, descriptorCount = 8},
+        {type = .SAMPLER, descriptorCount = 8},
     }
     paint_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
@@ -113,18 +111,6 @@ world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage
     ) {
         return false
     }
-    failure_stage^ = "marine ecology atlas"
-    marine_fallback := [4]u8{}
-    if !resources.texture_upload_rgba8(
-        ctx,
-        marine_fallback[:],
-        1,
-        1,
-        &world_renderer.marine_ecology_atlas,
-        {address_mode = .CLAMP_TO_EDGE, linear_color = true},
-    ) {
-        return false
-    }
     paint_image_info := vk.DescriptorImageInfo {
         imageView   = world_renderer.vehicle_paint_atlas.view,
         imageLayout = .SHADER_READ_ONLY_OPTIMAL,
@@ -153,14 +139,7 @@ world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage
     business_sign_sampler_info := vk.DescriptorImageInfo {
         sampler = world_renderer.business_sign_atlas.sampler,
     }
-    marine_ecology_image_info := vk.DescriptorImageInfo {
-        imageView = world_renderer.marine_ecology_atlas.view,
-        imageLayout = .SHADER_READ_ONLY_OPTIMAL,
-    }
-    marine_ecology_sampler_info := vk.DescriptorImageInfo {
-        sampler = world_renderer.marine_ecology_atlas.sampler,
-    }
-    paint_writes := [10]vk.WriteDescriptorSet {
+    paint_writes := [8]vk.WriteDescriptorSet {
         {
             sType = .WRITE_DESCRIPTOR_SET,
             dstSet = world_renderer.vehicle_paint_descriptor,
@@ -225,24 +204,8 @@ world_renderer_create_descriptors :: proc(ctx: ^engine.Vk_Context, failure_stage
             descriptorType = .SAMPLER,
             pImageInfo = &business_sign_sampler_info,
         },
-        {
-            sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = world_renderer.vehicle_paint_descriptor,
-            dstBinding = 16,
-            descriptorCount = 1,
-            descriptorType = .SAMPLED_IMAGE,
-            pImageInfo = &marine_ecology_image_info,
-        },
-        {
-            sType = .WRITE_DESCRIPTOR_SET,
-            dstSet = world_renderer.vehicle_paint_descriptor,
-            dstBinding = 17,
-            descriptorCount = 1,
-            descriptorType = .SAMPLER,
-            pImageInfo = &marine_ecology_sampler_info,
-        },
     }
-    vk.UpdateDescriptorSets(ctx.device, 10, raw_data(paint_writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(ctx.device, 8, raw_data(paint_writes[:]), 0, nil)
     failure_stage^ = "material lab textures"
     for index in 0 ..< MATERIAL_LAB_MAP_COUNT {
         if !material_lab_gpu_map_load(ctx, Material_Lab_Map_Kind(index), &world_renderer.material_lab_maps[index]) {

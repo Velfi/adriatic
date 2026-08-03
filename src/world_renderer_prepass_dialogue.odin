@@ -13,7 +13,6 @@ world_pre_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     if !world_renderer.initialized && !world_renderer_create(pass.ctx) do return
     editor := world_renderer.editor
     if editor == nil do return
-    _ = marine_ecology_atlas_update(editor)
     frame_index := int(pass.frame.frame_index)
     world_prepare(editor, pass.frame.command_buffer, frame_index)
     if !world_dynamic_vertex_buffer_upload(frame_index) do return

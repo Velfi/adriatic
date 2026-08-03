@@ -39,9 +39,12 @@ Land_Paint_Kind :: enum u8 {
 
 land_paint_target :: #force_inline proc(kind: Land_Paint_Kind) -> f32 {
     switch kind {
-    case .Natural: return 0
-    case .Sand:    return -1
-    case .Soil:    return 1
+    case .Natural:
+        return 0
+    case .Sand:
+        return -1
+    case .Soil:
+        return 1
     }
     return 0
 }
@@ -966,11 +969,11 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     if hovered_tool >= 0 {
         if hovered_tool == 0 {
             bounds := editor_ui_tool_bounds(layout, hovered_tool)
-            size := ui_measure_text(.Label, "SELECT  [S]", .5)
+            size := ui_measure_text(.Label, "SELECT", .5)
             tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
             canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
             canvas2d.DrawRectangleRoundedLinesEx(tooltip, .14, 5, 1, {89, 101, 114, 255})
-            ui_draw_text(.Label, "SELECT  [S]", {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
+            ui_draw_text(.Label, "SELECT", {tooltip.x + 10, tooltip.y + 8}, .5, {235, 239, 243, 255})
         } else if hovered_tool - 1 == AUTHORING_TOOL_DISPLAY_COUNT {
             bounds := editor_ui_tool_bounds(layout, hovered_tool)
             size := ui_measure_text(.Label, "ROCKS", .5)
@@ -1348,7 +1351,11 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         mode_bounds := editor_ui_slider_bounds(layout, row)
         half := (mode_bounds.width - 6) * .5
         editor_ui_panel_button({mode_bounds.x, mode_bounds.y + 20, half, 30}, "LAND", !editor.marine_ecology_paint)
-        editor_ui_panel_button({mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}, "MARINE", editor.marine_ecology_paint)
+        editor_ui_panel_button(
+            {mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30},
+            "MARINE",
+            editor.marine_ecology_paint,
+        )
         row += 1
         if editor.marine_ecology_paint {
             kind_bounds := editor_ui_slider_bounds(layout, row)
@@ -1377,7 +1384,14 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             }
             row += 1
         }
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "RADIUS (m)", editor.radius, terrain.BASE_CELL_SIZE, 400, 0)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.radius,
+            terrain.BASE_CELL_SIZE,
+            400,
+            0,
+        )
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
         row += 1
@@ -1810,7 +1824,12 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     case .Obstacles:
         actions := editor_ui_slider_bounds(layout, row)
         half := (actions.width - 6) * .5
-        editor_ui_panel_button({actions.x, actions.y + 8, half, 30}, "ADD", false, editor.sdf_obstacle_count < SDF_OBSTACLE_CAPACITY)
+        editor_ui_panel_button(
+            {actions.x, actions.y + 8, half, 30},
+            "ADD",
+            false,
+            editor.sdf_obstacle_count < SDF_OBSTACLE_CAPACITY,
+        )
         editor_ui_panel_button(
             {actions.x + half + 6, actions.y + 8, half, 30},
             "DELETE",
@@ -1819,7 +1838,12 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row += 1
         list_bounds := editor_ui_slider_bounds(layout, row)
-        editor_ui_section_title(fmt.ctprintf("TORI  %d/%d", editor.sdf_obstacle_count, SDF_OBSTACLE_CAPACITY), list_bounds.x, list_bounds.y, list_bounds.width)
+        editor_ui_section_title(
+            fmt.ctprintf("TORI  %d/%d", editor.sdf_obstacle_count, SDF_OBSTACLE_CAPACITY),
+            list_bounds.x,
+            list_bounds.y,
+            list_bounds.width,
+        )
         previous_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 66, list_bounds.y - 4, 30, 26}
         next_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 30, list_bounds.y - 4, 30, 26}
         editor_ui_panel_button(previous_bounds, "<", false, editor.sdf_obstacle_interaction.list_scroll > 0)
@@ -2378,7 +2402,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         half := (mode_bounds.width - 6) * .5
         if pressed && canvas2d.CheckCollisionPointRec(mouse, {mode_bounds.x, mode_bounds.y + 20, half, 30}) {
             editor.marine_ecology_paint = false
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}) {
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}) {
             editor.marine_ecology_paint = true
             if editor.marine_ecology_paint_kind == .Bare do editor.marine_ecology_paint_kind = .Seagrass
         }

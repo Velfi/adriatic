@@ -101,27 +101,15 @@ editor_island_translate_mobile_actors :: proc(editor: ^Editor, id: terrain.Islan
     }
     if boats_moved do gameplay_physics_rebuild_boats(editor)
 
-    if terrain.island_at(
-        &editor.project,
-        editor.postale.spawn_position.x,
-        editor.postale.spawn_position.z,
-    ) == id {
+    if terrain.island_at(&editor.project, editor.postale.spawn_position.x, editor.postale.spawn_position.z) == id {
         editor.postale.spawn_position.x += dx
         editor.postale.spawn_position.z += dz
     }
-    if terrain.island_at(
-        &editor.project,
-        editor.libellula.spawn_position.x,
-        editor.libellula.spawn_position.z,
-    ) == id {
+    if terrain.island_at(&editor.project, editor.libellula.spawn_position.x, editor.libellula.spawn_position.z) == id {
         editor.libellula.spawn_position.x += dx
         editor.libellula.spawn_position.z += dz
     }
-    if terrain.island_at(
-        &editor.project,
-        editor.rondine.spawn_position.x,
-        editor.rondine.spawn_position.z,
-    ) == id {
+    if terrain.island_at(&editor.project, editor.rondine.spawn_position.x, editor.rondine.spawn_position.z) == id {
         editor.rondine.spawn_position.x += dx
         editor.rondine.spawn_position.z += dz
     }
@@ -213,27 +201,25 @@ editor_island_translate_fixture_positions :: proc(editor: ^Editor, id: terrain.I
         obstacle.position.x += dx
         obstacle.position.z += dz
     }
-    if terrain.island_at(
-        &editor.project,
-        editor.crash_recovery_position.x,
-        editor.crash_recovery_position.z,
-    ) == id {
+    if terrain.island_at(&editor.project, editor.crash_recovery_position.x, editor.crash_recovery_position.z) == id {
         editor.crash_recovery_position.x += dx
         editor.crash_recovery_position.z += dz
     }
     if terrain.island_at(
-        &editor.project,
-        editor.vehicle_paint_saved_postale_position.x,
-        editor.vehicle_paint_saved_postale_position.z,
-    ) == id {
+           &editor.project,
+           editor.vehicle_paint_saved_postale_position.x,
+           editor.vehicle_paint_saved_postale_position.z,
+       ) ==
+       id {
         editor.vehicle_paint_saved_postale_position.x += dx
         editor.vehicle_paint_saved_postale_position.z += dz
     }
     if terrain.island_at(
-        &editor.project,
-        editor.vehicle_paint_saved_libellula_position.x,
-        editor.vehicle_paint_saved_libellula_position.z,
-    ) == id {
+           &editor.project,
+           editor.vehicle_paint_saved_libellula_position.x,
+           editor.vehicle_paint_saved_libellula_position.z,
+       ) ==
+       id {
         editor.vehicle_paint_saved_libellula_position.x += dx
         editor.vehicle_paint_saved_libellula_position.z += dz
     }

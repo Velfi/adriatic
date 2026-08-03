@@ -608,7 +608,9 @@ live_control_poll :: proc(editor: ^Editor) {
         if len(fields) != 3 ||
            (fields[0] != "top" && fields[0] != "succulents-and-cacti" && fields[0] != "cacti") ||
            (fields[1] != "near" && fields[1] != "medium" && fields[1] != "far") ||
-           !maturity_ok || maturity < 0 || maturity > 1 {
+           !maturity_ok ||
+           maturity < 0 ||
+           maturity > 1 {
             response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"unknown plant catalog section"}}`, request_id)
         } else if !lab_scene_load(editor, {definition = lab_scene_find("plant-generator")}) {
             response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"could not open plant catalog"}}`, request_id)

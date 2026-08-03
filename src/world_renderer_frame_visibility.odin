@@ -88,7 +88,6 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     // instead of silently dropping vehicles at the end of the frame.
     profile_water := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_water")
     world_ocean(editor)
-    world_marine_ecology(editor)
     world_bathymetry(editor)
     world_river_water(editor)
     dio.flame_graph_end(dio.flame_graph_current(), profile_water)

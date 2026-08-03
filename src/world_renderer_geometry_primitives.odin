@@ -323,12 +323,12 @@ world_scene_moonlight :: proc(sky: atmosphere.Sky_State) -> f32 {
 
 @(no_instrumentation)
 world_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}, {}, {}, 0}
 }
 
 @(no_instrumentation)
 world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}, {}, {}, 0}
 }
 
 @(no_instrumentation)
@@ -362,6 +362,12 @@ world_ocean_vertex :: #force_inline proc(
         // shoreline triangle, drawing a false deep-water diagonal.
         vertex.material.y = -1
     }
+    if habitat, found := terrain.sample_marine_habitat(&editor.project, point.x, point.z); found {
+        // A negative alpha is an internal vertex sentinel. The vertex shader
+        // keeps these values linear and the water fragment path restores
+        // opaque output after decoding disturbance from it.
+        vertex.color = {habitat.seagrass, habitat.macroalgae, habitat.coralligenous, -1 - habitat.disturbance}
+    }
     if lab_scene_is_active(editor, "dunes") {
         // Carry shallowness under the hidden landward part of the ocean grid
         // so interpolation reaches the exact waterline.
@@ -394,7 +400,7 @@ world_ocean_vertex :: #force_inline proc(
 
 @(no_instrumentation)
 world_fountain_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}, {}, {}, 0}
 }
 
 @(no_instrumentation)
@@ -403,7 +409,7 @@ world_foliage_vertex :: #force_inline proc(
     color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}, {}, {}, 0}
 }
 
 @(no_instrumentation)
@@ -412,7 +418,7 @@ world_eye_vertex :: #force_inline proc(
     color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
+    return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}, {}, {}, 0}
 }
 
 @(no_instrumentation)
@@ -564,6 +570,9 @@ world_greek_asset_vertex :: proc(
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
         {},
+        {},
+        {},
+        0,
     }
 }
 

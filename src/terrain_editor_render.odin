@@ -136,16 +136,25 @@ editor_world_ray_direction :: proc(
     camera: Perspective_Camera,
     mouse: canvas2d.Vector2,
     width, height: i32,
-) -> (third_person.Vec3, bool) {
+) -> (
+    third_person.Vec3,
+    bool,
+) {
     if width <= 0 || height <= 0 || camera.focal_length <= 0 do return {}, false
     screen_x := (mouse.x / f32(width) - .5) * 2
     screen_y := (.5 - mouse.y / f32(height)) * 2
     aspect := f32(width) / f32(height)
     direction := linalg.normalize0(
         third_person.Vec3 {
-            camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
-            camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
-            camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+            camera.forward.x +
+            camera.right.x * screen_x * aspect / camera.focal_length +
+            camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y +
+            camera.right.y * screen_x * aspect / camera.focal_length +
+            camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z +
+            camera.right.z * screen_x * aspect / camera.focal_length +
+            camera.up.z * screen_y / camera.focal_length,
         },
     )
     return direction, linalg.dot(direction, direction) > 1e-8

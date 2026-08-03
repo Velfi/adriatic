@@ -12,14 +12,14 @@ import canvas2d "zelda_engine:canvas2d"
 // joint away from the rest of the rig and fling its weighted vertices out of
 // the body. Compression remains unconstrained so crouches and squash poses
 // retain their authored silhouette.
-mouse_skeleton_keep_joints_connected :: proc(skeleton: ^[5]Mouse_Bone_Pose) {
-    if skeleton == nil do return
-    authored := skeleton^
-    for child_index in 1 ..< len(skeleton) {
-        child := &skeleton[child_index]
+mouse_architecture_keep_joints_connected :: proc(architecture: ^[5]Mouse_Bone_Pose) {
+    if architecture == nil do return
+    authored := architecture^
+    for child_index in 1 ..< len(architecture) {
+        child := &architecture[child_index]
         parent_index := int(child.parent)
         if parent_index < 0 || parent_index >= child_index do continue
-        parent := &skeleton[parent_index]
+        parent := &architecture[parent_index]
         authored_child := authored[child_index]
         authored_parent := authored[parent_index]
         bind_offset := authored_child.bind_position - authored_parent.bind_position
@@ -63,46 +63,46 @@ mouse_skeleton_keep_joints_connected :: proc(skeleton: ^[5]Mouse_Bone_Pose) {
 
 when ODIN_TEST {
     @(test)
-    mouse_skeleton_keeps_escaped_child_joint_connected :: proc(t: ^testing.T) {
-        skeleton := [5]Mouse_Bone_Pose {
+    mouse_architecture_keeps_escaped_child_joint_connected :: proc(t: ^testing.T) {
+        architecture := [5]Mouse_Bone_Pose {
             {parent = -1, bind_position = {0, 0, 0}, position = {1, 2, 3}},
             {parent = 0, bind_position = {0, 0, .2}, position = {1, 2, 30}},
             {parent = 1, bind_position = {0, 0, .4}, position = {1, 2, 30.2}},
             {},
             {},
         }
-        mouse_skeleton_keep_joints_connected(&skeleton)
+        mouse_architecture_keep_joints_connected(&architecture)
         maximum := f32(.2 * 1.4)
-        testing.expect(t, linalg.length(skeleton[1].position - skeleton[0].position) <= maximum + .0001)
-        testing.expect(t, linalg.length(skeleton[2].position - skeleton[1].position) <= maximum + .0001)
+        testing.expect(t, linalg.length(architecture[1].position - architecture[0].position) <= maximum + .0001)
+        testing.expect(t, linalg.length(architecture[2].position - architecture[1].position) <= maximum + .0001)
     }
 
     @(test)
-    mouse_skeleton_preserves_connected_authored_joint :: proc(t: ^testing.T) {
-        skeleton := [5]Mouse_Bone_Pose {
+    mouse_architecture_preserves_connected_authored_joint :: proc(t: ^testing.T) {
+        architecture := [5]Mouse_Bone_Pose {
             {parent = -1, bind_position = {0, 0, 0}, position = {1, 2, 3}},
             {parent = 0, bind_position = {0, 0, .2}, position = {1.05, 2.04, 3.21}},
             {},
             {},
             {},
         }
-        authored := skeleton[1].position
-        mouse_skeleton_keep_joints_connected(&skeleton)
-        testing.expect_value(t, skeleton[1].position, authored)
+        authored := architecture[1].position
+        mouse_architecture_keep_joints_connected(&architecture)
+        testing.expect_value(t, architecture[1].position, authored)
     }
 
     @(test)
-    mouse_skeleton_child_pivot_inherits_parent_rotation :: proc(t: ^testing.T) {
-        skeleton := [5]Mouse_Bone_Pose {
+    mouse_architecture_child_pivot_inherits_parent_rotation :: proc(t: ^testing.T) {
+        architecture := [5]Mouse_Bone_Pose {
             {parent = -1, roll = math.PI * .5},
             {parent = 0, bind_position = {.2, 0, 0}, position = {.2, 0, 0}},
             {},
             {},
             {},
         }
-        mouse_skeleton_keep_joints_connected(&skeleton)
-        testing.expect(t, math.abs(skeleton[1].position.x) < .0001)
-        testing.expect(t, math.abs(skeleton[1].position.y - .2) < .0001)
+        mouse_architecture_keep_joints_connected(&architecture)
+        testing.expect(t, math.abs(architecture[1].position.x) < .0001)
+        testing.expect(t, math.abs(architecture[1].position.y - .2) < .0001)
     }
 
     @(test)
@@ -261,7 +261,7 @@ Mouse_Vertex_Group :: struct {
 
 mouse_body_profile_skin :: proc(
     bind_position: third_person.Vec3,
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
     lower, upper: int,
     amount: f32,
 ) -> third_person.Vec3 {
@@ -274,8 +274,8 @@ mouse_body_profile_skin :: proc(
         {profile.primary[upper], profile.primary_weight[upper]},
         {profile.secondary[upper], 1 - profile.primary_weight[upper]},
     }
-    lower_point := mouse_skin_vertex({bind_position = bind_position, groups = lower_groups}, skeleton)
-    upper_point := mouse_skin_vertex({bind_position = bind_position, groups = upper_groups}, skeleton)
+    lower_point := mouse_skin_vertex({bind_position = bind_position, groups = lower_groups}, architecture)
+    upper_point := mouse_skin_vertex({bind_position = bind_position, groups = upper_groups}, architecture)
     return lower_point + (upper_point - lower_point) * amount
 }
 
@@ -288,13 +288,13 @@ Mouse_Skin_Vertex :: struct {
 @(no_instrumentation)
 mouse_skin_vertex :: #force_inline proc(
     vertex: Mouse_Skin_Vertex,
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
 ) -> third_person.Vec3 {
     skinned: third_person.Vec3
     weight_sum: f32
     for group in vertex.groups {
         if group.weight <= 0 do continue
-        bone := skeleton[int(group.bone)]
+        bone := architecture[int(group.bone)]
         relative := third_person.Vec3 {
             vertex.bind_position.x - bone.bind_position.x,
             vertex.bind_position.y - bone.bind_position.y,
@@ -323,13 +323,13 @@ mouse_skin_vertex :: #force_inline proc(
 }
 
 mouse_body_surface_height :: proc(
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
     local_x, local_y, local_z: f32,
 ) -> (
     height: f32,
     push_up, hit: bool,
 ) {
-    if skeleton == nil do return
+    if architecture == nil do return
     profile := MOUSE_BODY_PROFILE
     if local_z < profile.ring_z[0] || local_z > profile.ring_z[MOUSE_BODY_RING_COUNT - 1] do return
 
@@ -349,17 +349,17 @@ mouse_body_surface_height :: proc(
     if body_radius_x <= .001 || math.abs(local_x) >= body_radius_x do return
     normalized_x := clamp(local_x / body_radius_x, -1, 1)
     vertical_radius := body_radius_y * f32(math.sqrt(f64(max(1 - normalized_x * normalized_x, f32(0)))))
-    posed_center := mouse_body_profile_skin({local_x, center_y, local_z}, skeleton, lower, upper, amount)
+    posed_center := mouse_body_profile_skin({local_x, center_y, local_z}, architecture, lower, upper, amount)
     push_up = local_y >= posed_center.y
     surface_y := center_y + (push_up ? vertical_radius : -vertical_radius)
-    posed_surface := mouse_body_profile_skin({local_x, surface_y, local_z}, skeleton, lower, upper, amount)
+    posed_surface := mouse_body_profile_skin({local_x, surface_y, local_z}, architecture, lower, upper, amount)
     return posed_surface.y, push_up, true
 }
 
 world_mouse_skinned_hull :: proc(
     origin: third_person.Vec3,
     rotation: f32,
-    skeleton: ^[5]Mouse_Bone_Pose,
+    architecture: ^[5]Mouse_Bone_Pose,
     fur, fur_dark, fur_light: canvas2d.Color,
     pattern: Mouse_Fur_Pattern,
     breath: f32,
@@ -431,7 +431,7 @@ world_mouse_skinned_hull :: proc(
                 },
                 color         = coat_color,
             }
-            local := mouse_skin_vertex(vertices[ring][segment], skeleton)
+            local := mouse_skin_vertex(vertices[ring][segment], architecture)
             if softness != nil && softness.initialized {
                 local += softness.displacement[ring][segment]
             }
@@ -501,7 +501,7 @@ world_mouse_skinned_hull :: proc(
             groups = {{.Pelvis, 1}, {.Spine, 0}},
             color = fur,
         },
-        skeleton,
+        architecture,
     )
     nose_center_local := mouse_skin_vertex(
         {
@@ -509,7 +509,7 @@ world_mouse_skinned_hull :: proc(
             groups = {{.Head, 1}, {.Neck, 0}},
             color = fur_light,
         },
-        skeleton,
+        architecture,
     )
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)

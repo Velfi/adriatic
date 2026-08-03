@@ -72,8 +72,8 @@ map_artifact_version_is_legacy :: #force_inline proc(format: u32, generator: u64
         (format == MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION && generator == MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION) ||
         (format == u32(2) && generator == u64(4)) ||
         (format == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
-            (generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION ||
-                generator == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION)) \
+                (generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION ||
+                        generator == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION)) \
     )
 }
 
@@ -210,8 +210,7 @@ map_artifact_header_version_pair :: proc(data: []byte) -> (format_version: u32, 
     for value, index in magic {
         if data[index] != value do return 0, 0, false
     }
-    if map_artifact_get_u16(data, 8) != MAP_ARTIFACT_CONTAINER_VERSION ||
-       map_artifact_get_u16(data, 10) != 0 {
+    if map_artifact_get_u16(data, 8) != MAP_ARTIFACT_CONTAINER_VERSION || map_artifact_get_u16(data, 10) != 0 {
         return 0, 0, false
     }
     return map_artifact_get_u32(data, 12), map_artifact_get_u64(data, 16), true

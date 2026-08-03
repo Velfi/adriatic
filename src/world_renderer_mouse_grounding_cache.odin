@@ -374,13 +374,7 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
         return
     }
     entry := &world_renderer.town_mouse_geometry_cache[cache_index]
-    if town_mouse_geometry_cache_matches(
-        entry,
-        model,
-        scale,
-        editor.project.revision,
-        editor.terrain_revision,
-    ) {
+    if town_mouse_geometry_cache_matches(entry, model, scale, editor.project.revision, editor.terrain_revision) {
         world_renderer.town_mouse_cache_reuses += 1
         profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mouse_cache_reuse")
         append(&world_renderer.vertices, ..entry.vertices[:])

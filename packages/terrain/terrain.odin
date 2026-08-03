@@ -2403,8 +2403,12 @@ default_apply_island_hydrology :: proc(
     nx := (world_x - hydrology.estuary_center[0]) / half
     nz := (world_z - hydrology.estuary_center[1]) / half
     if math.abs(nx) > 1 || math.abs(nz) > 1 do return
-    class := estuaries.sample_wetland(&hydrology.estuary, nx, nz)
-    if class == .Dry || class == .Open_Sea do return
+    channel := estuaries.sample_wetland_weight(&hydrology.estuary, nx, nz, .Channel)
+    mudflat := estuaries.sample_wetland_weight(&hydrology.estuary, nx, nz, .Mudflat)
+    marsh := estuaries.sample_wetland_weight(&hydrology.estuary, nx, nz, .Marsh)
+    shoal := estuaries.sample_wetland_weight(&hydrology.estuary, nx, nz, .Shoal)
+    wetland := channel + mudflat + marsh + shoal
+    if wetland <= .001 do return
     // The laboratory owns a finite square, but the island seabed does not.
     // Feather most of the outer domain and prevent deep-water cells from
     // being lifted into a square shelf. Channels may still carve through the
@@ -2412,38 +2416,27 @@ default_apply_island_hydrology :: proc(
     edge := 1 - terrain_smooth_weight((max(math.abs(nx), math.abs(nz)) - .58) / .42)
     seaward := terrain_smooth_weight((nz + .42) / .20)
     edge *= seaward
-    if class == .Channel {
+    if channel > .001 {
         // The north edge is the intentional river inlet, not an accidental
         // simulation boundary. Preserve the narrow classified channel there
         // so the estuary overlaps the terminal river bed instead of fading to
         // zero and leaving a dry diamond-shaped seam at the handoff.
         inlet := terrain_smooth_weight((nz - .58) / .42) * seaward
-        edge = max(edge, inlet)
+        edge = max(edge, inlet * channel)
     }
     if edge <= .001 do return
     target := estuaries.sample_elevation(&hydrology.estuary, nx, nz)
-    influence: f32
-    #partial switch class {
-    case .Channel:
-        influence = 1
-    case .Mudflat:
-        influence = .88
-    case .Marsh:
-        influence = .82
-    case .Shoal:
-        influence = .76
-    case:
-        influence = 0
-    }
+    influence := channel + mudflat * .88 + marsh * .82 + shoal * .76
     influence *= edge
-    if class != .Marsh && target > height {
+    marsh_share := marsh / max(wetland, f32(.001))
+    if marsh_share < .5 && target > height {
         depositional_core := terrain_smooth_weight((nz + .62) / .22)
         influence *= depositional_core
         target = min(target, f32(-.18))
     }
     if target > height {
         shallow_substrate := terrain_smooth_weight((height + 4.5) / 3.5)
-        if class == .Marsh {
+        if marsh_share >= .5 {
             // Marsh polygons are the generator's discrete depositional
             // islands. Let those build a little farther into the lobe while
             // keeping continuous shoal and channel fields tied to the
@@ -2460,13 +2453,8 @@ default_apply_island_hydrology :: proc(
         }
     }
     height += (target - height) * influence
-    #partial switch class {
-    case .Marsh:
-        material = .35
-    case .Channel, .Mudflat, .Shoal:
-        material = -1.35
-    case:
-    }
+    wet_material := -1.35 + marsh_share * 1.70
+    material += (wet_material - material) * clamp(wetland * edge, f32(0), f32(1))
     return
 }
 

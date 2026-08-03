@@ -395,8 +395,11 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     editor.cursor_hit = cursor_hit && !ui_hit && !editor.in_map
     if editor.cursor_hit {
         cursor_height, cursor_material, land_found := terrain.sample_land(&editor.project, 0, world_x, world_z)
-        bathymetry_height, bathymetry_material, _, bathymetry_found :=
-            terrain.sample_bathymetry(&editor.project, world_x, world_z)
+        bathymetry_height, bathymetry_material, _, bathymetry_found := terrain.sample_bathymetry(
+            &editor.project,
+            world_x,
+            world_z,
+        )
         terrain_seabed_target :=
             editor.authoring_tool == .Sculpt &&
             editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].affect_seabed

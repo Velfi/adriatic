@@ -78,6 +78,7 @@ Run_State :: struct {
     turntable_frame_index, turntable_capture_stride:                                         int,
     turntable_last_capture_frame, sequence_frame_index, sequence_last_capture_frame:         int,
     seed_frame_index, seed_last_capture_frame:                                               int,
+    plant_sheet_view_index, plant_sheet_last_capture_frame:                                  int,
     reload_requested:                                                                        bool,
     frame:                                                                                   int,
 }

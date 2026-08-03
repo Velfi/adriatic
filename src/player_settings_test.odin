@@ -1,7 +1,7 @@
 package main
 
-import "core:os"
 import "core:math"
+import "core:os"
 import "core:strings"
 import "core:testing"
 
