@@ -66,8 +66,18 @@ configure_generated_dune_capture_camera :: proc(
                 // is a better blowout signal than any one pale terrain cell.
                 score = depression * 3.2 - material - seaward_material * .55 - landward_material * .55
             } else {
-                seaward_height := terrain.sample_surface_height(&editor.project, 0, candidate_x, shore_z + inland - step)
-                landward_height := terrain.sample_surface_height(&editor.project, 0, candidate_x, shore_z + inland + step)
+                seaward_height := terrain.sample_surface_height(
+                    &editor.project,
+                    0,
+                    candidate_x,
+                    shore_z + inland - step,
+                )
+                landward_height := terrain.sample_surface_height(
+                    &editor.project,
+                    0,
+                    candidate_x,
+                    shore_z + inland + step,
+                )
                 prominence := height - (seaward_height + landward_height) * .5
                 // Prefer a locally raised sandy crest over a generally high
                 // hinterland slope. The previous absolute-height score could
@@ -273,43 +283,43 @@ Benchmark_Timing :: struct {
 
 Benchmark_Geometry :: struct {
     world_vertices, world_unique_vertices, world_capacity: int,
-    world_utilization:                                  f64,
-    road_vertices, road_capacity:                       int,
-    road_utilization:                                   f64,
-    foliage_vertices, foliage_capacity:                 int,
-    foliage_utilization:                                f64,
-    structure_lod_world_vertices:                       int,
-    structure_lod_foliage_vertices:                     int,
-    structure_lod_counts:                               [3]int,
-    structure_lod_cache_rebuilds:                       u64,
+    world_utilization:                                     f64,
+    road_vertices, road_capacity:                          int,
+    road_utilization:                                      f64,
+    foliage_vertices, foliage_capacity:                    int,
+    foliage_utilization:                                   f64,
+    structure_lod_world_vertices:                          int,
+    structure_lod_foliage_vertices:                        int,
+    structure_lod_counts:                                  [3]int,
+    structure_lod_cache_rebuilds:                          u64,
 }
 
 Benchmark_Caches :: struct {
-    clipmap_generated, clipmap_copied:                   u64,
-    clipmap_full_rebuilds, clipmap_incremental_shifts:   u64,
-    clipmap_cells_copied, clipmap_cells_generated:       u64,
-    grass_hits, grass_misses, grass_emitted:              u64,
-    climbing_leaf_builds, climbing_leaf_reuses:           u64,
-    town_mouse_builds, town_mouse_reuses:                 u64,
+    clipmap_generated, clipmap_copied:                 u64,
+    clipmap_full_rebuilds, clipmap_incremental_shifts: u64,
+    clipmap_cells_copied, clipmap_cells_generated:     u64,
+    grass_hits, grass_misses, grass_emitted:           u64,
+    climbing_leaf_builds, climbing_leaf_reuses:        u64,
+    town_mouse_builds, town_mouse_reuses:              u64,
 }
 
 Benchmark_Renderer :: struct {
-    dirty_build_ms, frame_build_ms:                       f64,
-    visibility_build_cpu_ms, texture_upload_ms:           f64,
+    dirty_build_ms, frame_build_ms:                        f64,
+    visibility_build_cpu_ms, texture_upload_ms:            f64,
     rebuilt_objects, rebuilt_pages, static_bytes_uploaded: u64,
-    indexed_cells, visible_clusters, indirect_commands:   u64,
+    indexed_cells, visible_clusters, indirect_commands:    u64,
     retired_bytes:                                         u64,
 }
 
 Benchmark_Result :: struct {
-    scenario:                         string,
-    samples:                          int,
-    window, world:                    [2]int,
-    timing:                           Benchmark_Timing,
-    geometry:                         Benchmark_Geometry,
-    visibility:                       Static_Visibility_Stats,
-    caches:                           Benchmark_Caches,
-    renderer:                         Benchmark_Renderer,
+    scenario:      string,
+    samples:       int,
+    window, world: [2]int,
+    timing:        Benchmark_Timing,
+    geometry:      Benchmark_Geometry,
+    visibility:    Static_Visibility_Stats,
+    caches:        Benchmark_Caches,
+    renderer:      Benchmark_Renderer,
 }
 
 benchmark_result_write_timing :: proc(builder: ^strings.Builder, result: ^Benchmark_Result) {

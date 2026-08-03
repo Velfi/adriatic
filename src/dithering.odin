@@ -548,7 +548,8 @@ dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Pos
     if editor != nil {
         style := editor.gameplay_options.visual_style
         mode := style == .Dither ? editor.gameplay_options.dither_mode : Dither_Mode.Off
-        render_pose := menu_scene_current(editor) == .Customization ? customization_preview_camera_pose() : editor.camera_pose
+        render_pose :=
+            menu_scene_current(editor) == .Customization ? customization_preview_camera_pose() : editor.camera_pose
         focal_length := editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : f32(1.35)
         focal_length = max(focal_length, f32(.1))
         field_of_view := f32(2 * math.atan(1 / f64(focal_length)))

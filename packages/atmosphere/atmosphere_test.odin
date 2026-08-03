@@ -1,7 +1,7 @@
 package atmosphere
 
-import "core:testing"
 import "core:math"
+import "core:testing"
 
 when ODIN_TEST {
     @(test)
@@ -44,14 +44,22 @@ when ODIN_TEST {
         front := &a.schedule.front
         a.schedule.elapsed_seconds = front.start_seconds + (front.end_seconds - front.start_seconds) * .5
         age := a.schedule.elapsed_seconds - front.start_seconds
-        center := [3]f32{
+        center := [3]f32 {
             front.origin[0] + front.direction[0] * front.speed * age,
             120,
             front.origin[1] + front.direction[1] * front.speed * age,
         }
         inside := sample_at(&a, center, center[1])
         nearby := sample_at(&a, {center[0] + 1, center[1], center[2] + 1}, center[1])
-        outside := sample_at(&a, {center[0] + front.direction[0] * front.width * 2, center[1], center[2] + front.direction[1] * front.width * 2}, center[1])
+        outside := sample_at(
+            &a,
+            {
+                center[0] + front.direction[0] * front.width * 2,
+                center[1],
+                center[2] + front.direction[1] * front.width * 2,
+            },
+            center[1],
+        )
         testing.expect(t, inside.severity > .45)
         testing.expect(t, math.abs(inside.severity - nearby.severity) < .02)
         testing.expect(t, outside.severity < inside.severity)
@@ -91,12 +99,12 @@ when ODIN_TEST {
         a := new(77)
         set_climate_regime(&a, .Jugo)
         terrain_ctx := Terrain_Context {
-            valid = true,
-            altitude_agl = 40,
+            valid            = true,
+            altitude_agl     = 40,
             terrain_gradient = {0, .12},
-            land = true,
-            coast_to_sea = {1, 0},
-            coast_distance = 240,
+            land             = true,
+            coast_to_sea     = {1, 0},
+            coast_distance   = 240,
         }
         set_world_minutes(&a, 15 * 60)
         afternoon := sample_at(&a, {}, 40, terrain_ctx)
@@ -117,7 +125,12 @@ when ODIN_TEST {
     bura_accelerates_channels_and_clears_haze :: proc(t: ^testing.T) {
         a := new(88)
         set_climate_regime(&a, .Bura_Clear)
-        open := Terrain_Context{valid = true, land = true, altitude_agl = 30, coast_distance = 1000}
+        open := Terrain_Context {
+            valid          = true,
+            land           = true,
+            altitude_agl   = 30,
+            coast_distance = 1000,
+        }
         channel := open
         channel.terrain_channel = 1
         calm := sample_at(&a, {}, 30, open)
@@ -136,7 +149,7 @@ when ODIN_TEST {
         duration := front.end_seconds - front.start_seconds
         a.schedule.elapsed_seconds = front.start_seconds + duration * .5
         age := a.schedule.elapsed_seconds - front.start_seconds
-        center := [3]f32{
+        center := [3]f32 {
             front.origin[0] + front.direction[0] * front.speed * age,
             200,
             front.origin[1] + front.direction[1] * front.speed * age,

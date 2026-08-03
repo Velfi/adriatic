@@ -620,7 +620,10 @@ when ODIN_TEST {
         missing_error, missing_loaded := fixture_editor_load_from_path(editor, path)
         testing.expect(
             t,
-            !missing_loaded && missing_error.kind == .Read_Sidecar && missing_error.path == path && missing_error.sidecar == sidecar,
+            !missing_loaded &&
+            missing_error.kind == .Read_Sidecar &&
+            missing_error.path == path &&
+            missing_error.sidecar == sidecar,
         )
         fixture_editor_store_error_dispose(&missing_error)
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))
@@ -631,8 +634,10 @@ when ODIN_TEST {
         digest_error, digest_loaded := fixture_editor_load_from_path(editor, path)
         testing.expect(
             t,
-            !digest_loaded && digest_error.kind == .Sidecar_Digest_Mismatch && digest_error.path == path &&
-                digest_error.sidecar == sidecar,
+            !digest_loaded &&
+            digest_error.kind == .Sidecar_Digest_Mismatch &&
+            digest_error.path == path &&
+            digest_error.sidecar == sidecar,
         )
         fixture_editor_store_error_dispose(&digest_error)
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))
@@ -643,7 +648,10 @@ when ODIN_TEST {
         copy(malformed_adrmap, sidecar_bytes)
         malformed_adrmap[len(malformed_adrmap) - 1] ~= 1
         malformed_sidecar, malformed_derived := fixture_map_sidecar_derive(malformed_adrmap)
-        testing.expect(t, malformed_derived && fixture_map_sidecar_matches_encoded(malformed_sidecar, malformed_adrmap))
+        testing.expect(
+            t,
+            malformed_derived && fixture_map_sidecar_matches_encoded(malformed_sidecar, malformed_adrmap),
+        )
         if !malformed_derived do return
         malformed_fixture, malformed_fixture_error, malformed_fixture_ok := fixture_codec_decode(
             fixture_bytes,
@@ -675,9 +683,13 @@ when ODIN_TEST {
         map_error, map_loaded := fixture_editor_load_from_path(editor, path)
         testing.expect(
             t,
-            !map_loaded && map_error.kind == .Load && map_error.path == path && map_error.sidecar == malformed_sidecar &&
-                map_error.load.kind == .Invalid_State && map_error.load.path == "map_source" &&
-                map_error.load.map_error.kind == .Checksum_Mismatch,
+            !map_loaded &&
+            map_error.kind == .Load &&
+            map_error.path == path &&
+            map_error.sidecar == malformed_sidecar &&
+            map_error.load.kind == .Invalid_State &&
+            map_error.load.path == "map_source" &&
+            map_error.load.map_error.kind == .Checksum_Mismatch,
         )
         fixture_editor_store_error_dispose(&map_error)
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))
@@ -690,7 +702,10 @@ when ODIN_TEST {
         if !malformed_ok do return
         defer fixture_migration_result_dispose(&malformed)
         malformed.fixture.map_source.sidecar.basename_count = 0
-        malformed_bytes, malformed_encode_error, malformed_encoded := fixture_codec_encode(malformed.fixture, context.allocator)
+        malformed_bytes, malformed_encode_error, malformed_encoded := fixture_codec_encode(
+            malformed.fixture,
+            context.allocator,
+        )
         testing.expect(t, malformed_encoded && malformed_encode_error.kind == .None)
         fixture_codec_error_dispose(&malformed_encode_error)
         if !malformed_encoded do return
@@ -704,8 +719,11 @@ when ODIN_TEST {
         )
         testing.expect(
             t,
-            !resolver_loaded && resolver_error.kind == .Resolve_Sidecar && resolver_error.path == path &&
-                resolver_error.sidecar.basename_count == 0 && read_state.read_calls == 1,
+            !resolver_loaded &&
+            resolver_error.kind == .Resolve_Sidecar &&
+            resolver_error.path == path &&
+            resolver_error.sidecar.basename_count == 0 &&
+            read_state.read_calls == 1,
         )
         fixture_editor_store_error_dispose(&resolver_error)
         testing.expect(t, fixture_editor_test_live_equal(editor, failure_snapshot))

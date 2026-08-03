@@ -183,7 +183,10 @@ settlement_plan_import_access_route :: proc(
         length := linalg.length(b - a)
         if length <= .01 do continue
         grade :=
-            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
+            math.abs(
+                terrain.sample_surface_height(project, 0, b[0], b[1]) -
+                terrain.sample_surface_height(project, 0, a[0], a[1]),
+            ) /
             length
         total_length += length
         weighted_grade += grade * length

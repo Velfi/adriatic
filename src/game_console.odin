@@ -392,7 +392,10 @@ console_execute :: proc(editor: ^Editor, source: string) {
         } else {
             console_push_line(
                 editor,
-                fmt.tprintf("No active front; next event in %.0f s", atmosphere.front_seconds_until_next(&editor.atmosphere)),
+                fmt.tprintf(
+                    "No active front; next event in %.0f s",
+                    atmosphere.front_seconds_until_next(&editor.atmosphere),
+                ),
             )
         }
         console_push_line(
@@ -402,7 +405,9 @@ console_execute :: proc(editor: ^Editor, source: string) {
                 local.severity,
                 local.precipitation,
                 local.gust_strength,
-                local.wind[0], local.wind[1], local.wind[2],
+                local.wind[0],
+                local.wind[1],
+                local.wind[2],
             ),
         )
     case "teleport":

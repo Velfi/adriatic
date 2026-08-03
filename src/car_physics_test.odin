@@ -13,7 +13,13 @@ car_physics_incline_basis_keeps_rendered_nose_uphill :: proc(t: ^testing.T) {
     testing.expectf(t, transform.forward_basis.y > 0, "expected uphill forward basis, got %v", transform.forward_basis)
     mesh_nose := world_vehicle_vertex_world(transform, {0, 0, -1})
     mesh_tail := world_vehicle_vertex_world(transform, {0, 0, 1})
-    testing.expectf(t, mesh_nose.y > mesh_tail.y, "expected mesh nose above tail, got nose %v tail %v", mesh_nose, mesh_tail)
+    testing.expectf(
+        t,
+        mesh_nose.y > mesh_tail.y,
+        "expected mesh nose above tail, got nose %v tail %v",
+        mesh_nose,
+        mesh_tail,
+    )
 }
 
 @(test)
@@ -29,9 +35,24 @@ car_physics_chassis_origin_offset_follows_body_up :: proc(t: ^testing.T) {
     }
     reconstructed := mesh_origin + body_up * .74
 
-    testing.expectf(t, math.abs(reconstructed[0] - body_position[0]) < .00001, "x offset did not round trip: %v", reconstructed)
-    testing.expectf(t, math.abs(reconstructed[1] - body_position[1]) < .00001, "y offset did not round trip: %v", reconstructed)
-    testing.expectf(t, math.abs(reconstructed[2] - body_position[2]) < .00001, "z offset did not round trip: %v", reconstructed)
+    testing.expectf(
+        t,
+        math.abs(reconstructed[0] - body_position[0]) < .00001,
+        "x offset did not round trip: %v",
+        reconstructed,
+    )
+    testing.expectf(
+        t,
+        math.abs(reconstructed[1] - body_position[1]) < .00001,
+        "y offset did not round trip: %v",
+        reconstructed,
+    )
+    testing.expectf(
+        t,
+        math.abs(reconstructed[2] - body_position[2]) < .00001,
+        "z offset did not round trip: %v",
+        reconstructed,
+    )
 }
 
 @(test)

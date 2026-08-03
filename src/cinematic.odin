@@ -33,9 +33,9 @@ cinematic_wipe_capture_play :: proc(editor: ^Editor, target_name: string) -> boo
         kind = .Down
     case "wipe-iris":
         kind = .Iris
-	case "wipe-clockwise":
-		kind = .Clockwise
-	case "wipe-checker":
+    case "wipe-clockwise":
+        kind = .Clockwise
+    case "wipe-checker":
         kind = .Checker
     case:
         return false
@@ -56,11 +56,11 @@ cinematic_wipe_capture_play :: proc(editor: ^Editor, target_name: string) -> boo
         {look.x, look.y, look.z},
         1.62,
     )
-	editor.story_cinematic_shots = {
-		cinematic.hold("wipe-outgoing", 1, from, cinematic.wipe(kind, 1.2)),
-		cinematic.hold("wipe-incoming", 1, to),
-		{},
-	}
+    editor.story_cinematic_shots = {
+        cinematic.hold("wipe-outgoing", 1, from, cinematic.wipe(kind, 1.2)),
+        cinematic.hold("wipe-incoming", 1, to),
+        {},
+    }
     editor.story_cinematic_script = {
         id    = target_name,
         shots = editor.story_cinematic_shots[:2],
@@ -133,7 +133,7 @@ cinematic_wipe_color :: proc(value: cinematic.Wipe) -> canvas2d.Color {
 }
 
 cinematic_wipe_is_camera_composited :: proc(kind: cinematic.Wipe_Kind) -> bool {
-	return kind != .None
+    return kind != .None
 }
 
 cinematic_draw_clock :: proc(width, height: i32, coverage: f32, color: canvas2d.Color) {
@@ -157,8 +157,8 @@ cinematic_draw_wipe :: proc(editor: ^Editor, width, height: i32) {
     if editor == nil || editor.cinematic_playback.script == nil do return
     value := cinematic.sample(&editor.cinematic_playback)
     if value.wipe.kind == .None do return
-	// Adriatic's Vulkan world pass composites every authored wipe shot-over-shot.
-	if cinematic_wipe_is_camera_composited(value.wipe.kind) do return
+    // Adriatic's Vulkan world pass composites every authored wipe shot-over-shot.
+    if cinematic_wipe_is_camera_composited(value.wipe.kind) do return
     coverage := cinematic_wipe_coverage(value.wipe_progress)
     if coverage <= 0 do return
     color := cinematic_wipe_color(value.wipe)

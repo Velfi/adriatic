@@ -9,12 +9,20 @@ when ODIN_TEST {
     Fixture_Codec_OOM_Test_Decode :: #type proc(
         data: []byte,
         allocator: mem.Allocator,
-    ) -> (Fixture_Migration_Result, Fixture_Codec_Error, bool)
+    ) -> (
+        Fixture_Migration_Result,
+        Fixture_Codec_Error,
+        bool,
+    )
 
     fixture_codec_oom_test_decode_through_v0005 :: proc(
         data: []byte,
         allocator: mem.Allocator,
-    ) -> (Fixture_Migration_Result, Fixture_Codec_Error, bool) {
+    ) -> (
+        Fixture_Migration_Result,
+        Fixture_Codec_Error,
+        bool,
+    ) {
         if allocator.procedure == nil {
             return {}, {kind = .Invalid_Argument}, false
         }
@@ -235,13 +243,7 @@ when ODIN_TEST {
         }
         if !all_counts_ready do return
 
-        fixture_codec_oom_test_sweep(
-            t,
-            current,
-            current_snapshot,
-            current_allocation_count,
-            fixture_codec_decode,
-        )
+        fixture_codec_oom_test_sweep(t, current, current_snapshot, current_allocation_count, fixture_codec_decode)
         fixture_codec_oom_test_sweep(
             t,
             historical[3],

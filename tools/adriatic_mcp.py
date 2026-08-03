@@ -195,6 +195,48 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "gameplay_state",
+        "title": "Get Gameplay State",
+        "description": "Read player occupancy and detailed car physics, wheel-contact, tuning, and MCP-control state.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "plant_catalog_view",
+        "title": "Open Plant Catalog Section",
+        "description": "Open the running Plant Generator catalog and jump to a named section.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "enum": ["top", "succulents-and-cacti", "cacti"],
+                    "default": "top",
+                },
+                "detail": {"type": "string", "enum": ["near", "medium", "far"], "default": "near"},
+                "maturity": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "vehicle_control",
+        "title": "Control Vehicle",
+        "description": "Enter, exit, drive, or release MCP control of the gameplay car.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "vehicle": {"type": "string", "enum": ["car"], "default": "car"},
+                "action": {"type": "string", "enum": ["drive", "release", "enter", "exit"]},
+                "throttle": {"type": "number", "minimum": -1, "maximum": 1, "default": 0},
+                "steering": {"type": "number", "minimum": -1, "maximum": 1, "default": 0},
+                "handbrake": {"type": "boolean", "default": False},
+                "duration": {"type": "number", "minimum": 0.05, "maximum": 30, "default": 1},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "selector_query",
         "title": "Query Runtime Subjects",
         "description": "Dynamically query targetable subjects instantiated in the running game.",
@@ -327,7 +369,7 @@ def handle(message: dict[str, object]) -> None:
         params = message.get("params") or {}
         tool_name = params.get("name") if isinstance(params, dict) else None
         if tool_name not in {
-            "audio_status", "npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set",
+            "audio_status", "gameplay_state", "plant_catalog_view", "vehicle_control", "npc_focus", "business_focus", "terrain_brush_get", "terrain_brush_set",
             "material_list", "material_create", "material_attach_map", "regenerate_islands",
             "selector_query", "selector_focus",
             "mouse_emote_start", "mouse_emote_control", "mouse_emote_cancel",
@@ -384,6 +426,45 @@ def handle(message: dict[str, object]) -> None:
                 if arguments:
                     raise ValueError("audio_status takes no arguments")
                 result = live_control("audio_status")
+            elif tool_name == "gameplay_state":
+                if arguments:
+                    raise ValueError("gameplay_state takes no arguments")
+                result = live_control("gameplay_state")
+            elif tool_name == "plant_catalog_view":
+                if set(arguments) - {"section", "detail", "maturity"}:
+                    raise ValueError("plant_catalog_view received unknown arguments")
+                section = arguments.get("section", "top")
+                if section not in {"top", "succulents-and-cacti", "cacti"}:
+                    raise ValueError("unknown plant catalog section")
+                detail = arguments.get("detail", "near")
+                maturity = arguments.get("maturity", 1)
+                if detail not in {"near", "medium", "far"}:
+                    raise ValueError("unknown plant catalog detail")
+                if isinstance(maturity, bool) or not isinstance(maturity, (int, float)) or not 0 <= maturity <= 1:
+                    raise ValueError("maturity must be between zero and one")
+                result = live_control("plant_catalog_view", section, detail, maturity)
+            elif tool_name == "vehicle_control":
+                allowed = {"vehicle", "action", "throttle", "steering", "handbrake", "duration"}
+                if set(arguments) - allowed or not isinstance(arguments.get("action"), str):
+                    raise ValueError("vehicle_control requires an action and known optional settings")
+                vehicle = arguments.get("vehicle", "car")
+                action = arguments["action"]
+                if vehicle != "car" or action not in {"drive", "release", "enter", "exit"}:
+                    raise ValueError("unsupported vehicle or action")
+                throttle = arguments.get("throttle", 0)
+                steering = arguments.get("steering", 0)
+                handbrake = arguments.get("handbrake", False)
+                duration = arguments.get("duration", 1)
+                if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in (throttle, steering, duration)):
+                    raise ValueError("throttle, steering, and duration must be numbers")
+                if not -1 <= throttle <= 1 or not -1 <= steering <= 1 or not 0.05 <= duration <= 30:
+                    raise ValueError("vehicle control value is out of range")
+                if not isinstance(handbrake, bool):
+                    raise ValueError("handbrake must be a boolean")
+                result = live_control(
+                    "vehicle_control", vehicle, action, throttle, steering,
+                    str(handbrake).lower(), duration,
+                )
             elif tool_name == "material_list":
                 if arguments:
                     raise ValueError("material_list takes no arguments")

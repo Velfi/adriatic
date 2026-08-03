@@ -106,7 +106,11 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
     if benchmark_scenario == "land_flight_cold" && frame >= benchmark_warmup {
         editor.benchmark_ground_grass_disabled = false
     }
-    if !editor.in_map && editor.tool != .Structure && cursor_hit && !ui_hit {
+    if !editor.in_map &&
+       editor.tool != .Structure &&
+       !terrain_sculpt_owns_direct_brush(editor) &&
+       cursor_hit &&
+       !ui_hit {
         if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
             terrain_history_push_undo(editor)
         }
@@ -122,6 +126,13 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
                 1,
                 editor.hardness,
             )
+            _ = terrain.bathymetry_refresh_generated_bounds(
+                &editor.project,
+                world_x - editor.radius,
+                world_z - editor.radius,
+                world_x + editor.radius,
+                world_z + editor.radius,
+            )
             world_terrain_changed(editor, world_x, world_z, editor.radius)
         }
         if canvas2d.IsMouseButtonDown(.RIGHT) {
@@ -134,6 +145,13 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
                 stroke_strength,
                 -1,
                 editor.hardness,
+            )
+            _ = terrain.bathymetry_refresh_generated_bounds(
+                &editor.project,
+                world_x - editor.radius,
+                world_z - editor.radius,
+                world_x + editor.radius,
+                world_z + editor.radius,
             )
             world_terrain_changed(editor, world_x, world_z, editor.radius)
         }

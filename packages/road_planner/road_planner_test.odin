@@ -1,7 +1,7 @@
 package road_planner
 
-import "core:testing"
 import "core:math"
+import "core:testing"
 
 @(test)
 planner_avoids_an_expensive_ridge :: proc(t: ^testing.T) {
@@ -13,7 +13,13 @@ planner_avoids_an_expensive_ridge :: proc(t: ^testing.T) {
     config.steep_grade_cost = 10000
     work := new(Workspace)
     defer free(work)
-    result := plan(work, {origin_x = 0, origin_z = 0, width = 9, height = 9, heights = heights[:]}, config, {10, 40}, {70, 40})
+    result := plan(
+        work,
+        {origin_x = 0, origin_z = 0, width = 9, height = 9, heights = heights[:]},
+        config,
+        {10, 40},
+        {70, 40},
+    )
     testing.expect(t, result.found)
     testing.expect(t, result.point_count > 6)
     crossed_ridge := false
@@ -30,7 +36,13 @@ planner_uses_direct_route_on_flat_ground :: proc(t: ^testing.T) {
     config.cell_size = 10
     work := new(Workspace)
     defer free(work)
-    result := plan(work, {origin_x = 0, origin_z = 0, width = 8, height = 8, heights = heights[:]}, config, {10, 10}, {60, 60})
+    result := plan(
+        work,
+        {origin_x = 0, origin_z = 0, width = 8, height = 8, heights = heights[:]},
+        config,
+        {10, 10},
+        {60, 60},
+    )
     testing.expect(t, result.found)
     testing.expect_value(t, result.point_count, 6)
     testing.expect_value(t, result.points[0], Point{10, 10})
@@ -113,14 +125,7 @@ planner_respects_product_supplied_exclusions :: proc(t: ^testing.T) {
     defer free(work)
     result := plan(
         work,
-        {
-            origin_x = 0,
-            origin_z = 0,
-            width = 9,
-            height = 9,
-            heights = heights[:],
-            blocked = blocked[:],
-        },
+        {origin_x = 0, origin_z = 0, width = 9, height = 9, heights = heights[:], blocked = blocked[:]},
         config,
         {10, 40},
         {70, 40},
@@ -158,12 +163,12 @@ planner_rewards_perpendicular_water_crossings :: proc(t: ^testing.T) {
     for &height in heights do height = 1
     for z in 2 ..= 4 do for x in 0 ..< 7 do heights[z * 7 + x] = -1
     grid := Grid {
-        origin_x = 0,
-        origin_z = 0,
-        width = 7,
-        height = 7,
+        origin_x  = 0,
+        origin_z  = 0,
+        width     = 7,
+        height    = 7,
         sea_level = 0,
-        heights = heights[:],
+        heights   = heights[:],
     }
 
     perpendicular := water_crossing_obliqueness(grid, 3, 2, 0, 1)

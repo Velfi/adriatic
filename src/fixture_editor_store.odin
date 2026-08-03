@@ -673,11 +673,12 @@ fixture_editor_load_from_path_with_options :: proc(
         if sidecar_read_error != nil || sidecar_bytes == nil {
             if sidecar_bytes != nil do delete(sidecar_bytes, alloc)
             return fixture_editor_store_sidecar_error(
-                .Read_Sidecar,
-                path,
-                sidecar,
-                sidecar_read_error if sidecar_read_error != nil else io.Error.Unexpected_EOF,
-            ), false
+                    .Read_Sidecar,
+                    path,
+                    sidecar,
+                    sidecar_read_error if sidecar_read_error != nil else io.Error.Unexpected_EOF,
+                ),
+                false
         }
         defer delete(sidecar_bytes, alloc)
         if !fixture_map_sidecar_matches_encoded(sidecar, sidecar_bytes) {

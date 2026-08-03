@@ -3,11 +3,13 @@ package main
 import atmosphere "../packages/atmosphere"
 import barrel_cactus_mesh "../packages/barrel_cactus_mesh"
 import branch_mesh "../packages/branch_mesh"
+import buildings "../packages/buildings"
 import flower_mesh "../packages/flower_mesh"
 import leaf_mesh "../packages/leaf_mesh"
 import lsystem "../packages/lsystem"
 import plant_bark "../packages/plant_bark"
 import plants "../packages/plants"
+import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:fmt"
 import "core:math"
@@ -22,6 +24,8 @@ plant_generator_detail := plants.Detail_Level.Near
 plant_generator_isolated := -1
 plant_generator_results: [plants.SPECIES_COUNT]plants.Generate_Result
 plant_generator_ready: [plants.SPECIES_COUNT]bool
+plant_generator_cull_minimum: [plants.SPECIES_COUNT]third_person.Vec3
+plant_generator_cull_maximum: [plants.SPECIES_COUNT]third_person.Vec3
 plant_generator_exclusions: [3]plants.Rect
 plant_generator_leaf_meshes: [plants.SPECIES_COUNT][4]leaf_mesh.Mesh
 plant_generator_leaf_mesh_ready: [plants.SPECIES_COUNT][4]bool
@@ -33,13 +37,78 @@ plant_generator_branch_meshes: [plants.SPECIES_COUNT]branch_mesh.Mesh
 plant_generator_branch_mesh_ready: [plants.SPECIES_COUNT]bool
 plant_generator_barrel_mesh: barrel_cactus_mesh.Mesh
 plant_generator_barrel_mesh_ready: bool
+plant_generator_torch_mesh: barrel_cactus_mesh.Mesh
+plant_generator_torch_mesh_ready: bool
 plant_generator_wind_base: third_person.Vec3
 plant_generator_wind_height: f32
 plant_generator_wind_compliance: f32
+plant_generator_wind_habit: plants.Growth_Habit
 plant_generator_camera_close := false
 plant_generator_camera_base := false
 plant_generator_succulent_garden := false
 plant_generator_climbing_garden := false
+plant_generator_bougainvillea_constrained := false
+plant_generator_climber_interior_corner := false
+plant_generator_gallery_scroll := f32(0)
+plant_generator_maturity_dragging := false
+plant_generator_window_dragging := -1
+plant_generator_window_drag_anchor: third_person.Vec3
+plant_generator_window_drag_origin: plants.Rect
+plant_generator_window_offsets: [2]third_person.Vec3
+plant_generator_window_drag_moved := false
+plant_generator_root_offset := f32(0)
+plant_generator_root_dragging := false
+plant_generator_root_drag_anchor_x: f32
+plant_generator_root_drag_origin_x: f32
+plant_generator_root_drag_moved := false
+plant_generator_gallery_generated_row := -1
+plant_generator_capture_sheet := false
+
+PLANT_GENERATOR_GRID_COLUMNS :: 4
+PLANT_GENERATOR_GRID_COLUMN_SPACING :: f32(7.2)
+PLANT_GENERATOR_GRID_ROW_SPACING :: f32(6.1)
+
+plant_generator_grid_rows :: proc() -> int {
+    // Group separators leave blank rows at 4, 8, and 10. The final cactus
+    // occupies row 12, so the scroll range must include thirteen rows.
+    return 13
+}
+
+plant_generator_species_grid_row :: proc(index: int) -> int {
+    if index < 16 do return index / PLANT_GENERATOR_GRID_COLUMNS
+    if index < 27 do return 5 + (index - 16) / PLANT_GENERATOR_GRID_COLUMNS
+    if index < 31 do return 9 + (index - 27) / PLANT_GENERATOR_GRID_COLUMNS
+    return 11 + (index - 31) / PLANT_GENERATOR_GRID_COLUMNS
+}
+
+plant_generator_species_grid_column :: proc(index: int) -> int {
+    if index < 16 do return index % PLANT_GENERATOR_GRID_COLUMNS
+    if index < 27 do return (index - 16) % PLANT_GENERATOR_GRID_COLUMNS
+    if index < 31 do return (index - 27) % PLANT_GENERATOR_GRID_COLUMNS
+    return (index - 31) % PLANT_GENERATOR_GRID_COLUMNS
+}
+
+plant_generator_grid_base :: proc(index: int) -> third_person.Vec3 {
+    column := plant_generator_species_grid_column(index)
+    row := plant_generator_species_grid_row(index)
+    return {
+        (f32(column) - f32(PLANT_GENERATOR_GRID_COLUMNS - 1) * .5) * PLANT_GENERATOR_GRID_COLUMN_SPACING,
+        f32(plant_generator_grid_rows() - 1 - row) * PLANT_GENERATOR_GRID_ROW_SPACING,
+        0,
+    }
+}
+
+plant_generator_gallery_scroll_max :: proc() -> f32 {
+    return f32(max(plant_generator_grid_rows() - 1, 0)) * PLANT_GENERATOR_GRID_ROW_SPACING
+}
+
+plant_generator_gallery_row :: proc() -> int {
+    return clamp(
+        int(math.round(f64(plant_generator_gallery_scroll / PLANT_GENERATOR_GRID_ROW_SPACING))),
+        0,
+        plant_generator_grid_rows() - 1,
+    )
+}
 
 PLANT_GENERATOR_CAPTURE_ASPECT :: f32(ADRIATIC_WORLD_WIDTH) / f32(ADRIATIC_WORLD_HEIGHT)
 // Camera-space depth inside broad rosettes makes their nearest leaf tips
@@ -161,6 +230,10 @@ plant_generator_destroy :: proc() {
         barrel_cactus_mesh.destroy(&plant_generator_barrel_mesh)
         plant_generator_barrel_mesh_ready = false
     }
+    if plant_generator_torch_mesh_ready {
+        barrel_cactus_mesh.destroy(&plant_generator_torch_mesh)
+        plant_generator_torch_mesh_ready = false
+    }
     for index in 0 ..< plants.SPECIES_COUNT {
         if plant_generator_ready[index] {
             plants.destroy(&plant_generator_results[index])
@@ -181,13 +254,37 @@ plant_generator_destroy :: proc() {
 }
 
 plant_generator_support :: proc(species: plants.Species) -> plants.Support_Surface {
-    plant_generator_exclusions = {{-1.0, .2, 1.0, 2.8}, {-3.2, 3.4, -1.2, 5.3}, {1.2, 3.4, 3.2, 5.3}}
-    neutral_bougainvillea := species == .Bougainvillea && plant_generator_climbing_garden
+    if plant_generator_climber_interior_corner {
+        plant_generator_exclusions = {
+            {
+                -3.45 + plant_generator_window_offsets[0].x,
+                1.05 + plant_generator_window_offsets[0].y,
+                -1.35 + plant_generator_window_offsets[0].x,
+                2.35 + plant_generator_window_offsets[0].y,
+            },
+            {
+                -3.45 + plant_generator_window_offsets[1].x,
+                3.65 + plant_generator_window_offsets[1].y,
+                -1.35 + plant_generator_window_offsets[1].x,
+                4.95 + plant_generator_window_offsets[1].y,
+            },
+            {},
+        }
+    } else {
+        plant_generator_exclusions = {{-1.0, .2, 1.0, 2.8}, {-3.2, 3.4, -1.2, 5.3}, {1.2, 3.4, 3.2, 5.3}}
+    }
+    neutral_bougainvillea := species == .Bougainvillea && !plant_generator_bougainvillea_constrained
+    root_x := f32(0)
+    if species == .Bougainvillea && !neutral_bougainvillea {
+        root_x = plant_generator_climber_interior_corner ? -2.45 + plant_generator_root_offset : -2.7
+    }
     return {
         width = 8,
         height = 7,
         plane_z = .18,
-        root_x = species == .Bougainvillea && !neutral_bougainvillea ? f32(-2.7) : f32(0),
+        root_x = root_x,
+        left_corner_x = plant_generator_climber_interior_corner ? f32(-4.16) : f32(0),
+        left_return_depth = plant_generator_climber_interior_corner ? f32(3.9) : f32(0),
         planter = species == .Bougainvillea,
         exclusions = species == .Bougainvillea && !neutral_bougainvillea ? plant_generator_exclusions[:] : nil,
     }
@@ -195,12 +292,19 @@ plant_generator_support :: proc(species: plants.Species) -> plants.Support_Surfa
 
 plant_generator_rebuild :: proc() {
     plant_generator_destroy()
+    gallery := plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden
+    gallery_row := plant_generator_gallery_row()
+    if gallery do plant_generator_gallery_generated_row = gallery_row
     for index in 0 ..< plants.SPECIES_COUNT {
         // Named captures and the interactive isolate mode only draw one
         // species. Avoid generating and meshing the entire catalog first;
         // climber density correctly scales with its support area, so doing
         // that hidden work is especially wasteful for wall-sized specimens.
         if plant_generator_isolated >= 0 && index != plant_generator_isolated do continue
+        if gallery {
+            row := plant_generator_species_grid_row(index)
+            if row < gallery_row - 1 || row > gallery_row + 1 do continue
+        }
         species := plants.Species(index)
         habit := plants.default_habit(species)
         support := plant_generator_support(species)
@@ -239,24 +343,36 @@ plant_generator_rebuild :: proc() {
             }
             plant_generator_barrel_mesh = barrel_cactus_mesh.generate(barrel_config)
             plant_generator_barrel_mesh_ready = len(plant_generator_barrel_mesh.indices) > 0
+        } else if species == .Golden_Torch_Cactus {
+            torch_config := barrel_cactus_mesh.defaults()
+            torch_config.radius = .110 + plant_generator_maturity * .070
+            torch_config.height = .35 + plant_generator_maturity * .75
+            torch_config.crown_depression = .012
+            torch_config.base_taper = .10
+            torch_config.crown_taper = .08
+            switch plant_generator_detail {
+            case .Near:
+                torch_config.ribs = 18
+                torch_config.vertical_rings = 14
+            case .Medium:
+                torch_config.ribs = 12
+                torch_config.vertical_rings = 9
+            case .Far:
+                torch_config.ribs = 8
+                torch_config.vertical_rings = 5
+            }
+            plant_generator_torch_mesh = barrel_cactus_mesh.generate(torch_config)
+            plant_generator_torch_mesh_ready = len(plant_generator_torch_mesh.indices) > 0
         }
         branch_config := branch_mesh.Config {
-            minimum_radius      = .012,
+            // Segment radii are authored in metres. Keep only a sub-millimetre
+            // numerical floor here; centimetre-scale presentation floors turn
+            // fine shoots and herb stems into structural limbs.
+            minimum_radius      = .0005,
             radial_irregularity = result.plant.wood.radial_irregularity,
             twist               = result.plant.wood.twist,
             seed                = plant_generator_seed + u64(index * 977),
         }
-        if species == .Thyme do branch_config.minimum_radius = .0007
-        if species == .Myrtle do branch_config.minimum_radius = .007
-        if species == .Mastic do branch_config.minimum_radius = .006
-        if species == .Oleander do branch_config.minimum_radius = .008
-        if species == .Pomegranate do branch_config.minimum_radius = .008
-        if species == .Prickly_Pear do branch_config.minimum_radius = .006
-        if species == .Agapanthus do branch_config.minimum_radius = .003
-        if species == .Lavender do branch_config.minimum_radius = .0006
-        if species == .Sage do branch_config.minimum_radius = .0035
-        if species == .Pelargonium do branch_config.minimum_radius = .0005
-        if species == .Rosemary do branch_config.minimum_radius = .0005
         switch plant_generator_detail {
         case .Near:
             branch_config.radial_segments = 8
@@ -449,75 +565,19 @@ plant_generator_rebuild :: proc() {
             }
             break
         }
+        scale := plant_generator_display_scale(species)
+        yaw := result.plant.habit == .Free_Standing ? f32(index) * .31 : f32(0)
+        plant_generator_cull_minimum[index], plant_generator_cull_maximum[index] =
+            plant_generator_visual_bounds(species, &result.plant, scale, yaw)
     }
 }
 
 plant_generator_leaf_presentation_scale :: proc(species: plants.Species) -> f32 {
-    #partial switch species {
-    case .Italian_Cypress:
-        return 2.2
-    case .Rosemary:
-        // Needle leaves are already emitted at very high density. Enlarging
-        // them for inspection changes their read from linear needles into
-        // broad elliptic paddles and hides the fine woody spray beneath.
-        return 1.25
-    case .Fig:
-        // Fig traits already use full-size palmate blades. Generic inspection
-        // magnification merges them into one opaque horizontal canopy slab.
-        return 1.7
-    case .Grapevine:
-        // Full palmate grape blades will return after the network pass; keep
-        // their botanical scale independent from the support-sized scaffold.
-        return 2.0
-    case .Oleander:
-        // Preserve narrow whorled leaves instead of half-metre spear cards.
-        return 1.15
-    case .Bay_Laurel:
-        // Laurel's authored sixteen-centimetre blades need no tree-scale
-        // magnification; a small lift is enough for the catalog camera.
-        return 1.7
-    case .Myrtle:
-        // Paired leaves no longer form oversized palmate stars, so restore
-        // enough game-scale footprint for the fine staggered stations to knit
-        // into Myrtle's dense evergreen crown.
-        return 4.0
-    case .Mastic:
-        return 5.0
-    case .Pomegranate:
-        return 3.9
-    case .Prickly_Pear:
-        return 2.4
-    case .Hydrangea_Bush, .Hydrangea_Tree:
-        // Hydrangea already authors unusually broad leaves at botanical
-        // dimensions. A restrained lift lets the corrected horizontal pairs
-        // knit into a crown without turning them into half-metre paddles.
-        return 1.24
-    case .Agapanthus:
-        // Strap leaves are already authored at their full botanical length.
-        return 1.6
-    case .Lavender:
-        return 1.55
-    case .Thyme:
-        // The dedicated mat already emits close opposite pairs at every
-        // runner link; generic inspection magnification made each tiny leaf
-        // read as a broad groundcover paddle.
-        return 3.2
-    case .Pelargonium:
-        // The dedicated mound is authored at patio-plant scale. Preserve the
-        // broad round blades instead of shrinking them a second time here.
-        return 1.05
-    case .Strawberry_Tree:
-        return 2.6
-    case .Oriental_Plane:
-        return 2.2
-    case .European_Hackberry:
-        return 2.2
-    case .Sage:
-        // Broad leaves are authored at full size; a restrained inspection
-        // scale keeps opposite pairs legible without rebuilding giant stars.
-        return 1.55
-    }
-    return 3.1
+    // Leaf traits are authored in metres at botanical size. The generator's
+    // display scale already magnifies the complete plant uniformly, so a
+    // second species or inspection multiplier breaks leaf-to-branch ratios.
+    _ = species
+    return 1
 }
 
 plant_generator_bounds_include :: proc(minimum, maximum: ^third_person.Vec3, point: third_person.Vec3) {
@@ -600,10 +660,19 @@ plant_generator_visual_bounds :: proc(
 
 plant_generator_configure_camera :: proc(editor: ^Editor) {
     if editor == nil do return
-    if plant_generator_climbing_garden {
-        editor.camera_pose = third_person.camera_look_at({0, 7.2, 30.5}, {0, 3.15, 0})
+    if plant_generator_climber_interior_corner {
+        // View both faces of the corner obliquely. Looking mostly down the
+        // return wall compressed valid wrapped growth into a narrow line at
+        // the seam and made the two-plane support appear one-sided.
+        editor.camera_pose = third_person.camera_look_at({7.8, 4.4, 7.8}, {-1.25, 3.15, 1.15})
+    } else if plant_generator_climbing_garden {
+        // The promenade is very wide but shallow. Frame its support walls,
+        // not the oversized ground slab and empty sky around them.
+        editor.camera_pose = third_person.camera_look_at({0, 5.4, 21.5}, {0, 2.75, 0})
     } else if plant_generator_succulent_garden {
-        editor.camera_pose = third_person.camera_look_at({8.6, 6.4, 13.8}, {0, .85, 0})
+        // Keep the oblique garden read while letting the planted gravel bed
+        // fill the viewport instead of framing the surrounding lab floor.
+        editor.camera_pose = third_person.camera_look_at({4.2, 3.15, 6.35}, {.45, .72, .15})
     } else if plant_generator_isolated >= 0 && plant_generator_ready[plant_generator_isolated] {
         species := plants.Species(plant_generator_isolated)
         generated := &plant_generator_results[plant_generator_isolated].plant
@@ -640,22 +709,58 @@ plant_generator_configure_camera :: proc(editor: ^Editor) {
             {focus_x, focus_y, focus_z},
         )
     } else {
-        editor.camera_pose = third_person.camera_look_at({0, 13.5, 29}, {0, 2.1, 0})
+        // Move a fixed, front-on camera down one continuous specimen board.
+        // Only nearby rows are generated, keeping the catalog cheap.
+        focus_y := f32(plant_generator_grid_rows() - 1) * PLANT_GENERATOR_GRID_ROW_SPACING - plant_generator_gallery_scroll + 2.7
+        editor.camera_pose = third_person.camera_look_at({0, focus_y + 2.5, 12.5}, {0, focus_y, 0})
     }
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
 }
 
-plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
+plant_generator_lab_configure :: proc(editor: ^Editor, requested_target: string) -> bool {
     if editor == nil do return false
+    target := requested_target
+    capture_sheet := false
+    capture_sheet_suffix := "-sheet"
+    if len(target) > len(capture_sheet_suffix) &&
+       target[len(target) - len(capture_sheet_suffix):] == capture_sheet_suffix {
+        target = target[:len(target) - len(capture_sheet_suffix)]
+        capture_sheet = true
+    }
+    plant_generator_capture_sheet = capture_sheet
     plant_generator_seed = 73
     plant_generator_maturity = 1
     plant_generator_detail = .Near
     plant_generator_isolated = plant_generator_find_species(target)
     plant_generator_camera_close = false
     plant_generator_camera_base = false
+    plant_generator_gallery_scroll = 0
+    plant_generator_maturity_dragging = false
+    plant_generator_window_dragging = -1
+    plant_generator_window_offsets = {}
+    plant_generator_window_drag_moved = false
+    plant_generator_root_offset = 0
+    plant_generator_root_dragging = false
+    plant_generator_root_drag_moved = false
     plant_generator_succulent_garden = target == "succulent-garden"
     plant_generator_climbing_garden = target == "climbing-garden" || target == "climbers"
+    plant_generator_climber_interior_corner = target == "climber-interior-corner"
+    plant_generator_bougainvillea_constrained = target == "constrained" || plant_generator_climber_interior_corner
+    if plant_generator_climber_interior_corner {
+        plant_generator_isolated = int(plants.Species.Bougainvillea)
+    }
+    corner_seed_prefix := "climber-interior-corner-seed-"
+    if len(target) > len(corner_seed_prefix) && target[:len(corner_seed_prefix)] == corner_seed_prefix {
+        parsed, ok := strconv.parse_int(target[len(corner_seed_prefix):])
+        if !ok || parsed < 0 {
+            return false
+        }
+        plant_generator_seed = u64(parsed)
+        plant_generator_isolated = int(plants.Species.Bougainvillea)
+        plant_generator_climber_interior_corner = true
+        plant_generator_bougainvillea_constrained = true
+    }
     if target == "olive-71" {
         plant_generator_seed = 71
         plant_generator_isolated = int(plants.Species.Olive)
@@ -712,8 +817,7 @@ plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
         plant_generator_isolated = int(plants.Species.Lemon)
     }
     hydrangea_seed_prefix := "hydrangea-bush-seed-"
-    if len(target) > len(hydrangea_seed_prefix) &&
-       target[:len(hydrangea_seed_prefix)] == hydrangea_seed_prefix {
+    if len(target) > len(hydrangea_seed_prefix) && target[:len(hydrangea_seed_prefix)] == hydrangea_seed_prefix {
         parsed, ok := strconv.parse_int(target[len(hydrangea_seed_prefix):])
         if !ok || parsed < 0 {
             return false
@@ -801,7 +905,7 @@ plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     plant_generator_rebuild()
 
     editor.in_map = true
-    editor.capture_world_only = plant_generator_camera_close || plant_generator_camera_base
+    editor.capture_world_only = capture_sheet || plant_generator_camera_close || plant_generator_camera_base
     editor.postale_visible = false
     editor.libellula_visible = false
     editor.rondine_visible = false
@@ -820,8 +924,134 @@ plant_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     return true
 }
 
+plant_generator_maturity_minus_bounds :: proc() -> canvas2d.Rectangle {
+    return {592, 56, 28, 28}
+}
+
+plant_generator_maturity_track_bounds :: proc() -> canvas2d.Rectangle {
+    return {630, 62, 132, 16}
+}
+
+plant_generator_maturity_plus_bounds :: proc() -> canvas2d.Rectangle {
+    return {772, 56, 28, 28}
+}
+
+plant_generator_set_maturity :: proc(value: f32) -> bool {
+    // Five-percent steps keep the whole-catalog rebuild responsive while
+    // still exposing the meaningful progression between lifecycle stages.
+    next := clamp(f32(math.round(f64(clamp(value, 0, 1) * 20))) / 20, 0, 1)
+    if math.abs(next - plant_generator_maturity) < .001 do return false
+    plant_generator_maturity = next
+    return true
+}
+
+plant_generator_window_cursor :: proc(editor: ^Editor, mouse: canvas2d.Vector2) -> (third_person.Vec3, bool) {
+    if editor == nil do return {}, false
+    width, height := canvas2d.GetScreenWidth(), canvas2d.GetScreenHeight()
+    if width <= 0 || height <= 0 do return {}, false
+    camera := perspective_camera(editor.camera_pose)
+    half_height := f32(height) * .5
+    screen_x := (mouse.x - f32(width) * .5) / half_height
+    screen_y := (f32(height) * .5 - mouse.y) / half_height
+    direction := linalg.normalize0(
+        camera.forward + camera.right * (screen_x / camera.focal_length) + camera.up * (screen_y / camera.focal_length),
+    )
+    if math.abs(direction.z) < .0001 do return {}, false
+    // Match the visible window face, rather than the vine routing plane just
+    // behind it, so the grabbed point remains directly beneath the cursor.
+    distance := (.005 - camera.position.z) / direction.z
+    if distance <= 0 do return {}, false
+    return camera.position + direction * distance, true
+}
+
+plant_generator_move_window :: proc(index: int, cursor: third_person.Vec3) -> bool {
+    if index < 0 || index >= 2 do return false
+    origin := plant_generator_window_drag_origin
+    width := origin.maximum_x - origin.minimum_x
+    height := origin.maximum_y - origin.minimum_y
+    minimum_x := clamp(origin.minimum_x + cursor.x - plant_generator_window_drag_anchor.x, -4, 4 - width)
+    minimum_y := clamp(origin.minimum_y + cursor.y - plant_generator_window_drag_anchor.y, 0, 7 - height)
+    moved := math.abs(minimum_x - origin.minimum_x) > .001 || math.abs(minimum_y - origin.minimum_y) > .001
+    plant_generator_window_offsets[index] = {
+        minimum_x + 3.45,
+        minimum_y - (index == 0 ? f32(1.05) : f32(3.65)),
+        0,
+    }
+    _ = plant_generator_support(.Bougainvillea)
+    return moved
+}
+
+plant_generator_move_root :: proc(cursor_x: f32) -> bool {
+    root_x := clamp(plant_generator_root_drag_origin_x + cursor_x - plant_generator_root_drag_anchor_x, -3.8, 3.8)
+    plant_generator_root_offset = root_x + 2.45
+    return math.abs(root_x - plant_generator_root_drag_origin_x) > .001
+}
+
 plant_generator_lab_process_input :: proc(editor: ^Editor) {
     changed := false
+    camera_changed := false
+    mouse := canvas2d.GetMousePosition()
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        window_cursor, window_cursor_ok := plant_generator_window_cursor(editor, mouse)
+        if plant_generator_climber_interior_corner && window_cursor_ok && mouse.y > 150 {
+            for opening, index in plant_generator_exclusions[:2] {
+                if window_cursor.x >= opening.minimum_x && window_cursor.x <= opening.maximum_x &&
+                   window_cursor.y >= opening.minimum_y && window_cursor.y <= opening.maximum_y {
+                    plant_generator_window_dragging = index
+                    plant_generator_window_drag_anchor = window_cursor
+                    plant_generator_window_drag_origin = opening
+                    plant_generator_window_drag_moved = false
+                    break
+                }
+            }
+            root_x := -2.45 + plant_generator_root_offset
+            if plant_generator_window_dragging < 0 &&
+               math.abs(window_cursor.x - root_x) <= .48 && window_cursor.y >= 0 && window_cursor.y <= .62 {
+                plant_generator_root_dragging = true
+                plant_generator_root_drag_anchor_x = window_cursor.x
+                plant_generator_root_drag_origin_x = root_x
+                plant_generator_root_drag_moved = false
+            }
+        }
+        if plant_generator_window_dragging >= 0 || plant_generator_root_dragging {
+            // The world handle owns this press; do not also activate panel controls.
+        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_minus_bounds()) {
+            changed = plant_generator_set_maturity(plant_generator_maturity - .05) || changed
+        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_plus_bounds()) {
+            changed = plant_generator_set_maturity(plant_generator_maturity + .05) || changed
+        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_track_bounds()) {
+            plant_generator_maturity_dragging = true
+        }
+    }
+    if plant_generator_maturity_dragging && canvas2d.IsMouseButtonDown(.LEFT) {
+        track := plant_generator_maturity_track_bounds()
+        changed = plant_generator_set_maturity((mouse.x - track.x) / track.width) || changed
+    }
+    if plant_generator_window_dragging >= 0 && canvas2d.IsMouseButtonDown(.LEFT) {
+        if cursor, ok := plant_generator_window_cursor(editor, mouse); ok {
+            plant_generator_window_drag_moved =
+                plant_generator_move_window(plant_generator_window_dragging, cursor) || plant_generator_window_drag_moved
+        }
+    }
+    if plant_generator_root_dragging && canvas2d.IsMouseButtonDown(.LEFT) {
+        if cursor, ok := plant_generator_window_cursor(editor, mouse); ok {
+            plant_generator_root_drag_moved =
+                plant_generator_move_root(cursor.x) || plant_generator_root_drag_moved
+        }
+    }
+    if canvas2d.IsMouseButtonReleased(.LEFT) {
+        plant_generator_maturity_dragging = false
+        if plant_generator_window_dragging >= 0 {
+            changed = plant_generator_window_drag_moved || changed
+            plant_generator_window_dragging = -1
+            plant_generator_window_drag_moved = false
+        }
+        if plant_generator_root_dragging {
+            changed = plant_generator_root_drag_moved || changed
+            plant_generator_root_dragging = false
+            plant_generator_root_drag_moved = false
+        }
+    }
     if canvas2d.IsKeyPressed(.R) {
         plant_generator_seed += 1
         changed = true
@@ -829,12 +1059,10 @@ plant_generator_lab_process_input :: proc(editor: ^Editor) {
     // canvas2d currently exposes arrows but not bracket key codes; arrows are
     // the interactive aliases for the documented [ and ] maturity controls.
     if canvas2d.IsKeyPressed(.LEFT) {
-        plant_generator_maturity = max(0, plant_generator_maturity - .1)
-        changed = true
+        changed = plant_generator_set_maturity(plant_generator_maturity - .1) || changed
     }
     if canvas2d.IsKeyPressed(.RIGHT) {
-        plant_generator_maturity = min(1, plant_generator_maturity + .1)
-        changed = true
+        changed = plant_generator_set_maturity(plant_generator_maturity + .1) || changed
     }
     if canvas2d.IsKeyPressed(.ONE) {
         plant_generator_detail = .Near
@@ -854,25 +1082,50 @@ plant_generator_lab_process_input :: proc(editor: ^Editor) {
         plant_generator_climbing_garden = false
         changed = true
     }
+    gallery := plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden
+    wheel_delta := canvas2d.GetMouseWheelMoveV()
+    wheel := math.abs(wheel_delta.x) > math.abs(wheel_delta.y) ? wheel_delta.x : wheel_delta.y
+    if gallery && math.abs(wheel) > .01 {
+        plant_generator_gallery_scroll =
+            clamp(plant_generator_gallery_scroll - wheel * 3.4, 0, plant_generator_gallery_scroll_max())
+        camera_changed = true
+    }
     if canvas2d.IsKeyPressed(.UP) {
-        plant_generator_succulent_garden = false
-        plant_generator_climbing_garden = false
-        plant_generator_isolated =
-            plant_generator_isolated < 0 ? 0 : (plant_generator_isolated + 1) % plants.SPECIES_COUNT
-        changed = true
+        if gallery {
+            plant_generator_gallery_scroll =
+                max(0, plant_generator_gallery_scroll - PLANT_GENERATOR_GRID_ROW_SPACING)
+            changed = true
+        } else {
+            plant_generator_succulent_garden = false
+            plant_generator_climbing_garden = false
+            plant_generator_isolated =
+                plant_generator_isolated < 0 ? 0 : (plant_generator_isolated + 1) % plants.SPECIES_COUNT
+            changed = true
+        }
     }
     if canvas2d.IsKeyPressed(.DOWN) {
-        plant_generator_succulent_garden = false
-        plant_generator_climbing_garden = false
-        if plant_generator_isolated < 0 {
-            plant_generator_isolated = plants.SPECIES_COUNT - 1
+        if gallery {
+            plant_generator_gallery_scroll =
+                min(plant_generator_gallery_scroll_max(), plant_generator_gallery_scroll + PLANT_GENERATOR_GRID_ROW_SPACING)
+            changed = true
         } else {
-            plant_generator_isolated = (plant_generator_isolated + plants.SPECIES_COUNT - 1) % plants.SPECIES_COUNT
+            plant_generator_succulent_garden = false
+            plant_generator_climbing_garden = false
+            if plant_generator_isolated < 0 {
+                plant_generator_isolated = plants.SPECIES_COUNT - 1
+            } else {
+                plant_generator_isolated = (plant_generator_isolated + plants.SPECIES_COUNT - 1) % plants.SPECIES_COUNT
+            }
+            changed = true
         }
+    }
+    if gallery && plant_generator_gallery_row() != plant_generator_gallery_generated_row {
         changed = true
     }
     if changed {
         plant_generator_rebuild()
+        plant_generator_configure_camera(editor)
+    } else if camera_changed {
         plant_generator_configure_camera(editor)
     }
 }
@@ -882,50 +1135,18 @@ plant_generator_lab_exit :: proc(_: ^Editor) {
 }
 
 plant_generator_display_scale :: proc(species: plants.Species) -> f32 {
-    #partial switch species {
-    case .Italian_Cypress:
-        return .60
-    case .Rosemary:
-        return 3.2
-    case .Lavender, .Sage, .Pelargonium:
-        return 3.0
-    case .Thyme:
-        return 4.2
-    case .Myrtle, .Mastic, .Prickly_Pear:
-        return 2.2
-    case .Golden_Barrel:
-        return 2.6
-    case .Agave, .Aloe:
-        return 2.4
-    case .Aeonium, .Jade_Plant:
-        return 2.2
-    case .Echeveria:
-        return 3.0
-    case .Stonecrop:
-        return 4.4
-    case .Blue_Chalk_Sticks:
-        return 3.4
-    case .Golden_Torch_Cactus:
-        return 1.8
-    case .Stone_Pine:
-        return 1.35
-    case .Bay_Laurel, .Carob, .Strawberry_Tree:
-        return 1.55
-    case .Holm_Oak, .Oriental_Plane, .European_Hackberry, .White_Poplar:
-        return 1.25
-    case .Bougainvillea:
-        return 1.15
-    case .Grapevine:
-        return 1.0
-    case .Lemon:
-        return 1.25
-    case .Olive, .Fig, .Pomegranate, .Almond, .Oleander:
-        return 1.65
-    }
+    // Generated plant coordinates are authoritative world-space metres. The
+    // lab camera fits those bounds; it must not resize specimens for display.
+    _ = species
     return 1
 }
 
-plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw, scale: f32) -> third_person.Vec3 {
+plant_generator_point :: proc(
+    base: third_person.Vec3,
+    point: lsystem.Vec3,
+    yaw, scale: f32,
+    trained_foliage_weight: f32 = -1,
+) -> third_person.Vec3 {
     cosine, sine := math.cos(yaw), math.sin(yaw)
     result := third_person.Vec3 {
         base.x + (point[0] * cosine - point[2] * sine) * scale,
@@ -934,6 +1155,10 @@ plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw,
     }
     editor := world_renderer.editor
     if editor == nil || plant_generator_wind_height <= .001 do return result
+    trained := plant_generator_wind_habit != .Free_Standing
+    // Ties, wires, and masonry hold climbing wood in place. Only callers
+    // transforming a foliage vertex opt into localized flutter below.
+    if trained && trained_foliage_weight < 0 do return result
     wind := editor.atmosphere.weather.wind
     wind_speed := f32(math.sqrt(f64(wind[0] * wind[0] + wind[1] * wind[1])))
     if wind_speed <= .001 do return result
@@ -948,8 +1173,10 @@ plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw,
     // missing along-branch gradient while the squared response keeps roots
     // and the lower trunk firmly planted.
     flex_weight := clamp(height_weight + reach_weight * .52, 0, 1)
-    bend_weight := flex_weight * flex_weight
-    time := editor.atmosphere.front_seconds
+    bend_weight := trained ? clamp(trained_foliage_weight, f32(0), f32(1)) : flex_weight * flex_weight
+    // A batched capture advances deterministic review phases without
+    // relaunching the app (and regenerating terrain) for every screenshot.
+    time := cinematic_export_active ? cinematic_export_time * .45 : editor.atmosphere.front_seconds
     phase := time * (.72 + wind_speed * .018) + plant_generator_wind_base.x * .071 - plant_generator_wind_base.z * .053
     gust := f32(math.sin(f64(phase))) * .72 + f32(math.sin(f64(phase * .43 + 1.9))) * .28
     cross_gust := f32(math.sin(f64(phase * 1.31 + 4.2)))
@@ -957,7 +1184,7 @@ plant_generator_point :: proc(base: third_person.Vec3, point: lsystem.Vec3, yaw,
     // trees. Normalize around that baseline so it controls relative species
     // flexibility while windy weather still produces a readable crown arc.
     compliance := clamp(plant_generator_wind_compliance / .18, .25, 2.4)
-    amplitude := clamp((wind_speed - 1) / 13, 0, 1) * .62 * compliance
+    amplitude := clamp((wind_speed - 1) / 13, 0, 1) * (trained ? f32(.16) : f32(.62)) * compliance
     result += direction * (amplitude * (.48 + gust * .52) * bend_weight)
     result += across * (amplitude * cross_gust * .13 * bend_weight)
     result.y -= amplitude * .08 * bend_weight * (1 + gust * .3)
@@ -1138,10 +1365,20 @@ plant_generator_flower_color :: proc(
         }
         base = colors[variety]
     case .Thyme:
-        colors := [4]canvas2d.Color{{190, 125, 174, 255}, {207, 146, 181, 255}, {180, 119, 165, 255}, {218, 166, 193, 255}}
+        colors := [4]canvas2d.Color {
+            {190, 125, 174, 255},
+            {207, 146, 181, 255},
+            {180, 119, 165, 255},
+            {218, 166, 193, 255},
+        }
         base = colors[variety]
     case .Sage:
-        colors := [4]canvas2d.Color{{142, 102, 176, 255}, {128, 112, 181, 255}, {163, 123, 186, 255}, {184, 154, 199, 255}}
+        colors := [4]canvas2d.Color {
+            {142, 102, 176, 255},
+            {128, 112, 181, 255},
+            {163, 123, 186, 255},
+            {184, 154, 199, 255},
+        }
         base = colors[variety]
     }
 
@@ -1204,8 +1441,22 @@ plant_generator_leaf_point :: proc(
     point: [3]f32,
     yaw, scale: f32,
 ) -> third_person.Vec3 {
-    local := position + (right * point[0] + forward * point[1] + up * point[2]) / scale
-    return plant_generator_point(base, local, yaw, scale)
+    // `display_scale` is a uniform presentation transform for the complete
+    // specimen. Keep leaf geometry in the same local space as attachment
+    // positions and branches; cancelling the scale here made magnified small
+    // plants retain unscaled leaves, producing needle-like succulents and
+    // incorrect leaf-to-stem proportions throughout the catalog.
+    local := position + right * point[0] + forward * point[1] + up * point[2]
+    // Leaf meshes originate at their petiole. Distance from that attachment
+    // supplies a continuous pin-to-tip weight, so trained leaves rustle
+    // without their bases sliding along the wall-mounted cane.
+    tip_weight := clamp(
+        (linalg.length(lsystem.Vec3{point[0], point[1], point[2]}) - .006) / (.12 - .006),
+        f32(0),
+        f32(1),
+    )
+    tip_weight = tip_weight * tip_weight * (3 - 2 * tip_weight)
+    return plant_generator_point(base, local, yaw, scale, tip_weight)
 }
 
 plant_generator_leaf_normal :: #force_inline proc(
@@ -1215,11 +1466,9 @@ plant_generator_leaf_normal :: #force_inline proc(
 ) -> third_person.Vec3 {
     local := linalg.normalize0(right * normal[0] + forward * normal[1] + up * normal[2])
     cosine, sine := math.cos(yaw), math.sin(yaw)
-    return linalg.normalize0(third_person.Vec3 {
-        local[0] * cosine - local[2] * sine,
-        local[1],
-        local[0] * sine + local[2] * cosine,
-    })
+    return linalg.normalize0(
+        third_person.Vec3{local[0] * cosine - local[2] * sine, local[1], local[0] * sine + local[2] * cosine},
+    )
 }
 
 plant_generator_draw_leaf :: proc(
@@ -1400,8 +1649,10 @@ plant_generator_draw_flower :: proc(
         cluster_config.radius = (.078 + f32(attachment.variant) * .005) * head_open * maturity_scale
         cluster_config.height = (.052 + f32(attachment.variant) * .002) * head_open * maturity_scale
         cluster_config.floret_scale =
-            cluster_floret_scale * floret_stage_scale[stage_index] *
-            (.92 + f32(attachment.variant) * .045) * maturity_scale
+            cluster_floret_scale *
+            floret_stage_scale[stage_index] *
+            (.92 + f32(attachment.variant) * .045) *
+            maturity_scale
         cluster_config.scale_variation = .10
         // Variant alone only supplies four phases, making repeated heads
         // visibly share the same Fibonacci floret pattern. Fold the authored
@@ -1468,70 +1719,72 @@ plant_generator_draw_flower :: proc(
         }
         return
     }
-    // Flower measurements describe individual petals; boost ornamental
-    // blossoms for presentation, but keep fruit-tree corollas at botanical
-    // scale relative to their fruit.
-    scale := clamp(display_scale, f32(.72), f32(1.4)) * 1.8
+    // Flower meshes are authored in metres and must follow the same uniform
+    // display transform as wood and leaves. The species factor converts the
+    // shared petal mesh into its botanical corolla size.
+    scale := display_scale * .12
     floret_count := 1
     if species == .Lemon {
-        // A lemon blossom is only a few centimetres across. The generic
-        // presentation boost made each one wider than the mature lemon.
-        scale = .18
+        scale = display_scale * .25
+    } else if species == .Almond {
+        scale = display_scale * .17
     } else if species == .Pomegranate {
-        // Keep the compact scarlet corolla clearly smaller than the fruit it
-        // precedes instead of letting it fill the surrounding leaf cluster.
-        scale = .22
+        scale = display_scale * .18
     } else if species == .Strawberry_Tree {
-        // Strawberry-tree flowers are small hanging bells, roughly a
-        // centimetre across, borne in clusters.
-        scale = .09
+        scale = display_scale * .04
     } else if species == .Lavender {
         // Lavender carries many tiny corollas along a narrow terminal spike.
         // One enlarged generic flower turns adjacent attachments into solid
         // purple pom-poms, so render a short run of small staggered florets.
-        scale = .55
+        scale = display_scale * .04
         floret_count = 7
     } else if species == .Thyme {
         // Thyme flowers are tiny lip-like whorls tucked into the mat, not
         // full-size garden corollas. A compact three-floret cluster keeps the
         // bloom readable without obscuring the creeping foliage beneath it.
-        scale = .16
+        scale = display_scale * .025
         floret_count = 3
     } else if species == .Sage {
         // Sage flowers climb in spaced whorls above the silver leaf mound.
         // A narrow vertical run reads as a flower spike; one large generic
         // corolla reads as purple disks pasted throughout the shrub.
-        scale = .50
+        scale = display_scale * .12
         floret_count = 5
     } else if species == .Pelargonium {
         // One terminal marker represents a compact rounded umbel.
-        scale = .34
+        scale = display_scale * .18
         floret_count = 7
     } else if species == .Star_Jasmine {
         // Small white pinwheels gather into loose clusters along trained vines.
         // The pale support consumes their edges at the standard camera, so
         // let each attachment represent a five-flower cyme rather than a few
         // isolated sub-pixel corollas.
-        scale = 2.0
+        scale = display_scale * .10
         floret_count = 5
     } else if species == .Wisteria {
         // One attachment stands for a hanging raceme, not one large blossom.
-        scale = 1.0
+        scale = display_scale * .08
         floret_count = 7
     } else if species == .Climbing_Rose {
         // Loose terminal rose clusters punctuate the trained cane network.
-        scale = 2.0
+        scale = display_scale * .25
         floret_count = 3
     } else if species == .Oleander {
         // Oleander blooms collect into loose terminal cymes. Several modest
         // corollas read as a cluster without masking the narrow leaves.
-        scale = .95
+        scale = display_scale * .15
         floret_count = 3
     } else if species == .Agapanthus {
         // One authored terminal marker represents a spherical umbel of many
         // small blue trumpets, not a single enlarged flower.
-        scale = .50
+        scale = display_scale * .18
         floret_count = 9
+    } else if species == .Bougainvillea {
+        scale = display_scale * .15
+    } else if species == .Myrtle {
+        scale = display_scale * .10
+    } else if species == .Bay_Laurel {
+        scale = display_scale * .05
     }
     for floret_index in 0 ..< floret_count {
         floret_position := position
@@ -1688,8 +1941,8 @@ plant_generator_draw_branch_hull :: proc(
     if !plant_generator_branch_mesh_ready[index] do return
     mesh := &plant_generator_branch_meshes[index]
     bark := plant_bark.profile(plants.Species(index))
-    bark_detail_strength := plant_generator_detail == .Near ? f32(1) :
-                            plant_generator_detail == .Medium ? f32(.52) : f32(.24)
+    bark_detail_strength :=
+        plant_generator_detail == .Near ? f32(1) : plant_generator_detail == .Medium ? f32(.52) : f32(.24)
     cosine, sine := math.cos(yaw), math.sin(yaw)
     for first := 0; first + 2 < len(mesh.indices); first += 3 {
         points: [3]third_person.Vec3
@@ -1706,10 +1959,7 @@ plant_generator_draw_branch_hull :: proc(
                     vertex.normal[0] * sine + vertex.normal[2] * cosine,
                 },
             )
-            uvs[point_index] = {
-                vertex.bark_uv[0] * bark.scale,
-                vertex.bark_uv[1] * bark.scale,
-            }
+            uvs[point_index] = {vertex.bark_uv[0] * bark.scale, vertex.bark_uv[1] * bark.scale}
         }
         // A cylindrical ring stores [0, 1) once. Repair triangles crossing
         // that seam locally so interpolation takes the short route through 1
@@ -1733,22 +1983,34 @@ plant_generator_draw_branch_hull :: proc(
             normals[0],
             normals[1],
             normals[2],
-            bark_color, bark_color, bark_color,
-            uvs[0], uvs[1], uvs[2],
-            f32(int(bark.pattern)), bark.roughness, bark_detail_strength,
+            bark_color,
+            bark_color,
+            bark_color,
+            uvs[0],
+            uvs[1],
+            uvs[2],
+            f32(int(bark.pattern)),
+            bark.roughness,
+            bark_detail_strength,
         )
     }
 }
 
-plant_generator_draw_barrel_cactus :: proc(base: third_person.Vec3, yaw, display_scale: f32, color: canvas2d.Color) {
-    if !plant_generator_barrel_mesh_ready do return
+plant_generator_draw_cactus_body :: proc(
+    mesh: ^barrel_cactus_mesh.Mesh,
+    ready: bool,
+    base: third_person.Vec3,
+    yaw, display_scale: f32,
+    color: canvas2d.Color,
+) {
+    if !ready || mesh == nil do return
     cosine, sine := math.cos(yaw), math.sin(yaw)
-    for first := 0; first + 2 < len(plant_generator_barrel_mesh.indices); first += 3 {
+    for first := 0; first + 2 < len(mesh.indices); first += 3 {
         points: [3]third_person.Vec3
         normals: [3]third_person.Vec3
         colors: [3]canvas2d.Color
         for corner in 0 ..< 3 {
-            vertex := plant_generator_barrel_mesh.vertices[plant_generator_barrel_mesh.indices[first + corner]]
+            vertex := mesh.vertices[mesh.indices[first + corner]]
             points[corner] = plant_generator_point(base, vertex.position, yaw, display_scale)
             normals[corner] = linalg.normalize0(
                 third_person.Vec3 {
@@ -1780,6 +2042,73 @@ plant_generator_draw_barrel_cactus :: proc(base: third_person.Vec3, yaw, display
     }
 }
 
+plant_generator_draw_torch_spines :: proc(
+    base: third_person.Vec3,
+    yaw, display_scale: f32,
+    color: canvas2d.Color,
+) {
+    rib_count := plant_generator_detail == .Near ? 18 : plant_generator_detail == .Medium ? 12 : 8
+    ring_count := plant_generator_detail == .Near ? 6 : plant_generator_detail == .Medium ? 4 : 3
+    body_radius := .110 + plant_generator_maturity * .070
+    body_height := .35 + plant_generator_maturity * .75
+    for ring in 0 ..< ring_count {
+        y := body_height * (.16 + f32(ring) * .70 / f32(max(ring_count - 1, 1)))
+        for rib in 0 ..< rib_count {
+            angle := f32(rib) * math.PI * 2 / f32(rib_count)
+            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            root := plant_generator_point(base, radial * body_radius + lsystem.Vec3{0, y, 0}, yaw, display_scale)
+            tip := plant_generator_point(
+                base,
+                radial * (body_radius + .045) + lsystem.Vec3{0, y + (rib & 1 == 0 ? f32(.012) : f32(-.008)), 0},
+                yaw,
+                display_scale,
+            )
+            world_tube_between(root, tip, {0, 1, 0}, .0045, .0012, color)
+        }
+    }
+}
+
+plant_generator_draw_barrel_spines :: proc(
+    base: third_person.Vec3,
+    yaw, display_scale: f32,
+    color: canvas2d.Color,
+) {
+    rib_count := plant_generator_detail == .Near ? 20 : plant_generator_detail == .Medium ? 14 : 9
+    ring_count := plant_generator_detail == .Near ? 7 : plant_generator_detail == .Medium ? 5 : 3
+    body_radius := .13 + plant_generator_maturity * .17
+    body_height := .20 + plant_generator_maturity * .32
+    for ring in 0 ..< ring_count {
+        t := .12 + f32(ring) * .76 / f32(max(ring_count - 1, 1))
+        ring_radius := body_radius * (.86 + .14 * math.sin(math.PI * t))
+        for rib in 0 ..< rib_count {
+            angle := f32(rib) * math.PI * 2 / f32(rib_count)
+            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            root := plant_generator_point(base, radial * ring_radius + lsystem.Vec3{0, body_height * t, 0}, yaw, display_scale)
+            tip_upper := plant_generator_point(
+                base,
+                radial * (ring_radius + .050) + lsystem.Vec3{0, body_height * t + .028, 0},
+                yaw,
+                display_scale,
+            )
+            tip_middle := plant_generator_point(
+                base,
+                radial * (ring_radius + .060) + lsystem.Vec3{0, body_height * t, 0},
+                yaw,
+                display_scale,
+            )
+            tip_lower := plant_generator_point(
+                base,
+                radial * (ring_radius + .050) + lsystem.Vec3{0, body_height * t - .026, 0},
+                yaw,
+                display_scale,
+            )
+            world_tube_between(root, tip_upper, {0, 1, 0}, .0035, .0008, color)
+            world_tube_between(root, tip_middle, {0, 1, 0}, .0042, .0010, color)
+            world_tube_between(root, tip_lower, {0, 1, 0}, .0035, .0008, color)
+        }
+    }
+}
+
 plant_generator_stage_color :: proc(color: canvas2d.Color, stage: plants.Attachment_Stage) -> canvas2d.Color {
     green := canvas2d.Color{91, 132, 67, color.a}
     green_weight: f32
@@ -1807,8 +2136,38 @@ plant_generator_stage_color :: proc(color: canvas2d.Color, stage: plants.Attachm
     }
 }
 
+plant_generator_result_in_view :: proc(index: int, base: third_person.Vec3) -> bool {
+    editor := world_renderer.editor
+    if editor == nil || index < 0 || index >= plants.SPECIES_COUNT || !plant_generator_ready[index] do return false
+
+    generated := &plant_generator_results[index].plant
+    species := plants.Species(index)
+    minimum := plant_generator_cull_minimum[index]
+    maximum := plant_generator_cull_maximum[index]
+
+    // Trained plants draw their support as part of the same result. Include it
+    // in the culling volume so a visible wall never disappears merely because
+    // the plant growth happens to lie beyond an edge of the view.
+    if generated.habit != .Free_Standing {
+        plant_generator_bounds_include(&minimum, &maximum, {-4.5, 0, -.4})
+        plant_generator_bounds_include(&minimum, &maximum, {4.5, 7.2, .4})
+        if plant_generator_climber_interior_corner && species == .Bougainvillea {
+            plant_generator_bounds_include(&minimum, &maximum, {-4.5, 0, 4.3})
+        }
+    }
+
+    center := base + (minimum + maximum) * .5
+    half_extent := (maximum - minimum) * .5
+    // Cover fine bark relief, flowers, fruit, thorns, and presentation-width
+    // floors that are intentionally absent from the generated plant bounds.
+    radius := f32(math.sqrt(f64(linalg.dot(half_extent, half_extent)))) + .35
+    camera := perspective_camera(editor.camera_pose)
+    aspect := f32(max(canvas2d.GetScreenWidth(), 1)) / f32(max(canvas2d.GetScreenHeight(), 1))
+    return static_sphere_in_frustum(camera, center, radius, aspect, WORLD_PLAY_NEAR_CLIP, WORLD_FAR_CLIP)
+}
+
 plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
-    if index < 0 || index >= plants.SPECIES_COUNT || !plant_generator_ready[index] do return
+    if !plant_generator_result_in_view(index, base) do return
     result := &plant_generator_results[index].plant
     species := plants.Species(index)
     wood, leaf_color, accent := plant_generator_colors(species)
@@ -1817,9 +2176,59 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
     plant_generator_wind_base = base
     plant_generator_wind_height = max((result.bounds.maximum[1] - result.bounds.minimum[1]) * display_scale, f32(.1))
     plant_generator_wind_compliance = result.wind_compliance
+    plant_generator_wind_habit = result.habit
     if result.habit != .Free_Standing {
         // A wall panel and trellis make the climbers' constraints legible.
         world_box({base.x, 3.5, base.z - .16}, {8.8, 7.2, .24}, {197, 187, 161, 255})
+        if plant_generator_climber_interior_corner && species == .Bougainvillea {
+            // Continue the support toward the camera so the stacked-window
+            // wall terminates in a readable interior corner rather than an
+            // arbitrary panel edge.
+            world_box({base.x - 4.28, 3.5, base.z + 2.02}, {.24, 7.2, 4.36}, {187, 176, 150, 255})
+            window_structure := terrain.structure_make(base.x, base.z, 8.8, .4, 0, 7.2)
+            window_structure.kind = .Architecture
+            window_structure.seed = u32(plant_generator_seed)
+            window_structure.building = buildings.Identity {
+                archetype = .Dwelling,
+                purpose = .Dwelling,
+                region = .Adriatic,
+            }
+            glass := canvas2d.Color{53, 77, 81, 255}
+            surround := canvas2d.Color{190, 166, 128, 255}
+            timber := canvas2d.Color{57, 88, 73, 255}
+            iron := canvas2d.Color{62, 60, 54, 255}
+            for opening, row in plant_generator_exclusions[:2] {
+                center_x := base.x + (opening.minimum_x + opening.maximum_x) * .5
+                center_y := (opening.minimum_y + opening.maximum_y) * .5
+                width := opening.maximum_x - opening.minimum_x
+                height := opening.maximum_y - opening.minimum_y
+                window_glass := glass
+                interior, interior_light := world_architecture_window_interior(window_structure, .Front, row, 0)
+                if interior_light > 0 do window_glass = interior
+                world_architecture_generated_window(
+                    window_structure,
+                    {center_x, center_y, base.z + .005},
+                    0,
+                    width * .84,
+                    height * .84,
+                    .Front,
+                    row,
+                    0,
+                    window_glass,
+                    surround,
+                    timber,
+                    iron,
+                    interior_light,
+                    true,
+                )
+            }
+            // A compact ground-level handle exposes the generated plant's
+            // root constraint without obscuring the trunk or wall.
+            root_x := -2.45 + plant_generator_root_offset
+            root_color := canvas2d.Color{151, 91, 58, 255}
+            if plant_generator_root_dragging do root_color = {232, 224, 189, 255}
+            world_box({base.x + root_x, .09, base.z + .025}, {.46, .18, .20}, root_color)
+        }
         if result.habit == .Trellised {
             for rail in 1 ..= 4 {
                 y := f32(rail) * 1.25
@@ -1836,7 +2245,25 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
     }
     shadow_first := len(world_renderer.vertices)
     if species == .Golden_Barrel {
-        plant_generator_draw_barrel_cactus(base, yaw, display_scale, leaf_color)
+        plant_generator_draw_cactus_body(
+            &plant_generator_barrel_mesh,
+            plant_generator_barrel_mesh_ready,
+            base,
+            yaw,
+            display_scale,
+            leaf_color,
+        )
+        plant_generator_draw_barrel_spines(base, yaw, display_scale, accent)
+    } else if species == .Golden_Torch_Cactus {
+        plant_generator_draw_cactus_body(
+            &plant_generator_torch_mesh,
+            plant_generator_torch_mesh_ready,
+            base,
+            yaw,
+            display_scale,
+            leaf_color,
+        )
+        plant_generator_draw_torch_spines(base, yaw, display_scale, accent)
     }
     // Opuntia cladodes are the persistent structure; its tiny internal
     // topology exists for generation invariants, not as visible brown wood.
@@ -1849,21 +2276,15 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
         // These canes are presentation-thickened but remain only a few
         // pixels wide. Full trunk-strength relief alternates with each short
         // segment frame, so retain a quieter peeling signal here.
-        bark_detail_strength := plant_generator_detail == .Near ? f32(.48) :
-                                plant_generator_detail == .Medium ? f32(.25) : f32(.12)
+        bark_detail_strength :=
+            plant_generator_detail == .Near ? f32(.48) : plant_generator_detail == .Medium ? f32(.25) : f32(.12)
         for segment in result.segments {
             display_segment := segment
             // Presentation-scale minimums keep young trained shoots legible
             // against the pale wall. Apply them to a copy so generation data
             // and production-world radii remain botanically authoritative.
-            display_segment.radius_start = max(
-                display_segment.radius_start,
-                f32(.024) / max(display_scale, f32(.001)),
-            )
-            display_segment.radius_end = max(
-                display_segment.radius_end,
-                f32(.014) / max(display_scale, f32(.001)),
-            )
+            display_segment.radius_start = max(display_segment.radius_start, f32(.024) / max(display_scale, f32(.001)))
+            display_segment.radius_end = max(display_segment.radius_end, f32(.014) / max(display_scale, f32(.001)))
             world_generated_bark_segment(
                 display_segment,
                 bark,
@@ -1890,7 +2311,7 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
         plant_generator_draw_branch_hull(index, base, yaw, display_scale, wood)
     }
     for attachment in result.attachments {
-        if species == .Golden_Barrel do continue
+        if species == .Golden_Barrel || species == .Golden_Torch_Cactus do continue
         position := plant_generator_point(base, attachment.position, yaw, display_scale)
         color := attachment.kind == .Leaf || attachment.kind == .Tendril ? leaf_color : accent
         if attachment.kind == .Flower {
@@ -2004,36 +2425,78 @@ world_plant_generator_lab :: proc(_: ^Editor) {
         plant_generator_draw_succulent_garden()
         return
     }
-    world_box({0, -.18, 0}, {40, .34, 24}, {116, 133, 83, 255})
     if plant_generator_isolated >= 0 {
+        world_box({0, -.18, 0}, {16, .34, 16}, {116, 133, 83, 255})
         plant_generator_draw_result(plant_generator_isolated, {0, 0, 0})
         return
     }
-    // Eight free-standing plots occupy the first four columns; the final
-    // column contains the wall-trained and trellised climbers.
-    free_order := [8]plants.Species {
-        .Olive,
-        .Italian_Cypress,
-        .Fig,
-        .Lemon,
-        .Pomegranate,
-        .Almond,
-        .Oleander,
-        .Rosemary,
+    board := canvas2d.Color{78, 91, 65, 255}
+    frame := canvas2d.Color{55, 67, 49, 255}
+    card_a := canvas2d.Color{103, 82, 55, 255}
+    card_b := canvas2d.Color{94, 76, 53, 255}
+    board_height := f32(plant_generator_grid_rows()) * PLANT_GENERATOR_GRID_ROW_SPACING
+    board_center_y := f32(plant_generator_grid_rows() - 1) * PLANT_GENERATOR_GRID_ROW_SPACING * .5 + 2.65
+    world_box({0, board_center_y, -1.55}, {30.4, board_height + .7, .34}, frame)
+    world_box({0, board_center_y, -1.32}, {29.7, board_height, .18}, board)
+    for index in 0 ..< plants.SPECIES_COUNT {
+        base := plant_generator_grid_base(index)
+        tile_color := index % 2 == 0 ? card_a : card_b
+        world_box({base.x, base.y + 2.72, -1.05}, {6.65, 5.45, .22}, tile_color)
+        world_box({base.x, base.y - .03, -.15}, {6.65, .12, 2.05}, frame)
+        plant_generator_draw_result(index, base)
     }
-    for species, order_index in free_order {
-        column := order_index % 4
-        row := order_index / 4
-        base := third_person.Vec3{-13.5 + f32(column) * 7.1, 0, -4.7 + f32(row) * 9.4}
-        world_box({base.x, .03, base.z}, {5.8, .06, 5.8}, {99, 78, 49, 255})
-        plant_generator_draw_result(int(species), base)
-    }
-    plant_generator_draw_result(int(plants.Species.Bougainvillea), {13.8, 0, -4.7})
-    plant_generator_draw_result(int(plants.Species.Grapevine), {13.8, 0, 4.7})
 }
 
-plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
-    panel := canvas2d.Rectangle{24, 24, 560, 126}
+plant_generator_draw_grid_labels :: proc(editor: ^Editor, width, height: i32) {
+    if editor == nil || plant_generator_isolated >= 0 || plant_generator_succulent_garden || plant_generator_climbing_garden do return
+    camera := perspective_camera(editor.camera_pose)
+    for index in 0 ..< plants.SPECIES_COUNT {
+        base := plant_generator_grid_base(index)
+        anchor := project_3d(camera, {base.x, base.y + .18, .72}, width, height)
+        if !anchor.visible || anchor.position.y < 154 || anchor.position.y > f32(height - 24) do continue
+        label: cstring = fmt.ctprintf("%s", plants.species_name(plants.Species(index)))
+        text_size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 11, 1)
+        bounds := canvas2d.Rectangle {
+            anchor.position.x - text_size.x * .5 - 8,
+            anchor.position.y - 10,
+            text_size.x + 16,
+            22,
+        }
+        if bounds.x < 8 || bounds.x + bounds.width > f32(width - 92) do continue
+        canvas2d.DrawRectangleRounded(bounds, .28, 6, {19, 31, 27, 224})
+        canvas2d.DrawRectangleRoundedLinesEx(bounds, .28, 6, 1, {111, 146, 111, 255})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            label,
+            {bounds.x + 8, bounds.y + 6},
+            11,
+            1,
+            {232, 224, 189, 255},
+        )
+    }
+
+    group_rows := [4]int{0, 5, 9, 11}
+    group_names := [4]cstring{"MEDITERRANEAN STAPLES", "HERBS & FLOWERS", "CANOPY TREES", "SUCCULENTS"}
+    for group_row, group_index in group_rows {
+        group_y := f32(plant_generator_grid_rows() - 1 - group_row) * PLANT_GENERATOR_GRID_ROW_SPACING + 5
+        anchor := project_3d(camera, {-10.5, group_y, .72}, width, height)
+        if !anchor.visible || anchor.position.y < 154 || anchor.position.y > f32(height - 24) do continue
+        canvas2d.DrawTextEx(canvas2d.Font{}, group_names[group_index], anchor.position, 11, 1, {232, 224, 189, 255})
+    }
+
+    track := canvas2d.Rectangle{f32(width - 108), 162, 5, f32(height - 194)}
+    canvas2d.DrawRectangleRounded(track, 1, 4, {35, 48, 41, 190})
+    maximum := max(plant_generator_gallery_scroll_max(), f32(.001))
+    progress := clamp(plant_generator_gallery_scroll / maximum, 0, 1)
+    thumb_height := max(track.height * 2 / f32(plant_generator_grid_rows()), f32(34))
+    thumb := canvas2d.Rectangle{track.x - 3, track.y + (track.height - thumb_height) * progress, 11, thumb_height}
+    canvas2d.DrawRectangleRounded(thumb, 1, 5, {174, 207, 160, 240})
+}
+
+plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
+    if plant_generator_capture_sheet do return
+    plant_generator_draw_grid_labels(editor, width, height)
+    panel := canvas2d.Rectangle{24, 24, 792, 126}
     canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "ADRIATIC PLANT GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
@@ -2045,9 +2508,28 @@ plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         detail_name,
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 66}, 13, 1, {174, 207, 160, 255})
+    minus := plant_generator_maturity_minus_bounds()
+    track := plant_generator_maturity_track_bounds()
+    plus := plant_generator_maturity_plus_bounds()
+    canvas2d.DrawTextEx(canvas2d.Font{}, "MATURITY", {592, 39}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawRectangleRounded(minus, .22, 6, {38, 51, 43, 244})
+    canvas2d.DrawRectangleRoundedLinesEx(minus, .22, 6, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "-", {602, 62}, 13, 1, {232, 224, 189, 255})
+    canvas2d.DrawRectangleRounded({track.x, track.y + 5, track.width, 6}, 1, 4, {48, 64, 54, 255})
+    fill_width := track.width * plant_generator_maturity
+    canvas2d.DrawRectangleRounded({track.x, track.y + 5, fill_width, 6}, 1, 4, {174, 207, 160, 255})
+    knob_x := track.x + fill_width
+    canvas2d.DrawCircleV({knob_x, track.y + 8}, 7, {232, 224, 189, 255})
+    canvas2d.DrawRectangleRounded(plus, .22, 6, {38, 51, 43, 244})
+    canvas2d.DrawRectangleRoundedLinesEx(plus, .22, 6, 1, {111, 146, 111, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "+", {781, 62}, 13, 1, {232, 224, 189, 255})
+    help: cstring = "R SEED   LEFT/RIGHT MATURITY   TWO-FINGER SCROLL   1/2/3 DETAIL   4 GALLERY"
+    if plant_generator_climber_interior_corner {
+        help = "DRAG WINDOWS OR ROOT   R SEED   LEFT/RIGHT MATURITY   1/2/3 DETAIL   4 GALLERY"
+    }
     canvas2d.DrawTextEx(
         canvas2d.Font{},
-        "R SEED   LEFT/RIGHT MATURITY   UP/DOWN SPECIES   1/2/3 DETAIL   4 GALLERY",
+        help,
         {38, 91},
         11,
         1,
@@ -2077,7 +2559,7 @@ plant_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     } else {
         canvas2d.DrawTextEx(
             canvas2d.Font{},
-            "OLIVE  CYPRESS  FIG  LEMON  /  POMEGRANATE  ALMOND  OLEANDER  ROSEMARY  /  BOUGAINVILLEA  GRAPEVINE",
+            "ALL PLANTS",
             {38, 116},
             10,
             1,

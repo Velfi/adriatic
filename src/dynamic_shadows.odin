@@ -427,12 +427,7 @@ shadow_append_indexed :: proc(vertices: []World_Vertex, indices: []u32) -> bool 
            !dynamic_shadow_material_casts(vertices[c].kind) {
             continue
         }
-        append(
-            &world_renderer.shadow_vertices,
-            vertices[a],
-            vertices[b],
-            vertices[c],
-        )
+        append(&world_renderer.shadow_vertices, vertices[a], vertices[b], vertices[c])
         appended = true
     }
     return appended
@@ -441,17 +436,17 @@ shadow_append_indexed :: proc(vertices: []World_Vertex, indices: []u32) -> bool 
 shadow_instance_position :: #force_inline proc(vertex: World_Vertex, instance: World_Mesh_Instance) -> [3]f32 {
     return {
         instance.basis_x_translation_x[0] * vertex.position[0] +
-            instance.basis_y_translation_y[0] * vertex.position[1] +
-            instance.basis_z_translation_z[0] * vertex.position[2] +
-            instance.basis_x_translation_x[3],
+        instance.basis_y_translation_y[0] * vertex.position[1] +
+        instance.basis_z_translation_z[0] * vertex.position[2] +
+        instance.basis_x_translation_x[3],
         instance.basis_x_translation_x[1] * vertex.position[0] +
-            instance.basis_y_translation_y[1] * vertex.position[1] +
-            instance.basis_z_translation_z[1] * vertex.position[2] +
-            instance.basis_y_translation_y[3],
+        instance.basis_y_translation_y[1] * vertex.position[1] +
+        instance.basis_z_translation_z[1] * vertex.position[2] +
+        instance.basis_y_translation_y[3],
         instance.basis_x_translation_x[2] * vertex.position[0] +
-            instance.basis_y_translation_y[2] * vertex.position[1] +
-            instance.basis_z_translation_z[2] * vertex.position[2] +
-            instance.basis_z_translation_z[3],
+        instance.basis_y_translation_y[2] * vertex.position[1] +
+        instance.basis_z_translation_z[2] * vertex.position[2] +
+        instance.basis_z_translation_z[3],
     }
 }
 
@@ -460,7 +455,9 @@ shadow_append_instances :: proc() {
         vertex_first := int(mesh.first_vertex)
         index_first := int(mesh.first_index)
         index_count := int(mesh.index_count)
-        if vertex_first < 0 || index_first < 0 || index_count < 3 ||
+        if vertex_first < 0 ||
+           index_first < 0 ||
+           index_count < 3 ||
            index_first + index_count > len(world_renderer.instance_indices) {
             continue
         }
@@ -469,7 +466,9 @@ shadow_append_instances :: proc() {
                 a := vertex_first + int(world_renderer.instance_indices[triangle])
                 b := vertex_first + int(world_renderer.instance_indices[triangle + 1])
                 c := vertex_first + int(world_renderer.instance_indices[triangle + 2])
-                if a < vertex_first || b < vertex_first || c < vertex_first ||
+                if a < vertex_first ||
+                   b < vertex_first ||
+                   c < vertex_first ||
                    a >= len(world_renderer.instance_vertices) ||
                    b >= len(world_renderer.instance_vertices) ||
                    c >= len(world_renderer.instance_vertices) {
@@ -478,11 +477,7 @@ shadow_append_instances :: proc() {
                 pa := shadow_instance_position(world_renderer.instance_vertices[a], instance)
                 pb := shadow_instance_position(world_renderer.instance_vertices[b], instance)
                 pc := shadow_instance_position(world_renderer.instance_vertices[c], instance)
-                shadow_append_triangle(
-                    {pa[0], pa[1], pa[2]},
-                    {pb[0], pb[1], pb[2]},
-                    {pc[0], pc[1], pc[2]},
-                )
+                shadow_append_triangle({pa[0], pa[1], pa[2]}, {pb[0], pb[1], pb[2]}, {pc[0], pc[1], pc[2]})
             }
         }
     }
@@ -500,11 +495,9 @@ shadow_append_raised_roads :: proc(editor: ^Editor) {
         terrain_a := terrain.sample_surface_height(&editor.project, 0, a.position[0], a.position[2])
         terrain_b := terrain.sample_surface_height(&editor.project, 0, b.position[0], b.position[2])
         terrain_c := terrain.sample_surface_height(&editor.project, 0, c.position[0], c.position[2])
-        clearance := max(
-            a.position[1] - terrain_a,
-            max(b.position[1] - terrain_b, c.position[1] - terrain_c),
-        )
-        vertical_span := max(a.position[1], max(b.position[1], c.position[1])) -
+        clearance := max(a.position[1] - terrain_a, max(b.position[1] - terrain_b, c.position[1] - terrain_c))
+        vertical_span :=
+            max(a.position[1], max(b.position[1], c.position[1])) -
             min(a.position[1], min(b.position[1], c.position[1]))
         // Ordinary pavement hugs the receiver and would only introduce acne.
         // Elevated decks, curbs, retaining faces, and bridge details clear
@@ -545,11 +538,7 @@ shadow_append_terrain :: proc(editor: ^Editor) {
     }
 }
 
-shadow_append_grass_cards :: proc(
-    editor: ^Editor,
-    instances: []Grass_Instance,
-    radius, density: f32,
-) {
+shadow_append_grass_cards :: proc(editor: ^Editor, instances: []Grass_Instance, radius, density: f32) {
     sky := atmosphere_sky(editor)
     sun_x, sun_z := sky.sun_direction[0], sky.sun_direction[2]
     horizontal := f32(math.sqrt(f64(sun_x * sun_x + sun_z * sun_z)))
@@ -595,7 +584,10 @@ dynamic_shadow_range_is_covered :: #force_inline proc(candidate, covering: World
 world_register_shadow_caster :: #force_inline proc(first: int) {
     count := len(world_renderer.vertices) - first
     if first < 0 || count <= 0 do return
-    candidate := World_Shadow_Caster_Range{first = first, count = count}
+    candidate := World_Shadow_Caster_Range {
+        first = first,
+        count = count,
+    }
     for &existing in world_renderer.explicit_shadow_caster_ranges {
         if dynamic_shadow_range_is_covered(candidate, existing) do return
         if dynamic_shadow_range_is_covered(existing, candidate) {
@@ -626,7 +618,10 @@ shadow_append_world_range :: proc(first, count: int) {
     if first < 0 || count < 3 || first + count > len(world_renderer.vertices) do return
     end := first + count
     for triangle := first; triangle + 2 < end; triangle += 3 {
-        a, b, c := world_renderer.vertices[triangle], world_renderer.vertices[triangle + 1], world_renderer.vertices[triangle + 2]
+        a, b, c :=
+            world_renderer.vertices[triangle],
+            world_renderer.vertices[triangle + 1],
+            world_renderer.vertices[triangle + 2]
         if !dynamic_shadow_material_casts(a.kind) ||
            !dynamic_shadow_material_casts(b.kind) ||
            !dynamic_shadow_material_casts(c.kind) {

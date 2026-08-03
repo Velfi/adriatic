@@ -93,6 +93,8 @@ Capture_Request :: struct {
     camera_offset:           [3]f32,
     camera_offset_set:       bool,
     turntable_frames:        int,
+    seed_frames:             int,
+    seed_start:              u64,
     sequence_frames:         int,
     sequence_fps:            int,
     selector:                string,
@@ -214,6 +216,7 @@ CAPTURE_MOUSE_GAIT_TARGETS := [?]string{"stop-spray", "scurry"}
 CAPTURE_PATIO_TARGETS := [?]string{"coastal", "courtyard", "evening"}
 CAPTURE_GARDEN_TARGETS := [?]string{"courtyard", "kitchen", "wild", "stone", "alternate"}
 CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
+    "<species>-sheet",
     "gallery",
     "climbing-garden",
     "succulent-garden",
@@ -245,6 +248,8 @@ CAPTURE_PLANT_GENERATOR_TARGETS := [?]string {
     "almond",
     "oleander",
     "bougainvillea",
+    "climber-interior-corner",
+    "climber-interior-corner-seed-<seed>",
     "rosemary",
     "stone-pine",
     "bay-laurel",
@@ -338,7 +343,16 @@ CAPTURE_WINDOW_GENERATOR_TARGETS := [?]string {
     "open",
 }
 CAPTURE_FOUNTAIN_GENERATOR_TARGETS := [?]string{"tiered", "bowl", "courtyard"}
-CAPTURE_BRIDGE_GENERATOR_TARGETS := [?]string{"dalmatian", "herzegovinian", "venetian", "rialto", "cycladic", "fortress", "timber", "iron"}
+CAPTURE_BRIDGE_GENERATOR_TARGETS := [?]string {
+    "dalmatian",
+    "herzegovinian",
+    "venetian",
+    "rialto",
+    "cycladic",
+    "fortress",
+    "timber",
+    "iron",
+}
 CAPTURE_CEMETERY_GENERATOR_TARGETS := [?]string {
     "mediterranean",
     "adriatic-medieval",

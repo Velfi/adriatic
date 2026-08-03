@@ -125,7 +125,9 @@ apparent_airflow_audio_spans_flight_speed_and_respects_tailwind_cancellation :: 
 
 @(test)
 wind_audio_update_accepts_clamped_apparent_strength :: proc(t: ^testing.T) {
-    runtime := wind_audio.Runtime{synth = wind_audio.new_synth(0x41505041)}
+    runtime := wind_audio.Runtime {
+        synth = wind_audio.new_synth(0x41505041),
+    }
     wind_audio.update(&runtime, 12, 0, direction = -.4, strength_override = .37)
     testing.expect(t, runtime.synth.target_strength == .37)
     testing.expect(t, runtime.synth.target_direction == -.4)

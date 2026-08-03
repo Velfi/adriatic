@@ -425,7 +425,7 @@ generate_cypress_spray :: proc(config: Config) -> Mesh {
             s := f32(side)
             root := [3]f32{s * shoot_half * .35, base_y - overlap, config.cup * .10 * envelope}
             shoulder := [3]f32{s * (outward * .68), base_y + blade_length * .16, config.cup * .34 * envelope}
-            tip := [3]f32{
+            tip := [3]f32 {
                 s * outward,
                 min(base_y + blade_length, length * 1.015),
                 config.cup * envelope + config.curl * t * .20,

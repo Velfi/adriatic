@@ -44,4 +44,3 @@ fixture_v0017_rejects_inconsistent_legacy_metadata :: proc(t: ^testing.T) {
     migration_error := fixture_v0017_validate_road_design(fixture)
     testing.expect_value(t, migration_error.kind, Fixture_Migration_Error_Kind.Invalid_Source)
 }
-

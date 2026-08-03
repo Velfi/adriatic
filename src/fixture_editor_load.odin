@@ -1,7 +1,5 @@
 package main
 
-import terrain "../packages/terrain"
-import canvas2d "zelda_engine:canvas2d"
 import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
 import flight "../packages/flight"
@@ -9,10 +7,12 @@ import game_input "../packages/game_input"
 import harbor "../packages/harbor"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"
+import tarot "../packages/tarot"
+import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"
-import tarot "../packages/tarot"
+import canvas2d "zelda_engine:canvas2d"
 
 Fixture_Editor_Load_Error_Kind :: enum {
     None,
@@ -578,7 +578,11 @@ fixture_editor_load_decoded :: proc(
     defer map_artifact_error_dispose(&map_error)
     if !map_applied {
         if map_artifact_error_is_allocation_failure(map_error) do return {kind = .Out_Of_Memory, path = "map_source"}, false
-        error = {kind = .Invalid_State, path = "map_source", map_error = map_error}
+        error = {
+            kind      = .Invalid_State,
+            path      = "map_source",
+            map_error = map_error,
+        }
         map_error = {}
         return error, false
     }

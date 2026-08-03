@@ -387,7 +387,14 @@ screen_pops_draw :: proc(system: ^Screen_Pop_System) {
             particle.scale,
             shadow,
         )
-        canvas2d.DrawTextEx(canvas2d.Font{}, cstring(&particle.text[0]), position, font_size, particle.scale, particle.color)
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            cstring(&particle.text[0]),
+            position,
+            font_size,
+            particle.scale,
+            particle.color,
+        )
     }
 }
 
@@ -597,7 +604,12 @@ screen_pops_lab_draw_controls :: proc(height: i32) {
         )
         canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width, 7}, 1, 4, {42, 59, 67, 255})
         normalized := screen_pops_lab_slider_value(index)
-        canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 4, bounds.width * normalized, 7}, 1, 4, {102, 186, 178, 255})
+        canvas2d.DrawRectangleRounded(
+            {bounds.x, bounds.y + 4, bounds.width * normalized, 7},
+            1,
+            4,
+            {102, 186, 178, 255},
+        )
         canvas2d.DrawCircleV({bounds.x + bounds.width * normalized, bounds.y + 7.5}, 7, {224, 239, 224, 255})
     }
 

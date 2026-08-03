@@ -145,7 +145,9 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     traits: Leaf_Traits
     switch species {
     case .Olive:
-        traits = {.Lanceolate, .12, .032, 0, .008, .003, 0}
+        // Olea europaea leaves reach about 7.5 cm; use the mature upper bound
+        // rather than a canopy-coverage surrogate.
+        traits = {.Lanceolate, .075, .020, 0, .006, .0025, 0}
     case .Italian_Cypress:
         // Represent overlapping scale-leaf sprays rather than individual
         // microscopic scales; the latter disappear at ordinary game-camera
@@ -165,7 +167,8 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
         // gaps through the crown.
         traits = {.Elliptic, .145, .062, .04, .011, .005, 0}
     case .Pomegranate:
-        traits = {.Lanceolate, .115, .040, 0, .008, .004, 0}
+        // Punica granatum leaves are typically 2.5-10 cm long.
+        traits = {.Lanceolate, .100, .034, 0, .007, .0035, 0}
     case .Almond:
         traits = {.Lanceolate, .15, .048, .08, .010, .004, 0}
     case .Oleander:
@@ -191,9 +194,11 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     case .Mastic:
         traits = {.Elliptic, .072, .031, 0, .007, .003, 0}
     case .Lavender:
-        traits = {.Lanceolate, .052, .014, 0, .008, .002, 0}
+        // English lavender leaves are about 1-2.5 cm long.
+        traits = {.Lanceolate, .025, .006, 0, .004, .0012, 0}
     case .Thyme:
-        traits = {.Ovate, .020, .009, 0, .003, .001, 0}
+        // Common thyme leaves are roughly 6-13 mm long.
+        traits = {.Ovate, .012, .005, 0, .002, .0007, 0}
     case .Sage:
         traits = {.Ovate, .105, .055, .12, .018, .012, 0}
     case .Prickly_Pear:
@@ -233,7 +238,7 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     case .Agave:
         traits = {.Lanceolate, .58, .115, .06, .040, .045, .038}
     case .Aloe:
-        traits = {.Lanceolate, .38, .072, .08, .055, .032, .030}
+        traits = {.Lanceolate, .44, .055, .10, .060, .028, .026}
     case .Aeonium:
         traits = {.Ovate, .22, .105, 0, .018, .020, .026}
     case .Echeveria:
@@ -241,9 +246,9 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     case .Jade_Plant:
         traits = {.Ovate, .105, .072, 0, .008, .022, .030}
     case .Stonecrop:
-        traits = {.Ovate, .040, .020, 0, .004, .010, .016}
+        traits = {.Ovate, .038, .024, 0, .007, .012, .018}
     case .Blue_Chalk_Sticks:
-        traits = {.Lanceolate, .19, .034, 0, .012, .014, .030}
+        traits = {.Lanceolate, .24, .045, 0, .016, .020, .036}
     case .Golden_Torch_Cactus:
         traits = {.Lanceolate, .78, .080, 0, .006, .040, .052}
     }
@@ -327,6 +332,36 @@ attachment_frame :: proc(
     return
 }
 
+on_left_return_wall :: proc(position: lsystem.Vec3, support: ^Support_Surface) -> bool {
+    return_plane_x := support != nil ? support.left_corner_x + support.plane_z : f32(0)
+    return support != nil &&
+        support.left_return_depth > 0 &&
+        position[2] > support.plane_z + .001 &&
+        math.abs(position[0] - return_plane_x) < .02
+}
+
+fold_source_attachment_frame :: proc(forward, up: ^lsystem.Vec3, position: lsystem.Vec3, support: ^Support_Surface) {
+    if !on_left_return_wall(position, support) do return
+    // Unwrapped negative x becomes positive z after folding around the left
+    // corner. Rotate the already-scaled front-wall frame by ninety degrees.
+    forward^ = linalg.normalize0(lsystem.Vec3{0, forward^[1], -forward^[0]})
+    if linalg.dot(forward^, forward^) < .001 do forward^ = {0, 1, 0}
+    up^ = {1, 0, 0}
+}
+
+routed_attachment_frame :: proc(direction, position: lsystem.Vec3, support: ^Support_Surface) -> (forward, up: lsystem.Vec3) {
+    if on_left_return_wall(position, support) {
+        forward = linalg.normalize0(lsystem.Vec3{0, direction[1], direction[2]})
+        if linalg.dot(forward, forward) < .001 do forward = {0, 1, 0}
+        up = {1, 0, 0}
+        return
+    }
+    forward = linalg.normalize0(lsystem.Vec3{direction[0], direction[1], 0})
+    if linalg.dot(forward, forward) < .001 do forward = {0, 1, 0}
+    up = {0, 0, 1}
+    return
+}
+
 update_leaf_bounds :: proc(bounds: ^Bounds, position, forward, up: lsystem.Vec3, traits: Leaf_Traits, first: ^bool) {
     right := linalg.normalize0(linalg.cross(forward, up))
     if linalg.dot(right, right) < .001 do right = {1, 0, 0}
@@ -353,6 +388,12 @@ route_point :: proc(
     height_fraction := clamp(point[1] / max(source_height, f32(.001)), f32(0), f32(1))
     root_x := clamp(support.root_x, -support.width * .46, support.width * .46)
     opposite_x := root_x <= 0 ? support.width * .42 : -support.width * .42
+    folded_left_wall :=
+        habit == .Wall_Trained &&
+        support.left_return_depth > 0 &&
+        support.left_corner_x < root_x
+    route_min_x := -support.width * .48
+    if folded_left_wall do route_min_x = support.left_corner_x - support.left_return_depth
     if habit == .Trellised && depth <= -20 {
         normalized_x := clamp(point[0] / max(source_half_width, f32(.001)), f32(-1), f32(1))
         if math.abs(root_x) > support.width * .20 {
@@ -368,7 +409,7 @@ route_point :: proc(
         } else {
             result[0] = root_x + normalized_x * support.width * .42
         }
-        result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+        result[0] = clamp(result[0], route_min_x, support.width * .48)
         result[1] = height_fraction * support.height * .92
         // Ties and wire hold grape canes slightly proud of the wall. Keeping
         // them exactly coplanar causes alternating spans to lose the depth
@@ -391,7 +432,7 @@ route_point :: proc(
             } else {
                 result[0] = exclusion.maximum_x + margin
             }
-            result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+            result[0] = clamp(result[0], route_min_x, support.width * .48)
         }
         return result
     }
@@ -408,22 +449,21 @@ route_point :: proc(
     branch_order := math.abs(lateral_fraction) * 3
     spread_envelope := .16 + height_fraction * .84
     lateral_spread := lateral_fraction * support.width * (.25 + branch_order * .055) * spread_envelope
-    // Real wall climbers do not train every shoot along one shared diagonal.
     // Keep the leader near its root with a slow searching meander, then let
     // lateral and secondary shoots use the source plant's two horizontal
-    // axes to fan across the available surface. A small directional drift
-    // still prevents a ruler-straight central cane without overpowering the
-    // generated forks.
+    // axes to fan across the available surface.
     leader_meander :=
         f32(math.sin(f64(height_fraction * math.PI * 2.35 + lateral_fraction * .71))) *
         support.width *
         (.035 + branch_order * .010) *
         spread_envelope
-    directional_drift := (opposite_x - root_x) * height_fraction * (.10 + min(branch_order, f32(1)) * .05)
-    result[0] = root_x + directional_drift + lateral_spread + leader_meander
+    // Wall-trained growth must not inherit a shared destination from the
+    // root's position. That global opposite-side drift overpowered negative
+    // lateral axes and bent every plant toward the same end of the wall.
+    result[0] = root_x + lateral_spread + leader_meander
     result[1] = height_fraction * support.height * .96
     result[2] = support.plane_z
-    result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+    result[0] = clamp(result[0], route_min_x, support.width * .48)
     if habit == .Trellised {
         // A trellised vine climbs freely to its first wire, then trains its
         // generated leader and branches along four horizontal tiers. Snapping
@@ -468,7 +508,7 @@ route_point :: proc(
                 result[1] = raw_y * .82 + wire_y * .18
             }
         }
-        result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+        result[0] = clamp(result[0], route_min_x, support.width * .48)
     }
     for exclusion in support.exclusions {
         exclusion_center := (exclusion.minimum_x + exclusion.maximum_x) * .5
@@ -477,6 +517,33 @@ route_point :: proc(
         // Planters and low plinths can raise a doorway exclusion slightly;
         // distinguish those from upper windows by relative wall height.
         ground_opening := exclusion.minimum_y <= support.height * .18
+        margin := f32(.12)
+        root_beneath_opening :=
+            !ground_opening &&
+            root_x >= exclusion.minimum_x - margin &&
+            root_x <= exclusion.maximum_x + margin
+        if habit == .Wall_Trained && root_beneath_opening && result[1] <= exclusion.maximum_y + clearance {
+            // Establish the fork below the sill instead of waiting until a
+            // cane is already level with the glass. By the first window each
+            // generated side has reached its own jamb, leaving two readable
+            // leaders from the root rather than one diagonal fan.
+            // Give the return wall a slight majority of the searching canes.
+            // Its foreshortened screen area needs more botanical occupancy
+            // than the broad front wall to read as a balanced corner plant.
+            route_left := lateral_fraction < .18
+            edge_spread := math.abs(lateral_fraction) * support.width * .10
+            target_x := route_left ? exclusion.minimum_x - margin - edge_spread : exclusion.maximum_x + margin + edge_spread
+            if route_left && folded_left_wall {
+                return_fraction := .28 + math.abs(lateral_fraction) * .48
+                target_x = support.left_corner_x - support.left_return_depth * return_fraction
+            }
+            approach_height := max(exclusion.minimum_y * .5, f32(.001))
+            approach := clamp(result[1] / approach_height, f32(0), f32(1))
+            approach = approach * approach * (3 - 2 * approach)
+            result[0] = linalg.lerp(result[0], target_x, approach)
+            result[0] = clamp(result[0], route_min_x, support.width * .48)
+            continue
+        }
         if habit == .Wall_Trained && ground_opening && height_fraction > release_fraction {
             // Train the connected canopy across the lintel while retaining
             // each shoot's authored lateral displacement. Remapping the rise
@@ -488,10 +555,19 @@ route_point :: proc(
                 f32(1),
             )
             canopy_progress = canopy_progress * canopy_progress * (3 - 2 * canopy_progress)
-            result[0] = root_x + (opposite_x - root_x) * canopy_progress * .94 + lateral_spread
+            // Once above the opening, let each cane's botanical lateral axis
+            // establish its own wall route. Driving almost all horizontal
+            // travel from height made every shoot climb the jamb first and
+            // arrive at the opposite side only along the roofline. A modest
+            // shared advance keeps the plant moving away from its root while
+            // the independent fan fills the lintel and wall face at several
+            // heights.
+            shared_advance := .16 + canopy_progress * .52
+            independent_fan := lateral_fraction * support.width * (.18 + canopy_progress * .10)
+            result[0] = root_x + (opposite_x - root_x) * shared_advance + independent_fan + lateral_spread * .42
             lintel_top := support.height * .96
             result[1] = exclusion.maximum_y + .02 + (lintel_top - exclusion.maximum_y - .02) * canopy_progress
-            result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+            result[0] = clamp(result[0], route_min_x, support.width * .48)
             continue
         }
         // Hold the routed side for enough vertical distance that a tessellated
@@ -503,7 +579,6 @@ route_point :: proc(
         if result[1] < exclusion.minimum_y || result[1] > exclusion.maximum_y + clearance {
             continue
         }
-        margin := f32(.12)
         // Keep the vine on the root side while it climbs past an opening.
         // Choosing the nearest edge independently allowed connected segment
         // endpoints to flip sides and draw a branch straight through a door.
@@ -513,7 +588,34 @@ route_point :: proc(
         } else {
             result[0] = max(result[0], exclusion.maximum_x + margin + edge_spread)
         }
-        result[0] = clamp(result[0], -support.width * .48, support.width * .48)
+        result[0] = clamp(result[0], route_min_x, support.width * .48)
+    }
+    // Multiple stacked openings may successively influence the same point.
+    // Enforce the final clearance after all routing passes so a later window's
+    // approach cannot pull a cane back through an earlier pane.
+    for exclusion in support.exclusions {
+        if result[0] < exclusion.minimum_x ||
+           result[0] > exclusion.maximum_x ||
+           result[1] < exclusion.minimum_y ||
+           result[1] > exclusion.maximum_y {
+            continue
+        }
+        margin := f32(.12)
+        exclusion_center := (exclusion.minimum_x + exclusion.maximum_x) * .5
+        root_beneath_opening :=
+            support.root_x >= exclusion.minimum_x - margin &&
+            support.root_x <= exclusion.maximum_x + margin
+        route_left := root_beneath_opening ? lateral_fraction < .18 : support.root_x <= exclusion_center
+        result[0] = route_left ? exclusion.minimum_x - margin : exclusion.maximum_x + margin
+        result[0] = clamp(result[0], route_min_x, support.width * .48)
+    }
+    if folded_left_wall && result[0] < support.left_corner_x {
+        distance_around_corner := min(support.left_corner_x - result[0], support.left_return_depth)
+        // Match the front wall's proud offset on the perpendicular plane.
+        // Landing directly on the masonry caused the wrapped canopy to lose
+        // the depth test and appear as a few intermittent marks at the seam.
+        result[0] = support.left_corner_x + support.plane_z
+        result[2] = support.plane_z + distance_around_corner
     }
     return result
 }

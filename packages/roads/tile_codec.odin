@@ -25,8 +25,11 @@ tile_valid :: proc(tile: ^Tile) -> bool {
     if tile == nil do return false
     node_ids := make(map[Node_Id]bool, context.temp_allocator)
     for node in tile.nodes {
-        if u64(node.id) == 0 || !tile_vec3_finite(node.position) || !tile_vec3_finite(node.up) ||
-           !tile_scalar_finite(node.junction_radius) || node.junction_radius < 0 {
+        if u64(node.id) == 0 ||
+           !tile_vec3_finite(node.position) ||
+           !tile_vec3_finite(node.up) ||
+           !tile_scalar_finite(node.junction_radius) ||
+           node.junction_radius < 0 {
             return false
         }
         if node_ids[node.id] do return false
@@ -36,11 +39,17 @@ tile_valid :: proc(tile: ^Tile) -> bool {
     span_ids := make(map[[2]u64]bool, context.temp_allocator)
     for span in tile.spans {
         if u64(span.route_id) == 0 ||
-           !tile_vec3_finite(span.curve.p0) || !tile_vec3_finite(span.curve.p1) ||
-           !tile_vec3_finite(span.curve.p2) || !tile_vec3_finite(span.curve.p3) ||
-           !tile_scalar_finite(span.half_width) || span.half_width <= 0 ||
-           !tile_scalar_finite(span.shoulder_width) || span.shoulder_width < 0 ||
-           !tile_scalar_finite(span.use_intensity) || span.use_intensity < 0 || span.use_intensity > 1 {
+           !tile_vec3_finite(span.curve.p0) ||
+           !tile_vec3_finite(span.curve.p1) ||
+           !tile_vec3_finite(span.curve.p2) ||
+           !tile_vec3_finite(span.curve.p3) ||
+           !tile_scalar_finite(span.half_width) ||
+           span.half_width <= 0 ||
+           !tile_scalar_finite(span.shoulder_width) ||
+           span.shoulder_width < 0 ||
+           !tile_scalar_finite(span.use_intensity) ||
+           span.use_intensity < 0 ||
+           span.use_intensity > 1 {
             return false
         }
         midpoint := spline_point(span.curve, .5)
@@ -52,24 +61,14 @@ tile_valid :: proc(tile: ^Tile) -> bool {
     return true
 }
 
-tile_encode :: proc(
-    tile: ^Tile,
-    alloc := context.allocator,
-) -> (data: []byte, error: hs.Portable_Error, ok: bool) {
+tile_encode :: proc(tile: ^Tile, alloc := context.allocator) -> (data: []byte, error: hs.Portable_Error, ok: bool) {
     if alloc.procedure == nil || !tile_valid(tile) {
         return nil, {kind = .Invalid_Argument, message = "road tile is invalid"}, false
     }
-    return hs.portable_encode(
-        any{data = rawptr(tile), id = typeid_of(Tile)},
-        tile_portable_config(),
-        alloc,
-    )
+    return hs.portable_encode(any{data = rawptr(tile), id = typeid_of(Tile)}, tile_portable_config(), alloc)
 }
 
-tile_decode :: proc(
-    data: []byte,
-    alloc := context.allocator,
-) -> (tile: ^Tile, error: hs.Portable_Error, ok: bool) {
+tile_decode :: proc(data: []byte, alloc := context.allocator) -> (tile: ^Tile, error: hs.Portable_Error, ok: bool) {
     if alloc.procedure == nil || len(data) == 0 || len(data) > ROAD_TILE_RECORD_MAX_BYTES {
         return nil, {kind = .Invalid_Argument, message = "road tile payload is invalid"}, false
     }

@@ -40,14 +40,14 @@ world_model_vertex_world :: #force_inline proc(
     // Model space uses +X right, +Y up, and -Z forward. Compose from the
     // named basis vectors directly so mixed pitch/roll cannot transpose the
     // frame through matrix storage-order assumptions.
-    return transform.origin +
+    return(
+        transform.origin +
         transform.right_basis * position.x +
         transform.up_basis * position.y -
-        transform.forward_basis * position.z
+        transform.forward_basis * position.z \
+    )
 }
 
 world_model_normal_world :: #force_inline proc(transform: World_Model_Transform, normal: [3]f32) -> third_person.Vec3 {
-    return transform.right_basis * normal.x +
-        transform.up_basis * normal.y -
-        transform.forward_basis * normal.z
+    return transform.right_basis * normal.x + transform.up_basis * normal.y - transform.forward_basis * normal.z
 }

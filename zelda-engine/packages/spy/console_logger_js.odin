@@ -166,7 +166,7 @@ format_logger_line_widget :: proc(
         )
     }
 
-    package_name := loc.package_name
+    package_name := source_package_name(loc)
     has_package := package_name != ""
     if has_package || has_scope_label {
         if has_package {
@@ -245,7 +245,7 @@ build_log_line :: proc(
 ) -> string {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     scope_label, message_text, has_scope_label := split_log_scope_metadata(text)
-    line_cap := len(message_text) + len(ident) + len(location.package_name) + len(location.file_path) + 128
+    line_cap := len(message_text) + len(ident) + len(source_package_name(location)) + len(location.file_path) + 128
     if line_cap < 256 {
         line_cap = 256
     }
@@ -275,7 +275,7 @@ console_logger_proc :: proc(
     prefix := strings.builder_make_len_cap(0, 64, context.temp_allocator)
     do_time_header(options, &prefix, time.now())
 
-    module_cap := len(loc.package_name) + len(scope_label) + 64
+    module_cap := len(source_package_name(loc)) + len(scope_label) + 64
     if module_cap < 128 {
         module_cap = 128
     }
@@ -305,7 +305,7 @@ console_logger_proc :: proc(
         prefix_len,
         module_ptr,
         module_len,
-        module_color_index(loc.package_name),
+        module_color_index(source_package_name(loc)),
         suffix_ptr,
         suffix_len,
         message_ptr,
@@ -418,7 +418,7 @@ do_module_header :: proc(
     scope_override: string,
     has_scope_override: bool,
 ) {
-    package_name := location.package_name
+    package_name := source_package_name(location)
     has_package := package_name != ""
     scope_count := 0
     if !has_scope_override {

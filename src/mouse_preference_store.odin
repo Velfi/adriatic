@@ -29,14 +29,14 @@ Mouse_Preference_Payload :: struct {
 }
 
 Mouse_Preference_Payload_V5 :: struct {
-    fur, pattern, headgear: u8,
-    scarf_enabled: bool,
-    scarf_color: [4]u8,
-    look_sensitivity, sound_fx_level: f32,
+    fur, pattern, headgear:                                      u8,
+    scarf_enabled:                                               bool,
+    scarf_color:                                                 [4]u8,
+    look_sensitivity, sound_fx_level:                            f32,
     invert_look_x, invert_look_y, invert_flight_pitch, show_hud: bool,
-    crunchiness, visual_style, dither_mode: u8,
-    hdr_exposure: bool,
-    theme_mode: u8,
+    crunchiness, visual_style, dither_mode:                      u8,
+    hdr_exposure:                                                bool,
+    theme_mode:                                                  u8,
 }
 
 Mouse_Preference_File_V4 :: struct {
@@ -47,8 +47,8 @@ Mouse_Preference_File_V4 :: struct {
 }
 
 Mouse_Preference_File_V5 :: struct {
-    header: Mouse_Preference_Header,
-    payload: Mouse_Preference_Payload_V5,
+    header:   Mouse_Preference_Header,
+    payload:  Mouse_Preference_Payload_V5,
     checksum: u64,
 }
 
@@ -339,7 +339,10 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         editor.mouse_headgear = Mouse_Accessory(payload.headgear)
         editor.mouse_scarf_enabled = payload.scarf_enabled
         editor.mouse_scarf_color = {
-            payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3],
+            payload.scarf_color[0],
+            payload.scarf_color[1],
+            payload.scarf_color[2],
+            payload.scarf_color[3],
         }
         editor.gameplay_options = {
             look_sensitivity    = payload.look_sensitivity,
@@ -383,21 +386,24 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         editor.mouse_headgear = Mouse_Accessory(payload.headgear)
         editor.mouse_scarf_enabled = payload.scarf_enabled
         editor.mouse_scarf_color = {
-            payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3],
+            payload.scarf_color[0],
+            payload.scarf_color[1],
+            payload.scarf_color[2],
+            payload.scarf_color[3],
         }
         editor.gameplay_options = {
-            look_sensitivity = payload.look_sensitivity,
-            sound_fx_level = payload.sound_fx_level,
-            invert_look_x = payload.invert_look_x,
-            invert_look_y = payload.invert_look_y,
+            look_sensitivity    = payload.look_sensitivity,
+            sound_fx_level      = payload.sound_fx_level,
+            invert_look_x       = payload.invert_look_x,
+            invert_look_y       = payload.invert_look_y,
             invert_flight_pitch = payload.invert_flight_pitch,
-            show_hud = payload.show_hud,
-            crunchiness = Crunchiness(payload.crunchiness),
-            visual_style = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
-            dither_mode = Dither_Mode(payload.dither_mode),
-            hdr_exposure = payload.hdr_exposure,
-            theme_mode = UI_Theme_Mode(payload.theme_mode),
-            anti_aliasing = .MSAA_4X,
+            show_hud            = payload.show_hud,
+            crunchiness         = Crunchiness(payload.crunchiness),
+            visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
+            dither_mode         = Dither_Mode(payload.dither_mode),
+            hdr_exposure        = payload.hdr_exposure,
+            theme_mode          = UI_Theme_Mode(payload.theme_mode),
+            anti_aliasing       = .MSAA_4X,
         }
         return true
     }
@@ -405,13 +411,19 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
        (cast(^Mouse_Preference_File_V5)raw_data(bytes)).header.version == 5 {
         file_data := cast(^Mouse_Preference_File_V5)raw_data(bytes)
         payload := &file_data.payload
-        if file_data.header.magic != MOUSE_PREFERENCE_MAGIC_V5 || file_data.header.version != 5 ||
+        if file_data.header.magic != MOUSE_PREFERENCE_MAGIC_V5 ||
+           file_data.header.version != 5 ||
            file_data.header.payload_size != u32(size_of(Mouse_Preference_Payload_V5)) ||
            file_data.checksum != mouse_preference_checksum_v5(payload) ||
-           int(payload.fur) >= CUSTOMIZATION_COLOR_COUNT || int(payload.pattern) >= CUSTOMIZATION_PATTERN_COUNT ||
-           int(payload.headgear) >= CUSTOMIZATION_HEADGEAR_COUNT || payload.look_sensitivity < .004 ||
-           payload.look_sensitivity > .024 || payload.sound_fx_level < 0 || payload.sound_fx_level > 1 ||
-           int(payload.crunchiness) > int(Crunchiness.Full) || int(payload.visual_style) > 2 ||
+           int(payload.fur) >= CUSTOMIZATION_COLOR_COUNT ||
+           int(payload.pattern) >= CUSTOMIZATION_PATTERN_COUNT ||
+           int(payload.headgear) >= CUSTOMIZATION_HEADGEAR_COUNT ||
+           payload.look_sensitivity < .004 ||
+           payload.look_sensitivity > .024 ||
+           payload.sound_fx_level < 0 ||
+           payload.sound_fx_level > 1 ||
+           int(payload.crunchiness) > int(Crunchiness.Full) ||
+           int(payload.visual_style) > 2 ||
            int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
            (Visual_Style(payload.visual_style) == .Dither && payload.dither_mode == u8(Dither_Mode.Off)) ||
            int(payload.theme_mode) > int(UI_Theme_Mode.Dark) {
@@ -421,15 +433,25 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         editor.mouse_pattern = Mouse_Fur_Pattern(payload.pattern)
         editor.mouse_headgear = Mouse_Accessory(payload.headgear)
         editor.mouse_scarf_enabled = payload.scarf_enabled
-        editor.mouse_scarf_color = {payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3]}
+        editor.mouse_scarf_color = {
+            payload.scarf_color[0],
+            payload.scarf_color[1],
+            payload.scarf_color[2],
+            payload.scarf_color[3],
+        }
         editor.gameplay_options = {
-            look_sensitivity = payload.look_sensitivity, sound_fx_level = payload.sound_fx_level,
-            invert_look_x = payload.invert_look_x, invert_look_y = payload.invert_look_y,
-            invert_flight_pitch = payload.invert_flight_pitch, show_hud = payload.show_hud,
-            crunchiness = Crunchiness(payload.crunchiness),
-            visual_style = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
-            dither_mode = Dither_Mode(payload.dither_mode), hdr_exposure = payload.hdr_exposure,
-            theme_mode = UI_Theme_Mode(payload.theme_mode), anti_aliasing = .MSAA_4X,
+            look_sensitivity    = payload.look_sensitivity,
+            sound_fx_level      = payload.sound_fx_level,
+            invert_look_x       = payload.invert_look_x,
+            invert_look_y       = payload.invert_look_y,
+            invert_flight_pitch = payload.invert_flight_pitch,
+            show_hud            = payload.show_hud,
+            crunchiness         = Crunchiness(payload.crunchiness),
+            visual_style        = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
+            dither_mode         = Dither_Mode(payload.dither_mode),
+            hdr_exposure        = payload.hdr_exposure,
+            theme_mode          = UI_Theme_Mode(payload.theme_mode),
+            anti_aliasing       = .MSAA_4X,
         }
         return true
     }
@@ -448,13 +470,11 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
        payload.sound_fx_level < 0 ||
        payload.sound_fx_level > 1 ||
        int(payload.crunchiness) > int(Crunchiness.Full) ||
-       // Value 2 was the removed Painterly style. Accept it for backward
-       // compatibility and restore it as Standard below.
        int(payload.visual_style) > 2 ||
        int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
        (Visual_Style(payload.visual_style) == .Dither && payload.dither_mode == u8(Dither_Mode.Off)) ||
        int(payload.theme_mode) > int(UI_Theme_Mode.Dark) ||
-       int(payload.anti_aliasing) > int(Anti_Aliasing.MSAA_4X) {
+       int(payload.anti_aliasing) > int(Anti_Aliasing.MSAA_4X) {     // Value 2 was the removed Painterly style. Accept it for backward// compatibility and restore it as Standard below.
         return false
     }
     editor.mouse_fur = Mouse_Fur(payload.fur)

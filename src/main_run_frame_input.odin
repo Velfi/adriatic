@@ -213,8 +213,14 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                 if !control_key_down() && canvas2d.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
             }
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
-            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.S) do map_editor_save(editor)
-            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.O) do map_editor_load(editor)
+            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.S) {
+                if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
+                map_editor_save(editor)
+            }
+            if !imgui_captures_keyboard() && control_key_down() && canvas2d.IsKeyPressed(.O) {
+                if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
+                map_editor_load(editor)
+            }
             if !imgui_captures_keyboard() &&
                editor.tool != .Structure &&
                control_key_down() &&
@@ -375,8 +381,24 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             editor.cursor_material = cursor_material
         }
     }
-    note_placement_consumes_input := fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
-    if !note_placement_consumes_input {
+    teleport_consumes_input := false
+    if editor.tweak_teleport_on_click {
+        // While armed, this one-shot tool owns world clicks so an authoring
+        // brush cannot also modify the destination terrain.
+        teleport_consumes_input = true
+        if canvas2d.IsKeyPressed(.ESCAPE) || canvas2d.IsMouseButtonPressed(.RIGHT) {
+            editor.tweak_teleport_on_click = false
+        } else if cursor_hit && !ui_hit && !imgui_captures_mouse() && canvas2d.IsMouseButtonPressed(.LEFT) {
+            ground_y := terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
+            player_place(editor, {world_x, ground_y, world_z}, .Teleport, editor.player.facing_yaw_radians)
+            editor.tweak_teleport_on_click = false
+        }
+    }
+    note_placement_consumes_input :=
+        teleport_consumes_input || fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
+    terrain_sculpt_consumes_input :=
+        teleport_consumes_input || terrain_sculpt_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+    if !teleport_consumes_input && !note_placement_consumes_input && !terrain_sculpt_consumes_input {
         architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         airport_stamp_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)

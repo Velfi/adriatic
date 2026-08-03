@@ -16,12 +16,12 @@ fixture_migration_v0014_to_v0015_preserves_wing_trails_and_widens_capacity :: pr
     historical.wing_trails.particles[1] = {
         position = {1, 2, 3},
         velocity = {4, 5, 6},
-        life = .4,
+        life     = .4,
         max_life = .8,
-        size = .03,
-        seed = 91,
-        side = 1,
-        curve = -.2,
+        size     = .03,
+        seed     = 91,
+        side     = 1,
+        curve    = -.2,
     }
     tentative.wing_trails.count = historical.wing_trails.count
     tentative.wing_trails.spawn = historical.wing_trails.spawn
@@ -36,4 +36,3 @@ fixture_migration_v0014_to_v0015_preserves_wing_trails_and_widens_capacity :: pr
     testing.expect(t, tentative.wing_trails.particles[1].side == 1)
     testing.expect(t, tentative.wing_trails.particles[192].life == 0)
 }
-

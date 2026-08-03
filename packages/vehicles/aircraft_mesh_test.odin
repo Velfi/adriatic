@@ -16,10 +16,7 @@ aircraft_mesh_uv_assignment_is_complete :: proc(t: ^testing.T, mesh: ^$Mesh) {
             testing.expect(t, vertex.uv[0] >= 0 && vertex.uv[0] <= 1)
             testing.expect(t, vertex.uv[1] >= 0 && vertex.uv[1] <= 1)
         }
-        uv_area := abs(
-            (b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) -
-            (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]),
-        )
+        uv_area := abs((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]))
         testing.expect(t, uv_area > 0)
     }
 }

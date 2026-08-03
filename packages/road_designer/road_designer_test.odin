@@ -130,12 +130,31 @@ hard_horizontal_violations_are_not_feasible :: proc(t: ^testing.T) {
 nondominated_sort_assigns_fronts_and_crowding :: proc(t: ^testing.T) {
     candidates: [4]Design_Candidate
     for &item in candidates do item.feasibility = .Feasible
-    candidates[0].metrics = {construction = 1, travel = 4, impact = 4}
-    candidates[1].metrics = {construction = 4, travel = 1, impact = 4}
-    candidates[2].metrics = {construction = 4, travel = 4, impact = 1}
-    candidates[3].metrics = {construction = 5, travel = 5, impact = 5}
+    candidates[0].metrics = {
+        construction = 1,
+        travel       = 4,
+        impact       = 4,
+    }
+    candidates[1].metrics = {
+        construction = 4,
+        travel       = 1,
+        impact       = 4,
+    }
+    candidates[2].metrics = {
+        construction = 4,
+        travel       = 4,
+        impact       = 1,
+    }
+    candidates[3].metrics = {
+        construction = 5,
+        travel       = 5,
+        impact       = 5,
+    }
     assign_fronts_and_crowding(candidates[:])
-    testing.expect(t, candidates[0].pareto_rank == 0 && candidates[1].pareto_rank == 0 && candidates[2].pareto_rank == 0)
+    testing.expect(
+        t,
+        candidates[0].pareto_rank == 0 && candidates[1].pareto_rank == 0 && candidates[2].pareto_rank == 0,
+    )
     testing.expect_value(t, candidates[3].pareto_rank, 1)
     testing.expect(t, candidates[0].crowding > 0 && candidates[1].crowding > 0 && candidates[2].crowding > 0)
 }
@@ -153,7 +172,11 @@ materialization_splits_at_structure_boundaries :: proc(t: ^testing.T) {
     candidate.centerline[2] = {100, 5, 0}
     candidate.stations[0], candidate.stations[1], candidate.stations[2] = 0, 50, 100
     candidate.structure_count = 1
-    candidate.structures[0] = {kind = .Bridge, station_from = 40, station_to = 60}
+    candidate.structures[0] = {
+        kind         = .Bridge,
+        station_from = 40,
+        station_to   = 60,
+    }
     graph: roads.Graph
     from := roads.add_node(&graph, candidate.centerline[0])
     to := roads.add_node(&graph, candidate.centerline[2])

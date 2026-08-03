@@ -77,6 +77,7 @@ Run_State :: struct {
     instrument_started_at:                                                                   f64,
     turntable_frame_index, turntable_capture_stride:                                         int,
     turntable_last_capture_frame, sequence_frame_index, sequence_last_capture_frame:         int,
+    seed_frame_index, seed_last_capture_frame:                                               int,
     reload_requested:                                                                        bool,
     frame:                                                                                   int,
 }

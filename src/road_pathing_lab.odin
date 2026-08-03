@@ -325,7 +325,11 @@ world_road_pathing_lab :: proc(editor: ^Editor) {
             previous_point.z,
         }
         for point in route.result.points[1:route.result.point_count] {
-            current := roads.Vec3{point.x, terrain.sample_surface_height(&editor.project, 0, point.x, point.z), point.z}
+            current := roads.Vec3 {
+                point.x,
+                terrain.sample_surface_height(&editor.project, 0, point.x, point.z),
+                point.z,
+            }
             world_road_editor_link(previous, current, widths[route.scale], colors[route.scale])
             previous = current
         }

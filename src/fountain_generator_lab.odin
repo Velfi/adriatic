@@ -123,7 +123,14 @@ fountain_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         fountain_lab_height,
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "A / D seed     S style     LEFT / RIGHT radius", {38, 104}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "A / D seed     S style     LEFT / RIGHT radius",
+        {38, 104},
+        13,
+        1,
+        {171, 201, 207, 255},
+    )
     canvas2d.DrawTextEx(canvas2d.Font{}, "UP / DOWN jets     1 / 2 jet height", {38, 128}, 13, 1, {171, 201, 207, 255})
     plan := fountains.generate(
         fountain_lab_seed,

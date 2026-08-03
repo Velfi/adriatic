@@ -92,13 +92,15 @@ Rect :: struct {
 }
 
 Support_Surface :: struct {
-    width:      f32,
-    height:     f32,
-    plane_z:    f32,
-    root_x:     f32,
-    planter:    bool,
-    exclusions: []Rect,
-    signature:  u64,
+    width:             f32,
+    height:            f32,
+    plane_z:           f32,
+    root_x:            f32,
+    left_corner_x:     f32,
+    left_return_depth: f32,
+    planter:           bool,
+    exclusions:        []Rect,
+    signature:         u64,
 }
 
 Generate_Config :: struct {

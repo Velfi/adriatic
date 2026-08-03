@@ -338,7 +338,8 @@ mouse_wheel_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     }
 
     wheel_speed_at_mouse := mouse_wheel_angular_velocity * MOUSE_WHEEL_MOUSE_RADIUS
-    speed_color := abs(mouse_wheel_mouse_speed) > .05 ? canvas2d.Color{143, 224, 164, 255} : canvas2d.Color{171, 185, 184, 255}
+    speed_color :=
+        abs(mouse_wheel_mouse_speed) > .05 ? canvas2d.Color{143, 224, 164, 255} : canvas2d.Color{171, 185, 184, 255}
     canvas2d.DrawTextEx(
         canvas2d.Font{},
         fmt.ctprintf(

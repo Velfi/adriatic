@@ -11,30 +11,27 @@ import canvas2d "zelda_engine:canvas2d"
 // contain no fixture-owned references: placement, farmland, and rendering can
 // reconstruct the same bounded geometry from the committed farmstead.
 Farm_Compound :: struct {
-    region:                                      Settlement_Region,
-    host_id:                                     u64,
-    host_footprint:                              architecture.Architecture_Footprint,
-    center, envelope_center:                     [2]f32,
-    rotation:                                    f32,
-    envelope_width, envelope_depth:              f32,
-    yard_center:                                 [2]f32,
-    yard_width, yard_depth:                      f32,
-    threshing_center:                            [2]f32,
-    threshing_radius:                            f32,
-    field_gate, field_anchor:                    [2]f32,
-    field_yaw:                                   f32,
-    field_scale_x, field_scale_z:                f32,
-    utility_center:                              [2]f32,
-    shelter_center:                              [2]f32,
-    has_thresher, has_shelter, has_lean_to:      bool,
+    region:                                 Settlement_Region,
+    host_id:                                u64,
+    host_footprint:                         architecture.Architecture_Footprint,
+    center, envelope_center:                [2]f32,
+    rotation:                               f32,
+    envelope_width, envelope_depth:         f32,
+    yard_center:                            [2]f32,
+    yard_width, yard_depth:                 f32,
+    threshing_center:                       [2]f32,
+    threshing_radius:                       f32,
+    field_gate, field_anchor:               [2]f32,
+    field_yaw:                              f32,
+    field_scale_x, field_scale_z:           f32,
+    utility_center:                         [2]f32,
+    shelter_center:                         [2]f32,
+    has_thresher, has_shelter, has_lean_to: bool,
 }
 
 farm_compound_local_point :: #force_inline proc(compound: Farm_Compound, x, z: f32) -> [2]f32 {
     cosine, sine := f32(math.cos(f64(compound.rotation))), f32(math.sin(f64(compound.rotation)))
-    return {
-        compound.center[0] + x * cosine - z * sine,
-        compound.center[1] + x * sine + z * cosine,
-    }
+    return {compound.center[0] + x * cosine - z * sine, compound.center[1] + x * sine + z * cosine}
 }
 
 farm_compound_derive :: proc(
@@ -108,8 +105,11 @@ farm_compound_contains_point :: #force_inline proc(compound: Farm_Compound, x, z
     // work yard and field gate live, while retaining a small front margin.
     front := max(f32(2), compound.envelope_depth * .16)
     rear := compound.envelope_depth - front
-    return math.abs(local_x) <= compound.envelope_width * .5 + margin &&
-           local_z <= front + margin && local_z >= -rear - margin
+    return(
+        math.abs(local_x) <= compound.envelope_width * .5 + margin &&
+        local_z <= front + margin &&
+        local_z >= -rear - margin \
+    )
 }
 
 farm_compound_host_for_barn :: proc(
@@ -180,9 +180,16 @@ farm_compound_structure_clear :: proc(
         compound := farm_compound_derive(region, structure, project)
         if allowed_host != nil && compound.center == allowed_host.center do continue
         if !settlement_oriented_rectangles_clear(
-            x, z, width, depth, rotation,
-            compound.envelope_center[0], compound.envelope_center[1],
-            compound.envelope_width, compound.envelope_depth, compound.rotation,
+            x,
+            z,
+            width,
+            depth,
+            rotation,
+            compound.envelope_center[0],
+            compound.envelope_center[1],
+            compound.envelope_width,
+            compound.envelope_depth,
+            compound.rotation,
             .45,
         ) {
             return false
@@ -235,7 +242,8 @@ world_farm_compound_wall :: proc(editor: ^Editor, compound: Farm_Compound, ax, a
 
 world_farm_compound_shelter :: proc(editor: ^Editor, compound: Farm_Compound) {
     point := compound.shelter_center
-    if !compound.has_shelter || !farm_compound_feature_on_land(&editor.project, point, 2.2) ||
+    if !compound.has_shelter ||
+       !farm_compound_feature_on_land(&editor.project, point, 2.2) ||
        !farm_compound_feature_clear(editor, compound, point, 2.4) {
         return
     }
@@ -282,7 +290,8 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
         world_farm_compound_wall(editor, compound, -half_width, -half_depth, -gate_half, -half_depth)
         world_farm_compound_wall(editor, compound, gate_half, -half_depth, half_width, -half_depth)
     }
-    if compound.has_thresher && farm_compound_feature_on_land(&editor.project, compound.threshing_center, compound.threshing_radius) {
+    if compound.has_thresher &&
+       farm_compound_feature_on_land(&editor.project, compound.threshing_center, compound.threshing_radius) {
         point := compound.threshing_center
         y := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
         world_ellipse_material_uv(
@@ -319,11 +328,28 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
             if farm_compound_feature_on_land(&editor.project, oven, 1.0) &&
                farm_compound_feature_clear(editor, compound, oven, 1.2) {
                 oven_y := terrain.sample_surface_height(&editor.project, 0, oven[0], oven[1])
-                world_box_rotated({oven[0], oven_y + .62, oven[1]}, {1.7, 1.24, 1.55}, compound.rotation, {190, 186, 169, 255})
-                world_ellipse_material_uv({oven[0], oven_y + 1.24, oven[1]}, .86, .78, compound.rotation, {205, 201, 184, 255}, .BRDF)
+                world_box_rotated(
+                    {oven[0], oven_y + .62, oven[1]},
+                    {1.7, 1.24, 1.55},
+                    compound.rotation,
+                    {190, 186, 169, 255},
+                )
+                world_ellipse_material_uv(
+                    {oven[0], oven_y + 1.24, oven[1]},
+                    .86,
+                    .78,
+                    compound.rotation,
+                    {205, 201, 184, 255},
+                    .BRDF,
+                )
             }
         } else {
-            world_box_rotated({utility[0], y + .34, utility[1]}, {2.4, .68, .72}, compound.rotation, {151, 142, 122, 255})
+            world_box_rotated(
+                {utility[0], y + .34, utility[1]},
+                {2.4, .68, .72},
+                compound.rotation,
+                {151, 142, 122, 255},
+            )
         }
     }
     if compound.has_lean_to {

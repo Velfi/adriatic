@@ -220,7 +220,10 @@ generate_cluster :: proc(config: Cluster_Config) -> Cluster {
     tau := f32(2 * math.PI)
 
     if config.form == .Single {
-        result.instances[0] = {normal = {0, 0, 1}, scale = base_scale}
+        result.instances[0] = {
+            normal = {0, 0, 1},
+            scale  = base_scale,
+        }
         result.count = 1
         return result
     }
@@ -233,9 +236,9 @@ generate_cluster :: proc(config: Cluster_Config) -> Cluster {
             if index == 0 {
                 result.instances[index] = {
                     position = {0, 0, height},
-                    normal = {0, 0, 1},
+                    normal   = {0, 0, 1},
                     rotation = angle - math.floor(angle / tau) * tau,
-                    scale = instance_scale,
+                    scale    = instance_scale,
                 }
                 continue
             }
@@ -243,12 +246,18 @@ generate_cluster :: proc(config: Cluster_Config) -> Cluster {
             ring := radius * math.sqrt(t)
             normalized_ring := radius > 1e-6 ? clamp(ring / radius, f32(0), f32(1)) : f32(0)
             z := height * math.sqrt(max(1 - normalized_ring * normalized_ring, f32(0)))
-            normal := normalize3({math.cos(angle) * normalized_ring, math.sin(angle) * normalized_ring, max(z / max(height, f32(.001)), f32(.12))})
+            normal := normalize3(
+                {
+                    math.cos(angle) * normalized_ring,
+                    math.sin(angle) * normalized_ring,
+                    max(z / max(height, f32(.001)), f32(.12)),
+                },
+            )
             result.instances[index] = {
                 position = {math.cos(angle) * ring, math.sin(angle) * ring, z},
-                normal = normal,
+                normal   = normal,
                 rotation = angle - math.floor(angle / tau) * tau,
-                scale = instance_scale,
+                scale    = instance_scale,
             }
         } else {
             t := (f32(index) + .5) / f32(result.count)
@@ -268,9 +277,9 @@ generate_cluster :: proc(config: Cluster_Config) -> Cluster {
             )
             result.instances[index] = {
                 position = {sphere_normal[0] * radius, sphere_normal[1] * radius, sphere_normal[2] * height},
-                normal = surface_normal,
+                normal   = surface_normal,
                 rotation = angle - math.floor(angle / tau) * tau,
-                scale = instance_scale,
+                scale    = instance_scale,
             }
         }
     }

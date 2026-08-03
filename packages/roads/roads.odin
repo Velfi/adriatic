@@ -21,25 +21,25 @@ Node :: struct {
 }
 
 Edge :: struct {
-    from, to:                 int,
-    control_from, control_to: Vec3,
-    half_width:               f32,
-    shoulder_width:           f32,
-    pavement:                 Pavement,
+    from, to:                               int,
+    control_from, control_to:               Vec3,
+    half_width:                             f32,
+    shoulder_width:                         f32,
+    pavement:                               Pavement,
     // Normalized circulation intensity. One is a maintained, frequently used
     // road; zero is neglected enough for vegetation to reclaim its joints.
-    use_intensity:            f32,
+    use_intensity:                          f32,
     // Zero identifies legacy/manual geometry. Non-zero IDs group the
     // contiguous elements produced by one engineered road-design commit.
-    design_id:                u32,
-    alignment_kind:           Alignment_Element_Kind,
-    station_from, station_to: f32,
-    curvature_from, curvature_to: f32,
+    design_id:                              u32,
+    alignment_kind:                         Alignment_Element_Kind,
+    station_from, station_to:               f32,
+    curvature_from, curvature_to:           f32,
     superelevation_from, superelevation_to: f32,
-    structure_kind:           Structure_Span_Kind,
-    engineering_designed:     bool,
-    policy_pavement:          Pavement,
-    authored_profile:         bool,
+    structure_kind:                         Structure_Span_Kind,
+    engineering_designed:                   bool,
+    policy_pavement:                        Pavement,
+    authored_profile:                       bool,
 }
 
 Alignment_Element_Kind :: enum u8 {
@@ -305,13 +305,24 @@ split_edge :: proc(graph: ^Graph, edge_index: int, amount: f32, junction_radius:
 }
 
 can_add :: #force_inline proc(graph: ^Graph, nodes, edges: int) -> bool {
-    return graph != nil && nodes >= 0 && edges >= 0 &&
-        graph.node_count + nodes <= MAX_NODES && graph.edge_count + edges <= MAX_EDGES
+    return(
+        graph != nil &&
+        nodes >= 0 &&
+        edges >= 0 &&
+        graph.node_count + nodes <= MAX_NODES &&
+        graph.edge_count + edges <= MAX_EDGES \
+    )
 }
 
 can_split_edge :: #force_inline proc(graph: ^Graph, edge_index: int, amount: f32) -> bool {
-    return graph != nil && edge_index >= 0 && edge_index < graph.edge_count &&
-        amount > .0001 && amount < .9999 && can_add(graph, 1, 1)
+    return(
+        graph != nil &&
+        edge_index >= 0 &&
+        edge_index < graph.edge_count &&
+        amount > .0001 &&
+        amount < .9999 &&
+        can_add(graph, 1, 1) \
+    )
 }
 
 pavement_name :: proc(pavement: Pavement) -> string {
@@ -411,7 +422,10 @@ edge_between :: proc(graph: ^Graph, a, b: int) -> int {
 // coarse pass finds the relevant basin and a bounded ternary refinement keeps
 // the query deterministic without allocating or depending on mesh density.
 nearest_edge_point :: proc(graph: ^Graph, point: Vec3, samples: int = 24) -> Nearest_Edge_Point {
-    result := Nearest_Edge_Point{edge_index = -1, distance_squared = f32(1e30)}
+    result := Nearest_Edge_Point {
+        edge_index       = -1,
+        distance_squared = f32(1e30),
+    }
     if graph == nil || graph.edge_count <= 0 do return result
     sample_count := clamp(samples, 4, 96)
     for edge, edge_index in graph.edges[:graph.edge_count] {
@@ -820,7 +834,13 @@ edge_trim_range :: proc(graph: ^Graph, edge: Edge) -> (f32, f32) {
     return from_trim, 1 - to_trim
 }
 
-bake_edge :: proc(mesh: ^Mesh, graph: ^Graph, edge: Edge, edge_index: int, settings: Bake_Settings) -> Edge_Boundaries {
+bake_edge :: proc(
+    mesh: ^Mesh,
+    graph: ^Graph,
+    edge: Edge,
+    edge_index: int,
+    settings: Bake_Settings,
+) -> Edge_Boundaries {
     boundaries: Edge_Boundaries
     segment_count := edge_segment_count(graph, edge, settings)
     start_t, end_t := edge_trim_range(graph, edge)

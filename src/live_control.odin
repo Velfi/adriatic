@@ -10,6 +10,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import sdl "vendor:sdl3"
+import canvas2d "zelda_engine:canvas2d"
 
 LIVE_CONTROL_REQUEST_ENV :: "ADRIATIC_LIVE_CONTROL_REQUEST"
 LIVE_CONTROL_RESPONSE_ENV :: "ADRIATIC_LIVE_CONTROL_RESPONSE"
@@ -235,7 +236,9 @@ live_control_terrain_brush_response :: proc(editor: ^Editor, request_id: string)
     case .Foliage:
         if editor.plant_stamp_mode == .Climbing {
             radius, strength, hardness =
-                editor.climbing_leaf_brush_radius, editor.climbing_leaf_brush_strength, editor.climbing_leaf_brush_hardness
+                editor.climbing_leaf_brush_radius,
+                editor.climbing_leaf_brush_strength,
+                editor.climbing_leaf_brush_hardness
             mode = "climbing"
         } else {
             radius, strength, hardness =
@@ -304,6 +307,142 @@ live_control_audio_status_response :: proc(editor: ^Editor, request_id: string) 
     )
 }
 
+live_control_gameplay_state_response :: proc(editor: ^Editor, request_id: string) -> string {
+    if editor == nil {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"editor is unavailable"}}`, request_id)
+    }
+    contacts := strings.builder_make(context.temp_allocator)
+    contact_count := 0
+    for wheel, index in editor.car_wheels {
+        if wheel.contact do contact_count += 1
+        if index > 0 do strings.write_byte(&contacts, ',')
+        fmt.sbprintf(
+            &contacts,
+            `{{"index":%d,"contact":%v,"position":[%.4f,%.4f,%.4f],"suspension":%.4f,"rotation":%.4f}}`,
+            index,
+            wheel.contact,
+            wheel.position[0],
+            wheel.position[1],
+            wheel.position[2],
+            wheel.suspension,
+            wheel.rotation,
+        )
+    }
+    active_vehicle := "none"
+    if driving_car(editor) {
+        active_vehicle = "car"
+    } else if driving_aircraft(editor) {
+        active_vehicle = "aircraft"
+    }
+    remaining := max(live_vehicle_control.expires_at - canvas2d.GetTime(), f64(0))
+    car_terrain_height := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        editor.car.position.x,
+        editor.car.position.z,
+    )
+    return fmt.aprintf(
+        `{{"ok":true,"id":"%s","in_map":%v,"paused":%v,"active_lab":"%s","pilot":{{"mode":"%v","vehicle":"%s","position":[%.4f,%.4f,%.4f]}},"player":{{"position":[%.4f,%.4f,%.4f],"velocity":[%.4f,%.4f,%.4f],"grounded":%v}},"car":{{"position":[%.4f,%.4f,%.4f],"terrain_height":%.4f,"yaw":%.4f,"velocity":[%.4f,%.4f,%.4f],"speed":%.4f,"wheel_speed":%.4f,"physics_vehicle":%v,"contacts":%d,"wheels":[%s],"tuning":{{"acceleration":%.4f,"reverse_acceleration":%.4f,"brake":%.4f,"max_forward":%.4f,"max_reverse":%.4f}},"mcp_control":{{"active":%v,"throttle":%.4f,"steering":%.4f,"handbrake":%v,"remaining":%.4f}}}}}}`,
+        request_id,
+        editor.in_map,
+        pause_menu_is_open(editor),
+        editor.active_lab_scene,
+        editor.pilot.mode,
+        active_vehicle,
+        editor.pilot.position.x,
+        editor.pilot.position.y,
+        editor.pilot.position.z,
+        editor.player.position.x,
+        editor.player.position.y,
+        editor.player.position.z,
+        editor.player.velocity.x,
+        editor.player.velocity.y,
+        editor.player.velocity.z,
+        editor.player.grounded,
+        editor.car.position.x,
+        editor.car.position.y,
+        editor.car.position.z,
+        car_terrain_height,
+        editor.car.yaw_radians,
+        editor.car_drive.velocity.x,
+        editor.car_drive.velocity.y,
+        editor.car_drive.velocity.z,
+        vehicles.car_drive_speed(editor.car_drive),
+        editor.car_drive.wheel_speed,
+        editor.car_physics_vehicle != nil,
+        contact_count,
+        strings.to_string(contacts),
+        editor.tweak.car.acceleration,
+        editor.tweak.car.reverse_acceleration,
+        editor.tweak.car.brake,
+        editor.tweak.car.max_forward,
+        editor.tweak.car.max_reverse,
+        live_vehicle_control.active && remaining > 0,
+        live_vehicle_control.throttle,
+        live_vehicle_control.steering,
+        live_vehicle_control.handbrake,
+        remaining,
+    )
+}
+
+live_control_vehicle_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
+    fields := strings.split(arguments, "\t", context.temp_allocator)
+    if len(fields) != 6 || fields[0] != "car" {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"expected car control request"}}`, request_id)
+    }
+    action := fields[1]
+    if action == "release" {
+        live_vehicle_control = {}
+    } else if action == "enter" {
+        if !editor.in_map {
+            return fmt.aprintf(`{{"ok":false,"id":"%s","error":"gameplay is not active"}}`, request_id)
+        }
+        if !driving_car(editor) {
+            player_place(editor, editor.car.position, .Scene_Setup, editor.car.yaw_radians, false)
+            _, entered := vehicles.try_enter_nearest(&editor.pilot, []^vehicles.Vehicle{&editor.car})
+            if !entered {
+                return fmt.aprintf(`{{"ok":false,"id":"%s","error":"player could not enter car"}}`, request_id)
+            }
+        }
+    } else if action == "exit" {
+        live_vehicle_control = {}
+        if !driving_car(editor) || !vehicles.try_exit(&editor.pilot, true) {
+            return fmt.aprintf(`{{"ok":false,"id":"%s","error":"player is not driving car"}}`, request_id)
+        }
+        player_place(editor, editor.pilot.position, .Vehicle_Exit, editor.pilot.facing_yaw_radians)
+    } else if action == "drive" {
+        if !driving_car(editor) {
+            return fmt.aprintf(`{{"ok":false,"id":"%s","error":"player is not driving car"}}`, request_id)
+        }
+        throttle, throttle_ok := strconv.parse_f32(fields[2])
+        steering, steering_ok := strconv.parse_f32(fields[3])
+        duration, duration_ok := strconv.parse_f64(fields[5])
+        handbrake := fields[4] == "true"
+        if !throttle_ok ||
+           !steering_ok ||
+           !duration_ok ||
+           throttle < -1 ||
+           throttle > 1 ||
+           steering < -1 ||
+           steering > 1 ||
+           duration < .05 ||
+           duration > 30 ||
+           (fields[4] != "true" && fields[4] != "false") {
+            return fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid vehicle control values"}}`, request_id)
+        }
+        live_vehicle_control = {
+            active     = true,
+            throttle   = throttle,
+            steering   = steering,
+            handbrake  = handbrake,
+            expires_at = canvas2d.GetTime() + duration,
+        }
+    } else {
+        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"unknown vehicle action"}}`, request_id)
+    }
+    return live_control_gameplay_state_response(editor, request_id)
+}
+
 live_control_emote_start_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
     fields := strings.split(arguments, "\t", context.temp_allocator)
     if len(fields) != 7 {
@@ -325,20 +464,25 @@ live_control_emote_start_response :: proc(editor: ^Editor, request_id, arguments
         y, y_ok := strconv.parse_f32(fields[5])
         z, z_ok := strconv.parse_f32(fields[6])
         target_ok = x_ok && y_ok && z_ok
-        if target_ok do target = {position = {x, y, z}, valid = true, world_space = true}
+        if target_ok do target = {
+            position    = {x, y, z},
+            valid       = true,
+            world_space = true,
+        }
     }
-    if !action_ok || action == .None || !handedness_ok || !seed_ok || seed < 0 || seed > 0xffffffff ||
-       !loop_ok || loop_count < 0 || loop_count > 1000 || !target_ok {
+    if !action_ok ||
+       action == .None ||
+       !handedness_ok ||
+       !seed_ok ||
+       seed < 0 ||
+       seed > 0xffffffff ||
+       !loop_ok ||
+       loop_count < 0 ||
+       loop_count > 1000 ||
+       !target_ok {
         return fmt.aprintf(`{{"ok":false,"id":"%s","error":"invalid emote settings"}}`, request_id)
     }
-    _ = mouse_emote_start(
-        &editor.mouse_emote,
-        action,
-        handedness,
-        target,
-        u32(seed),
-        u32(loop_count),
-    )
+    _ = mouse_emote_start(&editor.mouse_emote, action, handedness, target, u32(seed), u32(loop_count))
     return fmt.aprintf(
         `{{"ok":true,"id":"%s","action":"%s","handedness":"%s","seed":%d,"loops":%d}}`,
         request_id,
@@ -352,7 +496,10 @@ live_control_emote_start_response :: proc(editor: ^Editor, request_id, arguments
 live_control_emote_control_response :: proc(editor: ^Editor, request_id, arguments: string) -> string {
     fields := strings.split(arguments, "\t", context.temp_allocator)
     if len(fields) != 2 || (fields[0] != "true" && fields[0] != "false") {
-        return fmt.aprintf(`{{"ok":false,"id":"%s","error":"expected frozen boolean and scrub time or -"}}`, request_id)
+        return fmt.aprintf(
+            `{{"ok":false,"id":"%s","error":"expected frozen boolean and scrub time or -"}}`,
+            request_id,
+        )
     }
     scrub_ok := fields[1] == "-"
     scrub: f32
@@ -395,6 +542,7 @@ live_control_poll :: proc(editor: ^Editor) {
     command, arguments := "npc", payload
     if payload == "terrain_brush_get" ||
        payload == "audio_status" ||
+       payload == "gameplay_state" ||
        payload == "material_list" ||
        payload == "material_save" ||
        payload == "regenerate_islands" ||
@@ -451,6 +599,42 @@ live_control_poll :: proc(editor: ^Editor) {
         response = live_control_terrain_brush_response(editor, request_id)
     } else if command == "audio_status" {
         response = live_control_audio_status_response(editor, request_id)
+    } else if command == "gameplay_state" {
+        response = live_control_gameplay_state_response(editor, request_id)
+    } else if command == "plant_catalog_view" {
+        fields := strings.split(arguments, "\t", context.temp_allocator)
+        maturity, maturity_ok := f32(0), false
+        if len(fields) == 3 do maturity, maturity_ok = strconv.parse_f32(fields[2])
+        if len(fields) != 3 ||
+           (fields[0] != "top" && fields[0] != "succulents-and-cacti" && fields[0] != "cacti") ||
+           (fields[1] != "near" && fields[1] != "medium" && fields[1] != "far") ||
+           !maturity_ok || maturity < 0 || maturity > 1 {
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"unknown plant catalog section"}}`, request_id)
+        } else if !lab_scene_load(editor, {definition = lab_scene_find("plant-generator")}) {
+            response = fmt.aprintf(`{{"ok":false,"id":"%s","error":"could not open plant catalog"}}`, request_id)
+        } else {
+            editor.main_menu_active = false
+            menu_scene_set(editor, .Closed)
+            plant_generator_detail = fields[1] == "near" ? .Near : fields[1] == "medium" ? .Medium : .Far
+            plant_generator_maturity = maturity
+            if fields[0] == "succulents-and-cacti" {
+                plant_generator_gallery_scroll = 15 * PLANT_GENERATOR_GRID_ROW_SPACING
+            } else if fields[0] == "cacti" {
+                plant_generator_gallery_scroll = 18 * PLANT_GENERATOR_GRID_ROW_SPACING
+            }
+            // Gallery generation is virtualized around the current row, so
+            // jump first and rebuild the destination rather than row zero.
+            plant_generator_rebuild()
+            plant_generator_configure_camera(editor)
+            response = fmt.aprintf(
+                `{{"ok":true,"id":"%s","section":"%s","row":%d,"message":"Opened plant catalog"}}`,
+                request_id,
+                fields[0],
+                plant_generator_gallery_row(),
+            )
+        }
+    } else if command == "vehicle_control" {
+        response = live_control_vehicle_response(editor, request_id, arguments)
     } else if command == "emote_start" {
         response = live_control_emote_start_response(editor, request_id, arguments)
     } else if command == "emote_control" {

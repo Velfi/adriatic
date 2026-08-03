@@ -551,6 +551,10 @@ adriatic_run_impl :: proc(
     if !editor.authoring_tool_atlas.ready {
         fmt.eprintln("authoring tool icon atlas failed to load")
     }
+    editor.sculpt_tool_atlas = canvas2d.LoadTexture("assets/textures/ui/sculpt-tools-atlas.png")
+    if !editor.sculpt_tool_atlas.ready {
+        fmt.eprintln("sculpt tool icon atlas failed to load")
+    }
     editor.tarot_atlas = canvas2d.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
     if !editor.tarot_atlas.ready {
         fmt.eprintln("tarot card atlas failed to load")
@@ -627,6 +631,11 @@ adriatic_run_impl :: proc(
     run_config.showcase_target = showcase_target
     run_config.island_center = island_center
     if !run_prepare_showcase(editor, &run_config) do return .Quit
+    if request != nil && request.seed_frames > 0 {
+        plant_generator_seed = request.seed_start
+        plant_generator_rebuild()
+        plant_generator_configure_camera(editor)
+    }
     when HOT_RELOAD {
         switch hot_state_load(editor, hot_state_path) {
         case .Invalid:
@@ -707,6 +716,7 @@ adriatic_run_impl :: proc(
         turntable_capture_stride     = 12,
         turntable_last_capture_frame = capture_frame,
         sequence_last_capture_frame  = capture_frame,
+        seed_last_capture_frame      = capture_frame,
     }
     adriatic_frame_loop(&run)
     return run.reload_requested ? .Reload : .Quit

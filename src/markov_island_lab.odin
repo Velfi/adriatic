@@ -291,7 +291,8 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         diagnostics.maximum_elevation,
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, metrics, {40, 94}, 12, 1, {188, 219, 217, 255})
-    validity_color := markov_island_plan.valid ? canvas2d.Color{154, 220, 148, 255} : canvas2d.Color{245, 154, 116, 255}
+    validity_color :=
+        markov_island_plan.valid ? canvas2d.Color{154, 220, 148, 255} : canvas2d.Color{245, 154, 116, 255}
     shape_status := fmt.ctprintf(
         "%s     %s  ASPECT %.2f  RECT %.2f",
         markov_island_rejection_text(diagnostics.rejection_mask),
@@ -305,7 +306,14 @@ markov_island_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     button_fill: canvas2d.Color = hovered ? {52, 125, 131, 248} : {34, 79, 85, 244}
     canvas2d.DrawRectangleRounded(button, .22, 8, button_fill)
     canvas2d.DrawRectangleRoundedLinesEx(button, .22, 8, 1, {112, 198, 194, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "ROLL NEW ISLAND  [R]", {button.x + 13, button.y + 12}, 11, 1, {242, 231, 188, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "ROLL NEW ISLAND  [R]",
+        {button.x + 13, button.y + 12},
+        11,
+        1,
+        {242, 231, 188, 255},
+    )
     canvas2d.DrawTextEx(canvas2d.Font{}, "LEFT / RIGHT: STEP SEED", {40, 194}, 11, 1, {175, 190, 190, 255})
     markov_island_draw_diagnostic(width)
 }

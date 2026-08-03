@@ -927,22 +927,22 @@ Clipmap_Level_V6 :: struct {
 }
 
 Project :: struct {
-    levels:                [CLIPMAP_LEVELS]Clipmap_Level,
-    sea_level:             f32,
-    revision:              u64,
-    structures:            [dynamic]Structure,
-    structure_count:       int,
-    next_structure_id:     u64,
-    road_graph:            roads.Graph,
-    city_density:          [CITY_DENSITY_SAMPLES]u8,
-    climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
-    river_water_splines:   [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
-    terrain_pages:         [dynamic]Terrain_Page `fixture:"-"`,
-    terrain_level_layout:  [CLIPMAP_LEVELS]Terrain_Level_Layout `fixture:"-"`,
-    bathymetry_chunks:     [dynamic]Bathymetry_Chunk `fixture:"-"`,
-    terrain_page_lookup:   map[[3]i32]int `fixture:"-" map:"-"`,
+    levels:                  [CLIPMAP_LEVELS]Clipmap_Level,
+    sea_level:               f32,
+    revision:                u64,
+    structures:              [dynamic]Structure,
+    structure_count:         int,
+    next_structure_id:       u64,
+    road_graph:              roads.Graph,
+    city_density:            [CITY_DENSITY_SAMPLES]u8,
+    climbing_leaf_density:   [CITY_DENSITY_SAMPLES]u8,
+    river_water_splines:     [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
+    terrain_pages:           [dynamic]Terrain_Page `fixture:"-"`,
+    terrain_level_layout:    [CLIPMAP_LEVELS]Terrain_Level_Layout `fixture:"-"`,
+    bathymetry_chunks:       [dynamic]Bathymetry_Chunk `fixture:"-"`,
+    terrain_page_lookup:     map[[3]i32]int `fixture:"-" map:"-"`,
     bathymetry_chunk_lookup: map[[3]i32]int `fixture:"-" map:"-"`,
-    island_transforms:     [ISLAND_COUNT]Island_Transform,
+    island_transforms:       [ISLAND_COUNT]Island_Transform,
 }
 
 Project_File_Payload :: struct {
@@ -2768,7 +2768,14 @@ sample_authored_field_raw :: #force_inline proc(
     return
 }
 
-sample_land_raw :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+sample_land_raw :: #force_inline proc(
+    project: ^Project,
+    level: int,
+    x, z: f32,
+) -> (
+    height, material: f32,
+    found: bool,
+) {
     contained: bool
     height, material, contained = sample_authored_field_raw(project, level, x, z)
     return height, material, contained && height > project.sea_level + SHORELINE_EPSILON

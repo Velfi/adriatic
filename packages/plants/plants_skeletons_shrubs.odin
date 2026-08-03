@@ -435,10 +435,15 @@ olive_emit_spray :: proc(plant: ^lsystem.Plant, random: ^u64, position, directio
     side := linalg.normalize0(linalg.cross(stem, lsystem.Vec3{0, 1, 0}))
     if linalg.dot(side, side) < .2 do side = {1, 0, 0}
     stem_up := linalg.normalize0(linalg.cross(side, stem))
-    // Olive blades spread mostly sideways from a shoot. A full 360-degree
-    // roll creates implausible curtains of vertically hanging leaf pairs.
+    // Olive blades spread mostly sideways from a shoot. Choose either side
+    // before applying the shallow roll; constraining every sample around the
+    // positive side axis put every source leaf on the same side of its shoot
+    // (most visible when Far detail collapses each opposite pair to one card).
+    // A full 360-degree roll still creates implausible curtains of vertically
+    // hanging leaves, so retain the narrow botanical fan on both sides.
+    side_sign := lsystem.random_next(random) & 1 == 0 ? f32(-1) : f32(1)
     phase := olive_random_signed(random) * .45
-    forward := linalg.normalize0(side * math.cos(phase) + stem_up * math.sin(phase))
+    forward := linalg.normalize0(side * side_sign * math.cos(phase) + stem_up * math.sin(phase))
     up := linalg.normalize0(linalg.cross(forward, stem))
     append(&plant.leaves, lsystem.Leaf{position = position, forward = forward, up = up, depth = depth})
 }
@@ -464,11 +469,13 @@ olive_grow_branch :: proc(
         binormal := linalg.normalize0(linalg.cross(side, direction))
         direction = linalg.normalize0(
             direction +
-            side * olive_random_signed(random) * .16 +
-            binormal * olive_random_signed(random) * .10 +
+            side * olive_random_signed(random) * .24 +
+            binormal * olive_random_signed(random) * .16 +
             lsystem.Vec3{0, .05, 0},
         )
-        segment_length := length * (.92 - f32(segment_index) * .09) * (1 + olive_random_signed(random) * .10)
+        // Compact, crooked runs let neighboring twigs overlap into an olive
+        // crown instead of exposing long straight scaffold rays.
+        segment_length := length * (.80 - f32(segment_index) * .075) * (1 + olive_random_signed(random) * .12)
         next := position + direction * segment_length
         end_radius := current_radius * (.80 - f32(segment_index) * .035)
         append(
@@ -504,6 +511,19 @@ olive_grow_branch :: proc(
                 direction,
                 depth,
             )
+            if generations <= 1 {
+                // Fill terminal shoots with one staggered station. Three
+                // widely separated pairs exposed the branch as a ladder;
+                // this keeps the opposite-pair habit while closing the crown.
+                fill_fraction := .56 + olive_random_signed(foliage_random) * .06
+                olive_emit_spray(
+                    plant,
+                    foliage_random,
+                    position - direction * segment_length * (1 - fill_fraction),
+                    direction,
+                    depth,
+                )
+            }
             olive_emit_spray(plant, foliage_random, position, direction, depth)
         } else if generations >= 3 && segment_index == 1 {
             // One sparse interior pair visually carries foliage from the old
@@ -523,7 +543,7 @@ olive_grow_branch :: proc(
     }
     if generations == 0 do return
 
-    child_count := generations >= 2 && lsystem.random_next(random) % 3 == 0 ? 3 : 2
+    child_count := generations >= 2 ? 3 : 2
     parent_direction := direction
     parent_side := linalg.normalize0(linalg.cross(parent_direction, lsystem.Vec3{0, 1, 0}))
     if linalg.dot(parent_side, parent_side) < .2 do parent_side = {1, 0, 0}
@@ -533,8 +553,8 @@ olive_grow_branch :: proc(
         azimuth := phase + f32(child_index) * math.PI * 2 / f32(child_count)
         radial := parent_side * math.cos(azimuth) + parent_up * math.sin(azimuth)
         child_direction := linalg.normalize0(
-            parent_direction * (.58 + olive_random_signed(random) * .08) +
-            radial * (.52 + olive_random_signed(random) * .10) +
+            parent_direction * (.50 + olive_random_signed(random) * .08) +
+            radial * (.66 + olive_random_signed(random) * .10) +
             lsystem.Vec3{0, .12 + olive_random_signed(random) * .08, 0},
         )
         olive_grow_branch(
@@ -543,7 +563,7 @@ olive_grow_branch :: proc(
             foliage_random,
             position,
             child_direction,
-            length * (.70 + olive_random_signed(random) * .05),
+            length * (.62 + olive_random_signed(random) * .05),
             current_radius * .66,
             depth + 1,
             generations - 1,

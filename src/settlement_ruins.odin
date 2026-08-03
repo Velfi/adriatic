@@ -129,11 +129,7 @@ settlement_ruin_radial_fraction :: proc(scale: Settlement_Scale) -> f32 {
     return .65
 }
 
-settlement_ruin_anchor_supported :: proc(
-    scale: Settlement_Scale,
-    project: ^terrain.Project,
-    point: [2]f32,
-) -> bool {
+settlement_ruin_anchor_supported :: proc(scale: Settlement_Scale, project: ^terrain.Project, point: [2]f32) -> bool {
     if scale != .Town do return true
     return settlement_nearest_committed_road_distance(project, point) <= 20
 }
@@ -148,9 +144,7 @@ settlement_ruins_generate :: proc(plan: ^Settlement_Plan, project: ^terrain.Proj
     for attempt in 0 ..< 24 {
         seed := plan.request.seed ~ u32(attempt * 0x9e3779b9) ~ 0x5255494e
         angle := f32(attempt) * math.PI * 2 / 24 + ruins.random_range(seed, -.08, .08)
-        point :=
-            plan.request.center +
-            [2]f32{math.cos(angle), math.sin(angle)} * plan.request.radius * radial_fraction
+        point := plan.request.center + [2]f32{math.cos(angle), math.sin(angle)} * plan.request.radius * radial_fraction
         if plan.macro_cell_count > 0 {
             best, best_distance := point, f32(1e30)
             for cell in plan.macro_cells[:plan.macro_cell_count] {
@@ -183,22 +177,16 @@ settlement_ruin_add_access :: proc(
     if ruin_index < 0 do return false
     ruin := plan.sites[ruin_index].structure
     ruin_center := [2]f32{ruin.center_x, ruin.center_z}
-    route_origin, _, _, route_width, route_shoulder, _, _, route_found :=
-        settlement_nearest_route_frame(plan, ruin_center)
+    route_origin, _, _, route_width, route_shoulder, _, _, route_found := settlement_nearest_route_frame(
+        plan,
+        ruin_center,
+    )
     if !route_found do return false
     approach := settlement_structure_approach_point(ruin, route_origin, .45)
     outward := linalg.normalize0(approach - route_origin)
     if linalg.length(outward) <= .001 do return false
     road_edge := route_origin + outward * (route_width * .5 + route_shoulder + .3)
-    path := settlement_access_path_find(
-        project,
-        city_plan,
-        approach,
-        road_edge,
-        -1,
-        .7,
-        true,
-    )
+    path := settlement_access_path_find(project, city_plan, approach, road_edge, -1, .7, true)
     if path.count < 2 do return false
     path_length := f32(0)
     for index in 0 ..< path.count - 1 {

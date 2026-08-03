@@ -450,8 +450,12 @@ car_physics_level_heights :: proc(editor: ^Editor, level_index: int, result: []f
         world_z := level.origin_z + f32(z) * level.cell_size
         for x in 0 ..< terrain.TERRAIN_RESOLUTION {
             world_x := level.origin_x + f32(x) * level.cell_size
-            result[terrain.sample_index(x, z)] =
-                terrain.sample_surface_height(&editor.project, level_index, world_x, world_z)
+            result[terrain.sample_index(x, z)] = terrain.sample_surface_height(
+                &editor.project,
+                level_index,
+                world_x,
+                world_z,
+            )
         }
     }
     if level_index == 0 do return
@@ -489,26 +493,28 @@ car_physics_create :: proc(editor: ^Editor) {
     editor.car_physics_vehicle = physics.create_vehicle(
         editor.car_physics_world,
         {
-            half_width = .67,
-            half_height = .25,
-            half_length = 1.22,
-            mass = CAR_PHYSICS_MASS,
+            half_width              = .67,
+            half_height             = .25,
+            half_length             = 1.22,
+            mass                    = CAR_PHYSICS_MASS,
             center_of_mass_offset_y = -.18,
-            wheel_x = vehicles.CAR_WHEEL_TRACK_HALF,
-            front_wheel_z = vehicles.CAR_WHEELBASE_HALF,
-            rear_wheel_z = -vehicles.CAR_WHEELBASE_HALF,
-            wheel_y = -.20,
-            wheel_radius = vehicles.CAR_WHEEL_RADIUS,
-            wheel_width = vehicles.CAR_WHEEL_WIDTH,
-            suspension_min = .08,
-            suspension_max = .30,
-            suspension_frequency = 2.4,
-            suspension_damping = .9,
-            max_steer_angle = math.PI * .19,
-            max_engine_torque = 520,
-            max_brake_torque = 1100,
-            max_handbrake_torque = 1400,
-            four_wheel_drive = false,
+            wheel_x                 = vehicles.CAR_WHEEL_TRACK_HALF,
+            front_wheel_z           = vehicles.CAR_WHEELBASE_HALF,
+            rear_wheel_z            = -vehicles.CAR_WHEELBASE_HALF,
+            wheel_y                 = -.20,
+            wheel_radius            = vehicles.CAR_WHEEL_RADIUS,
+            wheel_width             = vehicles.CAR_WHEEL_WIDTH,
+            suspension_min          = .08,
+            // Keep the suspension cast beyond the chassis' resting plane so
+            // terrain contact is established before the chassis bottoms out.
+            suspension_max          = .38,
+            suspension_frequency    = 2.4,
+            suspension_damping      = .9,
+            max_steer_angle         = math.PI * .19,
+            max_engine_torque       = 520,
+            max_brake_torque        = 1100,
+            max_handbrake_torque    = 1400,
+            four_wheel_drive        = false,
         },
         {editor.car.position.x, ground + .74, editor.car.position.z},
         car_physics_rotation(editor.car.yaw_radians),

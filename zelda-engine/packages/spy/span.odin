@@ -38,6 +38,19 @@ Span_Context :: struct {
     next_id: u64,
 }
 
+// Source_Code_Location no longer carries a package name. Use the source file's
+// parent directory, which matches the package layout used by Odin projects.
+source_package_name :: proc(loc: runtime.Source_Code_Location) -> string {
+    path := loc.file_path
+    file_separator := max(strings.last_index_byte(path, '/'), strings.last_index_byte(path, '\\'))
+    if file_separator <= 0 {
+        return ""
+    }
+    directory := path[:file_separator]
+    directory_separator := max(strings.last_index_byte(directory, '/'), strings.last_index_byte(directory, '\\'))
+    return directory[directory_separator + 1:]
+}
+
 Span_Context_Guard :: struct {
     previous: Span_Context,
     active:   bool,
@@ -211,13 +224,14 @@ scoped_span_context_end :: proc(
 }
 
 // #+vet redundancy public-api
+// Pair the returned guard with `defer detach_span_context(&guard, alloc)`.
 scoped_span_context :: proc(
     ctx: Span_Context,
     alloc := context.allocator,
     loc := #caller_location,
 ) -> (
     scope_guard: Span_Context_Guard,
-) #scope_exit(.implicit, scoped_span_context_end(ctx, alloc, loc, scope_guard)) {
+) {
     return attach_span_context(ctx, alloc)
 }
 
@@ -288,6 +302,7 @@ scoped_span_end :: proc(
 }
 
 // #+vet redundancy public-api
+// Pair the returned span with `defer exit_span(&scope_value, alloc)`.
 scoped_span :: proc(
     name: string,
     fields := "",
@@ -295,12 +310,12 @@ scoped_span :: proc(
     loc := #caller_location,
 ) -> (
     scope_value: Span,
-) #scope_exit(.implicit, scoped_span_end(name, fields, alloc, loc, scope_value)) {
+) {
     return enter_span(name, fields, alloc, loc = loc)
 }
 
-scope :: proc(name: string, fields := "", alloc := context.allocator, loc := #caller_location) -> (scope_value: Span) \
-#scope_exit(.implicit, scoped_span_end(name, fields, alloc, loc, scope_value)) {
+// Pair the returned span with `defer scope_end(&scope_value, alloc)`.
+scope :: proc(name: string, fields := "", alloc := context.allocator, loc := #caller_location) -> (scope_value: Span) {
     return enter_span(name, fields, alloc, loc = loc)
 }
 

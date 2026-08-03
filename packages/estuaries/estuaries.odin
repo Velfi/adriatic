@@ -204,7 +204,8 @@ tidal_island_surface :: proc(config: Config, nx, nz: f32) -> (height: f32, prese
         salt := hash(config.seed ~ u32(island) * 0x9e3779b9 ~ 0x49534c54)
         center_z := -.68 + f32((salt >> 16) & 0xffff) / 65535 * .60
         basin_progress := clamp((.18 - center_z) / .94, 0, 1)
-        basin_center := f32(math.sin(f64((center_z + .35) * 3.1 + f32(config.seed & 255) * .011))) * (.025 + basin_progress * .035)
+        basin_center :=
+            f32(math.sin(f64((center_z + .35) * 3.1 + f32(config.seed & 255) * .011))) * (.025 + basin_progress * .035)
         basin_half_width := .065 + smoothstep(basin_progress) * (.35 + config.mouth_width * .95)
         center_x := basin_center + (f32(salt & 0xffff) / 65535 * 2 - 1) * basin_half_width * .78
         radius_x := .018 + f32(hash(salt ~ 0x57494454) & 255) / 255 * (.030 + config.branching * .020)
@@ -332,7 +333,8 @@ build_initial :: proc(plan: ^Plan) {
             small_noise := coastal_variation(nx, nz, c.seed) * c.relief * .045
             bed := c.mean_sea_level + coastal_rise + f32(side_rise) + small_noise
             basin_progress := clamp((.18 - nz) / .94, 0, 1)
-            basin_center := f32(math.sin(f64((nz + .35) * 3.1 + f32(c.seed & 255) * .011))) * (.025 + basin_progress * .035)
+            basin_center :=
+                f32(math.sin(f64((nz + .35) * 3.1 + f32(c.seed & 255) * .011))) * (.025 + basin_progress * .035)
             basin_half_width := .065 + smoothstep(basin_progress) * (.35 + c.mouth_width * .95)
             across := math.abs(nx - basin_center) / max(basin_half_width, .001)
             if nz > -.82 && nz < .24 && across < 1.25 {
@@ -362,14 +364,16 @@ build_initial :: proc(plan: ^Plan) {
                 secondary_phase := (nz + 1) * math.PI * 3.17 - f32(c.seed & 255) * .017 * .63
                 river_center :=
                     (bend_side + f32(math.sin(f64(secondary_phase))) * .28) *
-                    (.045 + c.branching * .055) * smoothstep((nz + 1) * .5)
+                    (.045 + c.branching * .055) *
+                    smoothstep((nz + 1) * .5)
                 lateral_side := clamp((nx - river_center) / max(valley_width, .001), -1, 1)
                 inside_bend := clamp(.5 + lateral_side * bend_side * .5, 0, 1)
                 // A low inside bank becomes a broad point bar while the outer
                 // bank stays taller. This breaks the mirrored canal silhouette
                 // without adding pixel-scale noise to the terrain.
                 asymmetric_bank := (inside_bend - .5) * .85
-                valley_target := c.mean_sea_level + .30 + smoothstep(valley_across) * (1.75 + bank_undulation + asymmetric_bank)
+                valley_target :=
+                    c.mean_sea_level + .30 + smoothstep(valley_across) * (1.75 + bank_undulation + asymmetric_bank)
                 valley_weight := river_reach * (1 - smoothstep((valley_across - .82) / .38))
                 bed += (min(bed, valley_target) - bed) * valley_weight
             }

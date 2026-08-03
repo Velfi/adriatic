@@ -1,7 +1,7 @@
 package main
 
-import mouse_paws "../packages/mouse_paws"
 import mouse_gait "../packages/mouse_gait"
+import mouse_paws "../packages/mouse_paws"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
@@ -30,12 +30,12 @@ player_paw_surface_sample :: proc(editor: ^Editor, desired: third_person.Vec3) -
     body_position, body_rotation, body_ok := physics.get_transform(editor.gameplay_physics.world, hit.body)
     if !body_ok do return {}
     return {
-        position      = {hit.position.x, hit.position.y, hit.position.z},
-        normal        = linalg.normalize0(third_person.Vec3{hit.normal.x, hit.normal.y, hit.normal.z}),
-        body          = u32(hit.body),
+        position = {hit.position.x, hit.position.y, hit.position.z},
+        normal = linalg.normalize0(third_person.Vec3{hit.normal.x, hit.normal.y, hit.normal.z}),
+        body = u32(hit.body),
         body_position = {body_position.x, body_position.y, body_position.z},
         body_rotation = body_rotation,
-        valid         = true,
+        valid = true,
     }
 }
 
@@ -53,10 +53,14 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
     yaw := math.PI - editor.player.facing_yaw_radians
     cosine, sine := math.cos(yaw), math.sin(yaw)
     animation := &editor.tweak.player_animation
-    horizontal_speed := f32(math.sqrt(f64(
-        editor.player.velocity.x * editor.player.velocity.x +
-        editor.player.velocity.z * editor.player.velocity.z,
-    )))
+    horizontal_speed := f32(
+        math.sqrt(
+            f64(
+                editor.player.velocity.x * editor.player.velocity.x +
+                editor.player.velocity.z * editor.player.velocity.z,
+            ),
+        ),
+    )
     gait := mouse_gait_weights(animation, horizontal_speed, editor.player_airborne_weight)
     run_weight := editor.player_gait_weight
     scurry_weight := clamp(editor.player_scurry_weight, 0, 1)
@@ -67,7 +71,8 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
         walk_offset := fore ? (left_side ? f32(0) : f32(.50)) : (left_side ? f32(.25) : f32(.75))
         trot_offset := fore ? (left_side ? f32(0) : f32(.50)) : (left_side ? f32(.50) : f32(0))
         bilateral_lag := side * mouse_gait.bound_bilateral_lag(gait.bound)
-        bound_offset := fore ? mouse_gait.BOUND_PHASE_OFFSET + bilateral_lag : .50 + mouse_gait.BOUND_PHASE_OFFSET - bilateral_lag
+        bound_offset :=
+            fore ? mouse_gait.BOUND_PHASE_OFFSET + bilateral_lag : .50 + mouse_gait.BOUND_PHASE_OFFSET - bilateral_lag
         motion := mouse_gait.blend_scaled(
             editor.player_stride_phase,
             walk_offset,
@@ -96,7 +101,8 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
         support_sample: mouse_paws.Paw_Surface_Sample
         if contact.phase == .Stance && contact.support_body != u32(physics.INVALID_BODY) {
             body_position, body_rotation, body_ok := physics.get_transform(
-                editor.gameplay_physics.world, physics.Body_ID(contact.support_body),
+                editor.gameplay_physics.world,
+                physics.Body_ID(contact.support_body),
             )
             if body_ok {
                 contact.anchor = mouse_paws.support_world_position(
@@ -132,11 +138,18 @@ player_paws_step :: proc(editor: ^Editor, delta_seconds: f32) {
             socket = evaluated
         }
         rig.authored[paw_index] = {
-            socket = socket, desired = desired, maximum_reach = maximum_reach,
-            stance = stance, valid = true,
+            socket        = socket,
+            desired       = desired,
+            maximum_reach = maximum_reach,
+            stance        = stance,
+            valid         = true,
         }
         result := mouse_paws.resolve(contact, socket, desired, stance, maximum_reach, yaw)
-        touchdown := result.event == .Planted || result.event == .Replanted_Reach || result.event == .Replanted_Turn || result.event == .Replanted_Teleport
+        touchdown :=
+            result.event == .Planted ||
+            result.event == .Replanted_Reach ||
+            result.event == .Replanted_Turn ||
+            result.event == .Replanted_Teleport
         if touchdown && !desired_sample.valid {
             result = mouse_paws.release(contact, desired)
             stance = false

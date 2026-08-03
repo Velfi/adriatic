@@ -162,21 +162,23 @@ dunes_lab_rebuild_runtime :: proc(editor: ^Editor) {
         shelf_depth     = 13,
         bar_strength    = .82,
     }
-    runtime.plan = dunes.generate({
-        seed                = config.seed,
-        anchor              = {0, 0},
-        tangent             = {1, 0},
-        inland              = {0, 1},
-        length              = DUNES_LAB_LENGTH,
-        width               = DUNES_LAB_WIDTH,
-        wind_direction      = wind,
-        wind_strength       = .72,
-        dune_height         = 9.2,
-        dune_spacing        = 34,
-        vegetation_strength = config.vegetation,
-        shore_fade          = 13,
-        inland_fade         = 25,
-    })
+    runtime.plan = dunes.generate(
+        {
+            seed = config.seed,
+            anchor = {0, 0},
+            tangent = {1, 0},
+            inland = {0, 1},
+            length = DUNES_LAB_LENGTH,
+            width = DUNES_LAB_WIDTH,
+            wind_direction = wind,
+            wind_strength = .72,
+            dune_height = 9.2,
+            dune_spacing = 34,
+            vegetation_strength = config.vegetation,
+            shore_fade = 13,
+            inland_fade = 25,
+        },
+    )
     runtime.diagnostics = {}
 }
 

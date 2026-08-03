@@ -129,6 +129,7 @@ Editor :: struct {
     terrain_redo:                       [TERRAIN_HISTORY_CAPACITY]Terrain_History_State,
     terrain_undo_count:                 int,
     terrain_redo_count:                 int,
+    terrain_sculpt:                     Terrain_Sculpt_State `fixture:"-"`,
     terrain_file_status:                cstring,
     terrain_file_status_until:          f32,
     terrain_saved_revision:             u64,
@@ -179,6 +180,7 @@ Editor :: struct {
     control_hint_atlases:               Control_Hint_Atlases,
     vehicle_paint_tool_icons:           canvas2d.Texture,
     authoring_tool_atlas:               canvas2d.Texture,
+    sculpt_tool_atlas:                  canvas2d.Texture,
     tarot_atlas:                        canvas2d.Texture,
     photo_filter_media_atlas:           canvas2d.Texture,
     photo_filter_lut_atlas:             canvas2d.Texture,
@@ -653,6 +655,7 @@ structure_history_storage_destroy :: proc(editor: ^Editor) {
 
 structure_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
+    terrain_sculpt_destroy(editor)
     road_design_runtime_destroy(editor)
     fixture_storage_destroy(&editor.fixture)
     structure_history_storage_destroy(editor)
@@ -674,5 +677,9 @@ terrain_history_restore :: proc(editor: ^Editor, state: ^Terrain_History_State) 
     }
     editor.project.sea_level = state.sea_level
     editor.project.revision = max(editor.project.revision, state.revision) + 1
+    terrain.terrain_pages_rebuild(&editor.project)
+    for &structure in editor.project.structures[:editor.project.structure_count] {
+        structure.base_y = terrain.sample_surface_height(&editor.project, 0, structure.center_x, structure.center_z)
+    }
     world_terrain_invalidate_all(editor)
 }

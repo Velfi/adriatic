@@ -467,9 +467,11 @@ ruins_lab_masonry_segment :: proc(
                 color = {190, 177, 143, 255}
             }
             if jitter > .012 {
-                color = building.culture == .Roman ? canvas2d.Color{194, 178, 150, 255} : canvas2d.Color{205, 191, 157, 255}
+                color =
+                    building.culture == .Roman ? canvas2d.Color{194, 178, 150, 255} : canvas2d.Color{205, 191, 157, 255}
             } else if jitter < -.012 {
-                color = building.culture == .Minoan ? canvas2d.Color{164, 146, 113, 255} : canvas2d.Color{169, 157, 128, 255}
+                color =
+                    building.culture == .Minoan ? canvas2d.Color{164, 146, 113, 255} : canvas2d.Color{169, 157, 128, 255}
             }
             if building.occupation_phase == .Expansion && ruins.hash(building.seed ~ block_salt ~ 0x5ea1) % 11 < 3 {
                 color = {201, 188, 158, 255}
@@ -1150,7 +1152,8 @@ ruins_lab_building :: proc(building: ruins.Building) {
     } else if building.kind == .Villa || building.kind == .Palace {
         // Villas and Minoan palaces organize rooms around an open light court.
         p := ruins_lab_local(building, 0, 0)
-        court_color := building.culture == .Minoan ? canvas2d.Color{177, 130, 86, 255} : canvas2d.Color{190, 178, 145, 255}
+        court_color :=
+            building.culture == .Minoan ? canvas2d.Color{177, 130, 86, 255} : canvas2d.Color{190, 178, 145, 255}
         ruins_lab_shaded_box_rotated(
             {p.x, building.base_y + .19, p.z},
             {building.width * .38, .08, building.depth * .38},

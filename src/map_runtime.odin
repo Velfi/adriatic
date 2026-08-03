@@ -144,7 +144,11 @@ map_artifact_capture_fixture :: proc(
         artifact.project.terrain_pages = pages
     }
     if len(fixture.project.bathymetry_chunks) > 0 {
-        chunks, allocation_error := make([dynamic]terrain.Bathymetry_Chunk, len(fixture.project.bathymetry_chunks), alloc)
+        chunks, allocation_error := make(
+            [dynamic]terrain.Bathymetry_Chunk,
+            len(fixture.project.bathymetry_chunks),
+            alloc,
+        )
         if allocation_error != nil {
             map_artifact_destroy(artifact, alloc)
             return nil, map_artifact_allocation_error(), false

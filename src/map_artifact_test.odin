@@ -381,11 +381,11 @@ when ODIN_TEST {
         defer map_artifact_fixture_test_destroy(source)
         append(&source.project.terrain_pages, terrain.Terrain_Page{level = 0, page_x = 1, page_z = 2})
         source.project.terrain_pages[0].heights[3] = 6.25
-        chunk := terrain.Bathymetry_Chunk{
-            chunk_x = -3,
-            chunk_z = 4,
-            owner = .West,
-            heights = make([dynamic]f16, terrain.BATHYMETRY_CHUNK_SAMPLES),
+        chunk := terrain.Bathymetry_Chunk {
+            chunk_x  = -3,
+            chunk_z  = 4,
+            owner    = .West,
+            heights  = make([dynamic]f16, terrain.BATHYMETRY_CHUNK_SAMPLES),
             material = make([dynamic]i8, terrain.BATHYMETRY_CHUNK_SAMPLES),
         }
         chunk.heights[5] = -7
@@ -404,7 +404,11 @@ when ODIN_TEST {
         testing.expect_value(t, len(source.project.bathymetry_chunks), 1)
         testing.expect_value(t, f32(source.project.bathymetry_chunks[0].heights[5]), f32(-7))
         testing.expect(t, raw_data(source.project.terrain_pages) != raw_data(artifact.project.terrain_pages))
-        testing.expect(t, raw_data(source.project.bathymetry_chunks[0].heights) != raw_data(artifact.project.bathymetry_chunks[0].heights))
+        testing.expect(
+            t,
+            raw_data(source.project.bathymetry_chunks[0].heights) !=
+            raw_data(artifact.project.bathymetry_chunks[0].heights),
+        )
         source.project.structures[0].id = 99
 
         encoded, encode_error, encoded_ok := map_artifact_encode(artifact)

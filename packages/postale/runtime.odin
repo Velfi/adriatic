@@ -210,11 +210,7 @@ reset :: proc(runtime: ^Runtime, ground_height: f32) {
     runtime.crashed = false
 }
 
-landing_intent_candidate :: proc(
-    runtime: ^Runtime,
-    ground_height: f32,
-    wind: flight.Vec3 = {},
-) -> bool {
+landing_intent_candidate :: proc(runtime: ^Runtime, ground_height: f32, wind: flight.Vec3 = {}) -> bool {
     if runtime == nil || runtime.grounded || runtime.crashed do return false
     height_agl := runtime.body.position.y - ground_height - runtime.tuning.ground_clearance
     if height_agl <= 0 || height_agl > LANDING_INTENT_HEIGHT do return false
@@ -243,11 +239,7 @@ landing_intent_candidate :: proc(
     return true
 }
 
-update_landing_intent :: proc(
-    runtime: ^Runtime,
-    ground_height, delta_seconds: f32,
-    wind: flight.Vec3 = {},
-) {
+update_landing_intent :: proc(runtime: ^Runtime, ground_height, delta_seconds: f32, wind: flight.Vec3 = {}) {
     if runtime == nil || delta_seconds <= 0 do return
     dt := min_f32(delta_seconds, .05)
     // A takeoff roll or go-around must retract landing configuration promptly;
@@ -340,16 +332,14 @@ step_normalized_command :: proc(
 
     runtime.was_grounded = runtime.grounded
     ground_orientation := runtime.body.orientation
-    ground_horizontal_speed := f32(math.sqrt(f64(
-        runtime.body.velocity.x * runtime.body.velocity.x +
-        runtime.body.velocity.z * runtime.body.velocity.z,
-    )))
+    ground_horizontal_speed := f32(
+        math.sqrt(
+            f64(runtime.body.velocity.x * runtime.body.velocity.x + runtime.body.velocity.z * runtime.body.velocity.z),
+        ),
+    )
     ground_was_settled := runtime.grounded && ground_horizontal_speed < .25 && command.throttle <= .01
     vertical_before := runtime.body.velocity.y
-    ground_distance := max_f32(
-        0,
-        runtime.body.position.y - ground_height - runtime.tuning.ground_clearance,
-    )
+    ground_distance := max_f32(0, runtime.body.position.y - ground_height - runtime.tuning.ground_clearance)
     step_airborne_model(runtime, command, dt, wind, ground_distance)
 
     result := resolve_ground_contact(runtime, ground_height, vertical_before, dt)
@@ -486,11 +476,7 @@ step :: proc(
             0,
             1,
         )
-        speed_fraction := clamp(
-            (forward_airspeed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01),
-            0,
-            1,
-        )
+        speed_fraction := clamp((forward_airspeed - rotation_speed * .9) / max_f32(rotation_speed * .1, .01), 0, 1)
         ground_pitch_target := f32(0)
         if runtime.throttle > runtime.tuning.takeoff_throttle {
             ground_pitch_target = MAX_GROUND_PITCH_RADIANS * rotation_fraction * speed_fraction

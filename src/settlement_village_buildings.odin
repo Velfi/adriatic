@@ -121,7 +121,12 @@ settlement_plan_generate_village_buildings :: proc(
                     for quay_half_span in quay_half_spans {
                         candidate_start := resource_center - harbor_quay_tangent * quay_half_span
                         candidate_end := resource_center + harbor_quay_tangent * quay_half_span
-                        start_height := terrain.sample_surface_height(project, 0, candidate_start[0], candidate_start[1])
+                        start_height := terrain.sample_surface_height(
+                            project,
+                            0,
+                            candidate_start[0],
+                            candidate_start[1],
+                        )
                         end_height := terrain.sample_surface_height(project, 0, candidate_end[0], candidate_end[1])
                         quay_grade := settlement_access_segment_max_grade(project, candidate_start, candidate_end)
                         if start_height <= project.sea_level + .6 ||

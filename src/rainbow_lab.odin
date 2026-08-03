@@ -106,7 +106,14 @@ rainbow_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         1,
         {203, 235, 237, 255},
     )
-    canvas2d.DrawTextEx(canvas2d.Font{}, "LEFT / RIGHT LIGHT    UP / DOWN RAIN", {38, 101}, 13, 1, {171, 202, 211, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "LEFT / RIGHT LIGHT    UP / DOWN RAIN",
+        {38, 101},
+        13,
+        1,
+        {171, 202, 211, 255},
+    )
     canvas2d.DrawTextEx(canvas2d.Font{}, "1 DRY    2 SHOWER    3 DOUBLE BOW", {38, 123}, 13, 1, {171, 202, 211, 255})
     _ = width
     _ = height

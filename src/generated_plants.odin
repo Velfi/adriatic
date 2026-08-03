@@ -277,9 +277,15 @@ world_generated_bark_segment :: proc(
             normals[side],
             normals[next],
             normals[side],
-            bark_color, bark_color, bark_color,
-            uvs_a[side], next_b, uvs_b[side],
-            pattern, bark.roughness, detail_strength,
+            bark_color,
+            bark_color,
+            bark_color,
+            uvs_a[side],
+            next_b,
+            uvs_b[side],
+            pattern,
+            bark.roughness,
+            detail_strength,
         )
         world_triangle_bark(
             points_a[side],
@@ -288,9 +294,15 @@ world_generated_bark_segment :: proc(
             normals[side],
             normals[next],
             normals[next],
-            bark_color, bark_color, bark_color,
-            uvs_a[side], next_a, next_b,
-            pattern, bark.roughness, detail_strength,
+            bark_color,
+            bark_color,
+            bark_color,
+            uvs_a[side],
+            next_a,
+            next_b,
+            pattern,
+            bark.roughness,
+            detail_strength,
         )
     }
     if cap_start || cap_end {
@@ -309,9 +321,15 @@ world_generated_bark_segment :: proc(
                     normal_a,
                     normal_a,
                     normal_a,
-                    bark_color, bark_color, bark_color,
-                    uvs_a[side], uvs_a[side], {next_u, uvs_a[next].y},
-                    pattern, bark.roughness, detail_strength,
+                    bark_color,
+                    bark_color,
+                    bark_color,
+                    uvs_a[side],
+                    uvs_a[side],
+                    {next_u, uvs_a[next].y},
+                    pattern,
+                    bark.roughness,
+                    detail_strength,
                 )
             }
             if cap_end {
@@ -322,9 +340,15 @@ world_generated_bark_segment :: proc(
                     normal_b,
                     normal_b,
                     normal_b,
-                    bark_color, bark_color, bark_color,
-                    uvs_b[side], {next_u, uvs_b[next].y}, uvs_b[side],
-                    pattern, bark.roughness, detail_strength,
+                    bark_color,
+                    bark_color,
+                    bark_color,
+                    uvs_b[side],
+                    {next_u, uvs_b[next].y},
+                    uvs_b[side],
+                    pattern,
+                    bark.roughness,
+                    detail_strength,
                 )
             }
         }
@@ -717,11 +741,16 @@ world_generated_plant :: proc(
     bark := plant_bark.profile(species)
     bark_detail_strength: f32 = 1
     switch render_lod {
-    case .Hero:    bark_detail_strength = 1
-    case .Near:    bark_detail_strength = .82
-    case .Medium:  bark_detail_strength = .52
-    case .Far:     bark_detail_strength = .24
-    case .Distant: bark_detail_strength = .10
+    case .Hero:
+        bark_detail_strength = 1
+    case .Near:
+        bark_detail_strength = .82
+    case .Medium:
+        bark_detail_strength = .52
+    case .Far:
+        bark_detail_strength = .24
+    case .Distant:
+        bark_detail_strength = .10
     }
     for segment, segment_index in generated.plant.segments {
         if species == .Prickly_Pear ||
@@ -770,7 +799,12 @@ world_generated_plant :: proc(
             }
             reproductive_color := accent
             if attachment.kind == .Flower {
-                reproductive_color = plant_generator_flower_color(species, seed, attachment.variant, reproductive_color)
+                reproductive_color = plant_generator_flower_color(
+                    species,
+                    seed,
+                    attachment.variant,
+                    reproductive_color,
+                )
             }
             reproductive_color = plant_generator_stage_color(reproductive_color, attachment.stage)
             radius *= stage_scale

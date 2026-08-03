@@ -19,11 +19,11 @@ Point :: struct {
 }
 
 State :: struct {
-    points:                [POINT_COUNT]Point,
-    last_root:             third_person.Vec3,
-    evaluated_attachment:  third_person.Vec3,
-    attachment_valid:      bool,
-    initialized:           bool,
+    points:               [POINT_COUNT]Point,
+    last_root:            third_person.Vec3,
+    evaluated_attachment: third_person.Vec3,
+    attachment_valid:     bool,
+    initialized:          bool,
 }
 
 Config :: struct {

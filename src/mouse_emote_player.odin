@@ -6,9 +6,6 @@ package main
 mouse_emote_enforce_player_priority :: proc(editor: ^Editor) {
     if editor == nil || !mouse_emote_active(&editor.mouse_emote) do return
     incompatible :=
-        editor.pilot.mode != .On_Foot ||
-        !editor.in_map ||
-        !editor.player.grounded ||
-        pause_menu_is_open(editor)
+        editor.pilot.mode != .On_Foot || !editor.in_map || !editor.player.grounded || pause_menu_is_open(editor)
     if incompatible do mouse_emote_cancel(&editor.mouse_emote)
 }

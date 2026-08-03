@@ -11,9 +11,9 @@ fixture_migration_v0017_to_v0018_defaults_building_base_elevation :: proc(t: ^te
     defer free(tentative)
     tentative.settlement_plan.metrics.building_base_elevation = {
         count = 4,
-        min = 3,
-        max = 9,
-        mean = 6,
+        min   = 3,
+        max   = 9,
+        mean  = 6,
     }
 
     migration_error := fixture_migrate_v0017_to_v0018(historical^, tentative, context.allocator)

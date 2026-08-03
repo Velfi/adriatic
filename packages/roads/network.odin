@@ -62,13 +62,13 @@ Tile :: struct {
 }
 
 Proxy_Route :: struct {
-    id:             Route_Id,
-    points:         [dynamic]Vec3,
-    tiles:          [dynamic]Tile_Key,
-    min_x, min_z:   f32,
-    max_x, max_z:   f32,
-    half_width:     f32,
-    pavement:       Pavement,
+    id:           Route_Id,
+    points:       [dynamic]Vec3,
+    tiles:        [dynamic]Tile_Key,
+    min_x, min_z: f32,
+    max_x, max_z: f32,
+    half_width:   f32,
+    pavement:     Pavement,
 }
 
 Tile_Directory_Entry :: struct {
@@ -104,10 +104,7 @@ Nearest_Result :: struct {
 
 tile_key_at :: #force_inline proc(x, z: f32, tile_size := ROAD_TILE_SIZE) -> Tile_Key {
     size := max(tile_size, f32(.001))
-    return {
-        x = i32(math.floor(f64(x / size))),
-        z = i32(math.floor(f64(z / size))),
-    }
+    return {x = i32(math.floor(f64(x / size))), z = i32(math.floor(f64(z / size)))}
 }
 
 tile_minimum :: #force_inline proc(key: Tile_Key, tile_size := ROAD_TILE_SIZE) -> (x, z: f32) {
@@ -150,11 +147,7 @@ network_destroy :: proc(network: ^Network, allocator := context.allocator) {
     network^ = {}
 }
 
-network_tile_get_or_create :: proc(
-    network: ^Network,
-    key: Tile_Key,
-    allocator := context.allocator,
-) -> ^Tile {
+network_tile_get_or_create :: proc(network: ^Network, key: Tile_Key, allocator := context.allocator) -> ^Tile {
     if network == nil do return nil
     if network.loaded == nil do network_init(network, allocator)
     if tile, found := network.loaded[key]; found do return tile
@@ -170,10 +163,12 @@ network_tile_get_or_create :: proc(
 spline_point :: #force_inline proc(curve: Spline, t: f32) -> Vec3 {
     amount := clamp(t, f32(0), f32(1))
     inverse := 1 - amount
-    return curve.p0 * (inverse * inverse * inverse) +
+    return(
+        curve.p0 * (inverse * inverse * inverse) +
         curve.p1 * (3 * inverse * inverse * amount) +
         curve.p2 * (3 * inverse * amount * amount) +
-        curve.p3 * (amount * amount * amount)
+        curve.p3 * (amount * amount * amount) \
+    )
 }
 
 spline_split :: proc(curve: Spline, t: f32) -> (before, after: Spline) {
@@ -204,7 +199,10 @@ spline_first_tile_exit_recursive :: proc(
     origin: Tile_Key,
     tile_size: f32,
     depth: int,
-) -> (t: f32, found: bool) {
+) -> (
+    t: f32,
+    found: bool,
+) {
     if spline_hull_inside_tile(curve, origin, tile_size) do return 1, false
     if depth <= 0 {
         previous_t := f32(0)
@@ -267,15 +265,26 @@ network_add_spline :: proc(
     pavement: Pavement = .Asphalt,
     use_intensity: f32 = 1,
     allocator := context.allocator,
-) -> (Route_Id, bool) {
-    if network == nil || width <= 0 || width != width || math.is_inf_f32(width) ||
-       !tile_vec3_finite(curve.p0) || !tile_vec3_finite(curve.p1) ||
-       !tile_vec3_finite(curve.p2) || !tile_vec3_finite(curve.p3) {
+) -> (
+    Route_Id,
+    bool,
+) {
+    if network == nil ||
+       width <= 0 ||
+       width != width ||
+       math.is_inf_f32(width) ||
+       !tile_vec3_finite(curve.p0) ||
+       !tile_vec3_finite(curve.p1) ||
+       !tile_vec3_finite(curve.p2) ||
+       !tile_vec3_finite(curve.p3) {
         return {}, false
     }
     if network.loaded == nil do network_init(network, allocator)
     route_id := Route_Id(network.metadata.next_route_id)
-    Staged_Span :: struct {key: Tile_Key, span: Route_Span}
+    Staged_Span :: struct {
+        key:  Tile_Key,
+        span: Route_Span,
+    }
     staged := make([dynamic]Staged_Span, context.temp_allocator)
     proxy_points := make([dynamic]Vec3, allocator)
     proxy_tiles := make([dynamic]Tile_Key, allocator)
@@ -313,15 +322,15 @@ network_add_spline :: proc(
             piece.p3, pending.p0 = portal, portal
         }
         span := Route_Span {
-            route_id = route_id,
-            span_index = span_index,
-            curve = piece,
-            half_width = width * .5,
+            route_id       = route_id,
+            span_index     = span_index,
+            curve          = piece,
+            half_width     = width * .5,
             shoulder_width = max(shoulder_width, f32(0)),
-            pavement = pavement,
-            use_intensity = clamp(use_intensity, f32(0), f32(1)),
-            start_kind = span_index == 0 ? .Junction : .Portal,
-            end_kind = split ? .Portal : .Junction,
+            pavement       = pavement,
+            use_intensity  = clamp(use_intensity, f32(0), f32(1)),
+            start_kind     = span_index == 0 ? .Junction : .Portal,
+            end_kind       = split ? .Portal : .Junction,
         }
         midpoint := spline_point(piece, .5)
         key := tile_key_at(midpoint.x, midpoint.z, network.metadata.tile_size)
@@ -364,17 +373,20 @@ network_add_spline :: proc(
         tile.revision += 1
         tile.dirty = true
     }
-    append(&network.metadata.proxy, Proxy_Route {
-        id = route_id,
-        points = proxy_points,
-        tiles = proxy_tiles,
-        min_x = minimum_x,
-        min_z = minimum_z,
-        max_x = maximum_x,
-        max_z = maximum_z,
-        half_width = width * .5,
-        pavement = pavement,
-    })
+    append(
+        &network.metadata.proxy,
+        Proxy_Route {
+            id = route_id,
+            points = proxy_points,
+            tiles = proxy_tiles,
+            min_x = minimum_x,
+            min_z = minimum_z,
+            max_x = maximum_x,
+            max_z = maximum_z,
+            half_width = width * .5,
+            pavement = pavement,
+        },
+    )
     network.metadata.next_route_id += 1
     staged_owned = false
     return route_id, true
@@ -394,7 +406,10 @@ segment_nearest :: proc(a, b, point: Vec3) -> (position: Vec3, distance_squared:
 }
 
 network_nearest_proxy :: proc(network: ^Network, point: Vec3) -> Nearest_Result {
-    result := Nearest_Result{detail = .Missing, distance_squared = max(f32)}
+    result := Nearest_Result {
+        detail           = .Missing,
+        distance_squared = max(f32),
+    }
     if network == nil do return result
     for route in network.metadata.proxy {
         if len(route.points) < 2 do continue
@@ -402,12 +417,12 @@ network_nearest_proxy :: proc(network: ^Network, point: Vec3) -> Nearest_Result 
             position, distance_squared := segment_nearest(route.points[index], route.points[index + 1], point)
             if distance_squared >= result.distance_squared do continue
             result = {
-                detail = .Proxy,
-                route_id = route.id,
-                position = position,
+                detail           = .Proxy,
+                route_id         = route.id,
+                position         = position,
                 distance_squared = distance_squared,
-                pavement = route.pavement,
-                found = true,
+                pavement         = route.pavement,
+                found            = true,
             }
         }
     }
@@ -432,12 +447,12 @@ network_nearest :: proc(network: ^Network, point: Vec3, samples: int = 24) -> Ne
                     position, distance_squared := segment_nearest(previous, current, point)
                     if !result.found || distance_squared <= result.distance_squared {
                         result = {
-                            detail = .Detailed,
-                            route_id = span.route_id,
-                            position = position,
+                            detail           = .Detailed,
+                            route_id         = span.route_id,
+                            position         = position,
                             distance_squared = distance_squared,
-                            pavement = span.pavement,
-                            found = true,
+                            pavement         = span.pavement,
+                            found            = true,
                         }
                     }
                     previous = current
@@ -464,12 +479,7 @@ when ODIN_TEST {
         network: Network
         network_init(&network)
         defer network_destroy(&network)
-        curve := Spline {
-            {-300, 2, -40},
-            {-80, 7, 420},
-            {380, -3, -420},
-            {700, 4, 40},
-        }
+        curve := Spline{{-300, 2, -40}, {-80, 7, 420}, {380, -3, -420}, {700, 4, 40}}
         route, added := network_add_spline(&network, curve, 8, 2, .Asphalt)
         testing.expect(t, added)
         testing.expect(t, u64(route) != 0)

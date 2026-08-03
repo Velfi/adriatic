@@ -167,6 +167,10 @@ GetMousePinchScale :: proc() -> f32 { return state.mouse_pinch_scale }
 IsMouseButtonPressed :: proc(button: MouseButton) -> bool {assert(button != .COUNT); return(
         state.mouse_pressed[int(button)] \
     )}
+// Claims a pointer activation so lower-priority input handlers do not also
+// respond to the same click during the current frame.
+ConsumeMouseButtonPressed :: proc(button: MouseButton) {assert(button != .COUNT)
+    state.mouse_pressed[int(button)] = false}
 IsMouseButtonDown :: proc(button: MouseButton) -> bool { assert(button != .COUNT); return(
         state.mouse_down[int(button)] \
     ) }
@@ -268,6 +272,10 @@ keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alte
 @(no_instrumentation)
 IsKeyPressed :: #force_inline proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
     return state.keys_pressed[int(primary)] || alternate != .UNKNOWN && state.keys_pressed[int(alternate)]}
+// Adds a product-supplied key activation to the current input frame. This is
+// useful for on-screen controls that mirror physical keyboard actions.
+InjectKeyPressed :: proc(key: KeyboardKey) {primary, _ := keyboard_key_scancodes(key)
+    state.keys_pressed[int(primary)] = true}
 @(no_instrumentation)
 IsKeyDown :: #force_inline proc(key: KeyboardKey) -> bool {primary, alternate := keyboard_key_scancodes(key)
     return state.keys_down[int(primary)] || alternate != .UNKNOWN && state.keys_down[int(alternate)]}

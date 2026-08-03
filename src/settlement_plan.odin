@@ -1032,10 +1032,7 @@ settlement_plan_acceptance_failure :: proc(
             return .Submerged_Site
         }
         if site.kind != .Ordinary do continue
-        if !settlement_ordinary_building_dimensions_valid(
-            site.structure.width,
-            site.structure.depth,
-        ) {
+        if !settlement_ordinary_building_dimensions_valid(site.structure.width, site.structure.depth) {
             return .Undersized_Building
         }
         ordinary_count += 1

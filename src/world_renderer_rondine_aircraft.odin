@@ -205,9 +205,32 @@ postale_bank_grid :: proc(editor: ^Editor, mesh: ^vehicles.Aircraft_Mesh) {
                 c := mesh.vertices[triangle.c]
                 color := aircraft_postale_part_color_with_paint(editor, a.part, editor.postale.throttle)
                 if vehicles.aircraft_mesh_part_uses_smooth_normals(a.part) {
-                    world_aircraft_triangle_smooth(world_aircraft_vertex_world(transform, a.position), world_aircraft_vertex_world(transform, b.position), world_aircraft_vertex_world(transform, c.position), world_aircraft_normal_world(transform, a.normal), world_aircraft_normal_world(transform, b.normal), world_aircraft_normal_world(transform, c.normal), color, a.uv, b.uv, c.uv, paint_layer, vehicle_paint_part_is_paintable(a.part))
+                    world_aircraft_triangle_smooth(
+                        world_aircraft_vertex_world(transform, a.position),
+                        world_aircraft_vertex_world(transform, b.position),
+                        world_aircraft_vertex_world(transform, c.position),
+                        world_aircraft_normal_world(transform, a.normal),
+                        world_aircraft_normal_world(transform, b.normal),
+                        world_aircraft_normal_world(transform, c.normal),
+                        color,
+                        a.uv,
+                        b.uv,
+                        c.uv,
+                        paint_layer,
+                        vehicle_paint_part_is_paintable(a.part),
+                    )
                 } else {
-                    world_aircraft_triangle(world_aircraft_vertex_world(transform, a.position), world_aircraft_vertex_world(transform, b.position), world_aircraft_vertex_world(transform, c.position), color, a.uv, b.uv, c.uv, paint_layer, vehicle_paint_part_is_paintable(a.part))
+                    world_aircraft_triangle(
+                        world_aircraft_vertex_world(transform, a.position),
+                        world_aircraft_vertex_world(transform, b.position),
+                        world_aircraft_vertex_world(transform, c.position),
+                        color,
+                        a.uv,
+                        b.uv,
+                        c.uv,
+                        paint_layer,
+                        vehicle_paint_part_is_paintable(a.part),
+                    )
                 }
             }
         }

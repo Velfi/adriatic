@@ -89,6 +89,7 @@ run_initialize_editor_defaults :: proc(
     editor.tweak = tweak_default_state()
     editor.tweak_status = .Defaults
     editor.tweak_panel_visible = false
+    editor.tweak_teleport_on_click = false
     editor.gameplay_options = gameplay_options_default()
     if capture_mode {
         if request != nil {

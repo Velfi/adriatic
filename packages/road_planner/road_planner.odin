@@ -9,7 +9,9 @@ MAX_DIRECTIONS :: 16
 MAX_STATES :: MAX_GRID_CELLS * MAX_DIRECTIONS
 MAX_PATH_POINTS :: MAX_GRID_CELLS
 
-Point :: struct { x, z: f32 }
+Point :: struct {
+    x, z: f32,
+}
 
 Config :: struct {
     cell_size:        f32,
@@ -24,15 +26,15 @@ Config :: struct {
 }
 
 DEFAULT_CONFIG :: Config {
-        cell_size        = 18,
-        length_cost      = 1,
-        grade_cost       = 34,
-        steep_grade_cost = 180,
-        water_cost       = 450,
-        turn_cost        = 1.5,
-        switchback_cost  = 18,
-        maximum_grade    = .24,
-        heuristic_weight = 1.08,
+    cell_size        = 18,
+    length_cost      = 1,
+    grade_cost       = 34,
+    steep_grade_cost = 180,
+    water_cost       = 450,
+    turn_cost        = 1.5,
+    switchback_cost  = 18,
+    maximum_grade    = .24,
+    heuristic_weight = 1.08,
 }
 
 default_config :: proc() -> Config { return DEFAULT_CONFIG }
@@ -59,11 +61,11 @@ Grid :: struct {
 }
 
 Result :: struct {
-    points:       [MAX_PATH_POINTS]Point,
-    point_count:  int,
-    total_cost:   f32,
-    expanded:     int,
-    found:        bool,
+    points:      [MAX_PATH_POINTS]Point,
+    point_count: int,
+    total_cost:  f32,
+    expanded:    int,
+    found:       bool,
 }
 
 Workspace :: struct {
@@ -77,8 +79,13 @@ Workspace :: struct {
 }
 
 grid_valid :: proc(grid: Grid) -> bool {
-    return grid.width > 1 && grid.height > 1 && grid.width <= MAX_GRID_WIDTH &&
-        grid.height <= MAX_GRID_HEIGHT && len(grid.heights) >= grid.width * grid.height
+    return(
+        grid.width > 1 &&
+        grid.height > 1 &&
+        grid.width <= MAX_GRID_WIDTH &&
+        grid.height <= MAX_GRID_HEIGHT &&
+        len(grid.heights) >= grid.width * grid.height \
+    )
 }
 
 // Returns the fraction of a road step that runs along a nearby shoreline.
@@ -172,8 +179,11 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
     fx := clamp(int(math.round((finish.x - grid.origin_x) / config.cell_size)), 0, grid.width - 1)
     fz := clamp(int(math.round((finish.z - grid.origin_z) / config.cell_size)), 0, grid.height - 1)
     start_cell, finish_cell := sz * grid.width + sx, fz * grid.width + fx
-    initial_estimate := math.sqrt(f32((fx - sx) * (fx - sx) + (fz - sz) * (fz - sz))) *
-        config.cell_size * config.length_cost * config.heuristic_weight
+    initial_estimate :=
+        math.sqrt(f32((fx - sx) * (fx - sx) + (fz - sz) * (fz - sz))) *
+        config.cell_size *
+        config.length_cost *
+        config.heuristic_weight
     for direction in 0 ..< MAX_DIRECTIONS {
         state := start_cell * MAX_DIRECTIONS + direction
         work.scores[state] = 0
@@ -184,8 +194,22 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
     // The 2:1 moves give steep terrain enough lateral run to form switchbacks
     // that an eight-neighbor lattice cannot represent.
     offsets := [MAX_DIRECTIONS][2]int {
-        {-1,0}, {-2,-1}, {-1,-1}, {-1,-2}, {0,-1}, {1,-2}, {1,-1}, {2,-1},
-        {1,0}, {2,1}, {1,1}, {1,2}, {0,1}, {-1,2}, {-1,1}, {-2,1},
+        {-1, 0},
+        {-2, -1},
+        {-1, -1},
+        {-1, -2},
+        {0, -1},
+        {1, -2},
+        {1, -1},
+        {2, -1},
+        {1, 0},
+        {2, 1},
+        {1, 1},
+        {1, 2},
+        {0, 1},
+        {-1, 2},
+        {-1, 1},
+        {-2, 1},
     }
     finish_state := -1
     for {
@@ -231,7 +255,8 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
                     // Crossing along the bank costs up to twice as much as
                     // crossing its local normal. This keeps water expensive
                     // while rewarding short, square bridge approaches.
-                    step_cost += water_step_cost *
+                    step_cost +=
+                        water_step_cost *
                         (1 + water_crossing_obliqueness(grid, sample_x, sample_z, offset[0], offset[1]))
                 }
                 if sample < sample_count {
@@ -251,7 +276,8 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
             candidate := work.scores[current] + step_cost
             if candidate >= work.scores[next] do continue
             dx, dz := fx - nx, fz - nz
-            heuristic := math.sqrt(f32(dx * dx + dz * dz)) * config.cell_size * config.length_cost * config.heuristic_weight
+            heuristic :=
+                math.sqrt(f32(dx * dx + dz * dz)) * config.cell_size * config.length_cost * config.heuristic_weight
             work.scores[next] = candidate
             work.estimates[next] = candidate + heuristic
             work.parents[next] = current
@@ -272,7 +298,10 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
     for output_index in 0 ..< reverse_count {
         cell := reverse[reverse_count - 1 - output_index] / MAX_DIRECTIONS
         x, z := cell % grid.width, cell / grid.width
-        result.points[output_index] = {grid.origin_x + f32(x) * config.cell_size, grid.origin_z + f32(z) * config.cell_size}
+        result.points[output_index] = {
+            grid.origin_x + f32(x) * config.cell_size,
+            grid.origin_z + f32(z) * config.cell_size,
+        }
     }
     result.total_cost = work.scores[finish_state]
     result.found = true

@@ -1538,7 +1538,14 @@ markov_marina_draw_ui :: proc(_: ^Editor, width, height: i32) {
     }
     canvas2d.DrawTextEx(canvas2d.Font{}, overlap_label, {38, 176}, 13, 1, overlap_color)
     if markov_marina_gallery_active {
-        canvas2d.DrawTextEx(canvas2d.Font{}, "NATURAL  /  STRAIGHT  /  WEST APRON", {38, 196}, 12, 1, {208, 239, 240, 255})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            "NATURAL  /  STRAIGHT  /  WEST APRON",
+            {38, 196},
+            12,
+            1,
+            {208, 239, 240, 255},
+        )
         canvas2d.DrawTextEx(
             canvas2d.Font{},
             "EAST APRON  /  SPLIT APRONS  /  STEPPED QUAYS",

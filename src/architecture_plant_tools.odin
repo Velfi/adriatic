@@ -184,7 +184,8 @@ airport_stamp_site_valid :: proc(editor: ^Editor, x, z, yaw: f32) -> bool {
         for local_x in ([3]f32{-21, 0, 21}) {
             sample_x := x + local_x * cosine - local_z * sine
             sample_z := z + local_x * sine + local_z * cosine
-            if terrain.sample_surface_height(&editor.project, 0, sample_x, sample_z) <= editor.project.sea_level + .35 {
+            if terrain.sample_surface_height(&editor.project, 0, sample_x, sample_z) <=
+               editor.project.sea_level + .35 {
                 return false
             }
         }

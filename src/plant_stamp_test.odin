@@ -1,18 +1,18 @@
 package main
 
 import terrain "../packages/terrain"
-import "core:testing"
 import third_person "../packages/third_person"
+import "core:testing"
 
 @(test)
 plant_stamp_target_distance_respects_rotated_footprint :: proc(t: ^testing.T) {
     structure := terrain.Structure {
         center_x = 4,
         center_z = 2,
-        width = 8,
-        depth = 6,
-        height = 7,
-        kind = .Architecture,
+        width    = 8,
+        depth    = 6,
+        height   = 7,
+        kind     = .Architecture,
     }
     testing.expect(t, plant_stamp_structure_distance_squared(structure, 5, 3) == 0)
     testing.expect(t, plant_stamp_structure_distance_squared(structure, 14, 2) == 36)
@@ -25,12 +25,12 @@ plant_stamp_target_ray_hits_rotated_support_surface :: proc(t: ^testing.T) {
     structure := terrain.Structure {
         center_x = 4,
         center_z = 2,
-        width = 8,
-        depth = 6,
-        base_y = 1,
-        height = 7,
+        width    = 8,
+        depth    = 6,
+        base_y   = 1,
+        height   = 7,
         rotation = 1.5707963,
-        kind = .Architecture,
+        kind     = .Architecture,
     }
     distance, hit := plant_stamp_ray_structure_distance(
         structure,

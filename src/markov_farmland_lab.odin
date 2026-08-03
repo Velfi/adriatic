@@ -135,7 +135,8 @@ farmland_dry_stone_edge :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32,
     length := f32(math.sqrt(f64(dx * dx + dz * dz)))
     if length <= .2 do return
     segments := max(int(math.ceil(f64(length / 3.2))), 1)
-    stone := farmland_render_region == .Aegean ? canvas2d.Color{145, 145, 134, 255} : canvas2d.Color{151, 145, 128, 255}
+    stone :=
+        farmland_render_region == .Aegean ? canvas2d.Color{145, 145, 134, 255} : canvas2d.Color{151, 145, 128, 255}
     yaw := f32(math.atan2(f64(dz), f64(dx)))
     for segment in 0 ..< segments {
         t0, t1 := f32(segment) / f32(segments), f32(segment + 1) / f32(segments)
@@ -143,7 +144,8 @@ farmland_dry_stone_edge :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32,
         midpoint_z := a_z + dz * (t0 + t1) * .5
         span := length / f32(segments)
         base_y := terrain.sample_surface_height(&editor.project, 0, midpoint_x, midpoint_z)
-        if base_y <= editor.project.sea_level + .25 || terrain.active_waterway_at(&editor.project, 0, midpoint_x, midpoint_z) {
+        if base_y <= editor.project.sea_level + .25 ||
+           terrain.active_waterway_at(&editor.project, 0, midpoint_x, midpoint_z) {
             continue
         }
         variation := f32(farmland.mix(seed ~ u32(segment)) & 31) / 310
@@ -568,7 +570,12 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     farmland_render_width = plan.width
     farmland_render_height = plan.height
     farmland_render_tradition = plan.tradition
-    center_height := terrain.sample_surface_height(&editor.project, 0, farmland_render_origin_x, farmland_render_origin_z)
+    center_height := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        farmland_render_origin_x,
+        farmland_render_origin_z,
+    )
     altitude := max(editor.camera_pose.position.y - center_height, f32(0))
     detail_fade := 1 - clamp((altitude - 42) / 115, f32(0), f32(1))
     // Keep the inexpensive 5 m terrain mesh at every altitude. Coarsening to
@@ -839,24 +846,25 @@ world_authored_farmland :: proc(editor: ^Editor, include_authored := true) {
     if editor == nil do return
     farmland_render_region = editor.settlement_plan.valid ? editor.settlement_plan.request.region : .Adriatic
     if include_authored {
-    for &instance in editor.farms[:editor.farm_count] {
-        scale_x := instance.scale_x > 0 ? instance.scale_x : f32(1)
-        scale_z := instance.scale_z > 0 ? instance.scale_z : f32(1)
-        half_width := f32(instance.plan.width) * farmland.CELL_METERS * scale_x * .5
-        half_depth := f32(instance.plan.height) * farmland.CELL_METERS * scale_z * .5
-        radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
-        ground := terrain.sample_surface_height(&editor.project, 0, instance.origin_x, instance.origin_z)
-        if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
-            continue
+        for &instance in editor.farms[:editor.farm_count] {
+            scale_x := instance.scale_x > 0 ? instance.scale_x : f32(1)
+            scale_z := instance.scale_z > 0 ? instance.scale_z : f32(1)
+            half_width := f32(instance.plan.width) * farmland.CELL_METERS * scale_x * .5
+            half_depth := f32(instance.plan.height) * farmland.CELL_METERS * scale_z * .5
+            radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
+            ground := terrain.sample_surface_height(&editor.project, 0, instance.origin_x, instance.origin_z)
+            if !world_renderer.retained_patio_rebuilding &&
+               !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
+                continue
+            }
+            farmland_render_origin_x = instance.origin_x
+            farmland_render_origin_z = instance.origin_z
+            farmland_render_yaw = instance.yaw
+            farmland_render_scale_x = instance.scale_x > 0 ? instance.scale_x : f32(1)
+            farmland_render_scale_z = instance.scale_z > 0 ? instance.scale_z : f32(1)
+            farmland_render_preview = false
+            farmland_render_plan(editor, &instance.plan)
         }
-        farmland_render_origin_x = instance.origin_x
-        farmland_render_origin_z = instance.origin_z
-        farmland_render_yaw = instance.yaw
-        farmland_render_scale_x = instance.scale_x > 0 ? instance.scale_x : f32(1)
-        farmland_render_scale_z = instance.scale_z > 0 ? instance.scale_z : f32(1)
-        farmland_render_preview = false
-        farmland_render_plan(editor, &instance.plan)
-    }
     }
     if editor.farm_paint_mode && editor.farm_preview_valid {
         preview := &editor.farm_preview
@@ -995,7 +1003,12 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     atmosphere.set_weather_override(&editor.atmosphere, .Clear)
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
-    center_height := terrain.sample_surface_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
+    center_height := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        MARKOV_FARMLAND_ORIGIN_X,
+        MARKOV_FARMLAND_ORIGIN_Z,
+    )
     if target == "high" {
         editor.camera_pose = third_person.camera_look_at(
             {MARKOV_FARMLAND_ORIGIN_X + 42, center_height + 190, MARKOV_FARMLAND_ORIGIN_Z + 54},
@@ -1159,7 +1172,12 @@ markov_farmland_lab_terrain_name :: proc(kind: Farmland_Lab_Terrain) -> cstring 
 markov_farmland_lab_configure_camera :: proc(editor: ^Editor) {
     if editor == nil do return
     extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
-    center_height := terrain.sample_surface_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
+    center_height := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        MARKOV_FARMLAND_ORIGIN_X,
+        MARKOV_FARMLAND_ORIGIN_Z,
+    )
     eye := third_person.Vec3 {
         MARKOV_FARMLAND_ORIGIN_X + extent * .58,
         center_height + extent * .40,
@@ -1229,5 +1247,12 @@ markov_farmland_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         1,
         {105, 215, 198, 255},
     )
-    canvas2d.DrawTextEx(canvas2d.Font{}, "1 FLAT   2 TERRACE   3 CLIFF   4 INCLINE", {38, 98}, 14, 1, {190, 207, 211, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "1 FLAT   2 TERRACE   3 CLIFF   4 INCLINE",
+        {38, 98},
+        14,
+        1,
+        {190, 207, 211, 255},
+    )
 }

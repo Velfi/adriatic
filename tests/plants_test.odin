@@ -100,9 +100,58 @@ plant_catalog_generates_every_species_at_every_detail :: proc(t: ^testing.T) {
 }
 
 @(test)
+olive_source_leaves_use_both_sides_of_their_shoots :: proc(t: ^testing.T) {
+    // Juvenile plants retain one card per source station, exposing any bias
+    // that mature Near and Medium plants conceal with opposite pairs.
+    for seed in u64(1) ..= 8 {
+        result := plants.generate(
+            {species = .Olive, seed = seed, maturity = .20, detail = .Near, habit = .Free_Standing},
+        )
+        defer plants.destroy(&result)
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+        positive, negative := 0, 0
+        for attachment in result.plant.attachments {
+            if attachment.kind != .Leaf do continue
+            nearest_distance := f32(1e30)
+            nearest_side: [3]f32
+            for segment in result.plant.segments {
+                direction := segment.end - segment.start
+                length_squared := linalg.dot(direction, direction)
+                if length_squared < .000001 do continue
+                fraction := clamp(
+                    linalg.dot(attachment.position - segment.start, direction) / length_squared,
+                    f32(0),
+                    f32(1),
+                )
+                nearest := segment.start + direction * fraction
+                offset := attachment.position - nearest
+                distance := linalg.dot(offset, offset)
+                if distance >= nearest_distance do continue
+                side := linalg.normalize0(linalg.cross(linalg.normalize0(direction), [3]f32{0, 1, 0}))
+                if linalg.dot(side, side) < .2 do side = {1, 0, 0}
+                nearest_distance = distance
+                nearest_side = side
+            }
+            facing := linalg.dot(attachment.forward, nearest_side)
+            if facing > .25 do positive += 1
+            if facing < -.25 do negative += 1
+        }
+        testing.expectf(t, positive > 0, "olive seed=%d has no leaves on the positive shoot side", seed)
+        testing.expectf(t, negative > 0, "olive seed=%d has no leaves on the negative shoot side", seed)
+    }
+}
+
+@(test)
 climbing_limits_scale_with_support_area_not_a_global_count :: proc(t: ^testing.T) {
-    small := plants.Support_Surface{width = 2, height = 3}
-    large := plants.Support_Surface{width = 4, height = 6}
+    small := plants.Support_Surface {
+        width  = 2,
+        height = 3,
+    }
+    large := plants.Support_Surface {
+        width  = 4,
+        height = 6,
+    }
     for detail in plants.Detail_Level {
         small_segments, small_attachments := plants.climbing_density_limits(detail, &small)
         large_segments, large_attachments := plants.climbing_density_limits(detail, &large)
@@ -142,16 +191,14 @@ climbing_generation_fills_supports_within_area_density :: proc(t: ^testing.T) {
 
 @(test)
 star_jasmine_spreads_a_connected_flowering_fan_across_its_wall :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    support := plants.Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = 0,
+    }
     result := plants.generate(
-        {
-            species = .Star_Jasmine,
-            seed = 73,
-            maturity = 1,
-            detail = .Near,
-            habit = .Wall_Trained,
-            support = &support,
-        },
+        {species = .Star_Jasmine, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
     )
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
@@ -175,16 +222,14 @@ star_jasmine_spreads_a_connected_flowering_fan_across_its_wall :: proc(t: ^testi
 
 @(test)
 wisteria_spreads_woody_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    support := plants.Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = 0,
+    }
     result := plants.generate(
-        {
-            species = .Wisteria,
-            seed = 73,
-            maturity = 1,
-            detail = .Near,
-            habit = .Wall_Trained,
-            support = &support,
-        },
+        {species = .Wisteria, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
     )
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
@@ -204,16 +249,14 @@ wisteria_spreads_woody_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
 
 @(test)
 climbing_rose_spreads_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    support := plants.Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = 0,
+    }
     result := plants.generate(
-        {
-            species = .Climbing_Rose,
-            seed = 73,
-            maturity = 1,
-            detail = .Near,
-            habit = .Wall_Trained,
-            support = &support,
-        },
+        {species = .Climbing_Rose, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
     )
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
@@ -226,6 +269,68 @@ climbing_rose_spreads_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
         if attachment.kind == .Flower do flower_count += 1
     }
     testing.expect(t, flower_count > 0)
+}
+
+@(test)
+bougainvillea_main_leader_samples_one_continuous_root_to_tip_cane :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    result := plants.generate(
+        {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    previous := plants.main_leader_sample(&result.plant, 0)
+    for sample in 1 ..= 20 {
+        current := plants.main_leader_sample(&result.plant, f32(sample) / 20)
+        testing.expectf(
+            t,
+            current[1] + .0001 >= previous[1],
+            "leader moved downward from %.3f to %.3f at sample %d",
+            previous[1],
+            current[1],
+            sample,
+        )
+        previous = current
+    }
+    testing.expect(t, previous[1] >= support.height * .90)
+}
+
+@(test)
+mature_bougainvillea_clothes_its_canes_with_dense_short_laterals :: proc(t: ^testing.T) {
+    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    result := plants.generate(
+        {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    lateral_segment_count := 0
+    for segment in result.plant.segments {
+        if segment.depth >= 8 do lateral_segment_count += 1
+    }
+    testing.expectf(t, lateral_segment_count >= 450, "routed flowering lateral segments: %d", lateral_segment_count)
+    testing.expectf(
+        t,
+        len(result.plant.attachments) >= 900,
+        "mature bougainvillea attachments: %d",
+        len(result.plant.attachments),
+    )
+    unaccompanied_count := 0
+    for attachment in result.plant.attachments {
+        if attachment.kind == .Leaf do continue
+        accompanied := false
+        for candidate in result.plant.attachments {
+            if candidate.kind != .Leaf do continue
+            delta := candidate.position - attachment.position
+            if linalg.dot(delta, delta) <= 1e-8 {
+                accompanied = true
+                break
+            }
+        }
+        if !accompanied do unaccompanied_count += 1
+    }
+    testing.expectf(t, unaccompanied_count == 0, "flowering or thorn sites without foliage: %d", unaccompanied_count)
 }
 
 @(test)
@@ -653,6 +758,21 @@ olive_uses_a_crooked_trunk_and_staggered_primary_leaders :: proc(t: ^testing.T) 
         }
     }
     testing.expect(t, staggered)
+}
+
+@(test)
+olive_mature_roots_finish_below_grade_without_needle_tips :: proc(t: ^testing.T) {
+    result := plants.generate({species = .Olive, seed = 41, maturity = 1, detail = .Near, habit = .Free_Standing})
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    buried_tips := 0
+    for segment in result.plant.segments {
+        if segment.depth >= 0 || segment.end[1] >= 0 do continue
+        buried_tips += 1
+        testing.expect(t, segment.radius_end >= result.plant.segments[0].radius_start * .09)
+    }
+    testing.expect_value(t, buried_tips, 3)
 }
 
 @(test)
@@ -1627,6 +1747,105 @@ climbing_branches_route_around_a_doorway :: proc(t: ^testing.T) {
 }
 
 @(test)
+bougainvillea_routes_from_an_interior_corner_beneath_stacked_windows :: proc(t: ^testing.T) {
+    windows := [2]plants.Rect {
+        {-3.45, 1.05, -1.35, 2.35},
+        {-3.45, 3.65, -1.35, 4.95},
+    }
+    support := plants.Support_Surface {
+        width      = 8,
+        height     = 7,
+        plane_z    = .18,
+        root_x     = -2.45,
+        left_corner_x = -4.16,
+        left_return_depth = 3.9,
+        planter    = true,
+        exclusions = windows[:],
+    }
+    result := plants.generate(
+        {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+    )
+    defer plants.destroy(&result)
+    testing.expect_value(t, result.error, plants.Generate_Error.None)
+
+    corner_strip_count, return_wall_count, right_jamb_count, between_windows_count, above_windows_count := 0, 0, 0, 0, 0
+    maximum_return_z := support.plane_z
+    for attachment in result.plant.attachments {
+        for window in windows {
+            inside :=
+                attachment.position[0] >= window.minimum_x &&
+                attachment.position[0] <= window.maximum_x &&
+                attachment.position[1] >= window.minimum_y &&
+                attachment.position[1] <= window.maximum_y
+            testing.expectf(t, !inside, "inside window position: %.3f %.3f", attachment.position[0], attachment.position[1])
+        }
+        if attachment.position[0] <= windows[0].minimum_x - .08 do corner_strip_count += 1
+        if attachment.position[2] >= support.plane_z + .35 {
+            return_wall_count += 1
+            maximum_return_z = max(maximum_return_z, attachment.position[2])
+        }
+        if attachment.position[0] >= windows[0].maximum_x + .08 &&
+           attachment.position[1] >= windows[0].minimum_y &&
+           attachment.position[1] <= windows[1].maximum_y + support.height * .12 {
+            right_jamb_count += 1
+        }
+        if attachment.position[1] > windows[0].maximum_y && attachment.position[1] < windows[1].minimum_y {
+            between_windows_count += 1
+        }
+        if attachment.position[1] > windows[1].maximum_y do above_windows_count += 1
+    }
+    testing.expectf(t, corner_strip_count >= 12, "attachments using the interior-corner strip: %d", corner_strip_count)
+    testing.expectf(t, return_wall_count >= 200, "attachments wrapping onto the return wall: %d", return_wall_count)
+    testing.expectf(t, maximum_return_z >= support.plane_z + 2.5, "maximum return-wall depth: %.3f", maximum_return_z)
+    testing.expectf(t, right_jamb_count >= 12, "attachments using the right window jamb: %d", right_jamb_count)
+    testing.expectf(t, between_windows_count >= 8, "attachments between stacked windows: %d", between_windows_count)
+    testing.expectf(t, above_windows_count >= 12, "attachments above stacked windows: %d", above_windows_count)
+}
+
+@(test)
+bougainvillea_seeds_choose_distinct_window_routes :: proc(t: ^testing.T) {
+    windows := [2]plants.Rect {
+        {-3.45, 1.05, -1.35, 2.35},
+        {-3.45, 3.65, -1.35, 4.95},
+    }
+    support := plants.Support_Surface {
+        width      = 8,
+        height     = 7,
+        plane_z    = .18,
+        root_x     = -2.45,
+        left_corner_x = -4.16,
+        left_return_depth = 3.9,
+        planter    = true,
+        exclusions = windows[:],
+    }
+    route_signatures: [16]u64
+    distinct_signatures := 0
+    for seed in 0 ..< len(route_signatures) {
+        result := plants.generate(
+            {species = .Bougainvillea, seed = u64(seed), maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+        )
+        testing.expect_value(t, result.error, plants.Generate_Error.None)
+        signature: u64
+        for attachment in result.plant.attachments {
+            x_band := clamp(int((attachment.position[0] / support.width + .5) * 8), 0, 7)
+            y_band := clamp(int(attachment.position[1] / support.height * 8), 0, 7)
+            signature |= u64(1) << u64(y_band * 8 + x_band)
+        }
+        route_signatures[seed] = signature
+        unique := true
+        for previous in 0 ..< seed {
+            if route_signatures[previous] == signature {
+                unique = false
+                break
+            }
+        }
+        if unique do distinct_signatures += 1
+        plants.destroy(&result)
+    }
+    testing.expectf(t, distinct_signatures >= 8, "distinct 8x8 route signatures across 16 seeds: %d", distinct_signatures)
+}
+
+@(test)
 bougainvillea_preserves_a_broad_generated_fan_above_an_opening :: proc(t: ^testing.T) {
     opening := [1]plants.Rect{{-1.18, 0, 1.18, 2.78}}
     support := plants.Support_Surface {
@@ -1676,12 +1895,12 @@ bougainvillea_distributes_foliage_along_routed_canes :: proc(t: ^testing.T) {
     inspected_segment_count := 0
     for segment in result.plant.segments {
         midpoint := (segment.start + segment.end) * .5
-        eligible :=
-            (segment.depth >= 1 && midpoint[1] >= support.height * .20) ||
-            midpoint[1] >= support.height * .42
+        eligible := (segment.depth >= 1 && midpoint[1] >= support.height * .20) || midpoint[1] >= support.height * .42
         for exclusion in support.exclusions {
-            if midpoint[0] >= exclusion.minimum_x && midpoint[0] <= exclusion.maximum_x &&
-               midpoint[1] >= exclusion.minimum_y && midpoint[1] <= exclusion.maximum_y {
+            if midpoint[0] >= exclusion.minimum_x &&
+               midpoint[0] <= exclusion.maximum_x &&
+               midpoint[1] >= exclusion.minimum_y &&
+               midpoint[1] <= exclusion.maximum_y {
                 eligible = false
                 break
             }
@@ -1697,13 +1916,33 @@ bougainvillea_distributes_foliage_along_routed_canes :: proc(t: ^testing.T) {
         inspected_segment_count += 1
     }
     testing.expect(t, inspected_segment_count >= 24)
-    debug_upper_bands: [8]int
+    upper_bands: [8]int
+    minimum_upper_x, maximum_upper_x := f32(1e9), f32(-1e9)
     for attachment in result.plant.attachments {
         if attachment.kind != .Leaf || attachment.position[1] < 2.8 do continue
         normalized_x := clamp(attachment.position[0] / support.width + .5, f32(0), f32(.999))
-        debug_upper_bands[clamp(int(normalized_x * 8), 0, 7)] += 1
+        upper_bands[clamp(int(normalized_x * 8), 0, 7)] += 1
+        minimum_upper_x = min(minimum_upper_x, attachment.position[0])
+        maximum_upper_x = max(maximum_upper_x, attachment.position[0])
     }
-    testing.expectf(t, false, "upper foliage bands: %v; total attachments: %d", debug_upper_bands, len(result.plant.attachments))
+    occupied_upper_bands := 0
+    for count in upper_bands {
+        if count > 0 do occupied_upper_bands += 1
+    }
+    testing.expectf(
+        t,
+        occupied_upper_bands >= 6,
+        "upper foliage bands: %v; total attachments: %d",
+        upper_bands,
+        len(result.plant.attachments),
+    )
+    testing.expectf(
+        t,
+        maximum_upper_x - minimum_upper_x >= support.width * .70,
+        "upper foliage spread %.3f across %.3f-wide support",
+        maximum_upper_x - minimum_upper_x,
+        support.width,
+    )
     testing.expectf(
         t,
         maximum_nearest_distance_squared <= .36,
@@ -1783,7 +2022,11 @@ grapevine_routes_generated_growth_onto_trellis_wire_tiers :: proc(t: ^testing.T)
 
 @(test)
 grapevine_vsp_network_preserves_permanent_wood_and_variable_shoots_across_seeds :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, root_x = 0}
+    support := plants.Support_Surface {
+        width  = 8,
+        height = 7,
+        root_x = 0,
+    }
     minimum_shoot_segments, maximum_shoot_segments := 1_000, 0
     for seed in u64(70) ..= 76 {
         result := plants.generate(
@@ -1795,10 +2038,14 @@ grapevine_vsp_network_preserves_permanent_wood_and_variable_shoots_across_seeds 
         for segment in result.plant.segments {
             maximum_y = max(maximum_y, max(segment.start[1], segment.end[1]))
             switch segment.depth {
-            case -23: trunk_count += 1
-            case -20: cordon_count += 1
-            case -22: spur_count += 1
-            case -21: shoot_count += 1
+            case -23:
+                trunk_count += 1
+            case -20:
+                cordon_count += 1
+            case -22:
+                spur_count += 1
+            case -21:
+                shoot_count += 1
             }
         }
         testing.expect_value(t, trunk_count, 3)
@@ -1866,10 +2113,30 @@ hydrangea_catalog_separates_pruned_bush_and_tree_forms :: proc(t: ^testing.T) {
         tree.plant.bounds.maximum[0] - tree.plant.bounds.minimum[0],
         tree.plant.bounds.maximum[2] - tree.plant.bounds.minimum[2],
     )
-    testing.expectf(t, bush_height >= .65 && bush_height <= 1.8, "bush hydrangea height %.2fm is out of scale", bush_height)
-    testing.expectf(t, bush_width >= .75 && bush_width <= 2.4, "bush hydrangea width %.2fm is out of scale", bush_width)
-    testing.expectf(t, tree_height >= 1.5 && tree_height <= 4.5, "tree hydrangea height %.2fm is out of scale", tree_height)
-    testing.expectf(t, tree_width >= .75 && tree_width <= 2.8, "tree hydrangea width %.2fm is out of scale", tree_width)
+    testing.expectf(
+        t,
+        bush_height >= .65 && bush_height <= 1.8,
+        "bush hydrangea height %.2fm is out of scale",
+        bush_height,
+    )
+    testing.expectf(
+        t,
+        bush_width >= .75 && bush_width <= 2.4,
+        "bush hydrangea width %.2fm is out of scale",
+        bush_width,
+    )
+    testing.expectf(
+        t,
+        tree_height >= 1.5 && tree_height <= 4.5,
+        "tree hydrangea height %.2fm is out of scale",
+        tree_height,
+    )
+    testing.expectf(
+        t,
+        tree_width >= .75 && tree_width <= 2.8,
+        "tree hydrangea width %.2fm is out of scale",
+        tree_width,
+    )
     testing.expectf(
         t,
         tree_height > bush_height * 1.25,
@@ -1969,9 +2236,7 @@ mature_hydrangea_stays_bushy_and_floriferous_across_seeds :: proc(t: ^testing.T)
 
 @(test)
 agapanthus_separates_a_basal_strap_rosette_from_elevated_umbels :: proc(t: ^testing.T) {
-    result := plants.generate(
-        {species = .Agapanthus, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing},
-    )
+    result := plants.generate({species = .Agapanthus, seed = 73, maturity = 1, detail = .Near, habit = .Free_Standing})
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
     testing.expect_value(t, len(result.plant.segments), 4)
@@ -2226,7 +2491,14 @@ myrtle_preserves_a_fine_multistem_shrub_habit_across_seeds :: proc(t: ^testing.T
         )
         height := myrtle.plant.bounds.maximum[1] - myrtle.plant.bounds.minimum[1]
         testing.expect(t, height > width * .78)
-        testing.expectf(t, height < width * 1.60, "myrtle seed %d is too narrow: %.2fm high x %.2fm wide", seed, height, width)
+        testing.expectf(
+            t,
+            height < width * 1.60,
+            "myrtle seed %d is too narrow: %.2fm high x %.2fm wide",
+            seed,
+            height,
+            width,
+        )
         basal_stems := 0
         maximum_radius := f32(0)
         for segment in myrtle.plant.segments {

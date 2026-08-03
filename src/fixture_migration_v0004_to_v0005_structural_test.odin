@@ -269,22 +269,22 @@ when ODIN_TEST {
                 tentative.postale.body.orientation,
                 expected_postale_orientation,
             ) &&
-                fixture_migration_v0004_test_orientation_equal(
-                    tentative.libellula.body.orientation,
-                    expected_libellula_orientation,
-                ) &&
-                fixture_migration_v0004_test_orientation_equal(
-                    tentative.rondine.body.orientation,
-                    expected_rondine_orientation,
-                ) &&
-                fixture_migration_v0004_test_orientation_equal(
-                    tentative.libellula.spawn_orientation,
-                    expected_libellula_spawn,
-                ) &&
-                fixture_migration_v0004_test_orientation_equal(
-                    tentative.postale.spawn_orientation,
-                    expected_postale_spawn,
-                ),
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.libellula.body.orientation,
+                expected_libellula_orientation,
+            ) &&
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.rondine.body.orientation,
+                expected_rondine_orientation,
+            ) &&
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.libellula.spawn_orientation,
+                expected_libellula_spawn,
+            ) &&
+            fixture_migration_v0004_test_orientation_equal(
+                tentative.postale.spawn_orientation,
+                expected_postale_spawn,
+            ),
         )
         testing.expect(
             t,

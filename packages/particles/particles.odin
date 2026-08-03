@@ -406,9 +406,7 @@ step_wing_trails :: proc(
         // the spawn instead of letting the left side permanently starve the
         // right side once the fixed particle pool reaches steady state.
         if trails.count + 2 > MAX_WING_TRAIL_PARTICLES do break
-        pair_life :=
-            (.55 + next_random(&trails.seed) * (.55 + wind_speed * .02)) *
-            wing_trail_lifetime_scale(airspeed)
+        pair_life := (.55 + next_random(&trails.seed) * (.55 + wind_speed * .02)) * wing_trail_lifetime_scale(airspeed)
         for side in 0 ..< 2 {
             tip := side == 0 ? left_tip : right_tip
             jitter := next_random(&trails.seed) - .5

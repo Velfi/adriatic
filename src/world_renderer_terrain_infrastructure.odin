@@ -71,6 +71,11 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
 
 world_terrain_invalidate_all :: proc(editor: ^Editor) {
     if editor == nil do return
+    // Full terrain invalidation is the common commit point for undo/redo and
+    // semantic terrain regeneration. Refresh derived ocean beds here once;
+    // authored harbor and river chunks are excluded by terrain's ownership
+    // rule.
+    _ = terrain.bathymetry_refresh_all_generated(&editor.project)
     editor.terrain_revision += 1
     ground_grass_cache_clear()
     for &dirty in world_renderer.clipmap_dirty {

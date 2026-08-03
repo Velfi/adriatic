@@ -43,7 +43,8 @@ mouse_gait_lab_course_feature: int
 mouse_gait_lab_course_actor_position: third_person.Vec3
 
 mouse_gait_lab_course_clear :: proc(editor: ^Editor) {
-    if editor != nil && editor.gameplay_physics.world != nil &&
+    if editor != nil &&
+       editor.gameplay_physics.world != nil &&
        editor.gameplay_physics.world == mouse_gait_lab_course_world {
         for body in mouse_gait_lab_course_bodies[:mouse_gait_lab_course_body_count] {
             if body != physics.INVALID_BODY do physics.remove_body(editor.gameplay_physics.world, body)
@@ -76,10 +77,18 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     mouse_gait_lab_surface_course = false
     mouse_gait_lab_course_feature = 2
     course_side_targets := [5]string {
-        "surface-flat-side", "surface-ramp-side", "surface-steps-side", "surface-ledge-side", "surface-platform-side",
+        "surface-flat-side",
+        "surface-ramp-side",
+        "surface-steps-side",
+        "surface-ledge-side",
+        "surface-platform-side",
     }
     course_oblique_targets := [5]string {
-        "surface-flat-oblique", "surface-ramp-oblique", "surface-steps-oblique", "surface-ledge-oblique", "surface-platform-oblique",
+        "surface-flat-oblique",
+        "surface-ramp-oblique",
+        "surface-steps-oblique",
+        "surface-ledge-oblique",
+        "surface-platform-oblique",
     }
     for feature in 0 ..< 5 {
         if target == course_side_targets[feature] || target == course_oblique_targets[feature] {
@@ -168,7 +177,12 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
             state := &editor.gameplay_physics
             ramp_angle := f32(12 * math.PI / 180)
             course := [5]physics.Body_ID {
-                physics.add_box_layered(state.world, {1.15, .12, .7}, {-2.4, .12, 0}, rotation = {0, 0, math.sin(ramp_angle * .5), math.cos(ramp_angle * .5)}),
+                physics.add_box_layered(
+                    state.world,
+                    {1.15, .12, .7},
+                    {-2.4, .12, 0},
+                    rotation = {0, 0, math.sin(ramp_angle * .5), math.cos(ramp_angle * .5)},
+                ),
                 physics.add_box_layered(state.world, {.32, .10, .7}, {-.72, .10, 0}),
                 physics.add_box_layered(state.world, {.32, .20, .7}, {-.08, .20, 0}),
                 physics.add_box_layered(state.world, {.32, .30, .7}, {.56, .30, 0}),
@@ -178,12 +192,20 @@ mouse_gait_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
                 mouse_gait_lab_course_register(state.world, body)
             }
             mouse_gait_lab_moving_platform = physics.add_box_layered(
-                state.world, {.72, .12, .7}, {3.55, .36, 0}, motion = .Kinematic, layer = .Moving,
+                state.world,
+                {.72, .12, .7},
+                {3.55, .36, 0},
+                motion = .Kinematic,
+                layer = .Moving,
             )
             mouse_gait_lab_course_register(state.world, mouse_gait_lab_moving_platform)
         }
         course_positions := [5]third_person.Vec3 {
-            {-4.25, 0, 0}, {-2.4, .22, 0}, {-.72, .20, 0}, {1.72, .68, 0}, {3.55, .48, 0},
+            {-4.25, 0, 0},
+            {-2.4, .22, 0},
+            {-.72, .20, 0},
+            {1.72, .68, 0},
+            {3.55, .48, 0},
         }
         course_position := course_positions[mouse_gait_lab_course_feature]
         mouse_gait_lab_course_actor_position = course_position
@@ -341,13 +363,21 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
         // Keep the inspection actor near the optical center. The former flat-
         // ground placement at x=-4.25 fell outside the authored camera's
         // horizontal frustum even though the course itself remained visible.
-        world_mouse_model(editor, {
-            position = mouse_gait_lab_course_actor_position,
-            rotation = editor.player.facing_yaw_radians,
-            fur = Mouse_Fur(1), pattern = .Solid, grounded = true,
-            player_controlled = true, track_paw_plants = true,
-            gait_preview = true, gait_speed = 2.6, gait_phase = math.PI * 1.72,
-        })
+        world_mouse_model(
+            editor,
+            {
+                position = mouse_gait_lab_course_actor_position,
+                rotation = editor.player.facing_yaw_radians,
+                fur = Mouse_Fur(1),
+                pattern = .Solid,
+                grounded = true,
+                player_controlled = true,
+                track_paw_plants = true,
+                gait_preview = true,
+                gait_speed = 2.6,
+                gait_phase = math.PI * 1.72,
+            },
+        )
         return
     }
     track_length := f32(12)

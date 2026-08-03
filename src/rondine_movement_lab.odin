@@ -404,7 +404,14 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
                 runtime.grounded ? 1 : 0,
             )
             value_size := canvas2d.MeasureTextEx(canvas2d.Font{}, values, 10, .3)
-            canvas2d.DrawTextEx(canvas2d.Font{}, values, {x - value_size.x * .5, top + 46}, 10, .3, {213, 194, 142, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                values,
+                {x - value_size.x * .5, top + 46},
+                10,
+                .3,
+                {213, 194, 142, 255},
+            )
         } else {
             motion_values := fmt.ctprintf(
                 "%.0fm/s S%+.0f D%.0f C%.0f",
@@ -422,8 +429,22 @@ rondine_movement_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             )
             motion_size := canvas2d.MeasureTextEx(canvas2d.Font{}, motion_values, 8, .15)
             event_size := canvas2d.MeasureTextEx(canvas2d.Font{}, event_values, 8, .15)
-            canvas2d.DrawTextEx(canvas2d.Font{}, motion_values, {x - motion_size.x * .5, top + 43}, 8, .15, {213, 194, 142, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, event_values, {x - event_size.x * .5, top + 62}, 8, .15, {183, 219, 211, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                motion_values,
+                {x - motion_size.x * .5, top + 43},
+                8,
+                .15,
+                {213, 194, 142, 255},
+            )
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                event_values,
+                {x - event_size.x * .5, top + 62},
+                8,
+                .15,
+                {183, 219, 211, 255},
+            )
         }
         draw_index += 1
     }

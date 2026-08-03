@@ -338,7 +338,7 @@ format_logger_line_widget :: proc(
         )
     }
 
-    package_name := loc.package_name
+    package_name := source_package_name(loc)
     has_package := package_name != ""
     if has_package || has_scope_label {
         if has_package {
@@ -678,7 +678,7 @@ do_module_header :: proc(
     scope_override: string,
     has_scope_override: bool,
 ) {
-    package_name := location.package_name
+    package_name := source_package_name(location)
     has_package := package_name != ""
     scope_count := 0
     if !has_scope_override {

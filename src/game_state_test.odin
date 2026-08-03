@@ -170,6 +170,9 @@ when ODIN_TEST {
         editor.in_map = true
         editor.camera_pose = third_person.camera_look_at({0, 8, 12}, {0, 1, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
+        editor.in_map = false
+        editor.camera_pose = third_person.camera_look_at({0, 21, 0}, {0, 0, 500})
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
         editor.camera_pose = third_person.camera_look_at({0, 3008, 12}, {0, 3000, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
     }

@@ -157,7 +157,12 @@ succulent_emit_rosette :: proc(
         radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
         forward := linalg.normalize0(radial * spread + lsystem.Vec3{0, rise, 0})
         tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
-        append(&plant.leaves, lsystem.Leaf{position = center, forward = forward, up = tangent, depth = depth})
+        // Attachment `up` is the leaf-face normal; renderers derive the
+        // lateral width axis as cross(forward, up). Author a normal that
+        // makes that axis follow the rosette tangent. Passing the tangent as
+        // `up` turned leaf width vertically and reduced rosettes to edges.
+        face_normal := linalg.normalize0(linalg.cross(tangent, forward))
+        append(&plant.leaves, lsystem.Leaf{position = center, forward = forward, up = face_normal, depth = depth})
     }
 }
 
@@ -201,17 +206,19 @@ fleshy_plant_skeleton :: proc(
     } else {
         // Aloe is a narrower, more upright clumping rosette. Mature plants
         // add two small deterministic offsets instead of becoming one agave.
-        succulent_emit_rosette(&result.plant, {}, outer_count, phase, .62, .78, 0)
-        succulent_emit_rosette(&result.plant, {0, .025 * growth, 0}, inner_count, phase + .37, .88, .48, 1)
+        aloe_outer_count := detail == .Near ? 14 : detail == .Medium ? 10 : 7
+        aloe_inner_count := detail == .Near ? 8 : detail == .Medium ? 6 : 4
+        succulent_emit_rosette(&result.plant, {}, aloe_outer_count, phase, 1.05, .58, 0)
+        succulent_emit_rosette(&result.plant, {0, .025 * growth, 0}, aloe_inner_count, phase + .37, 1.20, .40, 1)
         if maturity >= .72 && detail != .Far {
-            offset_count := detail == .Near ? 7 : 5
+            offset_count := detail == .Near ? 5 : 4
             succulent_emit_rosette(
                 &result.plant,
                 {.18 * growth, 0, -.10 * growth},
                 offset_count,
                 phase + 1.1,
-                .72,
-                .66,
+                1.0,
+                .50,
                 2,
             )
             succulent_emit_rosette(
@@ -219,8 +226,8 @@ fleshy_plant_skeleton :: proc(
                 {-.16 * growth, 0, .12 * growth},
                 offset_count,
                 phase - .8,
-                .75,
-                .62,
+                1.0,
+                .48,
                 2,
             )
         }
@@ -272,8 +279,8 @@ succulent_catalog_skeleton :: proc(
         return result
     }
     if species == .Jade_Plant {
-        stem_count := detail == .Far ? 3 : 5
-        node_count := detail == .Near ? 4 : detail == .Medium ? 3 : 2
+        stem_count := detail == .Far ? 4 : detail == .Medium ? 6 : 7
+        node_count := detail == .Near ? 5 : detail == .Medium ? 4 : 3
         for stem in 0 ..< stem_count {
             angle := phase + f32(stem) * math.PI * 2 / f32(stem_count)
             radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
@@ -313,21 +320,32 @@ succulent_catalog_skeleton :: proc(
         return result
     }
     if species == .Stonecrop {
-        runner_count := detail == .Near ? 12 : detail == .Medium ? 8 : 5
+        // Stonecrop reads as a low, densely tiled cushion: short creeping
+        // stems disappear beneath overlapping, plump leaves. The previous
+        // single sideways leaf per node exposed the runners as a wire-like
+        // starburst when viewed from the catalog camera.
+        runner_count := detail == .Near ? 20 : detail == .Medium ? 13 : 8
         nodes := detail == .Near ? 5 : detail == .Medium ? 4 : 3
         for runner in 0 ..< runner_count {
             angle := phase + f32(runner) * math.PI * 2 / f32(runner_count)
             radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
             position: lsystem.Vec3
             for node in 0 ..< nodes {
-                next := position + radial * .075 * growth + lsystem.Vec3{0, .010 + f32(node) * .004, 0}
-                append(&result.plant.segments, lsystem.Segment{position, next, .006, .004, 0})
+                next := position + radial * .060 * growth + lsystem.Vec3{0, .012 + f32(node) * .003, 0}
+                append(&result.plant.segments, lsystem.Segment{position, next, .010, .007, 0})
                 append(
                     &result.plant.leaves,
                     lsystem.Leaf {
                         position = next,
-                        forward = {-radial[2], .18, radial[0]},
-                        up = {0, 1, 0},
+                        forward = linalg.normalize0(radial * .42 + tangent * .22 + lsystem.Vec3{0, .82, 0}),
+                        up = tangent,
+                        depth = node,
+                    },
+                    lsystem.Leaf {
+                        position = next + tangent * .012,
+                        forward = linalg.normalize0(radial * .18 - tangent * .48 + lsystem.Vec3{0, .86, 0}),
+                        up = radial,
                         depth = node,
                     },
                 )
@@ -338,16 +356,19 @@ succulent_catalog_skeleton :: proc(
     }
     if species == .Blue_Chalk_Sticks {
         append(&result.plant.segments, lsystem.Segment{{}, {0, .03, 0}, .008, .005, 0})
-        count := detail == .Near ? 22 : detail == .Medium ? 14 : 8
+        count := detail == .Near ? 28 : detail == .Medium ? 18 : 10
         for index in 0 ..< count {
             angle := phase + f32(index) * 2.399963
             radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
+            forward := linalg.normalize0(radial * .34 + lsystem.Vec3{0, 1, 0})
+            face_normal := linalg.normalize0(linalg.cross(tangent, forward))
             append(
                 &result.plant.leaves,
                 lsystem.Leaf {
-                    position = radial * (.035 + f32(index % 4) * .022),
-                    forward = linalg.normalize0(radial * .26 + lsystem.Vec3{0, 1, 0}),
-                    up = {-radial[2], 0, radial[0]},
+                    position = radial * (.045 + f32(index % 5) * .025),
+                    forward = forward,
+                    up = face_normal,
                     depth = index % 3,
                 },
             )

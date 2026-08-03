@@ -196,7 +196,10 @@ world_settlement_inhabitants :: proc(editor: ^Editor, include_animated := true, 
         point := home
         tangent := [2]f32{0, 1}
         distance_to_camera := linalg.length(home - camera)
-        if include_animated && distance_to_camera <= 135 && animated < 24 && editor.architecture_city_plan.alley_count > 0 {
+        if include_animated &&
+           distance_to_camera <= 135 &&
+           animated < 24 &&
+           editor.architecture_city_plan.alley_count > 0 {
             alley_index := int(inhabitant.seed % u32(editor.architecture_city_plan.alley_count))
             alley := editor.architecture_city_plan.alleys[alley_index]
             start := [2]f32{alley.start_x, alley.start_z}
@@ -358,7 +361,7 @@ world_town_mouse_placements_ensure :: proc(editor: ^Editor) {
                 world_renderer.town_mouse_placements[island_index][resident_index] = {
                     position = {x, ground_y, z},
                     rotation = rotation,
-                    valid = true,
+                    valid    = true,
                 }
                 break
             }
@@ -405,58 +408,56 @@ world_town_mice :: proc(editor: ^Editor) {
             frontage_rotation := placement.rotation
             named_resident: story.Resident
             named := false
-                if island_index == 0 && resident_index == 0 {
-                    named_resident, named = .Niko, true
-                } else if island_index == 0 && resident_index == 2 {
-                    named_resident, named = .Bojan, true
-                } else if island_index == 1 && resident_index == 1 {
-                    named_resident, named = .Iva, true
-                } else if island_index == 1 && resident_index == 5 {
-                    named_resident, named = .Zora, true
-                } else if island_index == 0 && resident_index == 4 {
-                    named_resident, named = .Vesna, true
-                } else if island_index == 0 && resident_index == 6 {
-                    named_resident, named = .Petar, true
-                } else if island_index == 1 && resident_index == 6 {
-                    named_resident, named = .Anica, true
-                } else if island_index == 1 && resident_index == 3 {
-                    named_resident, named = .Mirna, true
-                }
-                if named &&
-                   editor.story_state.romance == .Meeting &&
-                   (named_resident == .Niko || named_resident == .Iva) {
-                    continue
-                }
-                if named && named_resident == .Zora do continue
-                rotation := frontage_rotation + resident.facing
-                mouse_center := third_person.Vec3{x, ground_y + .75 * resident.scale, z}
-                if !static_sphere_in_frustum(
-                    view_camera,
-                    mouse_center,
-                    1.8 * resident.scale,
-                    aspect,
-                    near_plane,
-                    WORLD_FAR_CLIP,
-                ) {
-                    continue
-                }
+            if island_index == 0 && resident_index == 0 {
+                named_resident, named = .Niko, true
+            } else if island_index == 0 && resident_index == 2 {
+                named_resident, named = .Bojan, true
+            } else if island_index == 1 && resident_index == 1 {
+                named_resident, named = .Iva, true
+            } else if island_index == 1 && resident_index == 5 {
+                named_resident, named = .Zora, true
+            } else if island_index == 0 && resident_index == 4 {
+                named_resident, named = .Vesna, true
+            } else if island_index == 0 && resident_index == 6 {
+                named_resident, named = .Petar, true
+            } else if island_index == 1 && resident_index == 6 {
+                named_resident, named = .Anica, true
+            } else if island_index == 1 && resident_index == 3 {
+                named_resident, named = .Mirna, true
+            }
+            if named && editor.story_state.romance == .Meeting && (named_resident == .Niko || named_resident == .Iva) {
+                continue
+            }
+            if named && named_resident == .Zora do continue
+            rotation := frontage_rotation + resident.facing
+            mouse_center := third_person.Vec3{x, ground_y + .75 * resident.scale, z}
+            if !static_sphere_in_frustum(
+                view_camera,
+                mouse_center,
+                1.8 * resident.scale,
+                aspect,
+                near_plane,
+                WORLD_FAR_CLIP,
+            ) {
+                continue
+            }
             world_town_mouse_model_scaled_cached(
-                    editor,
-                    {
-                        position = {x, ground_y, z},
-                        rotation = rotation,
-                        build = resident.build,
-                        snout_length = resident.snout_length,
-                        accessory = resident.accessory,
-                        fur = resident.fur,
-                        pattern = resident.pattern,
-                        scarf_enabled = resident.scarf,
-                        scarf_color = resident.scarf_color,
-                        grounded = true,
-                    },
-                    resident.scale,
-                    island_index * len(residents) + resident_index,
-                )
+                editor,
+                {
+                    position = {x, ground_y, z},
+                    rotation = rotation,
+                    build = resident.build,
+                    snout_length = resident.snout_length,
+                    accessory = resident.accessory,
+                    fur = resident.fur,
+                    pattern = resident.pattern,
+                    scarf_enabled = resident.scarf,
+                    scarf_color = resident.scarf_color,
+                    grounded = true,
+                },
+                resident.scale,
+                island_index * len(residents) + resident_index,
+            )
             if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
                 world_mouse_interaction_indicator(editor, {x, ground_y, z})
             }

@@ -598,9 +598,19 @@ world_settlement_town_skirt_supported :: proc(
     tangent := [2]f32{math.cos(rotation), math.sin(rotation)}
     half_run := max(length * .5 - .12, f32(0))
     heights := [3]f32 {
-        terrain.sample_surface_height(&editor.project, 0, center_x - tangent[0] * half_run, center_z - tangent[1] * half_run),
+        terrain.sample_surface_height(
+            &editor.project,
+            0,
+            center_x - tangent[0] * half_run,
+            center_z - tangent[1] * half_run,
+        ),
         terrain.sample_surface_height(&editor.project, 0, center_x, center_z),
-        terrain.sample_surface_height(&editor.project, 0, center_x + tangent[0] * half_run, center_z + tangent[1] * half_run),
+        terrain.sample_surface_height(
+            &editor.project,
+            0,
+            center_x + tangent[0] * half_run,
+            center_z + tangent[1] * half_run,
+        ),
     }
     low, high := heights[0], heights[0]
     for height in heights[1:] {

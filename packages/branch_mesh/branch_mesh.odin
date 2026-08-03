@@ -14,16 +14,7 @@ when ODIN_OS == .Windows {
 }
 
 foreign adriatic_mesh {
-    adriatic_generate_uv_atlas :: proc(
-        positions: ^f32,
-        vertex_count: u32,
-        indices: ^u32,
-        index_count: u32,
-        source_by_atlas_vertex: ^u32,
-        uv_by_atlas_vertex: ^f32,
-        atlas_indices: ^u32,
-        output_vertex_capacity: u32,
-    ) -> u32 ---
+    adriatic_generate_uv_atlas :: proc(positions: ^f32, vertex_count: u32, indices: ^u32, index_count: u32, source_by_atlas_vertex: ^u32, uv_by_atlas_vertex: ^f32, atlas_indices: ^u32, output_vertex_capacity: u32) -> u32 ---
 }
 
 Vertex :: struct {
@@ -137,8 +128,8 @@ append_ring :: proc(
             &mesh.vertices,
             Vertex {
                 position = center + normal * local_radius,
-                normal   = normal,
-                bark_uv  = {f32(side) / f32(radial_segments), along},
+                normal = normal,
+                bark_uv = {f32(side) / f32(radial_segments), along},
             },
         )
     }
@@ -250,11 +241,7 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
     finish_center := u32(len(mesh.vertices))
     append(
         &mesh.vertices,
-        Vertex {
-            position = points[len(points) - 1],
-            normal   = linalg.normalize0(last_tangent),
-            bark_uv  = {.5, along},
-        },
+        Vertex{position = points[len(points) - 1], normal = linalg.normalize0(last_tangent), bark_uv = {.5, along}},
     )
     for side in 0 ..< radial {
         next := (side + 1) % radial

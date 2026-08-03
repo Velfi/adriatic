@@ -10,27 +10,37 @@ BATHYMETRY_CHUNK_SIZE :: f32(256)
 DEEP_OCEAN_DEPTH :: f32(64)
 SHORELINE_EPSILON :: f32(.01)
 
-Terrain_Level_Layout :: struct { cell_size, origin_x, origin_z: f32 }
+Terrain_Level_Layout :: struct {
+    cell_size, origin_x, origin_z: f32,
+}
 Terrain_Page :: struct {
     level, page_x, page_z: u8,
-    heights: [TERRAIN_PAGE_SAMPLES]f32,
-    material: [TERRAIN_PAGE_SAMPLES]f32,
+    heights:               [TERRAIN_PAGE_SAMPLES]f32,
+    material:              [TERRAIN_PAGE_SAMPLES]f32,
 }
-Water_Source_Kind :: enum { Ocean, Harbor, River }
+Water_Source_Kind :: enum {
+    Ocean,
+    Harbor,
+    River,
+}
 Bathymetry_Chunk :: struct {
     chunk_x, chunk_z: i32,
-    owner: Island_ID,
-    revision: u64,
-    source: Water_Source_Kind,
-    heights: [dynamic]f16,
-    material: [dynamic]i8,
+    owner:            Island_ID,
+    revision:         u64,
+    source:           Water_Source_Kind,
+    heights:          [dynamic]f16,
+    material:         [dynamic]i8,
 }
-Surface_Kind :: enum { Land, Bathymetry, Deep_Ocean }
+Surface_Kind :: enum {
+    Land,
+    Bathymetry,
+    Deep_Ocean,
+}
 Water_Interface_Sample :: struct {
-    kind: Water_Source_Kind,
+    kind:               Water_Source_Kind,
     water_level, depth: f32,
-    shore_distance: f32,
-    shore_normal: [2]f32,
+    shore_distance:     f32,
+    shore_normal:       [2]f32,
 }
 
 terrain_pages_rebuild :: proc(project: ^Project) {
@@ -42,22 +52,29 @@ terrain_pages_rebuild :: proc(project: ^Project) {
         pages_axis := TERRAIN_RESOLUTION / TERRAIN_PAGE_RESOLUTION
         for page_z in 0 ..< pages_axis {
             for page_x in 0 ..< pages_axis {
-            keep := false
-            for z in 0 ..< TERRAIN_PAGE_RESOLUTION {
-                for x in 0 ..< TERRAIN_PAGE_RESOLUTION {
-                if level.heights[sample_index(page_x * TERRAIN_PAGE_RESOLUTION + x, page_z * TERRAIN_PAGE_RESOLUTION + z)] > project.sea_level + SHORELINE_EPSILON do keep = true
+                keep := false
+                for z in 0 ..< TERRAIN_PAGE_RESOLUTION {
+                    for x in 0 ..< TERRAIN_PAGE_RESOLUTION {
+                        if level.heights[sample_index(page_x * TERRAIN_PAGE_RESOLUTION + x, page_z * TERRAIN_PAGE_RESOLUTION + z)] > project.sea_level + SHORELINE_EPSILON do keep = true
+                    }
                 }
-            }
-            if !keep do continue
-            page := Terrain_Page{level = u8(level_index), page_x = u8(page_x), page_z = u8(page_z)}
-            for z in 0 ..< TERRAIN_PAGE_RESOLUTION {
-                for x in 0 ..< TERRAIN_PAGE_RESOLUTION {
-                source := sample_index(page_x * TERRAIN_PAGE_RESOLUTION + x, page_z * TERRAIN_PAGE_RESOLUTION + z)
-                page.heights[z * TERRAIN_PAGE_RESOLUTION + x] = level.heights[source]
-                page.material[z * TERRAIN_PAGE_RESOLUTION + x] = level.material[source]
+                if !keep do continue
+                page := Terrain_Page {
+                    level  = u8(level_index),
+                    page_x = u8(page_x),
+                    page_z = u8(page_z),
                 }
-            }
-            append(&project.terrain_pages, page)
+                for z in 0 ..< TERRAIN_PAGE_RESOLUTION {
+                    for x in 0 ..< TERRAIN_PAGE_RESOLUTION {
+                        source := sample_index(
+                            page_x * TERRAIN_PAGE_RESOLUTION + x,
+                            page_z * TERRAIN_PAGE_RESOLUTION + z,
+                        )
+                        page.heights[z * TERRAIN_PAGE_RESOLUTION + x] = level.heights[source]
+                        page.material[z * TERRAIN_PAGE_RESOLUTION + x] = level.material[source]
+                    }
+                }
+                append(&project.terrain_pages, page)
             }
         }
     }
@@ -85,10 +102,13 @@ terrain_pages_restore :: proc(project: ^Project) -> bool {
         level := &project.levels[int(page.level)]
         for z in 0 ..< TERRAIN_PAGE_RESOLUTION {
             for x in 0 ..< TERRAIN_PAGE_RESOLUTION {
-            destination := sample_index(int(page.page_x) * TERRAIN_PAGE_RESOLUTION + x, int(page.page_z) * TERRAIN_PAGE_RESOLUTION + z)
-            source := z * TERRAIN_PAGE_RESOLUTION + x
-            level.heights[destination] = page.heights[source]
-            level.material[destination] = page.material[source]
+                destination := sample_index(
+                    int(page.page_x) * TERRAIN_PAGE_RESOLUTION + x,
+                    int(page.page_z) * TERRAIN_PAGE_RESOLUTION + z,
+                )
+                source := z * TERRAIN_PAGE_RESOLUTION + x
+                level.heights[destination] = page.heights[source]
+                level.material[destination] = page.material[source]
             }
         }
     }
@@ -150,18 +170,36 @@ terrain_sampling_lookup_rebuild :: proc(project: ^Project) {
     }
 }
 
-terrain_page_indices_in_bounds :: proc(project: ^Project, level: int, min_x, min_z, max_x, max_z: f32, result: []int) -> int {
+terrain_page_indices_in_bounds :: proc(
+    project: ^Project,
+    level: int,
+    min_x, min_z, max_x, max_z: f32,
+    result: []int,
+) -> int {
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return 0
     layout := project.terrain_level_layout[level]
+    if layout.cell_size <= 0 do return 0
     extent := f32(TERRAIN_PAGE_RESOLUTION) * layout.cell_size
+    pages_axis := TERRAIN_RESOLUTION / TERRAIN_PAGE_RESOLUTION
+    if max_x < layout.origin_x ||
+       max_z < layout.origin_z ||
+       min_x >= layout.origin_x + f32(pages_axis) * extent ||
+       min_z >= layout.origin_z + f32(pages_axis) * extent {
+        return 0
+    }
+    min_page_x := clamp(int(math.floor(f64((min_x - layout.origin_x) / extent))), 0, pages_axis - 1)
+    min_page_z := clamp(int(math.floor(f64((min_z - layout.origin_z) / extent))), 0, pages_axis - 1)
+    max_page_x := clamp(int(math.floor(f64((max_x - layout.origin_x) / extent))), 0, pages_axis - 1)
+    max_page_z := clamp(int(math.floor(f64((max_z - layout.origin_z) / extent))), 0, pages_axis - 1)
+    if len(project.terrain_page_lookup) != len(project.terrain_pages) do terrain_sampling_lookup_rebuild(project)
     count := 0
-    for page, index in project.terrain_pages {
-        if int(page.level) != level do continue
-        px := layout.origin_x + f32(page.page_x) * extent
-        pz := layout.origin_z + f32(page.page_z) * extent
-        if px > max_x || pz > max_z || px + extent < min_x || pz + extent < min_z do continue
-        if count < len(result) do result[count] = index
-        count += 1
+    for page_z in min_page_z ..= max_page_z {
+        for page_x in min_page_x ..= max_page_x {
+            if index, found := project.terrain_page_lookup[[3]i32{i32(level), i32(page_x), i32(page_z)}]; found {
+                if count < len(result) do result[count] = index
+                count += 1
+            }
+        }
     }
     return count
 }
@@ -171,13 +209,21 @@ bathymetry_chunk_at_source :: proc(project: ^Project, owner: Island_ID, x, z: f3
     cx := i32(math.floor(f64(x / BATHYMETRY_CHUNK_SIZE)))
     cz := i32(math.floor(f64(z / BATHYMETRY_CHUNK_SIZE)))
     if len(project.bathymetry_chunk_lookup) != len(project.bathymetry_chunks) do terrain_sampling_lookup_rebuild(project)
-    if index, found := project.bathymetry_chunk_lookup[[3]i32{i32(owner), cx, cz}]; found && index >= 0 && index < len(project.bathymetry_chunks) {
+    if index, found := project.bathymetry_chunk_lookup[[3]i32{i32(owner), cx, cz}];
+       found && index >= 0 && index < len(project.bathymetry_chunks) {
         return &project.bathymetry_chunks[index]
     }
     return nil
 }
 
-sample_bathymetry :: proc(project: ^Project, x, z: f32) -> (bed_height, material: f32, source: Water_Source_Kind, found: bool) {
+sample_bathymetry :: proc(
+    project: ^Project,
+    x, z: f32,
+) -> (
+    bed_height, material: f32,
+    source: Water_Source_Kind,
+    found: bool,
+) {
     if project == nil do return
     source_x, source_z := x, z
     chunk: ^Bathymetry_Chunk
@@ -255,13 +301,13 @@ bathymetry_destroy :: proc(chunks: ^[dynamic]Bathymetry_Chunk) {
 
 bathymetry_append_default_chunk :: proc(project: ^Project, owner: Island_ID, chunk_x, chunk_z: i32) {
     if project == nil || owner == .World do return
-    chunk := Bathymetry_Chunk{
-        chunk_x = chunk_x,
-        chunk_z = chunk_z,
-        owner = owner,
-        source = .Ocean,
+    chunk := Bathymetry_Chunk {
+        chunk_x  = chunk_x,
+        chunk_z  = chunk_z,
+        owner    = owner,
+        source   = .Ocean,
         revision = 1,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     origin_x := f32(chunk_x) * BATHYMETRY_CHUNK_SIZE
@@ -280,6 +326,69 @@ bathymetry_append_default_chunk :: proc(project: ^Project, owner: Island_ID, chu
         }
     }
     append(&project.bathymetry_chunks, chunk)
+}
+
+// Ocean chunks are derived from terrain and may be regenerated after a
+// shoreline edit. Harbor and river chunks are authored interventions; their
+// whole chunk is preserved so a coastal refresh can never erase dredging or a
+// deliberately shaped channel.
+bathymetry_refresh_generated_bounds :: proc(project: ^Project, min_x, min_z, max_x, max_z: f32) -> int {
+    if project == nil || min_x > max_x || min_z > max_z do return 0
+    refreshed := 0
+    cell := BATHYMETRY_CHUNK_SIZE / f32(BATHYMETRY_CHUNK_RESOLUTION - 1)
+    for &chunk in project.bathymetry_chunks {
+        if chunk.source != .Ocean ||
+           len(chunk.heights) != BATHYMETRY_CHUNK_SAMPLES ||
+           len(chunk.material) != BATHYMETRY_CHUNK_SAMPLES {
+            continue
+        }
+        translation_x, translation_z: f32
+        if owner_index, owned := island_index(chunk.owner); owned {
+            transform := island_transform_at(project, owner_index)
+            translation_x = transform.current_x - transform.source_x
+            translation_z = transform.current_z - transform.source_z
+        }
+        origin_x := f32(chunk.chunk_x) * BATHYMETRY_CHUNK_SIZE
+        origin_z := f32(chunk.chunk_z) * BATHYMETRY_CHUNK_SIZE
+        world_origin_x, world_origin_z := origin_x + translation_x, origin_z + translation_z
+        if world_origin_x > max_x ||
+           world_origin_z > max_z ||
+           world_origin_x + BATHYMETRY_CHUNK_SIZE < min_x ||
+           world_origin_z + BATHYMETRY_CHUNK_SIZE < min_z {
+            continue
+        }
+        changed := false
+        for z in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
+            source_z := origin_z + f32(z) * cell
+            world_z := source_z + translation_z
+            if world_z < min_z || world_z > max_z do continue
+            for x in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
+                source_x := origin_x + f32(x) * cell
+                world_x := source_x + translation_x
+                if world_x < min_x || world_x > max_x do continue
+                height, material, found := sample_authored_field_raw(project, 0, source_x, source_z)
+                if !found {
+                    height, material = project.sea_level - DEEP_OCEAN_DEPTH, 0
+                }
+                next_height := f16(min(height, project.sea_level - 1))
+                next_material := i8(clamp(int(math.round(f64(material * 63))), -127, 127))
+                index := z * BATHYMETRY_CHUNK_RESOLUTION + x
+                if chunk.heights[index] == next_height && chunk.material[index] == next_material do continue
+                chunk.heights[index] = next_height
+                chunk.material[index] = next_material
+                changed = true
+            }
+        }
+        if changed {
+            chunk.revision += 1
+            refreshed += 1
+        }
+    }
+    return refreshed
+}
+
+bathymetry_refresh_all_generated :: proc(project: ^Project) -> int {
+    return bathymetry_refresh_generated_bounds(project, -math.F32_MAX, -math.F32_MAX, math.F32_MAX, math.F32_MAX)
 }
 
 bathymetry_build_default :: proc(project: ^Project) {

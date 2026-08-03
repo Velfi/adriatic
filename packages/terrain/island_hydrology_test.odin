@@ -13,12 +13,7 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
     island_signs := DEFAULT_ISLAND_SIGNS
     for seed, index in DEFAULT_ISLAND_SEEDS {
         plans[index] = islands.generate(seed)
-        hydrology[index] = default_island_hydrology_generate(
-            &plans[index],
-            seed,
-            index,
-            island_signs[index],
-        )
+        hydrology[index] = default_island_hydrology_generate(&plans[index], seed, index, island_signs[index])
     }
     defer for &plan in plans do islands.destroy(&plan)
     defer for &water in hydrology do default_island_hydrology_destroy(&water)
@@ -34,10 +29,7 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
     for &water in hydrology {
         mouth := spring_river.mouth(&water.river)
         testing.expect(t, math.abs(mouth.position[0] - water.estuary_center[0]) < .5)
-        testing.expect(
-            t,
-            math.abs(mouth.position[1] - (water.estuary_center[1] + water.estuary_half_extent)) < .01,
-        )
+        testing.expect(t, math.abs(mouth.position[1] - (water.estuary_center[1] + water.estuary_half_extent)) < .01)
         testing.expect(t, math.abs(mouth.water_level) < .01)
 
         // Probe beyond the river's terminal bank kernel, inside the estuary.
@@ -71,12 +63,7 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
         }
     }
 
-    duplicate := default_island_hydrology_generate(
-        &plans[0],
-        DEFAULT_ISLAND_SEEDS[0],
-        0,
-        island_signs[0],
-    )
+    duplicate := default_island_hydrology_generate(&plans[0], DEFAULT_ISLAND_SEEDS[0], 0, island_signs[0])
     defer default_island_hydrology_destroy(&duplicate)
     testing.expect_value(t, duplicate.estuary.selected_seed, hydrology[0].estuary.selected_seed)
     testing.expect_value(t, duplicate.estuary.score, hydrology[0].estuary.score)

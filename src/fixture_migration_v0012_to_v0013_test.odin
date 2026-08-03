@@ -1,7 +1,7 @@
 package main
 
-import fixture_v0012 "../packages/fixture_history/v0012"
 import buildings "../packages/buildings"
+import fixture_v0012 "../packages/fixture_history/v0012"
 import hs "../packages/hs"
 import "base:runtime"
 import "core:testing"
@@ -26,7 +26,11 @@ when ODIN_TEST {
 
         registry := fixture_migration_production_registry()
         result, migration_error, migrated := fixture_migration_run_with_registry(
-            payload, 12, 13, {steps = registry.steps[:12]}, runtime.default_allocator(),
+            payload,
+            12,
+            13,
+            {steps = registry.steps[:12]},
+            runtime.default_allocator(),
         )
         defer fixture_migration_error_dispose(&migration_error)
         defer fixture_migration_result_dispose(&result)

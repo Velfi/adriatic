@@ -52,13 +52,16 @@ settlement_cemetery_built_radius :: proc(plan: ^Settlement_Plan) -> f32 {
     if plan == nil do return 0
     radius := f32(0)
     for site in plan.sites[:plan.site_count] {
-        if !site.accepted ||
-           (site.kind != .Ordinary && site.kind != .Landmark && site.kind != .Ruin) {
+        if !site.accepted || (site.kind != .Ordinary && site.kind != .Landmark && site.kind != .Ruin) {
             continue
         }
         center := [2]f32{site.structure.center_x, site.structure.center_z}
         extent :=
-            f32(math.sqrt(f64(site.structure.width * site.structure.width + site.structure.depth * site.structure.depth))) *
+            f32(
+                math.sqrt(
+                    f64(site.structure.width * site.structure.width + site.structure.depth * site.structure.depth),
+                ),
+            ) *
             .5
         radius = max(radius, linalg.length(center - plan.request.center) + extent)
     }
@@ -68,18 +71,14 @@ settlement_cemetery_built_radius :: proc(plan: ^Settlement_Plan) -> f32 {
 settlement_cemetery_site_relief :: proc(
     project: ^terrain.Project,
     x, z, width, depth, rotation: f32,
-) -> (center_y, relief: f32) {
+) -> (
+    center_y, relief: f32,
+) {
     center_y = terrain.sample_surface_height(project, 0, x, z)
     for side_x in -1 ..= 1 {
         for side_z in -1 ..= 1 {
             if side_x == 0 && side_z == 0 do continue
-            sample_x, sample_z := world_rotate_xz(
-                x,
-                z,
-                f32(side_x) * width * .46,
-                f32(side_z) * depth * .46,
-                rotation,
-            )
+            sample_x, sample_z := world_rotate_xz(x, z, f32(side_x) * width * .46, f32(side_z) * depth * .46, rotation)
             sample_y := terrain.sample_surface_height(project, 0, sample_x, sample_z)
             relief = max(relief, math.abs(sample_y - center_y))
         }
@@ -87,10 +86,7 @@ settlement_cemetery_site_relief :: proc(
     return
 }
 
-settlement_cemetery_access_clear :: proc(
-    editor: ^Editor,
-    x, z, width, depth, rotation: f32,
-) -> bool {
+settlement_cemetery_access_clear :: proc(editor: ^Editor, x, z, width, depth, rotation: f32) -> bool {
     approach_length := f32(10)
     approach_x, approach_z := world_rotate_xz(x, z, 0, -depth * .5 - approach_length * .5, rotation)
     empty_city: architecture.City_Plan
@@ -117,7 +113,14 @@ settlement_cemetery_access_clear :: proc(
     ) {
         return false
     }
-    _, relief := settlement_cemetery_site_relief(&editor.project, approach_x, approach_z, 2.1, approach_length, rotation)
+    _, relief := settlement_cemetery_site_relief(
+        &editor.project,
+        approach_x,
+        approach_z,
+        2.1,
+        approach_length,
+        rotation,
+    )
     return relief <= .8
 }
 
@@ -165,10 +168,7 @@ settlement_cemetery_derive :: proc(editor: ^Editor) -> Settlement_Cemetery {
         if ground_y <= editor.project.sea_level + .5 || relief > 1.05 do continue
         if settlement.request.scale == .Town {
             approach_x, approach_z := world_rotate_xz(x, z, 0, -depth * .5 - 5, rotation)
-            approach_distance := settlement_nearest_committed_road_distance(
-                &editor.project,
-                {approach_x, approach_z},
-            )
+            approach_distance := settlement_nearest_committed_road_distance(&editor.project, {approach_x, approach_z})
             if approach_distance > 32 || approach_distance >= best_approach_distance do continue
             best_approach_distance = approach_distance
             best_x, best_z, best_rotation, best_ground_y = x, z, rotation, ground_y
@@ -220,12 +220,13 @@ settlement_cemetery_world_point :: proc(site: Settlement_Cemetery, local_x, loca
 world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     site := settlement_cemetery_derive(editor)
     if !site.valid do return
-    if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(
-        editor,
-        {site.origin[0], site.ground_y + 2, site.origin[1]},
-        max(site.plan.width, site.plan.depth),
-        2,
-    ) {
+    if !world_renderer.retained_patio_rebuilding &&
+       !world_sphere_in_view(
+               editor,
+               {site.origin[0], site.ground_y + 2, site.origin[1]},
+               max(site.plan.width, site.plan.depth),
+               2,
+           ) {
         return
     }
 
@@ -250,7 +251,8 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
         return
     }
 
-    wall_color := site.plan.style == .Adriatic_Medieval ? canvas2d.Color{175, 166, 143, 255} : canvas2d.Color{151, 149, 139, 255}
+    wall_color :=
+        site.plan.style == .Adriatic_Medieval ? canvas2d.Color{175, 166, 143, 255} : canvas2d.Color{151, 149, 139, 255}
     path_color := canvas2d.Color{135, 126, 108, 255}
     path_x, path_z := settlement_cemetery_world_point(site, 0, 0)
     path_y := terrain.sample_surface_height(&editor.project, 0, path_x, path_z)
@@ -273,7 +275,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     wall_height, thickness := f32(.62), f32(.30)
     front_segment_width := (site.plan.width - site.plan.gate_width) * .5
     front_segment_offset := (site.plan.gate_width + front_segment_width) * .5
-    wall_specs := [5][4]f32{
+    wall_specs := [5][4]f32 {
         {-half_width, 0, thickness, site.plan.depth},
         {half_width, 0, thickness, site.plan.depth},
         {0, half_depth, site.plan.width, thickness},
@@ -338,7 +340,7 @@ gameplay_physics_add_settlement_cemetery :: proc(editor: ^Editor) {
     half_width, half_depth := site.plan.width * .5, site.plan.depth * .5
     front_width := (site.plan.width - site.plan.gate_width) * .5
     front_offset := (site.plan.gate_width + front_width) * .5
-    walls := [5][4]f32{
+    walls := [5][4]f32 {
         {-half_width, 0, .30, site.plan.depth},
         {half_width, 0, .30, site.plan.depth},
         {0, half_depth, site.plan.width, .30},

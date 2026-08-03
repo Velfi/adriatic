@@ -359,25 +359,25 @@ when ODIN_TEST {
         testing.expect(
             t,
             decoded.postale.body.orientation.x == source.postale.body.orientation.x &&
-                decoded.postale.body.orientation.y == source.postale.body.orientation.y &&
-                decoded.postale.body.orientation.z == source.postale.body.orientation.z &&
-                decoded.postale.body.orientation.w == source.postale.body.orientation.w &&
-                decoded.libellula.body.orientation.x == source.libellula.body.orientation.x &&
-                decoded.libellula.body.orientation.y == source.libellula.body.orientation.y &&
-                decoded.libellula.body.orientation.z == source.libellula.body.orientation.z &&
-                decoded.libellula.body.orientation.w == source.libellula.body.orientation.w &&
-                decoded.rondine.body.orientation.x == source.rondine.body.orientation.x &&
-                decoded.rondine.body.orientation.y == source.rondine.body.orientation.y &&
-                decoded.rondine.body.orientation.z == source.rondine.body.orientation.z &&
-                decoded.rondine.body.orientation.w == source.rondine.body.orientation.w &&
-                decoded.postale.spawn_orientation.x == source.postale.spawn_orientation.x &&
-                decoded.postale.spawn_orientation.y == source.postale.spawn_orientation.y &&
-                decoded.postale.spawn_orientation.z == source.postale.spawn_orientation.z &&
-                decoded.postale.spawn_orientation.w == source.postale.spawn_orientation.w &&
-                decoded.libellula.spawn_orientation.x == source.libellula.spawn_orientation.x &&
-                decoded.libellula.spawn_orientation.y == source.libellula.spawn_orientation.y &&
-                decoded.libellula.spawn_orientation.z == source.libellula.spawn_orientation.z &&
-                decoded.libellula.spawn_orientation.w == source.libellula.spawn_orientation.w,
+            decoded.postale.body.orientation.y == source.postale.body.orientation.y &&
+            decoded.postale.body.orientation.z == source.postale.body.orientation.z &&
+            decoded.postale.body.orientation.w == source.postale.body.orientation.w &&
+            decoded.libellula.body.orientation.x == source.libellula.body.orientation.x &&
+            decoded.libellula.body.orientation.y == source.libellula.body.orientation.y &&
+            decoded.libellula.body.orientation.z == source.libellula.body.orientation.z &&
+            decoded.libellula.body.orientation.w == source.libellula.body.orientation.w &&
+            decoded.rondine.body.orientation.x == source.rondine.body.orientation.x &&
+            decoded.rondine.body.orientation.y == source.rondine.body.orientation.y &&
+            decoded.rondine.body.orientation.z == source.rondine.body.orientation.z &&
+            decoded.rondine.body.orientation.w == source.rondine.body.orientation.w &&
+            decoded.postale.spawn_orientation.x == source.postale.spawn_orientation.x &&
+            decoded.postale.spawn_orientation.y == source.postale.spawn_orientation.y &&
+            decoded.postale.spawn_orientation.z == source.postale.spawn_orientation.z &&
+            decoded.postale.spawn_orientation.w == source.postale.spawn_orientation.w &&
+            decoded.libellula.spawn_orientation.x == source.libellula.spawn_orientation.x &&
+            decoded.libellula.spawn_orientation.y == source.libellula.spawn_orientation.y &&
+            decoded.libellula.spawn_orientation.z == source.libellula.spawn_orientation.z &&
+            decoded.libellula.spawn_orientation.w == source.libellula.spawn_orientation.w,
         )
         testing.expect(
             t,
@@ -405,10 +405,7 @@ when ODIN_TEST {
         return true
     }
 
-    fixture_codec_test_decode_inline_map_source :: proc(
-        t: ^testing.T,
-        source: Fixture_Map_Source,
-    ) -> ^Map_Artifact {
+    fixture_codec_test_decode_inline_map_source :: proc(t: ^testing.T, source: Fixture_Map_Source) -> ^Map_Artifact {
         testing.expect(t, source.kind == .Inline && len(source.inline_bytes) > 0 && source.sidecar == {})
         if source.kind != .Inline || len(source.inline_bytes) == 0 || source.sidecar != {} do return nil
         artifact, error, decoded := map_artifact_decode(source.inline_bytes[:])
@@ -697,9 +694,8 @@ when ODIN_TEST {
                 testing.expect(t, len(artifact.project.structures) == 1)
                 testing.expect(
                     t,
-                    artifact.project.levels[len(artifact.project.levels) - 1].heights[
-                        len(artifact.project.levels[0].heights) - 1
-                    ] == f32(91.5),
+                    artifact.project.levels[len(artifact.project.levels) - 1].heights[len(artifact.project.levels[0].heights) - 1] ==
+                    f32(91.5),
                 )
                 testing.expect(t, artifact.project.city_density[len(artifact.project.city_density) - 1] == 0xa5)
                 testing.expect(t, artifact.marina_authored_plan.seed == source.marina_authored_plan.seed)
@@ -728,29 +724,29 @@ when ODIN_TEST {
             testing.expect(
                 t,
                 decoded.sdf_obstacles[0].position.x == source.sdf_obstacles[0].position.x &&
-                    decoded.sdf_obstacles[0].position.y == source.sdf_obstacles[0].position.y &&
-                    decoded.sdf_obstacles[0].position.z == source.sdf_obstacles[0].position.z &&
-                    decoded.sdf_obstacles[0].rotation.x == source.sdf_obstacles[0].rotation.x &&
-                    decoded.sdf_obstacles[0].rotation.y == source.sdf_obstacles[0].rotation.y &&
-                    decoded.sdf_obstacles[0].rotation.z == source.sdf_obstacles[0].rotation.z &&
-                    decoded.sdf_obstacles[0].rotation.w == source.sdf_obstacles[0].rotation.w &&
-                    decoded.sdf_obstacles[0].scale.x == source.sdf_obstacles[0].scale.x &&
-                    decoded.sdf_obstacles[0].scale.y == source.sdf_obstacles[0].scale.y &&
-                    decoded.sdf_obstacles[0].scale.z == source.sdf_obstacles[0].scale.z &&
-                    decoded.sdf_obstacles[0].major_radius == source.sdf_obstacles[0].major_radius &&
-                    decoded.sdf_obstacles[0].tube_radius == source.sdf_obstacles[0].tube_radius &&
-                    decoded.sdf_obstacles[0].color[0] == source.sdf_obstacles[0].color[0] &&
-                    decoded.sdf_obstacles[0].color[1] == source.sdf_obstacles[0].color[1] &&
-                    decoded.sdf_obstacles[0].color[2] == source.sdf_obstacles[0].color[2] &&
-                    decoded.sdf_obstacles[0].color[3] == source.sdf_obstacles[0].color[3],
+                decoded.sdf_obstacles[0].position.y == source.sdf_obstacles[0].position.y &&
+                decoded.sdf_obstacles[0].position.z == source.sdf_obstacles[0].position.z &&
+                decoded.sdf_obstacles[0].rotation.x == source.sdf_obstacles[0].rotation.x &&
+                decoded.sdf_obstacles[0].rotation.y == source.sdf_obstacles[0].rotation.y &&
+                decoded.sdf_obstacles[0].rotation.z == source.sdf_obstacles[0].rotation.z &&
+                decoded.sdf_obstacles[0].rotation.w == source.sdf_obstacles[0].rotation.w &&
+                decoded.sdf_obstacles[0].scale.x == source.sdf_obstacles[0].scale.x &&
+                decoded.sdf_obstacles[0].scale.y == source.sdf_obstacles[0].scale.y &&
+                decoded.sdf_obstacles[0].scale.z == source.sdf_obstacles[0].scale.z &&
+                decoded.sdf_obstacles[0].major_radius == source.sdf_obstacles[0].major_radius &&
+                decoded.sdf_obstacles[0].tube_radius == source.sdf_obstacles[0].tube_radius &&
+                decoded.sdf_obstacles[0].color[0] == source.sdf_obstacles[0].color[0] &&
+                decoded.sdf_obstacles[0].color[1] == source.sdf_obstacles[0].color[1] &&
+                decoded.sdf_obstacles[0].color[2] == source.sdf_obstacles[0].color[2] &&
+                decoded.sdf_obstacles[0].color[3] == source.sdf_obstacles[0].color[3],
             )
             testing.expect(
                 t,
                 decoded.sdf_obstacle_interaction.hovered == 0 &&
-                    decoded.sdf_obstacle_interaction.gizmo_mode == .None &&
-                    decoded.sdf_obstacle_interaction.constrained_axis == .None &&
-                    !decoded.sdf_obstacle_interaction.transform_snapshot_valid &&
-                    !decoded.sdf_obstacle_interaction.inspector_euler_valid,
+                decoded.sdf_obstacle_interaction.gizmo_mode == .None &&
+                decoded.sdf_obstacle_interaction.constrained_axis == .None &&
+                !decoded.sdf_obstacle_interaction.transform_snapshot_valid &&
+                !decoded.sdf_obstacle_interaction.inspector_euler_valid,
             )
             testing.expect(t, decoded.radius == source.radius)
             testing.expect(t, decoded.architecture_city_plan.count == 1)

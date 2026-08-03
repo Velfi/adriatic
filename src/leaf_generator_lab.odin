@@ -91,16 +91,26 @@ leaf_generator_lab_process_input :: proc(_: ^Editor) {
 
 leaf_generator_palette :: proc(shape: leaves.Shape) -> (base, tip: canvas2d.Color) {
     switch shape {
-    case .Elliptic:      return {55, 105, 58, 255}, {78, 139, 70, 255}
-    case .Lanceolate:    return {50, 101, 65, 255}, {72, 134, 76, 255}
-    case .Ovate:         return {65, 112, 55, 255}, {92, 149, 70, 255}
-    case .Cordate:       return {46, 95, 53, 255}, {72, 130, 66, 255}
-    case .Deltoid:       return {62, 111, 58, 255}, {91, 150, 74, 255}
-    case .Lobed:         return {68, 108, 47, 255}, {103, 148, 63, 255}
-    case .Fig:           return {68, 102, 60, 255}, {103, 139, 77, 255}
-    case .Grapevine:     return {76, 114, 51, 255}, {116, 151, 64, 255}
-    case .Ivy:           return {38, 89, 54, 255}, {63, 127, 66, 255}
-    case .Cypress_Spray: return {49, 101, 52, 255}, {80, 138, 62, 255}
+    case .Elliptic:
+        return {55, 105, 58, 255}, {78, 139, 70, 255}
+    case .Lanceolate:
+        return {50, 101, 65, 255}, {72, 134, 76, 255}
+    case .Ovate:
+        return {65, 112, 55, 255}, {92, 149, 70, 255}
+    case .Cordate:
+        return {46, 95, 53, 255}, {72, 130, 66, 255}
+    case .Deltoid:
+        return {62, 111, 58, 255}, {91, 150, 74, 255}
+    case .Lobed:
+        return {68, 108, 47, 255}, {103, 148, 63, 255}
+    case .Fig:
+        return {68, 102, 60, 255}, {103, 139, 77, 255}
+    case .Grapevine:
+        return {76, 114, 51, 255}, {116, 151, 64, 255}
+    case .Ivy:
+        return {38, 89, 54, 255}, {63, 127, 66, 255}
+    case .Cypress_Spray:
+        return {49, 101, 52, 255}, {80, 138, 62, 255}
     }
     return {58, 105, 58, 255}, {82, 140, 70, 255}
 }
@@ -119,12 +129,12 @@ leaf_generator_effective_serration :: #force_inline proc(shape: leaves.Shape) ->
     return max(leaves.defaults(shape).serration, leaf_generator_serration)
 }
 
-leaf_generator_board_point :: #force_inline proc(position: [3]f32, origin: third_person.Vec3, scale: f32) -> third_person.Vec3 {
-    return {
-        origin.x + position[0] * scale,
-        origin.y + position[1] * scale,
-        origin.z + position[2] * scale,
-    }
+leaf_generator_board_point :: #force_inline proc(
+    position: [3]f32,
+    origin: third_person.Vec3,
+    scale: f32,
+) -> third_person.Vec3 {
+    return {origin.x + position[0] * scale, origin.y + position[1] * scale, origin.z + position[2] * scale}
 }
 
 leaf_generator_gallery_layout :: #force_inline proc(index: int) -> (origin: third_person.Vec3, scale: f32) {
@@ -158,11 +168,7 @@ leaf_generator_draw_mesh :: proc(shape: leaves.Shape, origin: third_person.Vec3,
             }
         }
         petiole_base := leaf_generator_board_point(junction, origin, scale)
-        petiole_tip := third_person.Vec3 {
-            petiole_base.x,
-            petiole_base.y - config.stem * scale,
-            origin.z + .006 * scale,
-        }
+        petiole_tip := third_person.Vec3{petiole_base.x, petiole_base.y - config.stem * scale, origin.z + .006 * scale}
         radius := max(config.width * scale * .018, f32(.012))
         petiole_color := canvas2d.Color {
             max(base_color.r, u8(58)) - 14,
@@ -256,7 +262,10 @@ leaf_generator_projected_bounds :: proc(
     origin: third_person.Vec3,
     scale: f32,
     width, height: i32,
-) -> (canvas2d.Rectangle, bool) {
+) -> (
+    canvas2d.Rectangle,
+    bool,
+) {
     if editor == nil do return {}, false
     config := leaves.defaults(shape)
     config.serration = leaf_generator_effective_serration(shape)

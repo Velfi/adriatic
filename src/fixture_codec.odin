@@ -144,7 +144,9 @@ fixture_codec_decode :: proc(
         }
         payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
         if !found {
-            return {}, {kind = .Sectioned_Container_Decode, sectioned = {kind = .Invalid_Directory, offset = 24}}, false
+            return {},
+                {kind = .Sectioned_Container_Decode, sectioned = {kind = .Invalid_Directory, offset = 24}},
+                false
         }
         if view.schema_version < 1 || view.schema_version > u32(FIXTURE_SCHEMA_VERSION) {
             return {}, {kind = .Schema_Mismatch}, false

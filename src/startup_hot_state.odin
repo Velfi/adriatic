@@ -237,9 +237,13 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
 
     // Validate fixture-backed lab state before replacing any live allocations.
     // Hot-state deserialization itself is intentionally a direct memory restore,
-    // so use temporary storage for this atomic preflight pass.
+    // and rebases pointers in its input bytes in place. Use a private payload
+    // copy as well as temporary Editor storage for this atomic preflight pass.
+    probe_payload, probe_payload_error := make([]byte, len(payload), context.temp_allocator)
+    if probe_payload_error != nil do return .Invalid
+    copy(probe_payload, payload)
     probe := new(Editor, context.temp_allocator)
-    _ = hs.deserialize(probe, payload, {.Dynamics}, context.temp_allocator)
+    _ = hs.deserialize(probe, probe_payload, {.Dynamics}, context.temp_allocator)
     if lab_fixture_preflight(probe.lab) != "" do return .Invalid
 
     // Existing allocations are runtime-owned. hs rebuilds dynamic data from

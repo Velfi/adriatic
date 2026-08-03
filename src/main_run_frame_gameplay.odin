@@ -126,7 +126,12 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                     touchdown_speed := f32(
                         math.sqrt(f64(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z)),
                     )
-                    terrain_height := terrain.sample_surface_height(&editor.project, 0, body.position.x, body.position.z)
+                    terrain_height := terrain.sample_surface_height(
+                        &editor.project,
+                        0,
+                        body.position.x,
+                        body.position.z,
+                    )
                     ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
                     ground = terrain.structure_collision_surface_height(
                         &editor.project,
@@ -298,37 +303,28 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         {editor.car.position.x, editor.car.position.y, editor.car.position.z},
                     )
                     car_impact_severity, car_impact_slide_speed, car_impact_obliqueness, car_impact_pan :=
-                        car_controller_step(
-                            editor,
-                            control,
-                            drive_surface,
-                            min(delta_seconds, .05),
-                            listener_yaw,
-                        )
+                        car_controller_step(editor, control, drive_surface, min(delta_seconds, .05), listener_yaw)
                     if car_impact_severity > 0 {
                         crash_severity = max(crash_severity, car_impact_severity)
                         crash_slide_speed = car_impact_slide_speed
                         crash_obliqueness = car_impact_obliqueness
                         crash_pan = car_impact_pan
                         crash_surface = crash_surface_from_dust(dust_surface)
-                        crash_water_mix = terrain.sample_surface(
-                            &editor.project,
-                            0,
-                            editor.car.position.x,
-                            editor.car.position.z,
-                        ) == .Land ? 0 : 1
+                        crash_water_mix =
+                            terrain.sample_surface(&editor.project, 0, editor.car.position.x, editor.car.position.z) == .Land ? 0 : 1
                     }
                     contacts := [4]particle_systems.Vehicle_Contact{}
                     for wheel, index in editor.car_wheels {
                         wheel_position := roads.Vec3{wheel.position[0], wheel.position[1], wheel.position[2]}
                         wheel_dust, _ := road_car_surface(editor, wheel_position)
-                        wheel_ground := terrain.sample_surface_height(&editor.project, 0, wheel.position[0], wheel.position[2])
+                        wheel_ground := terrain.sample_surface_height(
+                            &editor.project,
+                            0,
+                            wheel.position[0],
+                            wheel.position[2],
+                        )
                         contacts[index] = {
-                            position = {
-                                wheel.position[0],
-                                wheel_ground,
-                                wheel.position[2],
-                            },
+                            position = {wheel.position[0], wheel_ground, wheel.position[2]},
                             grounded = wheel.contact,
                             surface  = wheel_dust,
                         }

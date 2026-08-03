@@ -206,43 +206,37 @@ when ODIN_TEST {
             kind = cast(Lab_Kind)u8(255),
         }
         testing.expect(t, lab_fixture_preflight(unknown) == "lab.kind")
-        testing.expect(
-            t,
-            lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = -.62, vegetation = 0}}) == "",
-        )
-        testing.expect(
-            t,
-            lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .62, vegetation = 1}}) == "",
-        )
+        testing.expect(t, lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = -.62, vegetation = 0}}) == "")
+        testing.expect(t, lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .62, vegetation = 1}}) == "")
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = -.63, vegetation = .5}}) ==
-                "lab.dunes.wind_angle",
+            "lab.dunes.wind_angle",
         )
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .63, vegetation = .5}}) ==
-                "lab.dunes.wind_angle",
+            "lab.dunes.wind_angle",
         )
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .5, vegetation = -.01}}) ==
-                "lab.dunes.vegetation",
+            "lab.dunes.vegetation",
         )
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .5, vegetation = 1.01}}) ==
-                "lab.dunes.vegetation",
+            "lab.dunes.vegetation",
         )
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = math.nan_f32(), vegetation = .5}}) ==
-                "lab.dunes.wind_angle",
+            "lab.dunes.wind_angle",
         )
         testing.expect(
             t,
             lab_fixture_preflight({kind = .Dunes, dunes = {wind_angle = .5, vegetation = math.inf_f32(1)}}) ==
-                "lab.dunes.vegetation",
+            "lab.dunes.vegetation",
         )
     }
 

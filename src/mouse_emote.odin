@@ -45,31 +45,31 @@ Mouse_Emote_Target :: struct {
 }
 
 Mouse_Emote_State :: struct {
-    action:              Mouse_Emote,
-    phase:               Mouse_Emote_Phase,
-    elapsed_seconds:     f32,
-    phase_seconds:       f32,
-    normalized_time:     f32,
-    blend_weight:        f32,
-    loop_count:          u32,
-    loop_limit:          u32,
-    cancelling:          bool,
-    frozen:              bool,
-    scrub_enabled:       bool,
-    scrub_normalized:    f32,
-    handedness:          Mouse_Emote_Handedness,
-    target:              Mouse_Emote_Target,
-    variation_seed:      u32,
-    playback_revision:   u64,
+    action:            Mouse_Emote,
+    phase:             Mouse_Emote_Phase,
+    elapsed_seconds:   f32,
+    phase_seconds:     f32,
+    normalized_time:   f32,
+    blend_weight:      f32,
+    loop_count:        u32,
+    loop_limit:        u32,
+    cancelling:        bool,
+    frozen:            bool,
+    scrub_enabled:     bool,
+    scrub_normalized:  f32,
+    handedness:        Mouse_Emote_Handedness,
+    target:            Mouse_Emote_Target,
+    variation_seed:    u32,
+    playback_revision: u64,
 }
 
 Mouse_Emote_Inputs :: struct {
-    movement_intent: f32,
-    horizontal_speed: f32,
-    grounded: bool,
+    movement_intent:   f32,
+    horizontal_speed:  f32,
+    grounded:          bool,
     player_controlled: bool,
     incompatible_pose: bool,
-    paused: bool,
+    paused:            bool,
 }
 
 Mouse_Emote_Bone_Pose :: struct {
@@ -134,20 +134,34 @@ MOUSE_EMOTE_SPEED_CANCEL :: f32(.18)
 
 mouse_emote_name :: proc(action: Mouse_Emote) -> string {
     switch action {
-    case .None: return "none"
-    case .Wave: return "wave"
-    case .Cheer: return "cheer"
-    case .Bow: return "bow"
-    case .Point: return "point"
-    case .Shrug: return "shrug"
-    case .Sniff: return "sniff"
-    case .Curious_Head_Tilt: return "curious-head-tilt"
-    case .Surprised_Recoil: return "surprised-recoil"
-    case .Sit: return "sit"
-    case .Groom: return "groom"
-    case .Pick_Up_Hold: return "pick-up-hold"
-    case .Sleep: return "sleep"
-    case .Synthetic_Test: return "synthetic-test"
+    case .None:
+        return "none"
+    case .Wave:
+        return "wave"
+    case .Cheer:
+        return "cheer"
+    case .Bow:
+        return "bow"
+    case .Point:
+        return "point"
+    case .Shrug:
+        return "shrug"
+    case .Sniff:
+        return "sniff"
+    case .Curious_Head_Tilt:
+        return "curious-head-tilt"
+    case .Surprised_Recoil:
+        return "surprised-recoil"
+    case .Sit:
+        return "sit"
+    case .Groom:
+        return "groom"
+    case .Pick_Up_Hold:
+        return "pick-up-hold"
+    case .Sleep:
+        return "sleep"
+    case .Synthetic_Test:
+        return "synthetic-test"
     }
     return "none"
 }
@@ -209,16 +223,15 @@ mouse_emote_target_local :: proc(
     target: Mouse_Emote_Target,
     origin: third_person.Vec3,
     yaw_radians: f32,
-) -> (third_person.Vec3, bool) {
+) -> (
+    third_person.Vec3,
+    bool,
+) {
     if !target.valid do return {}, false
     delta := target.position
     if target.world_space do delta -= origin
     cosine, sine := math.cos(yaw_radians), math.sin(yaw_radians)
-    local := third_person.Vec3 {
-        delta.x * cosine + delta.z * sine,
-        delta.y,
-        -delta.x * sine + delta.z * cosine,
-    }
+    local := third_person.Vec3{delta.x * cosine + delta.z * sine, delta.y, -delta.x * sine + delta.z * cosine}
     horizontal_length := f32(math.sqrt(f64(local.x * local.x + local.z * local.z)))
     if horizontal_length > .0001 {
         local.x /= horizontal_length
@@ -285,11 +298,11 @@ mouse_emote_set_phase :: proc(state: ^Mouse_Emote_State, phase: Mouse_Emote_Phas
 mouse_emote_update :: proc(state: ^Mouse_Emote_State, inputs: Mouse_Emote_Inputs, delta_seconds: f32) {
     if !mouse_emote_active(state) || delta_seconds <= 0 do return
     if inputs.movement_intent > MOUSE_EMOTE_MOVEMENT_INTENT_CANCEL ||
-        inputs.horizontal_speed > MOUSE_EMOTE_SPEED_CANCEL ||
-        !inputs.grounded ||
-        !inputs.player_controlled ||
-        inputs.incompatible_pose ||
-        inputs.paused {
+       inputs.horizontal_speed > MOUSE_EMOTE_SPEED_CANCEL ||
+       !inputs.grounded ||
+       !inputs.player_controlled ||
+       inputs.incompatible_pose ||
+       inputs.paused {
         mouse_emote_cancel(state)
     }
 
@@ -315,7 +328,8 @@ mouse_emote_update :: proc(state: ^Mouse_Emote_State, inputs: Mouse_Emote_Inputs
             if state.loop_limit > state.loop_count + 1 {
                 state.loop_count += 1
                 mouse_emote_set_phase(state, .Performance)
-            } else if state.loop_limit == 0 && (state.action == .Sit || state.action == .Pick_Up_Hold || state.action == .Sleep) {
+            } else if state.loop_limit == 0 &&
+               (state.action == .Sit || state.action == .Pick_Up_Hold || state.action == .Sleep) {
                 mouse_emote_set_phase(state, .Hold)
             } else {
                 mouse_emote_set_phase(state, .Recovery)
@@ -336,7 +350,11 @@ mouse_emote_update :: proc(state: ^Mouse_Emote_State, inputs: Mouse_Emote_Inputs
 }
 
 mouse_emote_pose :: proc(state: ^Mouse_Emote_State) -> Mouse_Emote_Pose {
-    pose := Mouse_Emote_Pose{breathing_weight = 1, blink_weight = 1, idle_weight = 1}
+    pose := Mouse_Emote_Pose {
+        breathing_weight = 1,
+        blink_weight     = 1,
+        idle_weight      = 1,
+    }
     if !mouse_emote_active(state) || state.blend_weight <= 0 do return pose
     // The foundation's synthetic pose exercises every channel. Production
     // actions deliberately remain neutral until their individual todo owns
@@ -360,13 +378,45 @@ mouse_emote_pose :: proc(state: ^Mouse_Emote_State) -> Mouse_Emote_Pose {
             weight   = weight,
         }
     }
-    pose.ears[0] = {position = {-.018, .025, .012}, yaw = -.12, roll = -.08, weight = weight}
-    pose.ears[1] = {position = {.018, -.010, -.008}, yaw = .16, roll = .10, weight = weight}
-    pose.paws[0] = {local_offset = {side * .035, .22 + pulse * .025, -.05}, weight = weight, planted = false}
-    pose.paws[1] = {local_offset = {0, .015, -.025}, weight = weight, planted = true}
-    pose.paws[2] = {local_offset = {-side * .018, .07, .025}, weight = weight, planted = false}
-    pose.paws[3] = {local_offset = {0, .015, -.025}, weight = weight, planted = true}
-    pose.tail = {local_direction = {side * .42, .12, -1}, lift = .08, curl = side * .35, tip = -.18, weight = weight}
+    pose.ears[0] = {
+        position = {-.018, .025, .012},
+        yaw      = -.12,
+        roll     = -.08,
+        weight   = weight,
+    }
+    pose.ears[1] = {
+        position = {.018, -.010, -.008},
+        yaw      = .16,
+        roll     = .10,
+        weight   = weight,
+    }
+    pose.paws[0] = {
+        local_offset = {side * .035, .22 + pulse * .025, -.05},
+        weight       = weight,
+        planted      = false,
+    }
+    pose.paws[1] = {
+        local_offset = {0, .015, -.025},
+        weight       = weight,
+        planted      = true,
+    }
+    pose.paws[2] = {
+        local_offset = {-side * .018, .07, .025},
+        weight       = weight,
+        planted      = false,
+    }
+    pose.paws[3] = {
+        local_offset = {0, .015, -.025},
+        weight       = weight,
+        planted      = true,
+    }
+    pose.tail = {
+        local_direction = {side * .42, .12, -1},
+        lift            = .08,
+        curl            = side * .35,
+        tip             = -.18,
+        weight          = weight,
+    }
     pose.body_height = .035 * weight
     pose.body_compression = .018 * weight
     pose.breathing_weight = 1 - weight * .75
@@ -391,7 +441,10 @@ when ODIN_TEST {
     mouse_emote_progresses_loops_and_completes :: proc(t: ^testing.T) {
         state: Mouse_Emote_State
         testing.expect(t, mouse_emote_start(&state, .Wave, loop_limit = 2))
-        inputs := Mouse_Emote_Inputs{grounded = true, player_controlled = true}
+        inputs := Mouse_Emote_Inputs {
+            grounded          = true,
+            player_controlled = true,
+        }
         for _ in 0 ..< 180 do mouse_emote_update(&state, inputs, 1.0 / 60.0)
         testing.expect_value(t, state.action, Mouse_Emote.None)
         testing.expect(t, state.playback_revision >= 2)
@@ -401,7 +454,10 @@ when ODIN_TEST {
     mouse_emote_movement_cancels_with_bounded_blend_out :: proc(t: ^testing.T) {
         state: Mouse_Emote_State
         _ = mouse_emote_start(&state, .Wave)
-        still := Mouse_Emote_Inputs{grounded = true, player_controlled = true}
+        still := Mouse_Emote_Inputs {
+            grounded          = true,
+            player_controlled = true,
+        }
         mouse_emote_update(&state, still, .2)
         moving := still
         moving.movement_intent = 1
@@ -478,17 +534,33 @@ when ODIN_TEST {
             blink_weight     = 1,
             idle_weight      = 1,
         }
-        base.bones[0] = {position = {0, -.2, 0}, weight = 1}
-        base.paws[1] = {local_offset = {0, 0, .2}, weight = 1, planted = true}
+        base.bones[0] = {
+            position = {0, -.2, 0},
+            weight   = 1,
+        }
+        base.paws[1] = {
+            local_offset = {0, 0, .2},
+            weight       = 1,
+            planted      = true,
+        }
         overlay := Mouse_Emote_Pose {
             channels         = {.Upper_Body, .Head, .Fore_Paws},
             breathing_weight = 1,
             blink_weight     = 1,
             idle_weight      = 1,
         }
-        overlay.bones[2] = {pitch = .3, weight = 1}
-        overlay.bones[4] = {yaw = -.2, weight = 1}
-        overlay.paws[0] = {local_offset = {0, .3, 0}, weight = 1}
+        overlay.bones[2] = {
+            pitch  = .3,
+            weight = 1,
+        }
+        overlay.bones[4] = {
+            yaw    = -.2,
+            weight = 1,
+        }
+        overlay.paws[0] = {
+            local_offset = {0, .3, 0},
+            weight       = 1,
+        }
         combined := mouse_emote_pose_overlay(base, overlay)
         testing.expect_value(t, combined.bones[0], base.bones[0])
         testing.expect_value(t, combined.paws[1], base.paws[1])

@@ -382,8 +382,12 @@ world_bathymetry :: proc(editor: ^Editor) {
         if abs(origin_x - camera_x) > 512 || abs(origin_z - camera_z) > 512 do continue
         for z in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
             for x in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
-                center_x := origin_x + (f32(x) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
-                center_z := origin_z + (f32(z) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
+                center_x :=
+                    origin_x +
+                    (f32(x) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
+                center_z :=
+                    origin_z +
+                    (f32(z) + .5) * terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
                 _, _, land := terrain.sample_land(&editor.project, 0, center_x, center_z)
                 if land do continue
                 i := z * terrain.BATHYMETRY_CHUNK_RESOLUTION + x
@@ -393,9 +397,27 @@ world_bathymetry :: proc(editor: ^Editor) {
                 cell := terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
                 a := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i]), origin_z + f32(z) * cell}
                 b := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i2]), origin_z + f32(z + 1) * cell}
-                c := third_person.Vec3{origin_x + f32(x + 1) * cell, f32(chunk.heights[i3]), origin_z + f32(z + 1) * cell}
+                c := third_person.Vec3 {
+                    origin_x + f32(x + 1) * cell,
+                    f32(chunk.heights[i3]),
+                    origin_z + f32(z + 1) * cell,
+                }
                 d := third_person.Vec3{origin_x + f32(x + 1) * cell, f32(chunk.heights[i1]), origin_z + f32(z) * cell}
-                world_quad_colored_smooth_lit(a, b, c, d, normal, normal, normal, normal, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, canvas2d.Color{151, 137, 99, 255}, .94)
+                world_quad_colored_smooth_lit(
+                    a,
+                    b,
+                    c,
+                    d,
+                    normal,
+                    normal,
+                    normal,
+                    normal,
+                    canvas2d.Color{151, 137, 99, 255},
+                    canvas2d.Color{151, 137, 99, 255},
+                    canvas2d.Color{151, 137, 99, 255},
+                    canvas2d.Color{151, 137, 99, 255},
+                    .94,
+                )
             }
         }
     }
@@ -506,10 +528,28 @@ clipmap_grid_resolution :: #force_inline proc(level: int) -> int {
 // for aircraft because both points remain close together high above the land.
 clipmap_first_render_level :: proc(editor: ^Editor, viewport_height: i32, focal_length: f32 = 1.35) -> int {
     if editor == nil || viewport_height <= 0 do return 0
-    terrain_y := terrain.sample_surface_height(&editor.project, 0, editor.camera_pose.target.x, editor.camera_pose.target.z)
+    terrain_y := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        editor.camera_pose.target.x,
+        editor.camera_pose.target.z,
+    )
     terrain_focus := third_person.Vec3{editor.camera_pose.target.x, terrain_y, editor.camera_pose.target.z}
     delta := editor.camera_pose.position - terrain_focus
     distance := f32(math.sqrt(f64(linalg.dot(delta, delta))))
+    // A low chase camera can look hundreds of metres ahead while nearby
+    // shoreline still fills the lower half of the frame. Focus distance alone
+    // then discards the half-metre center mesh and makes the sea-level contour
+    // visibly faceted. Bound the estimate by clearance above the surface under
+    // the camera; genuinely high flight still selects coarser levels.
+    camera_surface_y := terrain.sample_surface_height(
+        &editor.project,
+        0,
+        editor.camera_pose.position.x,
+        editor.camera_pose.position.z,
+    )
+    camera_clearance := abs(editor.camera_pose.position.y - camera_surface_y)
+    distance = min(distance, camera_clearance)
     if distance <= .001 do return 0
     pixels_per_meter := focal_length * f32(viewport_height) * .5 / distance
     for level in 0 ..< terrain.CLIPMAP_LEVELS - 1 {

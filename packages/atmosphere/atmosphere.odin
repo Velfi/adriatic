@@ -42,15 +42,15 @@ Climate_State :: struct {
 }
 
 Terrain_Context :: struct {
-    valid:              bool,
-    altitude_agl:       f32,
-    terrain_height:     f32,
-    terrain_gradient:   [2]f32,
-    sea_level:          f32,
-    land:               bool,
-    coast_to_sea:       [2]f32,
-    coast_distance:     f32,
-    terrain_channel:    f32,
+    valid:            bool,
+    altitude_agl:     f32,
+    terrain_height:   f32,
+    terrain_gradient: [2]f32,
+    sea_level:        f32,
+    land:             bool,
+    coast_to_sea:     [2]f32,
+    coast_distance:   f32,
+    terrain_channel:  f32,
 }
 
 Weather_State :: struct {
@@ -62,45 +62,45 @@ Weather_State :: struct {
 }
 
 Local_Weather :: struct {
-    cloud_cover:         f32,
-    precipitation:       f32,
-    haze:                f32,
-    severity:            f32,
-    wind:                [3]f32,
-    gust_strength:       f32,
+    cloud_cover:           f32,
+    precipitation:         f32,
+    haze:                  f32,
+    severity:              f32,
+    wind:                  [3]f32,
+    gust_strength:         f32,
     vertical_air_strength: f32,
-    front_proximity:     f32,
-    rain_shadow:         f32,
-    thermal_breeze:      f32,
-    temperature_tendency: f32,
-    regime:              Climate_Regime,
+    front_proximity:       f32,
+    rain_shadow:           f32,
+    thermal_breeze:        f32,
+    temperature_tendency:  f32,
+    regime:                Climate_Regime,
 }
 
 Front_State :: struct {
-    active:               bool,
-    event_id:             u32,
-    seed:                 u32,
-    start_seconds:        f32,
-    end_seconds:          f32,
-    origin:               [2]f32,
-    direction:            [2]f32,
-    speed:                f32,
-    width:                f32,
-    intensity:            f32,
-    gustiness:            f32,
-    rainfall:             f32,
-    visibility_loss:      f32,
-    cell_scale:           f32,
-    cell_phase:           f32,
+    active:          bool,
+    event_id:        u32,
+    seed:            u32,
+    start_seconds:   f32,
+    end_seconds:     f32,
+    origin:          [2]f32,
+    direction:       [2]f32,
+    speed:           f32,
+    width:           f32,
+    intensity:       f32,
+    gustiness:       f32,
+    rainfall:        f32,
+    visibility_loss: f32,
+    cell_scale:      f32,
+    cell_phase:      f32,
 }
 
 Front_Schedule :: struct {
-    initialized:          bool,
-    rng_state:            u32,
-    elapsed_seconds:      f32,
-    next_event_seconds:   f32,
-    event_serial:         u32,
-    front:                Front_State,
+    initialized:        bool,
+    rng_state:          u32,
+    elapsed_seconds:    f32,
+    next_event_seconds: f32,
+    event_serial:       u32,
+    front:              Front_State,
 }
 
 Sky_Front_Field :: struct {
@@ -141,11 +141,11 @@ new :: proc(seed: u32) -> Atmosphere {
     // physical cycle length.
     lunar_days := f32(hash(seed) % 10000) / 10000 * SYNODIC_MONTH_DAYS
     result := Atmosphere {
-        seed = seed,
+        seed          = seed,
         world_minutes = 9.5 * 60,
-        lunar_days = lunar_days,
-        weather = weather_for(.Clear),
-        override = .Automatic,
+        lunar_days    = lunar_days,
+        weather       = weather_for(.Clear),
+        override      = .Automatic,
     }
     initialize_schedule(&result)
     initialize_climate(&result)
@@ -207,12 +207,18 @@ regime_weather :: proc(regime: Climate_Regime) -> Weather_State {
 
 regime_name :: proc(regime: Climate_Regime) -> string {
     switch regime {
-    case .Maestral: return "MAESTRAL"
-    case .Bura_Clear: return "BURA CLEAR"
-    case .Bura_Storm: return "BURA STORM"
-    case .Jugo: return "JUGO"
-    case .Calm_Humid: return "CALM HUMID"
-    case .Post_Front: return "POST FRONT"
+    case .Maestral:
+        return "MAESTRAL"
+    case .Bura_Clear:
+        return "BURA CLEAR"
+    case .Bura_Storm:
+        return "BURA STORM"
+    case .Jugo:
+        return "JUGO"
+    case .Calm_Humid:
+        return "CALM HUMID"
+    case .Post_Front:
+        return "POST FRONT"
     }
     return "MAESTRAL"
 }
@@ -337,21 +343,21 @@ trigger_front :: proc(state: ^Atmosphere) {
     travel := WORLD_SIZE_METERS * 2.4
     state.schedule.event_serial += 1
     state.schedule.front = {
-        active = true,
-        event_id = state.schedule.event_serial,
-        seed = hash(rng^ ~ state.schedule.event_serial),
-        start_seconds = state.schedule.elapsed_seconds,
-        end_seconds = state.schedule.elapsed_seconds + duration,
-        origin = {-direction[0] * travel * .5, -direction[1] * travel * .5},
-        direction = direction,
-        speed = travel / duration,
-        width = random_range(rng, 1800, 3200),
-        intensity = random_range(rng, .72, 1),
-        gustiness = random_range(rng, .55, 1),
-        rainfall = random_range(rng, .68, 1),
+        active          = true,
+        event_id        = state.schedule.event_serial,
+        seed            = hash(rng^ ~ state.schedule.event_serial),
+        start_seconds   = state.schedule.elapsed_seconds,
+        end_seconds     = state.schedule.elapsed_seconds + duration,
+        origin          = {-direction[0] * travel * .5, -direction[1] * travel * .5},
+        direction       = direction,
+        speed           = travel / duration,
+        width           = random_range(rng, 1800, 3200),
+        intensity       = random_range(rng, .72, 1),
+        gustiness       = random_range(rng, .55, 1),
+        rainfall        = random_range(rng, .68, 1),
         visibility_loss = random_range(rng, .55, .9),
-        cell_scale = random_range(rng, 700, 1500),
-        cell_phase = random_range(rng, 0, 2 * f32(math.PI)),
+        cell_scale      = random_range(rng, 700, 1500),
+        cell_phase      = random_range(rng, 0, 2 * f32(math.PI)),
     }
 }
 
@@ -419,54 +425,58 @@ sample_at :: proc(
     }
     base := climate_weather(state)
     result := Local_Weather {
-        cloud_cover = base.cloud_cover,
+        cloud_cover   = base.cloud_cover,
         precipitation = base.precipitation,
-        haze = base.haze,
-        severity = base.severity,
-        wind = {base.wind[0], 0, base.wind[1]},
-        regime = state.climate.current,
+        haze          = base.haze,
+        severity      = base.severity,
+        wind          = {base.wind[0], 0, base.wind[1]},
+        regime        = state.climate.current,
     }
     front := &state.schedule.front
     if front.active {
 
-    age := state.schedule.elapsed_seconds - front.start_seconds
-    center_x := front.origin[0] + front.direction[0] * front.speed * age
-    center_z := front.origin[1] + front.direction[1] * front.speed * age
-    relative_x, relative_z := position[0] - center_x, position[2] - center_z
-    lateral := -relative_x * front.direction[1] + relative_z * front.direction[0]
-    distortion := f32(math.sin(f64(lateral / max(front.cell_scale, f32(1)) * 2.1 + front.cell_phase))) * front.width * .12
-    along := relative_x * front.direction[0] + relative_z * front.direction[1] + distortion
-    half_width := front.width * .5
-    edge := max(front.width * .16, f32(120))
-    band := smoothstep(-half_width - edge, -half_width + edge, along) *
-        (1 - smoothstep(half_width - edge, half_width + edge, along))
-    cell_wave := .5 + .5 * f32(math.sin(f64(lateral / max(front.cell_scale, f32(1)) * 5.3 + front.cell_phase * 1.7)))
-    cell := clamp(.68 + cell_wave * .42, 0, 1)
-    exposure := clamp(band * front.intensity * cell, 0, 1)
-    if exposure > .0001 {
+        age := state.schedule.elapsed_seconds - front.start_seconds
+        center_x := front.origin[0] + front.direction[0] * front.speed * age
+        center_z := front.origin[1] + front.direction[1] * front.speed * age
+        relative_x, relative_z := position[0] - center_x, position[2] - center_z
+        lateral := -relative_x * front.direction[1] + relative_z * front.direction[0]
+        distortion :=
+            f32(math.sin(f64(lateral / max(front.cell_scale, f32(1)) * 2.1 + front.cell_phase))) * front.width * .12
+        along := relative_x * front.direction[0] + relative_z * front.direction[1] + distortion
+        half_width := front.width * .5
+        edge := max(front.width * .16, f32(120))
+        band :=
+            smoothstep(-half_width - edge, -half_width + edge, along) *
+            (1 - smoothstep(half_width - edge, half_width + edge, along))
+        cell_wave :=
+            .5 + .5 * f32(math.sin(f64(lateral / max(front.cell_scale, f32(1)) * 5.3 + front.cell_phase * 1.7)))
+        cell := clamp(.68 + cell_wave * .42, 0, 1)
+        exposure := clamp(band * front.intensity * cell, 0, 1)
+        if exposure > .0001 {
 
-    gust_period := 1.35 + f32(front.seed % 1400) / 1000
-    gust_phase := state.schedule.elapsed_seconds * (2 * f32(math.PI) / gust_period) + lateral * .0037 + front.cell_phase
-    gust_wave := .5 + .5 * f32(math.sin(f64(gust_phase)))
-    gust := exposure * front.gustiness * smoothstep(.18, .88, gust_wave)
-    cross_x, cross_z := -front.direction[1], front.direction[0]
-    wind_speed := 4 + exposure * 8 + gust * 3
-    vertical := exposure * (f32(math.sin(f64(gust_phase * .47 + cell_wave * 4))) * 2.6 - cell_wave * 1.35)
-    altitude_fade := 1 - smoothstep(900, 2600, altitude)
-    vertical *= .35 + altitude_fade * .65
-    result.cloud_cover = clamp(base.cloud_cover + exposure * .84, 0, 1)
-    result.precipitation = clamp(exposure * front.rainfall, 0, 1)
-    result.haze = clamp(base.haze + exposure * front.visibility_loss, 0, 1)
-    result.severity = clamp(base.severity + exposure * .96, 0, 1)
-    result.wind = {
-        front.direction[0] * wind_speed + cross_x * gust * 2.5,
-        vertical,
-        front.direction[1] * wind_speed + cross_z * gust * 2.5,
-    }
-    result.gust_strength = gust
-    result.vertical_air_strength = vertical
-    result.front_proximity = band
-    }
+            gust_period := 1.35 + f32(front.seed % 1400) / 1000
+            gust_phase :=
+                state.schedule.elapsed_seconds * (2 * f32(math.PI) / gust_period) + lateral * .0037 + front.cell_phase
+            gust_wave := .5 + .5 * f32(math.sin(f64(gust_phase)))
+            gust := exposure * front.gustiness * smoothstep(.18, .88, gust_wave)
+            cross_x, cross_z := -front.direction[1], front.direction[0]
+            wind_speed := 4 + exposure * 8 + gust * 3
+            vertical := exposure * (f32(math.sin(f64(gust_phase * .47 + cell_wave * 4))) * 2.6 - cell_wave * 1.35)
+            altitude_fade := 1 - smoothstep(900, 2600, altitude)
+            vertical *= .35 + altitude_fade * .65
+            result.cloud_cover = clamp(base.cloud_cover + exposure * .84, 0, 1)
+            result.precipitation = clamp(exposure * front.rainfall, 0, 1)
+            result.haze = clamp(base.haze + exposure * front.visibility_loss, 0, 1)
+            result.severity = clamp(base.severity + exposure * .96, 0, 1)
+            result.wind = {
+                front.direction[0] * wind_speed + cross_x * gust * 2.5,
+                vertical,
+                front.direction[1] * wind_speed + cross_z * gust * 2.5,
+            }
+            result.gust_strength = gust
+            result.vertical_air_strength = vertical
+            result.front_proximity = band
+        }
     }
 
     if terrain_context.valid {
@@ -481,7 +491,9 @@ sample_at :: proc(
         // coast_to_sea points away from land. Daytime heating drives the
         // opposite onshore vector; cool land reverses it after sunset.
         solar := f32(math.sin(f64((state.world_minutes / DAY_MINUTES - .25) * 2 * f32(math.PI))))
-        afternoon := smoothstep(.05, .75, solar) * smoothstep(7 * 60, 13 * 60, state.world_minutes) *
+        afternoon :=
+            smoothstep(.05, .75, solar) *
+            smoothstep(7 * 60, 13 * 60, state.world_minutes) *
             (1 - smoothstep(18 * 60, 21 * 60, state.world_minutes))
         night := 1 - smoothstep(-.18, .08, solar)
         coast_fade := 1 - smoothstep(150, 1800, terrain_context.coast_distance)
@@ -564,11 +576,9 @@ step :: proc(state: ^Atmosphere, delta_seconds: f32) {
             if state.climate.elapsed_seconds >= state.climate.transition_end_seconds {
                 state.climate.current = state.climate.next
                 state.climate.next = choose_next_regime(state, state.climate.current)
-                state.climate.transition_start_seconds = state.climate.elapsed_seconds + random_range(
-                    &state.climate.rng_state,
-                    CLIMATE_MIN_DURATION_SECONDS,
-                    CLIMATE_MAX_DURATION_SECONDS,
-                )
+                state.climate.transition_start_seconds =
+                    state.climate.elapsed_seconds +
+                    random_range(&state.climate.rng_state, CLIMATE_MIN_DURATION_SECONDS, CLIMATE_MAX_DURATION_SECONDS)
                 state.climate.transition_end_seconds = state.climate.transition_start_seconds + 90
                 if !state.schedule.front.active &&
                    (state.climate.current == .Jugo || state.climate.current == .Bura_Storm) {
@@ -600,6 +610,10 @@ set_world_minutes :: proc(state: ^Atmosphere, minutes: f32) {
     if state == nil do return
     state.world_minutes = f32(math.mod(f64(minutes), f64(DAY_MINUTES)))
     if state.world_minutes < 0 do state.world_minutes += DAY_MINUTES
+}
+
+world_minutes :: proc(state: ^Atmosphere) -> f32 {
+    return state != nil ? state.world_minutes : 0
 }
 
 set_lunar_age :: proc(state: ^Atmosphere, days_since_new_moon: f32) {

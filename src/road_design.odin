@@ -10,8 +10,8 @@ import canvas2d "zelda_engine:canvas2d"
 ROAD_EDIT_HISTORY_CAPACITY :: 8
 
 Road_Terrain_Delta :: struct {
-    level, index: int,
-    before, after:f32,
+    level, index:  int,
+    before, after: f32,
 }
 
 Road_Edit_Transaction :: struct {
@@ -77,13 +77,16 @@ road_design_apply_transaction :: proc(editor: ^Editor, transaction: ^Road_Edit_T
     if editor == nil || transaction == nil do return
     editor.project.road_graph = forward ? transaction.after_graph : transaction.before_graph
     for delta in transaction.terrain {
-        if delta.level < 0 || delta.level >= terrain.CLIPMAP_LEVELS ||
-           delta.index < 0 || delta.index >= terrain.SAMPLES_PER_LEVEL {
+        if delta.level < 0 ||
+           delta.level >= terrain.CLIPMAP_LEVELS ||
+           delta.index < 0 ||
+           delta.index >= terrain.SAMPLES_PER_LEVEL {
             continue
         }
         editor.project.levels[delta.level].heights[delta.index] = forward ? delta.after : delta.before
     }
-    editor.project.revision = max(editor.project.revision, forward ? transaction.revision_after : transaction.revision_before) + 1
+    editor.project.revision =
+        max(editor.project.revision, forward ? transaction.revision_after : transaction.revision_before) + 1
     // One consolidated invalidation covers terrain clipmaps, retained roads,
     // pavement/spatial queries, and downstream physics revisions.
     world_renderer_fixture_invalidate(editor)
@@ -151,10 +154,26 @@ road_design_grade :: proc(editor: ^Editor, graph: ^roads.Graph, design_id: u32) 
             for sample_index in 0 ..= sample_count {
                 t := f32(sample_index) / f32(sample_count)
                 center := roads.edge_point(graph, edge, t)
-                min_x := clamp(int(math.floor(f64((center.x - feather - level.origin_x) / level.cell_size))), 0, terrain.TERRAIN_RESOLUTION - 1)
-                max_x := clamp(int(math.ceil(f64((center.x + feather - level.origin_x) / level.cell_size))), 0, terrain.TERRAIN_RESOLUTION - 1)
-                min_z := clamp(int(math.floor(f64((center.z - feather - level.origin_z) / level.cell_size))), 0, terrain.TERRAIN_RESOLUTION - 1)
-                max_z := clamp(int(math.ceil(f64((center.z + feather - level.origin_z) / level.cell_size))), 0, terrain.TERRAIN_RESOLUTION - 1)
+                min_x := clamp(
+                    int(math.floor(f64((center.x - feather - level.origin_x) / level.cell_size))),
+                    0,
+                    terrain.TERRAIN_RESOLUTION - 1,
+                )
+                max_x := clamp(
+                    int(math.ceil(f64((center.x + feather - level.origin_x) / level.cell_size))),
+                    0,
+                    terrain.TERRAIN_RESOLUTION - 1,
+                )
+                min_z := clamp(
+                    int(math.floor(f64((center.z - feather - level.origin_z) / level.cell_size))),
+                    0,
+                    terrain.TERRAIN_RESOLUTION - 1,
+                )
+                max_z := clamp(
+                    int(math.ceil(f64((center.z + feather - level.origin_z) / level.cell_size))),
+                    0,
+                    terrain.TERRAIN_RESOLUTION - 1,
+                )
                 for z in min_z ..= max_z {
                     world_z := level.origin_z + f32(z) * level.cell_size
                     for x in min_x ..= max_x {
@@ -166,7 +185,11 @@ road_design_grade :: proc(editor: ^Editor, graph: ^roads.Graph, design_id: u32) 
                         if distance >= best_distance[index] do continue
                         blend := f32(1)
                         if distance > platform {
-                            normalized := clamp((distance - platform) / max(feather - platform, f32(.001)), f32(0), f32(1))
+                            normalized := clamp(
+                                (distance - platform) / max(feather - platform, f32(.001)),
+                                f32(0),
+                                f32(1),
+                            )
                             blend = 1 - normalized * normalized * (3 - 2 * normalized)
                         }
                         original := level.heights[index]
@@ -195,11 +218,11 @@ road_design_commit_graph :: proc(editor: ^Editor, graph: roads.Graph, design_id:
     after_graph := graph
     editor.road_edit_sequence += 1
     transaction := Road_Edit_Transaction {
-        before_graph = editor.project.road_graph,
-        after_graph = after_graph,
-        design_id = design_id,
+        before_graph    = editor.project.road_graph,
+        after_graph     = after_graph,
+        design_id       = design_id,
         revision_before = editor.project.revision,
-        sequence = editor.road_edit_sequence,
+        sequence        = editor.road_edit_sequence,
     }
     transaction.terrain = road_design_grade(editor, &after_graph, design_id)
     transaction.revision_after = editor.project.revision + 1
@@ -237,28 +260,46 @@ road_design_preview_begin :: proc(editor: ^Editor, base_graph: roads.Graph, from
     tube := max(config.cell_size * 4, f32(math.sqrt(f64(span_x * span_x + span_z * span_z))) * .12)
     margin := max(tube, config.cell_size * 6)
     origin_x, origin_z := min(a.x, b.x) - margin, min(a.z, b.z) - margin
-    width := clamp(int(math.ceil(f64((max(a.x, b.x) + margin - origin_x) / config.cell_size))) + 1, 2, road_planner.MAX_GRID_WIDTH)
-    height := clamp(int(math.ceil(f64((max(a.z, b.z) + margin - origin_z) / config.cell_size))) + 1, 2, road_planner.MAX_GRID_HEIGHT)
+    width := clamp(
+        int(math.ceil(f64((max(a.x, b.x) + margin - origin_x) / config.cell_size))) + 1,
+        2,
+        road_planner.MAX_GRID_WIDTH,
+    )
+    height := clamp(
+        int(math.ceil(f64((max(a.z, b.z) + margin - origin_z) / config.cell_size))) + 1,
+        2,
+        road_planner.MAX_GRID_HEIGHT,
+    )
     editor.road_design_heights = make([dynamic]f32, width * height)
     for z in 0 ..< height {
         for x in 0 ..< width {
             world_x := origin_x + f32(x) * config.cell_size
             world_z := origin_z + f32(z) * config.cell_size
             land_height, _, found := terrain.sample_land(&editor.project, 0, world_x, world_z)
-            editor.road_design_heights[z * width + x] = found ? land_height : terrain.sample_water_interface(&editor.project, world_x, world_z).water_level
+            editor.road_design_heights[z * width + x] =
+                found ? land_height : terrain.sample_water_interface(&editor.project, world_x, world_z).water_level
         }
     }
     request := road_designer.Design_Request {
-        grid = {origin_x = origin_x, origin_z = origin_z, width = width, height = height,
-            sea_level = editor.project.sea_level, heights = editor.road_design_heights[:]},
+        grid = {
+            origin_x = origin_x,
+            origin_z = origin_z,
+            width = width,
+            height = height,
+            sea_level = editor.project.sea_level,
+            heights = editor.road_design_heights[:],
+        },
         cell_size = config.cell_size,
-        start = {a.x, a.z}, finish = {b.x, b.z},
+        start = {a.x, a.z},
+        finish = {b.x, b.z},
         pavement = editor.road_pavement,
         width = editor.road_width,
         shoulder = editor.road_shoulder_width,
         sea_level = editor.project.sea_level,
-        available_nodes = roads.MAX_NODES - base_graph.node_count,
-        available_edges = roads.MAX_EDGES - base_graph.edge_count,
+        available_nodes = roads.MAX_NODES -
+        base_graph.node_count,
+        available_edges = roads.MAX_EDGES -
+        base_graph.edge_count,
         seed = u32(from * 73856093 ~ to * 19349663 ~ width * 83492791 ~ height),
     }
     status := road_designer.begin(editor.road_design_optimizer, request, editor.road_design_workspace)
@@ -294,8 +335,11 @@ road_design_preview_step :: proc(editor: ^Editor) -> bool {
     if !ok do return false
     preview := editor.road_design_base_graph
     result := road_designer.materialize_between(
-        selected, &preview, editor.road_design_preview_id,
-        editor.road_design_start_node, editor.road_design_target_node,
+        selected,
+        &preview,
+        editor.road_design_preview_id,
+        editor.road_design_start_node,
+        editor.road_design_target_node,
     )
     if !result.ok do return false
     editor.road_preview_graph = preview
@@ -371,7 +415,11 @@ road_design_redesign_selected_chain :: proc(editor: ^Editor) -> bool {
     if prior_design_id != 0 do editor.road_design_preview_id = prior_design_id
     editor.road_preview_start = base.nodes[from].position
     editor.road_preview_endpoint = base.nodes[to].position
-    editor.road_preview_snap = {kind = .Node, node = to, position = base.nodes[to].position}
+    editor.road_preview_snap = {
+        kind     = .Node,
+        node     = to,
+        position = base.nodes[to].position,
+    }
     editor.road_design_redesign_active = true
     return road_design_preview_step(editor)
 }

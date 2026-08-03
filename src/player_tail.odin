@@ -1,7 +1,7 @@
 package main
 
-import mouse_tail "../packages/mouse_tail"
 import mouse_gait "../packages/mouse_gait"
+import mouse_tail "../packages/mouse_tail"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
@@ -83,8 +83,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     // coincide with the rump instead of drifting sideways or vertically as
     // gait pitch, slope alignment, and body roll move the torso around it.
     pelvis_x := spine_side * .18 - scurry_support_shift
-    pelvis_y :=
-        .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015
+    pelvis_y := .36 - run_weight * .010 + body_bob - bound * .018 - brake_compression * .48 - posted_weight * .015
     pelvis_z := -.48 - spine_extension * .070 * run_weight + brake_pose * .035
     pelvis_pitch := bound * .075 + slope_pitch * .65 - posted_weight * .05 + scurry_lean * .45
     pelvis_yaw: f32
@@ -93,9 +92,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     pelvis_emote := emote_pose.bones[0]
     pelvis_emote_weight := clamp(pelvis_emote.weight, 0, 1)
     pelvis_x += pelvis_emote.position.x * pelvis_emote_weight
-    pelvis_y +=
-        pelvis_emote.position.y * pelvis_emote_weight +
-        emote_pose.body_height - emote_pose.body_compression
+    pelvis_y += pelvis_emote.position.y * pelvis_emote_weight + emote_pose.body_height - emote_pose.body_compression
     pelvis_z += pelvis_emote.position.z * pelvis_emote_weight
     pelvis_pitch += pelvis_emote.pitch * pelvis_emote_weight
     pelvis_yaw += pelvis_emote.yaw * pelvis_emote_weight
@@ -133,11 +130,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
     emote_weight := clamp(emote_tail.weight, 0, 1)
     if emote_weight > 0 {
         local := emote_tail.local_direction
-        desired := third_person.Vec3 {
-            local.x * cosine - local.z * sine,
-            local.y,
-            local.x * sine + local.z * cosine,
-        }
+        desired := third_person.Vec3{local.x * cosine - local.z * sine, local.y, local.x * sine + local.z * cosine}
         backward = backward * (1 - emote_weight) + desired * emote_weight
         root.y += emote_tail.lift * emote_weight * .35
     }

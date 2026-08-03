@@ -11,6 +11,16 @@ Vehicle_Controller_Input :: struct {
     handbrake:          bool,
 }
 
+Live_Vehicle_Control :: struct {
+    active:     bool,
+    throttle:   f32,
+    steering:   f32,
+    handbrake:  bool,
+    expires_at: f64,
+}
+
+live_vehicle_control: Live_Vehicle_Control
+
 car_controller_input :: proc() -> Vehicle_Controller_Input {
     result := Vehicle_Controller_Input{}
     if canvas2d.IsKeyDown(.W) || canvas2d.IsKeyDown(.UP) do result.throttle += 1
@@ -25,6 +35,15 @@ car_controller_input :: proc() -> Vehicle_Controller_Input {
     result.throttle = clamp(result.throttle, -1, 1)
     result.steering = clamp(result.steering, -1, 1)
     result.handbrake = input_action_down(.Handbrake)
+    if live_vehicle_control.active {
+        if canvas2d.GetTime() < live_vehicle_control.expires_at {
+            result.throttle = live_vehicle_control.throttle
+            result.steering = live_vehicle_control.steering
+            result.handbrake = live_vehicle_control.handbrake
+        } else {
+            live_vehicle_control = {}
+        }
+    }
     return result
 }
 
@@ -33,7 +52,9 @@ car_controller_step :: proc(
     control: Vehicle_Controller_Input,
     surface: vehicles.Car_Drive_Surface,
     delta_seconds, listener_yaw: f32,
-) -> (impact_severity, impact_slide_speed, impact_obliqueness, impact_pan: f32) {
+) -> (
+    impact_severity, impact_slide_speed, impact_obliqueness, impact_pan: f32,
+) {
     return car_physics_step(
         editor,
         control.throttle,

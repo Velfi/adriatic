@@ -42,12 +42,12 @@ MOUSE_THEATER_MONOLOGUE := [?]Mouse_Theater_Beat {
 }
 
 MOUSE_THEATER_VOICE :: engine_sound.Dialogue_Voice_Profile {
-    base_hz       = 345,
-    range_hz      = 145,
-    brightness    = .54,
-    warmth        = .68,
-    gain          = .105,
-    tract_hz      = 345,
+    base_hz    = 345,
+    range_hz   = 145,
+    brightness = .54,
+    warmth     = .68,
+    gain       = .105,
+    tract_hz   = 345,
 }
 
 Mouse_Theater_Dialogue :: struct {
@@ -82,9 +82,11 @@ mouse_theater_beat_seconds :: proc(beat: Mouse_Theater_Beat) -> f32 {
     }
     return(
         beat.opening_pause +
-        mouse_theater_text_seconds(beat.text[:split]) + .24 +
+        mouse_theater_text_seconds(beat.text[:split]) +
+        .24 +
         beat.line_pause +
-        mouse_theater_text_seconds(beat.text[split + 1:]) + .24 +
+        mouse_theater_text_seconds(beat.text[split + 1:]) +
+        .24 +
         beat.final_hold \
     )
 }
@@ -180,7 +182,7 @@ mouse_theater_configure :: proc(editor: ^Editor, target: string) -> bool {
     editor.atmosphere.paused = true
     mouse_theater_dialogue = {
         reveal_timer = MOUSE_THEATER_MONOLOGUE[0].opening_pause,
-        last_time = canvas2d.GetTime(),
+        last_time    = canvas2d.GetTime(),
     }
     engine_sound.dialogue_voice_stop(&editor.engine_audio)
     editor.engine_audio.dialogue_voice.unit_blend = .82
@@ -216,8 +218,7 @@ mouse_theater_dialogue_tick :: proc(editor: ^Editor, delta_seconds: f32) {
     mouse_theater_dialogue.performance_time += max(delta_seconds, 0)
     text := mouse_theater_current_text()
     mouse_theater_dialogue.reveal_timer -= max(delta_seconds, 0)
-    for mouse_theater_dialogue.cursor < len(text) &&
-        mouse_theater_dialogue.reveal_timer <= 0 {
+    for mouse_theater_dialogue.cursor < len(text) && mouse_theater_dialogue.reveal_timer <= 0 {
         start := mouse_theater_dialogue.cursor
         mouse_theater_dialogue.cursor = dialogue_voice_unit_end(text, start)
         unit := text[start:mouse_theater_dialogue.cursor]
@@ -225,8 +226,7 @@ mouse_theater_dialogue_tick :: proc(editor: ^Editor, delta_seconds: f32) {
             mouse_theater_dialogue.reveal_timer +=
                 .24 + MOUSE_THEATER_MONOLOGUE[mouse_theater_dialogue.beat].line_pause
         } else {
-            mouse_theater_dialogue.reveal_timer +=
-                DIALOGUE_REVEAL_SECONDS + dialogue_reveal_pause(unit)
+            mouse_theater_dialogue.reveal_timer += DIALOGUE_REVEAL_SECONDS + dialogue_reveal_pause(unit)
         }
         if dialogue_voice_should_synthesize_at(text, start, mouse_theater_dialogue.cursor) {
             engine_sound.dialogue_voice_trigger_grapheme(
@@ -260,9 +260,7 @@ mouse_theater_process_input :: proc(editor: ^Editor) {
     mouse_theater_camera_update(editor)
 
     advance :=
-        input_action_pressed(.Menu_Accept) ||
-        canvas2d.IsKeyPressed(.SPACE) ||
-        canvas2d.IsMouseButtonPressed(.LEFT)
+        input_action_pressed(.Menu_Accept) || canvas2d.IsKeyPressed(.SPACE) || canvas2d.IsMouseButtonPressed(.LEFT)
     if !advance || mouse_theater_dialogue.complete do return
     text := mouse_theater_current_text()
     if mouse_theater_dialogue.cursor < len(text) {
@@ -275,8 +273,7 @@ mouse_theater_process_input :: proc(editor: ^Editor) {
     mouse_theater_dialogue.cursor = 0
     mouse_theater_dialogue.beat_time = 0
     if mouse_theater_dialogue.beat < len(MOUSE_THEATER_MONOLOGUE) {
-        mouse_theater_dialogue.reveal_timer =
-            MOUSE_THEATER_MONOLOGUE[mouse_theater_dialogue.beat].opening_pause
+        mouse_theater_dialogue.reveal_timer = MOUSE_THEATER_MONOLOGUE[mouse_theater_dialogue.beat].opening_pause
     } else {
         mouse_theater_dialogue.reveal_timer = 0
     }
@@ -294,9 +291,9 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
     margin := max(f32(width) * .075, 54 * scale)
     panel_h := 154 * scale
     panel := canvas2d.Rectangle {
-        x = margin,
-        y = f32(height) - panel_h - 26 * scale,
-        width = f32(width) - margin * 2,
+        x      = margin,
+        y      = f32(height) - panel_h - 26 * scale,
+        width  = f32(width) - margin * 2,
         height = panel_h,
     }
     gold: canvas2d.Color = {232, 191, 91, 255}
@@ -313,7 +310,14 @@ mouse_theater_draw_ui :: proc(_: ^Editor, width, height: i32) {
     )
 
     quote_size := 48 * scale
-    canvas2d.DrawTextEx(canvas2d.DisplayFont(), "“", {panel.x + 20 * scale, panel.y + 14 * scale}, quote_size, 1, gold)
+    canvas2d.DrawTextEx(
+        canvas2d.DisplayFont(),
+        "“",
+        {panel.x + 20 * scale, panel.y + 14 * scale},
+        quote_size,
+        1,
+        gold,
+    )
     canvas2d.DrawTextEx(
         canvas2d.DisplayFont(),
         "”",
@@ -395,13 +399,7 @@ world_mouse_theater_auditorium :: proc() {
         fold_color := fold % 2 == 0 ? canvas2d.Color{91, 10, 22, 255} : canvas2d.Color{61, 7, 17, 255}
         depth := fold % 2 == 0 ? f32(.28) : f32(.18)
         fold_first := len(world_renderer.vertices)
-        world_box_rotated_material(
-            {x, 5.05, -6.56 + depth * .5},
-            {.79, 9.65, depth},
-            0,
-            fold_color,
-            .BRDF,
-        )
+        world_box_rotated_material({x, 5.05, -6.56 + depth * .5}, {.79, 9.65, depth}, 0, fold_color, .BRDF)
         for &vertex in world_renderer.vertices[fold_first:] do vertex.material = {0, .92}
     }
     world_box({-6.75, 5.1, -6.75}, {1.45, 9.8, .48}, {57, 8, 16, 255})
@@ -435,22 +433,8 @@ world_mouse_theater_limelights :: proc(editor: ^Editor) {
         // green-white sources that lift the curtain hem and the actor's lower
         // silhouette without flattening the overhead key.
         world_box_rotated({x, .73, -.02}, {.52, .28, .36}, 0, housing)
-        world_box_rotated_material(
-            {x, .86, -.11},
-            {.34, .10, .16},
-            0,
-            lime_glass,
-            .Emissive,
-        )
-        world_billboard_material_uv(
-            editor,
-            {x, .91, -.18},
-            .58,
-            .42,
-            {190, 255, 158, 92},
-            .Emissive_Halo,
-            true,
-        )
+        world_box_rotated_material({x, .86, -.11}, {.34, .10, .16}, 0, lime_glass, .Emissive)
+        world_billboard_material_uv(editor, {x, .91, -.18}, .58, .42, {190, 255, 158, 92}, .Emissive_Halo, true)
     }
 }
 
@@ -461,40 +445,33 @@ world_mouse_theater_spotlight :: proc(editor: ^Editor) {
     // emissive material provides a soft-edged spotlight footprint at night.
     world_tube_between({0, 12.55, -2.47}, {0, 11.75, -2.18}, {1, 0, 0}, .34, .42, rig)
     world_tube_between({0, 11.80, -2.18}, {0, 11.52, -2.0}, {1, 0, 0}, .30, .24, warm)
-    world_municipal_light_pool(
-        0,
-        .50,
-        -2.0,
-        nil,
-        .04,
-        2.75,
-        2.15,
-        0,
-        205,
-        0,
-        warm,
-        nil,
-        true,
-    )
+    world_municipal_light_pool(0, .50, -2.0, nil, .04, 2.75, 2.15, 0, 205, 0, warm, nil, true)
 }
 
-MOUSE_THEATER_STAGE_X := [?]f32 {
-    0, -.65, -1.2, -.45,
-    .45, 1.15, .55, -.25,
-    -.95, -1.35, -.55, .35,
-    1.1, .65, -.2, 0,
-}
+MOUSE_THEATER_STAGE_X := [?]f32{0, -.65, -1.2, -.45, .45, 1.15, .55, -.25, -.95, -1.35, -.55, .35, 1.1, .65, -.2, 0}
 
 MOUSE_THEATER_STAGE_Z := [?]f32 {
-    -2.0, -2.08, -2.18, -2.05,
-    -2.12, -2.22, -1.92, -1.82,
-    -2.05, -2.22, -1.95, -1.78,
-    -2.08, -1.86, -1.68, -1.48,
+    -2.0,
+    -2.08,
+    -2.18,
+    -2.05,
+    -2.12,
+    -2.22,
+    -1.92,
+    -1.82,
+    -2.05,
+    -2.22,
+    -1.95,
+    -1.78,
+    -2.08,
+    -1.86,
+    -1.68,
+    -1.48,
 }
 
 Mouse_Theater_Shot :: struct {
-    eye_start, eye_end: third_person.Vec3,
-    target_height:     f32,
+    eye_start, eye_end:     third_person.Vec3,
+    target_height:          f32,
     focal_start, focal_end: f32,
 }
 
@@ -517,10 +494,7 @@ MOUSE_THEATER_SHOTS := [?]Mouse_Theater_Shot {
     {{0, 1.18, .15}, {0, 1.02, -1.05}, .68, 1.86, 2.22}, // final dead-on zoom
 }
 
-mouse_theater_actor_pose :: proc() -> (
-    position: third_person.Vec3,
-    rotation, gait_speed, gait_phase: f32,
-) {
+mouse_theater_actor_pose :: proc() -> (position: third_person.Vec3, rotation, gait_speed, gait_phase: f32) {
     beat := clamp(mouse_theater_dialogue.beat, 0, len(MOUSE_THEATER_STAGE_X) - 1)
     previous := max(beat - 1, 0)
     // The actor crosses during the opening breath and first words, then plants
@@ -531,10 +505,8 @@ mouse_theater_actor_pose :: proc() -> (
     delta_x := MOUSE_THEATER_STAGE_X[beat] - MOUSE_THEATER_STAGE_X[previous]
     delta_z := MOUSE_THEATER_STAGE_Z[beat] - MOUSE_THEATER_STAGE_Z[previous]
     travel_distance := f32(math.sqrt(f64(delta_x * delta_x + delta_z * delta_z)))
-    x := MOUSE_THEATER_STAGE_X[previous] +
-        delta_x * travel
-    z := MOUSE_THEATER_STAGE_Z[previous] +
-        delta_z * travel
+    x := MOUSE_THEATER_STAGE_X[previous] + delta_x * travel
+    z := MOUSE_THEATER_STAGE_Z[previous] + delta_z * travel
     moving := travel < .995 && beat > 0
 
     text := mouse_theater_current_text()
@@ -561,9 +533,7 @@ mouse_theater_actor_pose :: proc() -> (
     // now slow continuously into their plant instead of cycling on a timer.
     gait_speed = 0
     if moving {
-        gait_speed =
-            travel_distance * 6 * raw_travel * (1 - raw_travel) /
-            max(travel_seconds, f32(.1))
+        gait_speed = travel_distance * 6 * raw_travel * (1 - raw_travel) / max(travel_seconds, f32(.1))
     }
     distance_traveled := travel_distance * travel
     for transition in 1 ..< beat {
@@ -589,13 +559,8 @@ mouse_theater_camera_update :: proc(editor: ^Editor) {
         shot.eye_start.z + (shot.eye_end.z - shot.eye_start.z) * progress,
     }
     actor_position, _, _, _ := mouse_theater_actor_pose()
-    target := third_person.Vec3 {
-        actor_position.x,
-        shot.target_height,
-        actor_position.z,
-    }
-    editor.cinematic_focal_length =
-        shot.focal_start + (shot.focal_end - shot.focal_start) * progress
+    target := third_person.Vec3{actor_position.x, shot.target_height, actor_position.z}
+    editor.cinematic_focal_length = shot.focal_start + (shot.focal_end - shot.focal_start) * progress
     editor.camera_pose = third_person.camera_look_at(eye, target)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -606,8 +571,7 @@ world_mouse_theater :: proc(editor: ^Editor) {
     world_mouse_theater_auditorium()
     world_mouse_theater_limelights(editor)
     world_mouse_theater_spotlight(editor)
-    actor_position, actor_rotation, actor_gait_speed, actor_gait_phase :=
-        mouse_theater_actor_pose()
+    actor_position, actor_rotation, actor_gait_speed, actor_gait_phase := mouse_theater_actor_pose()
     world_mouse_model_scaled(
         editor,
         {

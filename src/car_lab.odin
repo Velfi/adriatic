@@ -156,8 +156,22 @@ car_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRounded(panel, .08, 8, {12, 22, 29, 230})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .08, 8, 1, {191, 157, 94, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "CAR PHYSICS LAB", {36, 35}, 21, 1, {247, 225, 168, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "WASD drive   SPACE handbrake   R reset", {36, 67}, 14, 1, {207, 221, 218, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "1 asphalt   2 gravel   3 cobble   4 dirt", {36, 89}, 14, 1, {207, 221, 218, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "WASD drive   SPACE handbrake   R reset",
+        {36, 67},
+        14,
+        1,
+        {207, 221, 218, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "1 asphalt   2 gravel   3 cobble   4 dirt",
+        {36, 89},
+        14,
+        1,
+        {207, 221, 218, 255},
+    )
     canvas2d.DrawTextEx(
         canvas2d.Font{},
         fmt.ctprintf(

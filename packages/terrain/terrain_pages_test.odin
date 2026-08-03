@@ -1,7 +1,7 @@
 package terrain
 
-import "core:testing"
 import "core:math"
+import "core:testing"
 
 @(test)
 terrain_pages_omit_ocean_and_restore_land :: proc(t: ^testing.T) {
@@ -94,6 +94,25 @@ terrain_pages_reject_duplicate_and_out_of_bounds_keys :: proc(t: ^testing.T) {
 }
 
 @(test)
+terrain_page_bounds_lookup_returns_only_intersecting_pages :: proc(t: ^testing.T) {
+    project := new(Project)
+    defer free_project(project)
+    project.terrain_level_layout[0] = {1, -256, -256}
+    append(
+        &project.terrain_pages,
+        Terrain_Page{level = 0, page_x = 0, page_z = 0},
+        Terrain_Page{level = 0, page_x = 7, page_z = 7},
+        Terrain_Page{level = 1, page_x = 0, page_z = 0},
+    )
+    terrain_sampling_lookup_rebuild(project)
+    result: [4]int
+    count := terrain_page_indices_in_bounds(project, 0, -256, -256, -225, -225, result[:])
+    testing.expect_value(t, count, 1)
+    testing.expect_value(t, result[0], 0)
+    testing.expect_value(t, terrain_page_indices_in_bounds(project, 0, 1000, 1000, 1100, 1100, result[:]), 0)
+}
+
+@(test)
 bathymetry_missing_chunk_is_deep_ocean :: proc(t: ^testing.T) {
     project := new(Project)
     defer free_project(project)
@@ -108,10 +127,10 @@ bathymetry_chunk_is_not_land :: proc(t: ^testing.T) {
     project := new(Project)
     defer free_project(project)
     project.sea_level = 0
-    chunk := Bathymetry_Chunk{
-        chunk_x = 0,
-        chunk_z = 0,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        chunk_x  = 0,
+        chunk_z  = 0,
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for &height in chunk.heights do height = -6
@@ -126,8 +145,8 @@ bathymetry_level_edits_the_bed_instead_of_the_water_surface :: proc(t: ^testing.
     project := new(Project)
     defer free_project(project)
     project.sea_level = 2
-    chunk := Bathymetry_Chunk{
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for &height in chunk.heights do height = -4
@@ -142,12 +161,58 @@ bathymetry_level_edits_the_bed_instead_of_the_water_surface :: proc(t: ^testing.
 }
 
 @(test)
+bathymetry_level_edits_only_samples_inside_the_area :: proc(t: ^testing.T) {
+    project := new(Project)
+    defer free_project(project)
+    chunk := Bathymetry_Chunk {
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+        material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
+    }
+    for &height in chunk.heights do height = -4
+    append(&project.bathymetry_chunks, chunk)
+
+    apply_bathymetry_level(project, 16, 16, 8, -7, 0)
+
+    inside, _, _, inside_found := sample_bathymetry(project, 16, 16)
+    outside, _, _, outside_found := sample_bathymetry(project, 32, 16)
+    testing.expect(t, inside_found && outside_found)
+    testing.expect_value(t, inside, f32(-7))
+    testing.expect_value(t, outside, f32(-4))
+}
+
+@(test)
+bathymetry_level_cross_chunk_edit_matches_shared_boundary :: proc(t: ^testing.T) {
+    project := new(Project)
+    defer free_project(project)
+    for chunk_x in 0 ..= 1 {
+        chunk := Bathymetry_Chunk {
+            chunk_x  = i32(chunk_x),
+            heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+            material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
+        }
+        for &height in chunk.heights do height = -4
+        append(&project.bathymetry_chunks, chunk)
+    }
+
+    apply_bathymetry_level(project, BATHYMETRY_CHUNK_SIZE, 16, 9, -7, 0)
+
+    row := 2 * BATHYMETRY_CHUNK_RESOLUTION
+    left_edge := f32(project.bathymetry_chunks[0].heights[row + BATHYMETRY_CHUNK_RESOLUTION - 1])
+    right_edge := f32(project.bathymetry_chunks[1].heights[row])
+    testing.expect_value(t, left_edge, f32(-7))
+    testing.expect_value(t, right_edge, f32(-7))
+    testing.expect_value(t, left_edge, right_edge)
+    testing.expect_value(t, project.bathymetry_chunks[0].revision, u64(1))
+    testing.expect_value(t, project.bathymetry_chunks[1].revision, u64(1))
+}
+
+@(test)
 bathymetry_is_bilinear_and_rejects_incomplete_material :: proc(t: ^testing.T) {
     project := new(Project)
     defer free_project(project)
     project.island_transforms = default_island_transforms()
-    chunk := Bathymetry_Chunk{
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     chunk.heights[0] = -8
@@ -172,11 +237,11 @@ bathymetry_follows_moved_island_owner :: proc(t: ^testing.T) {
     source_x, source_z := project.island_transforms[0].source_x, project.island_transforms[0].source_z
     chunk_x := i32(math.floor(f64(source_x / BATHYMETRY_CHUNK_SIZE)))
     chunk_z := i32(math.floor(f64(source_z / BATHYMETRY_CHUNK_SIZE)))
-    chunk := Bathymetry_Chunk{
-        chunk_x = chunk_x,
-        chunk_z = chunk_z,
-        owner = .West,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        chunk_x  = chunk_x,
+        chunk_z  = chunk_z,
+        owner    = .West,
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for &height in chunk.heights do height = -7
@@ -195,9 +260,9 @@ bathymetry_negative_chunk_and_shared_edge_are_deterministic :: proc(t: ^testing.
     defer free_project(project)
     project.island_transforms = default_island_transforms()
     for chunk_x in -1 ..= 0 {
-        chunk := Bathymetry_Chunk{
-            chunk_x = i32(chunk_x),
-            heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+        chunk := Bathymetry_Chunk {
+            chunk_x  = i32(chunk_x),
+            heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
             material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
         }
         for &height in chunk.heights do height = -5
@@ -228,9 +293,9 @@ bathymetry_world_fallback_uses_world_coordinates :: proc(t: ^testing.T) {
     project.island_transforms = default_island_transforms()
     project.island_transforms[0].current_x = 0
     project.island_transforms[0].current_z = 0
-    chunk := Bathymetry_Chunk{
-        owner = .World,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        owner    = .World,
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for z in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
@@ -252,11 +317,11 @@ bathymetry_owned_chunk_resolves_outside_island_ellipse :: proc(t: ^testing.T) {
     project.island_transforms = default_island_transforms()
     source_x := project.island_transforms[0].source_x - DEFAULT_GENERATED_ISLAND_HALF_X - 220
     source_z := project.island_transforms[0].source_z
-    chunk := Bathymetry_Chunk{
-        chunk_x = i32(math.floor(f64(source_x / BATHYMETRY_CHUNK_SIZE))),
-        chunk_z = i32(math.floor(f64(source_z / BATHYMETRY_CHUNK_SIZE))),
-        owner = .West,
-        heights = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
+    chunk := Bathymetry_Chunk {
+        chunk_x  = i32(math.floor(f64(source_x / BATHYMETRY_CHUNK_SIZE))),
+        chunk_z  = i32(math.floor(f64(source_z / BATHYMETRY_CHUNK_SIZE))),
+        owner    = .West,
+        heights  = make([dynamic]f16, BATHYMETRY_CHUNK_SAMPLES),
         material = make([dynamic]i8, BATHYMETRY_CHUNK_SAMPLES),
     }
     for &height in chunk.heights do height = -9

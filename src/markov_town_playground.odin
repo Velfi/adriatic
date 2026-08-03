@@ -26,17 +26,17 @@ Settlement_Lab_Fixture :: enum {
 SETTLEMENT_LAB_CONTROL_COUNT :: 17
 
 Settlement_Lab_Controls :: struct {
-    initialized:       bool,
-    baseline_levels:   [terrain.CLIPMAP_LEVELS]terrain.Clipmap_Level,
-    baseline_sea:      f32,
-    profile:           Settlement_Profile,
-    region:            Settlement_Region,
-    fixture:           Settlement_Lab_Fixture,
-    vertical_map:      bool,
-    seed:              u32,
-    radius_scale:      f32,
-    selected:          int,
-    dirty:             bool,
+    initialized:     bool,
+    baseline_levels: [terrain.CLIPMAP_LEVELS]terrain.Clipmap_Level,
+    baseline_sea:    f32,
+    profile:         Settlement_Profile,
+    region:          Settlement_Region,
+    fixture:         Settlement_Lab_Fixture,
+    vertical_map:    bool,
+    seed:            u32,
+    radius_scale:    f32,
+    selected:        int,
+    dirty:           bool,
 }
 
 settlement_lab_controls: Settlement_Lab_Controls
@@ -757,14 +757,7 @@ settlement_lab_configure :: proc(
             plaza_z = route_origin[1] + route_normal[1] * (route_width * .5 + route_shoulder + plaza_depth * .5) * side
             rotation = f32(math.atan2(f64(route_tangent[1]), f64(route_tangent[0])))
         }
-        if !settlement_structure_footprint_on_land(
-            &editor.project,
-            x,
-            z,
-            landmark_width,
-            landmark_depth,
-            rotation,
-        ) {
+        if !settlement_structure_footprint_on_land(&editor.project, x, z, landmark_width, landmark_depth, rotation) {
             continue
         }
         previous_count := editor.project.structure_count
@@ -1096,12 +1089,7 @@ settlement_lab_configure :: proc(
                 inward_x, inward_z := (inner[0] - outer[0]) / segment_length, (inner[1] - outer[1]) / segment_length
                 candidate_camera_x := look_x - inward_x * camera.distance
                 candidate_camera_z := look_z - inward_z * camera.distance
-                if !settlement_camera_site_clear(
-                    &editor.project,
-                    candidate_camera_x,
-                    candidate_camera_z,
-                    2,
-                ) {
+                if !settlement_camera_site_clear(&editor.project, candidate_camera_x, candidate_camera_z, 2) {
                     continue
                 }
                 obstruction := f32(0)
@@ -1450,8 +1438,7 @@ settlement_lab_process_input :: proc(editor: ^Editor) {
             (settlement_lab_controls.selected + SETTLEMENT_LAB_CONTROL_COUNT - 1) % SETTLEMENT_LAB_CONTROL_COUNT
     }
     if canvas2d.IsKeyPressed(.DOWN) {
-        settlement_lab_controls.selected =
-            (settlement_lab_controls.selected + 1) % SETTLEMENT_LAB_CONTROL_COUNT
+        settlement_lab_controls.selected = (settlement_lab_controls.selected + 1) % SETTLEMENT_LAB_CONTROL_COUNT
     }
     direction := 0
     if canvas2d.IsKeyPressed(.LEFT) do direction = -1
@@ -1469,9 +1456,12 @@ settlement_lab_process_input :: proc(editor: ^Editor) {
         case 1:
             scale_index := (int(profile.scale) + direction + 3) % 3
             switch Settlement_Scale(scale_index) {
-            case .City:    profile^ = SETTLEMENT_CITY
-            case .Town:    profile^ = SETTLEMENT_TOWN
-            case .Village: profile^ = SETTLEMENT_VILLAGE
+            case .City:
+                profile^ = SETTLEMENT_CITY
+            case .Town:
+                profile^ = SETTLEMENT_TOWN
+            case .Village:
+                profile^ = SETTLEMENT_VILLAGE
             }
         case 2:
             controls.region = controls.region == .Adriatic ? .Aegean : .Adriatic
@@ -1498,9 +1488,17 @@ settlement_lab_process_input :: proc(editor: ^Editor) {
         case 13:
             profile.foliage_steps = clamp(profile.foliage_steps + direction, 0, 200)
         case 14:
-            profile.density_floor = clamp(profile.density_floor + f32(direction) * .01, f32(0), profile.density_ceiling)
+            profile.density_floor = clamp(
+                profile.density_floor + f32(direction) * .01,
+                f32(0),
+                profile.density_ceiling,
+            )
         case 15:
-            profile.density_ceiling = clamp(profile.density_ceiling + f32(direction) * .01, profile.density_floor, f32(1))
+            profile.density_ceiling = clamp(
+                profile.density_ceiling + f32(direction) * .01,
+                profile.density_floor,
+                f32(1),
+            )
         case 16:
             profile.max_slope = clamp(profile.max_slope + f32(direction) * .01, f32(.01), f32(1.5))
         }
@@ -1519,8 +1517,10 @@ settlement_lab_process_input :: proc(editor: ^Editor) {
         lab_scene_reset_content(editor)
         fixture_prefix := ""
         switch controls.fixture {
-        case .Slope:      fixture_prefix = "slope-"
-        case .Waterfront: fixture_prefix = "waterfront-"
+        case .Slope:
+            fixture_prefix = "slope-"
+        case .Waterfront:
+            fixture_prefix = "waterfront-"
         case .Default:
         }
         map_prefix := controls.vertical_map ? "map-" : ""
@@ -1545,23 +1545,40 @@ settlement_lab_control_text :: proc(index: int) -> cstring {
     controls := &settlement_lab_controls
     profile := &controls.profile
     switch index {
-    case 0:  return fmt.ctprintf("SEED                          %u", controls.seed)
-    case 1:  return fmt.ctprintf("SCALE                         %v", profile.scale)
-    case 2:  return fmt.ctprintf("REGION                        %v", controls.region)
-    case 3:  return fmt.ctprintf("TERRAIN                       %v", controls.fixture)
-    case 4:  return fmt.ctprintf("CAMERA                        %s", controls.vertical_map ? "MAP" : "PERSPECTIVE")
-    case 5:  return fmt.ctprintf("RADIUS                        %.0f%%", controls.radius_scale * 100)
-    case 6:  return fmt.ctprintf("WORLD CELL                    %.1fm", profile.world_cell)
-    case 7:  return fmt.ctprintf("NEIGHBORHOOD GROWTH           %d", profile.neighborhood_steps)
-    case 8:  return fmt.ctprintf("DENSITY GROWTH                %d", profile.density_growth_steps)
-    case 9:  return fmt.ctprintf("MEDIUM PROMOTION              %d", profile.medium_steps)
-    case 10: return fmt.ctprintf("HIGH PROMOTION                %d", profile.high_steps)
-    case 11: return fmt.ctprintf("CORE PROMOTION                %d", profile.core_steps)
-    case 12: return fmt.ctprintf("LANDMARKS                     %d", profile.landmark_steps)
-    case 13: return fmt.ctprintf("FOLIAGE                       %d", profile.foliage_steps)
-    case 14: return fmt.ctprintf("DENSITY FLOOR                 %.2f", profile.density_floor)
-    case 15: return fmt.ctprintf("DENSITY CEILING               %.2f", profile.density_ceiling)
-    case 16: return fmt.ctprintf("MAXIMUM SLOPE                 %.2f", profile.max_slope)
+    case 0:
+        return fmt.ctprintf("SEED                          %u", controls.seed)
+    case 1:
+        return fmt.ctprintf("SCALE                         %v", profile.scale)
+    case 2:
+        return fmt.ctprintf("REGION                        %v", controls.region)
+    case 3:
+        return fmt.ctprintf("TERRAIN                       %v", controls.fixture)
+    case 4:
+        return fmt.ctprintf("CAMERA                        %s", controls.vertical_map ? "MAP" : "PERSPECTIVE")
+    case 5:
+        return fmt.ctprintf("RADIUS                        %.0f%%", controls.radius_scale * 100)
+    case 6:
+        return fmt.ctprintf("WORLD CELL                    %.1fm", profile.world_cell)
+    case 7:
+        return fmt.ctprintf("NEIGHBORHOOD GROWTH           %d", profile.neighborhood_steps)
+    case 8:
+        return fmt.ctprintf("DENSITY GROWTH                %d", profile.density_growth_steps)
+    case 9:
+        return fmt.ctprintf("MEDIUM PROMOTION              %d", profile.medium_steps)
+    case 10:
+        return fmt.ctprintf("HIGH PROMOTION                %d", profile.high_steps)
+    case 11:
+        return fmt.ctprintf("CORE PROMOTION                %d", profile.core_steps)
+    case 12:
+        return fmt.ctprintf("LANDMARKS                     %d", profile.landmark_steps)
+    case 13:
+        return fmt.ctprintf("FOLIAGE                       %d", profile.foliage_steps)
+    case 14:
+        return fmt.ctprintf("DENSITY FLOOR                 %.2f", profile.density_floor)
+    case 15:
+        return fmt.ctprintf("DENSITY CEILING               %.2f", profile.density_ceiling)
+    case 16:
+        return fmt.ctprintf("MAXIMUM SLOPE                 %.2f", profile.max_slope)
     }
     return ""
 }
@@ -1640,6 +1657,13 @@ settlement_lab_draw_ui :: proc(editor: ^Editor, width: i32, _: i32) {
     )
     if plan.request.scale == .Village {
         village_report := settlement_village_program_report(plan)
-        canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", village_report), {454, 78}, 10, 1, {211, 220, 175, 255})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            fmt.ctprintf("%s", village_report),
+            {454, 78},
+            10,
+            1,
+            {211, 220, 175, 255},
+        )
     }
 }

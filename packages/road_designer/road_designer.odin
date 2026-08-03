@@ -41,9 +41,21 @@ Feasibility :: enum u8 {
     Profile,
 }
 
-Horizontal_Element_Kind :: enum u8 {Tangent, Spiral, Arc}
-Vertical_Element_Kind :: enum u8 {Tangent, Crest, Sag}
-Structure_Kind :: enum u8 {At_Grade, Bridge, Culvert}
+Horizontal_Element_Kind :: enum u8 {
+    Tangent,
+    Spiral,
+    Arc,
+}
+Vertical_Element_Kind :: enum u8 {
+    Tangent,
+    Crest,
+    Sag,
+}
+Structure_Kind :: enum u8 {
+    At_Grade,
+    Bridge,
+    Culvert,
+}
 
 Surface_Policy :: struct {
     design_speed_kph:       f32,
@@ -78,10 +90,10 @@ Design_Request :: struct {
 }
 
 Horizontal_Element :: struct {
-    kind:                       Horizontal_Element_Kind,
-    station_from, station_to:   f32,
-    curvature_from, curvature_to:f32,
-    source_pi:                  int,
+    kind:                         Horizontal_Element_Kind,
+    station_from, station_to:     f32,
+    curvature_from, curvature_to: f32,
+    source_pi:                    int,
 }
 
 Vertical_Element :: struct {
@@ -124,50 +136,50 @@ Genome :: struct {
 }
 
 Design_Candidate :: struct {
-    id:          u64,
-    genome:      Genome,
-    centerline:  [MAX_CENTERLINE_POINTS]roads.Vec3,
-    stations:    [MAX_CENTERLINE_POINTS]f32,
-    point_count: int,
-    horizontal:  [MAX_HORIZONTAL_ELEMENTS]Horizontal_Element,
+    id:               u64,
+    genome:           Genome,
+    centerline:       [MAX_CENTERLINE_POINTS]roads.Vec3,
+    stations:         [MAX_CENTERLINE_POINTS]f32,
+    point_count:      int,
+    horizontal:       [MAX_HORIZONTAL_ELEMENTS]Horizontal_Element,
     horizontal_count: int,
-    vertical:    [MAX_VERTICAL_ELEMENTS]Vertical_Element,
-    vertical_count: int,
-    structures:  [MAX_STRUCTURE_SPANS]Structure_Span,
-    structure_count: int,
-    earthwork:   [MAX_EARTHWORK_SAMPLES]Earthwork_Sample,
-    earthwork_count: int,
-    metrics:     Metrics,
-    feasibility: Feasibility,
-    pareto_rank: int,
-    crowding:    f32,
-    pavement:    roads.Pavement,
-    width, shoulder: f32,
+    vertical:         [MAX_VERTICAL_ELEMENTS]Vertical_Element,
+    vertical_count:   int,
+    structures:       [MAX_STRUCTURE_SPANS]Structure_Span,
+    structure_count:  int,
+    earthwork:        [MAX_EARTHWORK_SAMPLES]Earthwork_Sample,
+    earthwork_count:  int,
+    metrics:          Metrics,
+    feasibility:      Feasibility,
+    pareto_rank:      int,
+    crowding:         f32,
+    pavement:         roads.Pavement,
+    width, shoulder:  f32,
 }
 
 Workspace :: struct {
-    planner:       road_planner.Workspace,
-    profile_cost:  [MAX_CENTERLINE_POINTS][PROFILE_LEVEL_COUNT]f32,
-    profile_parent:[MAX_CENTERLINE_POINTS][PROFILE_LEVEL_COUNT]i8,
-    merge:         [POPULATION_SIZE]Design_Candidate,
-    combined:      [POPULATION_SIZE * 2]Design_Candidate,
+    planner:        road_planner.Workspace,
+    profile_cost:   [MAX_CENTERLINE_POINTS][PROFILE_LEVEL_COUNT]f32,
+    profile_parent: [MAX_CENTERLINE_POINTS][PROFILE_LEVEL_COUNT]i8,
+    merge:          [POPULATION_SIZE]Design_Candidate,
+    combined:       [POPULATION_SIZE * 2]Design_Candidate,
 }
 
 Optimizer :: struct {
-    request:       Design_Request,
-    policy:        Surface_Policy,
-    workspace:     ^Workspace,
-    seed_route:    road_planner.Result,
-    population:    [POPULATION_SIZE]Design_Candidate,
-    offspring:     [POPULATION_SIZE]Design_Candidate,
-    status:        Optimizer_Status,
-    generation:    int,
-    evaluations:   int,
+    request:           Design_Request,
+    policy:            Surface_Policy,
+    workspace:         ^Workspace,
+    seed_route:        road_planner.Result,
+    population:        [POPULATION_SIZE]Design_Candidate,
+    offspring:         [POPULATION_SIZE]Design_Candidate,
+    status:            Optimizer_Status,
+    generation:        int,
+    evaluations:       int,
     evaluation_cursor: int,
     stall_generations: int,
-    best_signature: f32,
-    rng:            u32,
-    selected:       [4]int,
+    best_signature:    f32,
+    rng:               u32,
+    selected:          [4]int,
 }
 
 Materialize_Result :: struct {
@@ -178,18 +190,18 @@ Materialize_Result :: struct {
 
 policy_for_pavement :: proc(pavement: roads.Pavement) -> Surface_Policy {
     policy := Surface_Policy {
-        design_speed_kph = 25,
-        maximum_grade = .20,
-        minimum_radius = 14,
-        sight_distance = 15,
-        minimum_spiral_length = 6,
+        design_speed_kph       = 25,
+        maximum_grade          = .20,
+        minimum_radius         = 14,
+        sight_distance         = 15,
+        minimum_spiral_length  = 6,
         maximum_superelevation = .03,
-        switchbacks_allowed = true,
-        bridge_cost_per_m = 18,
-        culvert_cost = 90,
-        construction_weight = .45,
-        travel_weight = .30,
-        impact_weight = .25,
+        switchbacks_allowed    = true,
+        bridge_cost_per_m      = 18,
+        culvert_cost           = 90,
+        construction_weight    = .45,
+        travel_weight          = .30,
+        impact_weight          = .25,
     }
     switch pavement {
     case .Asphalt:
@@ -255,26 +267,37 @@ orientation :: #force_inline proc(a, b, c: roads.Vec3) -> f32 {
 segments_intersect :: proc(a, b, c, d: roads.Vec3) -> bool {
     ab_c, ab_d := orientation(a, b, c), orientation(a, b, d)
     cd_a, cd_b := orientation(c, d, a), orientation(c, d, b)
-    return ((ab_c > .001 && ab_d < -.001) || (ab_c < -.001 && ab_d > .001)) &&
-        ((cd_a > .001 && cd_b < -.001) || (cd_a < -.001 && cd_b > .001))
+    return(
+        ((ab_c > .001 && ab_d < -.001) || (ab_c < -.001 && ab_d > .001)) &&
+        ((cd_a > .001 && cd_b < -.001) || (cd_a < -.001 && cd_b > .001)) \
+    )
 }
 
-horizontal_constraints_hold :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: Surface_Policy) -> bool {
+horizontal_constraints_hold :: proc(
+    candidate: ^Design_Candidate,
+    request: Design_Request,
+    policy: Surface_Policy,
+) -> bool {
     if candidate == nil || candidate.point_count < 2 do return false
     tolerance := f32(.01)
     if candidate.metrics.minimum_radius + tolerance < policy.minimum_radius do return false
     for index in 0 ..< candidate.genome.point_count {
-        if index > 0 && index < candidate.genome.point_count - 1 &&
+        if index > 0 &&
+           index < candidate.genome.point_count - 1 &&
            (candidate.genome.radii[index] < policy.minimum_radius ||
-            candidate.genome.spirals[index] < policy.minimum_spiral_length) {
+                   candidate.genome.spirals[index] < policy.minimum_spiral_length) {
             return false
         }
     }
     for first in 0 ..< candidate.point_count - 1 {
         for second in first + 2 ..< candidate.point_count - 1 {
             if second == first + 1 do continue
-            if segments_intersect(candidate.centerline[first], candidate.centerline[first + 1],
-                                  candidate.centerline[second], candidate.centerline[second + 1]) {
+            if segments_intersect(
+                candidate.centerline[first],
+                candidate.centerline[first + 1],
+                candidate.centerline[second],
+                candidate.centerline[second + 1],
+            ) {
                 return false
             }
         }
@@ -433,15 +456,21 @@ build_centerline :: proc(candidate: ^Design_Candidate, request: Design_Request, 
         dx, dz := finish.x - previous.x, finish.z - previous.z
         station += f32(math.sqrt(f64(dx * dx + dz * dz)))
     }
-    candidate.centerline[candidate.point_count] = {finish.x, sample_surface_height(request, finish.x, finish.z), finish.z}
+    candidate.centerline[candidate.point_count] = {
+        finish.x,
+        sample_surface_height(request, finish.x, finish.z),
+        finish.z,
+    }
     candidate.stations[candidate.point_count] = station
     candidate.point_count += 1
     // Persist an engineering element vocabulary even though the render graph
     // consumes a cubic approximation after materialization.
     for pi in 0 ..< genome.point_count - 1 {
         if candidate.horizontal_count >= MAX_HORIZONTAL_ELEMENTS do return false
-        from := pi == 0 ? f32(0) : candidate.stations[min(pi * (candidate.point_count - 1) / (genome.point_count - 1), candidate.point_count - 1)]
-        to := pi == genome.point_count - 2 ? station : candidate.stations[min((pi + 1) * (candidate.point_count - 1) / (genome.point_count - 1), candidate.point_count - 1)]
+        from :=
+            pi == 0 ? f32(0) : candidate.stations[min(pi * (candidate.point_count - 1) / (genome.point_count - 1), candidate.point_count - 1)]
+        to :=
+            pi == genome.point_count - 2 ? station : candidate.stations[min((pi + 1) * (candidate.point_count - 1) / (genome.point_count - 1), candidate.point_count - 1)]
         kind := Horizontal_Element_Kind.Tangent
         curvature_from, curvature_to := f32(0), f32(0)
         if pi > 0 && pi < genome.point_count - 1 {
@@ -454,7 +483,12 @@ build_centerline :: proc(candidate: ^Design_Candidate, request: Design_Request, 
     return true
 }
 
-solve_profile :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: Surface_Policy, work: ^Workspace) -> bool {
+solve_profile :: proc(
+    candidate: ^Design_Candidate,
+    request: Design_Request,
+    policy: Surface_Policy,
+    work: ^Workspace,
+) -> bool {
     count := candidate.point_count
     if count < 2 || work == nil do return false
     infinity := f32(1e30)
@@ -521,18 +555,23 @@ solve_profile :: proc(candidate: ^Design_Candidate, request: Design_Request, pol
             if grade < previous_grade - .002 do kind = .Crest
         }
         candidate.vertical[candidate.vertical_count] = {
-            kind = kind,
+            kind         = kind,
             station_from = candidate.stations[index],
-            station_to = candidate.stations[index + 1],
-            a = candidate.centerline[index].y,
-            b = grade,
+            station_to   = candidate.stations[index + 1],
+            a            = candidate.centerline[index].y,
+            b            = grade,
         }
         candidate.vertical_count += 1
     }
     return true
 }
 
-evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: Surface_Policy, work: ^Workspace) -> Metrics {
+evaluate :: proc(
+    candidate: ^Design_Candidate,
+    request: Design_Request,
+    policy: Surface_Policy,
+    work: ^Workspace,
+) -> Metrics {
     metrics: Metrics
     candidate.feasibility = .Geometry
     if !build_centerline(candidate, request, policy) do return metrics
@@ -560,14 +599,14 @@ evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: 
         cumulative_fill += fill_area * ds
         metrics.haul += math.abs(cumulative_cut - cumulative_fill) * ds
         candidate.earthwork[index] = {
-            station = station,
-            existing_y = ground,
-            finished_y = point.y,
-            cut_area = cut_area,
-            fill_area = fill_area,
-            cumulative_cut = cumulative_cut,
+            station         = station,
+            existing_y      = ground,
+            finished_y      = point.y,
+            cut_area        = cut_area,
+            fill_area       = fill_area,
+            cumulative_cut  = cumulative_cut,
             cumulative_fill = cumulative_fill,
-            haul_balance = cumulative_cut - cumulative_fill,
+            haul_balance    = cumulative_cut - cumulative_fill,
         }
         wet := ground <= request.sea_level + .04
         if wet && !open_water {
@@ -579,13 +618,13 @@ evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: 
             if candidate.structure_count < MAX_STRUCTURE_SPANS {
                 kind := span_length <= 14 && difference <= 3 ? Structure_Kind.Culvert : .Bridge
                 candidate.structures[candidate.structure_count] = {
-                    kind = kind,
+                    kind         = kind,
                     station_from = water_start,
-                    station_to = water_end,
-                    deck_y = point.y,
-                    invert_y = ground,
-                    width = request.width + request.shoulder * 2,
-                    clearance = max(point.y - ground, f32(.8)),
+                    station_to   = water_end,
+                    deck_y       = point.y,
+                    invert_y     = ground,
+                    width        = request.width + request.shoulder * 2,
+                    clearance    = max(point.y - ground, f32(.8)),
                 }
                 candidate.structure_count += 1
                 if kind == .Bridge {
@@ -615,13 +654,17 @@ evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: 
     }
     metrics.length = candidate.stations[candidate.point_count - 1]
     metrics.cut_volume, metrics.fill_volume = cumulative_cut, cumulative_fill
-    metrics.disturbed_area = metrics.length * (request.width + request.shoulder * 2) +
-        (metrics.cut_volume + metrics.fill_volume) * .35
+    metrics.disturbed_area =
+        metrics.length * (request.width + request.shoulder * 2) + (metrics.cut_volume + metrics.fill_volume) * .35
     speed_mps := max(policy.design_speed_kph / 3.6, f32(1))
     metrics.travel_seconds = metrics.length / speed_mps * (1 + metrics.maximum_grade * 2.2)
     imbalance := math.abs(metrics.cut_volume - metrics.fill_volume)
-    metrics.construction = metrics.length + (metrics.cut_volume + metrics.fill_volume) * .18 +
-        imbalance * .12 + metrics.haul * .0006 + metrics.bridge_length * policy.bridge_cost_per_m +
+    metrics.construction =
+        metrics.length +
+        (metrics.cut_volume + metrics.fill_volume) * .18 +
+        imbalance * .12 +
+        metrics.haul * .0006 +
+        metrics.bridge_length * policy.bridge_cost_per_m +
         f32(metrics.culvert_count) * policy.culvert_cost
     metrics.travel = metrics.travel_seconds + max(policy.minimum_radius - metrics.minimum_radius, f32(0)) * 3
     metrics.impact = metrics.disturbed_area + metrics.bridge_length * 12 + f32(metrics.culvert_count) * 30
@@ -642,18 +685,25 @@ evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: 
 dominates :: #force_inline proc(a, b: ^Design_Candidate) -> bool {
     if a == nil || b == nil || a.feasibility != .Feasible do return false
     if b.feasibility != .Feasible do return true
-    no_worse := a.metrics.construction <= b.metrics.construction && a.metrics.travel <= b.metrics.travel &&
+    no_worse :=
+        a.metrics.construction <= b.metrics.construction &&
+        a.metrics.travel <= b.metrics.travel &&
         a.metrics.impact <= b.metrics.impact
-    better := a.metrics.construction < b.metrics.construction || a.metrics.travel < b.metrics.travel ||
+    better :=
+        a.metrics.construction < b.metrics.construction ||
+        a.metrics.travel < b.metrics.travel ||
         a.metrics.impact < b.metrics.impact
     return no_worse && better
 }
 
 objective_value :: #force_inline proc(candidate: ^Design_Candidate, axis: int) -> f32 {
     switch axis {
-    case 0: return candidate.metrics.construction
-    case 1: return candidate.metrics.travel
-    case 2: return candidate.metrics.impact
+    case 0:
+        return candidate.metrics.construction
+    case 1:
+        return candidate.metrics.travel
+    case 2:
+        return candidate.metrics.impact
     }
     return 0
 }
@@ -720,7 +770,8 @@ assign_fronts_and_crowding :: proc(items: []Design_Candidate) {
                 if items[indices[cursor]].crowding < f32(1e29) {
                     items[indices[cursor]].crowding +=
                         (objective_value(&items[indices[cursor + 1]], axis) -
-                         objective_value(&items[indices[cursor - 1]], axis)) / scale
+                            objective_value(&items[indices[cursor - 1]], axis)) /
+                        scale
                 }
             }
         }
@@ -745,13 +796,18 @@ rank_and_select :: proc(optimizer: ^Optimizer) {
         normalized: [3]f32
         values := [3]f32{item.metrics.construction, item.metrics.travel, item.metrics.impact}
         for axis in 0 ..< 3 do normalized[axis] = (values[axis] - minimum[axis]) / max(maximum[axis] - minimum[axis], f32(.001))
-        scores := [4]f32{
-            normalized[0] * optimizer.policy.construction_weight + normalized[1] * optimizer.policy.travel_weight + normalized[2] * optimizer.policy.impact_weight,
-            normalized[0], normalized[1], normalized[2],
+        scores := [4]f32 {
+            normalized[0] * optimizer.policy.construction_weight +
+            normalized[1] * optimizer.policy.travel_weight +
+            normalized[2] * optimizer.policy.impact_weight,
+            normalized[0],
+            normalized[1],
+            normalized[2],
         }
         for choice in 0 ..< 4 {
-            if scores[choice] < best[choice] || (scores[choice] == best[choice] &&
-               (choices[choice] < 0 || item.id < optimizer.population[choices[choice]].id)) {
+            if scores[choice] < best[choice] ||
+               (scores[choice] == best[choice] &&
+                       (choices[choice] < 0 || item.id < optimizer.population[choices[choice]].id)) {
                 best[choice], choices[choice] = scores[choice], index
             }
         }
@@ -865,8 +921,8 @@ step :: proc(optimizer: ^Optimizer, evaluation_budget: int = 8) -> Optimizer_Sta
                 rank_and_select(optimizer)
             }
             recommended := optimizer.selected[int(Named_Alternative.Recommended)]
-            signature := recommended >= 0 ? optimizer.population[recommended].metrics.construction +
-                optimizer.population[recommended].metrics.travel + optimizer.population[recommended].metrics.impact : f32(1e30)
+            signature :=
+                recommended >= 0 ? optimizer.population[recommended].metrics.construction + optimizer.population[recommended].metrics.travel + optimizer.population[recommended].metrics.impact : f32(1e30)
             if signature + .001 < optimizer.best_signature {
                 optimizer.best_signature, optimizer.stall_generations = signature, 0
             } else {
@@ -946,9 +1002,18 @@ materialize_between :: proc(
     design_id: u32,
     from, to: int,
 ) -> Materialize_Result {
-    result := Materialize_Result{first_edge = -1}
-    if candidate == nil || graph == nil || candidate.feasibility != .Feasible || candidate.point_count < 2 ||
-       from < 0 || from >= graph.node_count || to < 0 || to >= graph.node_count || from == to {
+    result := Materialize_Result {
+        first_edge = -1,
+    }
+    if candidate == nil ||
+       graph == nil ||
+       candidate.feasibility != .Feasible ||
+       candidate.point_count < 2 ||
+       from < 0 ||
+       from >= graph.node_count ||
+       to < 0 ||
+       to >= graph.node_count ||
+       from == to {
         return result
     }
     total_station := candidate.stations[candidate.point_count - 1]
@@ -999,8 +1064,16 @@ materialize_between :: proc(
         after := segment + 2 <= segment_count ? points[segment + 2] : b
         from_tangent := b - before
         to_tangent := after - a
-        from_length := max(math.sqrt(from_tangent.x * from_tangent.x + from_tangent.y * from_tangent.y + from_tangent.z * from_tangent.z), f32(.001))
-        to_length := max(math.sqrt(to_tangent.x * to_tangent.x + to_tangent.y * to_tangent.y + to_tangent.z * to_tangent.z), f32(.001))
+        from_length := max(
+            math.sqrt(
+                from_tangent.x * from_tangent.x + from_tangent.y * from_tangent.y + from_tangent.z * from_tangent.z,
+            ),
+            f32(.001),
+        )
+        to_length := max(
+            math.sqrt(to_tangent.x * to_tangent.x + to_tangent.y * to_tangent.y + to_tangent.z * to_tangent.z),
+            f32(.001),
+        )
         from_tangent /= from_length
         to_tangent /= to_length
         length := math.sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) + (b.z - a.z) * (b.z - a.z))
@@ -1026,18 +1099,33 @@ materialize_between :: proc(
         edge.policy_pavement = candidate.pavement
         edge.station_from, edge.station_to = station_from, station_to
         switch alignment {
-        case .Tangent: edge.alignment_kind = .Tangent
-        case .Spiral:  edge.alignment_kind = .Spiral
-        case .Arc:     edge.alignment_kind = .Arc
+        case .Tangent:
+            edge.alignment_kind = .Tangent
+        case .Spiral:
+            edge.alignment_kind = .Spiral
+        case .Arc:
+            edge.alignment_kind = .Arc
         }
-        horizontal := candidate.horizontal[min(segment * max(candidate.horizontal_count, 1) / segment_count, max(candidate.horizontal_count - 1, 0))]
+        horizontal :=
+            candidate.horizontal[min(segment * max(candidate.horizontal_count, 1) / segment_count, max(candidate.horizontal_count - 1, 0))]
         edge.curvature_from, edge.curvature_to = horizontal.curvature_from, horizontal.curvature_to
-        edge.superelevation_from = clamp(edge.curvature_from * candidate.width * 2, -policy_for_pavement(candidate.pavement).maximum_superelevation, policy_for_pavement(candidate.pavement).maximum_superelevation)
-        edge.superelevation_to = clamp(edge.curvature_to * candidate.width * 2, -policy_for_pavement(candidate.pavement).maximum_superelevation, policy_for_pavement(candidate.pavement).maximum_superelevation)
+        edge.superelevation_from = clamp(
+            edge.curvature_from * candidate.width * 2,
+            -policy_for_pavement(candidate.pavement).maximum_superelevation,
+            policy_for_pavement(candidate.pavement).maximum_superelevation,
+        )
+        edge.superelevation_to = clamp(
+            edge.curvature_to * candidate.width * 2,
+            -policy_for_pavement(candidate.pavement).maximum_superelevation,
+            policy_for_pavement(candidate.pavement).maximum_superelevation,
+        )
         switch structure_at_station(candidate, (station_from + station_to) * .5) {
-        case .At_Grade: edge.structure_kind = .At_Grade
-        case .Bridge:   edge.structure_kind = .Bridge
-        case .Culvert:  edge.structure_kind = .Culvert
+        case .At_Grade:
+            edge.structure_kind = .At_Grade
+        case .Bridge:
+            edge.structure_kind = .Bridge
+        case .Culvert:
+            edge.structure_kind = .Culvert
         }
         result.edge_count += 1
     }
@@ -1046,7 +1134,9 @@ materialize_between :: proc(
 }
 
 materialize :: proc(candidate: ^Design_Candidate, graph: ^roads.Graph, design_id: u32) -> Materialize_Result {
-    result := Materialize_Result{first_edge = -1}
+    result := Materialize_Result {
+        first_edge = -1,
+    }
     if candidate == nil || graph == nil || candidate.point_count < 2 do return result
     from := roads.add_node(graph, candidate.centerline[0], max(candidate.width * .8, f32(2)))
     to := roads.add_node(graph, candidate.centerline[candidate.point_count - 1], max(candidate.width * .8, f32(2)))

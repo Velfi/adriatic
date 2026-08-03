@@ -176,7 +176,9 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         } else if config.species == .Lemon && leaf.depth >= 2 {
             leaf_cluster_size = 1
         }
-        if config.species == .Grapevine && kind != .Leaf {
+        if (config.species == .Grapevine || config.species == .Bougainvillea) && kind != .Leaf {
+            // Reproductive and defensive attachments are borne by leafy
+            // shoots; they do not replace the subtending foliage.
             attachment_count += 2
         } else if config.species == .Italian_Cypress && kind == .Fruit {
             attachment_count += leaf_cluster_size + 1
@@ -385,8 +387,33 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             attachment_cluster_size = 1
         }
         forward, up := attachment_frame(leaf.forward, leaf.up, profile, climbing)
+        if climbing do fold_source_attachment_frame(&forward, &up, position, config.support)
         traits :=
             kind == .Leaf ? generated_leaf_traits(config.species, variant, maturity, config.detail) : Leaf_Traits{}
+        // Rosette species reuse one leaf profile, but successive inner whorls
+        // are botanically shorter. Preserve the skeleton depth as a size
+        // gradient so centers tighten instead of stacking full-sized leaves.
+        if kind == .Leaf {
+            depth_scale := f32(1)
+            #partial switch config.species {
+            case .Agave:
+                if leaf.depth == 1 do depth_scale = .68
+            case .Aloe:
+                if leaf.depth == 1 do depth_scale = .70
+                if leaf.depth >= 2 do depth_scale = .74
+            case .Echeveria:
+                if leaf.depth == 1 do depth_scale = .66
+                if leaf.depth >= 2 do depth_scale = .72
+            case .Golden_Barrel,
+                 .Aeonium,
+                 .Jade_Plant,
+                 .Stonecrop,
+                 .Blue_Chalk_Sticks,
+                 .Golden_Torch_Cactus:
+            }
+            traits.length *= depth_scale
+            traits.width *= .84 + depth_scale * .16
+        }
         append(
             &result.plant.attachments,
             Attachment {
@@ -402,7 +429,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         )
         update_bounds(&result.plant.bounds, position, &first)
         if kind == .Leaf do update_leaf_bounds(&result.plant.bounds, position, forward, up, traits, &first)
-        if config.species == .Grapevine && generated_kind != .Leaf {
+        if (config.species == .Grapevine || config.species == .Bougainvillea) && generated_kind != .Leaf {
             companion_traits := generated_leaf_traits(config.species, variant, maturity, config.detail)
             append(
                 &result.plant.attachments,
@@ -565,7 +592,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                 if linalg.dot(direction, direction) < .001 do continue
                 variant := u8((config.seed + u64(segment_index * 13 + added * 7)) % 4)
                 traits := generated_leaf_traits(config.species, variant, maturity, config.detail)
-                forward, up := attachment_frame(direction, {0, 0, 1}, profile, true)
+                forward, up := routed_attachment_frame(direction, position, config.support)
                 append(
                     &result.plant.attachments,
                     Attachment {

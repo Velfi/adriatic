@@ -568,19 +568,8 @@ world_architecture_mass :: proc(
             for gable_end in -1 ..= 1 {
                 if gable_end == 0 do continue
                 local_z := f32(gable_end) * (roof_depth * .58 + .12)
-                attic_x, attic_z := world_rotate_xz(
-                    structure.center_x,
-                    structure.center_z,
-                    0,
-                    local_z,
-                    roof_rotation,
-                )
-                world_box_rotated(
-                    {attic_x, attic_y, attic_z},
-                    {attic_width, attic_height, .20},
-                    roof_rotation,
-                    window,
-                )
+                attic_x, attic_z := world_rotate_xz(structure.center_x, structure.center_z, 0, local_z, roof_rotation)
+                world_box_rotated({attic_x, attic_y, attic_z}, {attic_width, attic_height, .20}, roof_rotation, window)
                 pane_z_local := local_z + f32(gable_end) * .115
                 pane_x, pane_z := world_rotate_xz(
                     structure.center_x,

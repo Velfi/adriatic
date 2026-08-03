@@ -194,7 +194,12 @@ control_hint_controller_source :: proc(
     return {}
 }
 
-control_hint_draw_bar :: proc(editor: ^Editor, entries: []Control_Hint_Entry, position: canvas2d.Vector2, max_width: f32) {
+control_hint_draw_bar :: proc(
+    editor: ^Editor,
+    entries: []Control_Hint_Entry,
+    position: canvas2d.Vector2,
+    max_width: f32,
+) {
     if editor == nil do return
     controller := controller_prompt_active(editor)
     texture := editor.control_hint_atlases.keyboard_mouse

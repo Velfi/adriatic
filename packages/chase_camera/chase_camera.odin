@@ -54,13 +54,7 @@ look :: proc(state: ^State, mouse_x, mouse_y: f32) {
     state.orbit_pitch = clamp(state.orbit_pitch - mouse_y * .0025, -.75, .75)
 }
 
-step :: proc(
-    state: ^State,
-    target: Target,
-    delta_seconds: f32,
-    flyby_shake: f32 = 0,
-    wind_buffet: f32 = 0,
-) {
+step :: proc(state: ^State, target: Target, delta_seconds: f32, flyby_shake: f32 = 0, wind_buffet: f32 = 0) {
     if state == nil do return
     desired := desired_pose(target, state.orbit_yaw, state.orbit_pitch)
     if !state.initialized || distance_squared(state.base_pose.position, desired.position) > 50 * 50 {
@@ -126,7 +120,11 @@ shake_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intens
     return result
 }
 
-buffet_pose :: proc(pose: third_person.Camera_Pose, target: Target, phase, intensity: f32) -> third_person.Camera_Pose {
+buffet_pose :: proc(
+    pose: third_person.Camera_Pose,
+    target: Target,
+    phase, intensity: f32,
+) -> third_person.Camera_Pose {
     amount := clamp(intensity, 0, 1)
     if amount <= .001 do return pose
     // Wind should feel like a low-frequency displacement, not the sharp,

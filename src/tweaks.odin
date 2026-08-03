@@ -772,9 +772,38 @@ tweak_draw_time_of_day :: proc(editor: ^Editor) {
     im.Checkbox("Pause time", &a.paused)
 }
 
+tweak_vehicle_teleport_position :: proc(vehicle: ^vehicles.Vehicle) -> third_person.Vec3 {
+    if vehicle == nil do return {}
+    distance := vehicle.exit_distance
+    if distance <= 0 do distance = 1.8
+    left := third_person.Vec3{-math.cos(vehicle.yaw_radians), 0, math.sin(vehicle.yaw_radians)}
+    return vehicle.position + left * distance
+}
+
+tweak_teleport_player_to_vehicle :: proc(editor: ^Editor, vehicle: ^vehicles.Vehicle) {
+    if editor == nil || vehicle == nil do return
+    player_place(editor, tweak_vehicle_teleport_position(vehicle), .Teleport, vehicle.yaw_radians)
+    editor.camera = third_person.default_camera()
+}
+
 tweak_draw_player :: proc(editor: ^Editor) {
     c := &editor.tweak.player
     a := &editor.tweak.player_animation
+    if tweak_section("Teleport", true) {
+        if editor.tweak_teleport_on_click {
+            im.TextUnformatted("Click terrain to teleport. Escape cancels.")
+            if im.Button("Cancel teleport") do editor.tweak_teleport_on_click = false
+        } else if im.Button("Teleport on click") {
+            editor.tweak_teleport_on_click = true
+        }
+        if im.Button("Teleport to car") do tweak_teleport_player_to_vehicle(editor, &editor.car)
+        for &slot in editor.aircraft.slots[:editor.aircraft.count] {
+            if !slot.available || slot.vehicle == nil do continue
+            if im.Button(fmt.ctprintf("Teleport to %s", slot.name)) {
+                tweak_teleport_player_to_vehicle(editor, slot.vehicle)
+            }
+        }
+    }
     if tweak_section("Movement", true) {
         tweak_drag_f32("Move speed", &c.move_speed, 0, 100, .1)
         tweak_drag_f32("Run speed", &c.run_speed, 0, 100, .1)
@@ -1346,13 +1375,13 @@ tweak_draw_navigation :: proc() {
     im.Spacing()
     if im.TextFilter_PassFilter(
         &tweak_filter,
-        "Mouse player movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
+        "Mouse player teleport vehicle car aircraft movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
     ) {
         im.TextDisabled("CHARACTERS")
     }
     _ = tweak_page_select(
         "Mouse",
-        "Mouse player movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
+        "Mouse player teleport vehicle car aircraft movement speed acceleration drift boost jump gravity gait animation stride scurry body softness tail diagnostics",
         .Mouse,
     )
     im.Spacing()

@@ -1,9 +1,9 @@
 package main
 
-import rt "base:runtime"
 import fixture_file "../packages/fixture_file"
 import hs "../packages/hs"
 import roads "../packages/roads"
+import rt "base:runtime"
 import "core:hash"
 import "core:mem"
 import "core:os"
@@ -69,10 +69,15 @@ road_stream_worker_main :: proc(t: ^thread.Thread) {
         runtime.request_count -= 1
         sync.mutex_unlock(&runtime.mutex)
 
-        completion := Road_Stream_Completion{key = request.key, generation = request.generation}
+        completion := Road_Stream_Completion {
+            key        = request.key,
+            generation = request.generation,
+        }
         if request.entry.key.kind != .Road_Tile ||
-           request.entry.key.x != request.key.x || request.entry.key.z != request.key.z ||
-           request.entry.size == 0 || request.entry.size > u64(roads.ROAD_TILE_RECORD_MAX_BYTES) ||
+           request.entry.key.x != request.key.x ||
+           request.entry.key.z != request.key.z ||
+           request.entry.size == 0 ||
+           request.entry.size > u64(roads.ROAD_TILE_RECORD_MAX_BYTES) ||
            request.entry.offset > u64(max(i64)) {
             completion.error = .Invalid_Record
         } else {
@@ -119,11 +124,7 @@ road_stream_worker_main :: proc(t: ^thread.Thread) {
     }
 }
 
-road_stream_open :: proc(
-    runtime: ^Road_Stream_Runtime,
-    path: string,
-    allocator := context.allocator,
-) -> bool {
+road_stream_open :: proc(runtime: ^Road_Stream_Runtime, path: string, allocator := context.allocator) -> bool {
     if runtime == nil || path == "" || allocator.procedure == nil do return false
     // Opening an active runtime would orphan its file and worker. Call close
     // before reusing it so shutdown and queue ownership stay deterministic.
@@ -164,7 +165,11 @@ road_stream_request :: proc(
         if runtime.requests[index].key == key && runtime.requests[index].generation == generation do return .None
     }
     tail := (runtime.request_head + runtime.request_count) % ROAD_STREAM_QUEUE_CAPACITY
-    runtime.requests[tail] = {key = key, entry = entry, generation = generation}
+    runtime.requests[tail] = {
+        key        = key,
+        entry      = entry,
+        generation = generation,
+    }
     runtime.request_count += 1
     sync.cond_signal(&runtime.wake)
     return .None

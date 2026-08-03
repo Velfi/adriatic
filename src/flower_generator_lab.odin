@@ -290,9 +290,7 @@ flower_generator_draw_mesh :: proc(
                 frame_up * source.position[1] * scale +
                 frame_outward * source.position[2] * scale
             normals[corner] = linalg.normalize0(
-                frame_right * source.normal[0] +
-                frame_up * source.normal[1] +
-                frame_outward * source.normal[2],
+                frame_right * source.normal[0] + frame_up * source.normal[1] + frame_outward * source.normal[2],
             )
             center_triangle = center_triangle && int(index) >= center_first
         }
@@ -355,18 +353,18 @@ flower_generator_draw_cluster :: proc(
         floret_origin :=
             origin +
             third_person.Vec3 {
-                instance.position[0] * scale,
-                instance.position[2] * scale,
-                -instance.position[1] * scale,
-            }
+                    instance.position[0] * scale,
+                    instance.position[2] * scale,
+                    -instance.position[1] * scale,
+                }
         floret_outward := linalg.normalize0(
             third_person.Vec3{instance.normal[0], instance.normal[2], -instance.normal[1]},
         )
-        floret_right := third_person.Vec3{1, 0, 0} -
-            floret_outward * linalg.dot(third_person.Vec3{1, 0, 0}, floret_outward)
+        floret_right :=
+            third_person.Vec3{1, 0, 0} - floret_outward * linalg.dot(third_person.Vec3{1, 0, 0}, floret_outward)
         if linalg.dot(floret_right, floret_right) < .001 {
-            floret_right = third_person.Vec3{0, 0, -1} -
-                floret_outward * linalg.dot(third_person.Vec3{0, 0, -1}, floret_outward)
+            floret_right =
+                third_person.Vec3{0, 0, -1} - floret_outward * linalg.dot(third_person.Vec3{0, 0, -1}, floret_outward)
         }
         floret_right = linalg.normalize0(floret_right)
         floret_up := linalg.normalize0(linalg.cross(floret_outward, floret_right))
@@ -385,14 +383,7 @@ flower_generator_draw_cluster :: proc(
             floret_outward,
         )
     }
-    world_tube_between(
-        {origin.x, .10, origin.z},
-        origin,
-        {1, 0, 0},
-        .035 * scale,
-        .022 * scale,
-        {65, 112, 65, 255},
-    )
+    world_tube_between({origin.x, .10, origin.z}, origin, {1, 0, 0}, .035 * scale, .022 * scale, {65, 112, 65, 255})
 }
 
 world_flower_generator_lab :: proc(_: ^Editor) {

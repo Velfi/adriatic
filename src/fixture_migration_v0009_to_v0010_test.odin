@@ -23,7 +23,11 @@ when ODIN_TEST {
         if !encoded do return
         defer delete(payload)
         result, migration_error, migrated := fixture_migration_run_with_registry(
-            payload, 9, FIXTURE_SCHEMA_VERSION, fixture_migration_production_registry(), runtime.default_allocator(),
+            payload,
+            9,
+            FIXTURE_SCHEMA_VERSION,
+            fixture_migration_production_registry(),
+            runtime.default_allocator(),
         )
         defer fixture_migration_error_dispose(&migration_error)
         defer fixture_migration_result_dispose(&result)

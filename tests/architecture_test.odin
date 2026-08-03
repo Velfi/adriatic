@@ -1738,10 +1738,7 @@ architecture_civic_rear_ranges_keep_serviceable_public_connections :: proc(t: ^t
                             public_range.local_z + public_range.depth * .5,
                             rear_range.local_z + rear_range.depth * .5,
                         ) -
-                        max(
-                            public_range.local_z - public_range.depth * .5,
-                            rear_range.local_z - rear_range.depth * .5,
-                        )
+                        max(public_range.local_z - public_range.depth * .5, rear_range.local_z - rear_range.depth * .5)
                     testing.expectf(
                         t,
                         overlap_z >= 2.0 - .001,
@@ -1834,13 +1831,7 @@ architecture_broad_post_office_adds_a_connected_parcel_annex :: proc(t: ^testing
 
 @(test)
 architecture_post_offices_keep_serviceable_public_to_sorting_connection :: proc(t: ^testing.T) {
-    sizes := [5][3]f32 {
-        {16, 14, 9.6},
-        {18, 16, 12},
-        {24, 18, 18},
-        {30, 24, 24},
-        {60, 36, 48},
-    }
+    sizes := [5][3]f32{{16, 14, 9.6}, {18, 16, 12}, {24, 18, 18}, {30, 24, 24}, {60, 36, 48}}
     for size in sizes {
         for seed in 0 ..< 128 {
             structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
@@ -1955,12 +1946,7 @@ architecture_market_hall_can_use_a_connected_clerestoried_basilica_plan :: proc(
 
 @(test)
 architecture_market_basilica_keeps_serviceable_aisle_connections :: proc(t: ^testing.T) {
-    sizes := [4][3]f32 {
-        {22, 18, 9.6},
-        {24, 18, 12},
-        {30, 24, 24},
-        {60, 36, 48},
-    }
+    sizes := [4][3]f32{{22, 18, 9.6}, {24, 18, 12}, {30, 24, 24}, {60, 36, 48}}
     for size in sizes {
         for seed in 0 ..< 64 {
             if seed % 4 != 2 do continue
@@ -2031,13 +2017,7 @@ architecture_church_uses_connected_latin_cross_plan :: proc(t: ^testing.T) {
 
 @(test)
 architecture_church_keeps_serviceable_chancel_connection :: proc(t: ^testing.T) {
-    sizes := [5][3]f32 {
-        {12, 12, 9.6},
-        {14, 14, 12},
-        {18, 18, 18},
-        {24, 24, 24},
-        {30, 36, 48},
-    }
+    sizes := [5][3]f32{{12, 12, 9.6}, {14, 14, 12}, {18, 18, 18}, {24, 24, 24}, {30, 36, 48}}
     for size in sizes {
         for seed in 0 ..< 64 {
             structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
@@ -2244,13 +2224,7 @@ architecture_fortress_gate_forms_connected_guard_court :: proc(t: ^testing.T) {
 
 @(test)
 architecture_fortress_gate_keeps_cart_scale_central_passage :: proc(t: ^testing.T) {
-    sizes := [5][3]f32 {
-        {12, 12, 7.2},
-        {14, 12, 9.6},
-        {18, 18, 12},
-        {24, 18, 24},
-        {30, 24, 48},
-    }
+    sizes := [5][3]f32{{12, 12, 7.2}, {14, 12, 9.6}, {18, 18, 12}, {24, 18, 24}, {30, 24, 48}}
     for size in sizes {
         for seed in 0 ..< 64 {
             structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
@@ -2261,9 +2235,7 @@ architecture_fortress_gate_keeps_cart_scale_central_passage :: proc(t: ^testing.
             footprint := architecture.architecture_footprint(structure)
             testing.expect_value(t, footprint.count, 3)
             left, right, guard_range := footprint.masses[0], footprint.masses[1], footprint.masses[2]
-            passage_width :=
-                right.local_x - right.width * .5 -
-                (left.local_x + left.width * .5)
+            passage_width := right.local_x - right.width * .5 - (left.local_x + left.width * .5)
             testing.expectf(
                 t,
                 passage_width >= 3.0 - .001,
@@ -2493,15 +2465,38 @@ architecture_compound_floorplans_stay_inside_threshold_adjacent_lots :: proc(t: 
     // bits 9, 12, 15, and 18; a low consecutive seed range cannot exercise
     // those authored variations.
     seeds := [32]u32 {
-        0, 1, 2, 3, 4, 5, 6, 7,
-        8, 9, 10, 11, 12, 13, 14, 15,
-        0x00000100, 0x00000101,
-        0x00001000, 0x00001001,
-        0x00010000, 0x00010001,
-        0x00100000, 0x00100001,
-        0x01000000, 0x01000001,
-        0x10000000, 0x10000001,
-        0x55555555, 0xaaaaaaaa, 0xdeadbeef, 0xffffffff,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        0x00000100,
+        0x00000101,
+        0x00001000,
+        0x00001001,
+        0x00010000,
+        0x00010001,
+        0x00100000,
+        0x00100001,
+        0x01000000,
+        0x01000001,
+        0x10000000,
+        0x10000001,
+        0x55555555,
+        0xaaaaaaaa,
+        0xdeadbeef,
+        0xffffffff,
     }
     for archetype in archetypes {
         for width in 3 ..= 32 {
@@ -2592,8 +2587,7 @@ architecture_compound_floorplans_stay_inside_threshold_adjacent_lots :: proc(t: 
                         for a, a_index in layout.openings[:layout.count] {
                             for b in layout.openings[a_index + 1:layout.count] {
                                 if a.face != b.face do continue
-                                vertical_overlap :=
-                                    math.abs(a.y - b.y) < (a.height + b.height) * .5 - .001
+                                vertical_overlap := math.abs(a.y - b.y) < (a.height + b.height) * .5 - .001
                                 if !vertical_overlap do continue
                                 a_is_door := a.kind == .Door || a.kind == .Service_Door
                                 b_is_door := b.kind == .Door || b.kind == .Service_Door
@@ -2606,9 +2600,7 @@ architecture_compound_floorplans_stay_inside_threshold_adjacent_lots :: proc(t: 
                                 } else if a_is_door && b_is_door {
                                     required_gap = 0
                                 }
-                                horizontal_gap :=
-                                    math.abs(a.horizontal - b.horizontal) -
-                                    (a.width + b.width) * .5
+                                horizontal_gap := math.abs(a.horizontal - b.horizontal) - (a.width + b.width) * .5
                                 if horizontal_gap < required_gap - .001 {
                                     testing.expectf(
                                         t,
@@ -2647,11 +2639,9 @@ architecture_compound_floorplans_stay_inside_threshold_adjacent_lots :: proc(t: 
                                 for other, other_index in footprint.masses[:footprint.count] {
                                     if reachable[other_index] do continue
                                     overlap_x :=
-                                        math.abs(mass.local_x - other.local_x) <=
-                                        (mass.width + other.width) * .5 - 2.0
+                                        math.abs(mass.local_x - other.local_x) <= (mass.width + other.width) * .5 - 2.0
                                     overlap_z :=
-                                        math.abs(mass.local_z - other.local_z) <=
-                                        (mass.depth + other.depth) * .5 - 2.0
+                                        math.abs(mass.local_z - other.local_z) <= (mass.depth + other.depth) * .5 - 2.0
                                     if overlap_x && overlap_z do reachable[other_index] = true
                                 }
                             }
@@ -2958,11 +2948,8 @@ architecture_domestic_u_plan_wings_keep_serviceable_street_range_connections :: 
 architecture_clinic_and_mixed_use_wings_overlook_their_courts :: proc(t: ^testing.T) {
     cases := [2]struct {
         archetype: buildings.Archetype,
-        seeds:      [2]u32,
-    } {
-        {.Clinic, {2, 6}},
-        {.Mixed_Use_Dwelling, {5, 11}},
-    }
+        seeds:     [2]u32,
+    }{{.Clinic, {2, 6}}, {.Mixed_Use_Dwelling, {5, 11}}}
     for test_case in cases {
         for seed in test_case.seeds {
             structure := terrain.structure_make(1300, 1300, 30, 24, 4, 19.2)
@@ -3073,12 +3060,7 @@ architecture_shop_house_stockrooms_keep_serviceable_sales_floor_connections :: p
 @(test)
 architecture_attached_rear_returns_keep_serviceable_internal_passage :: proc(t: ^testing.T) {
     archetypes := [2]buildings.Archetype{.Townhouse, .Shop_House}
-    sizes := [4][3]f32 {
-        {16, 16, 9.6},
-        {18, 18, 12},
-        {24, 20, 24},
-        {30, 24, 48},
-    }
+    sizes := [4][3]f32{{16, 16, 9.6}, {18, 18, 12}, {24, 20, 24}, {30, 24, 48}}
     for archetype in archetypes {
         for size in sizes {
             for seed in 0 ..< 64 {
@@ -3151,12 +3133,7 @@ architecture_stepped_townhouse_bars_keep_serviceable_internal_connections :: pro
 @(test)
 architecture_domestic_t_plans_keep_serviceable_internal_passage :: proc(t: ^testing.T) {
     archetypes := [2]buildings.Archetype{.Dwelling, .Farmstead}
-    sizes := [4][3]f32 {
-        {18, 18, 9.6},
-        {22, 20, 12},
-        {30, 24, 24},
-        {60, 36, 48},
-    }
+    sizes := [4][3]f32{{18, 18, 9.6}, {22, 20, 12}, {30, 24, 24}, {60, 36, 48}}
     for archetype in archetypes {
         for size in sizes {
             for seed in 0 ..< 128 {
@@ -3195,13 +3172,7 @@ architecture_multi_storey_rear_returns_keep_lower_and_upper_daylight :: proc(t: 
     cases := [5]struct {
         archetype: buildings.Archetype,
         seed:      u32,
-    } {
-        {.Dwelling, 1},
-        {.Townhouse, 1},
-        {.Mixed_Use_Dwelling, 0},
-        {.Post_Office, 0},
-        {.Clinic, 0},
-    }
+    }{{.Dwelling, 1}, {.Townhouse, 1}, {.Mixed_Use_Dwelling, 0}, {.Post_Office, 0}, {.Clinic, 0}}
     for test_case in cases {
         structure := terrain.structure_make(1300, 1300, 18, 18, 4, 19.2)
         structure.width, structure.depth, structure.height = 18, 18, 19.2
@@ -3271,8 +3242,7 @@ architecture_occupied_multi_storey_masses_keep_each_daylight_band :: proc(t: ^te
                     if architecture.facade_floor_count(structure.height * mass.height_scale) <= 1 {
                         continue
                     }
-                    harbor_service_range :=
-                        archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
+                    harbor_service_range := archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
                     if harbor_service_range do continue
                     layout := architecture.architecture_opening_layout(structure, mass_index, primary)
                     lower_windows, upper_windows := 0, 0
@@ -3336,8 +3306,7 @@ architecture_compound_faces_keep_daylight_when_mostly_exposed :: proc(t: ^testin
                 if footprint.count <= 1 do continue
                 primary := architecture.architecture_frontage_mass_index(structure)
                 for mass, mass_index in footprint.masses[:footprint.count] {
-                    harbor_service_range :=
-                        archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
+                    harbor_service_range := archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
                     if harbor_service_range do continue
                     layout := architecture.architecture_opening_layout(structure, mass_index, primary)
                     wall_height := structure.height * mass.height_scale
@@ -3354,8 +3323,7 @@ architecture_compound_faces_keep_daylight_when_mostly_exposed :: proc(t: ^testin
                         if exposed_area < span * wall_height * .55 do continue
                         daylight := 0
                         for opening in layout.openings[:layout.count] {
-                            if opening.face == face &&
-                               (opening.kind == .Window || opening.kind == .Loggia) {
+                            if opening.face == face && (opening.kind == .Window || opening.kind == .Loggia) {
                                 daylight += 1
                             }
                         }
@@ -3412,8 +3380,7 @@ architecture_occupied_compound_faces_use_material_exterior_daylight :: proc(t: ^
                 if footprint.count <= 1 do continue
                 primary := architecture.architecture_frontage_mass_index(structure)
                 for mass, mass_index in footprint.masses[:footprint.count] {
-                    harbor_service_range :=
-                        archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
+                    harbor_service_range := archetype == .Harbor_Office && footprint.count == 3 && mass_index == 2
                     if harbor_service_range do continue
                     layout := architecture.architecture_opening_layout(structure, mass_index, primary)
                     wall_height := structure.height * mass.height_scale
@@ -3430,8 +3397,7 @@ architecture_occupied_compound_faces_use_material_exterior_daylight :: proc(t: ^
                         if exposed_area < span * wall_height * .20 do continue
                         has_daylight := false
                         for opening in layout.openings[:layout.count] {
-                            if opening.face == face &&
-                               (opening.kind == .Window || opening.kind == .Loggia) {
+                            if opening.face == face && (opening.kind == .Window || opening.kind == .Loggia) {
                                 has_daylight = true
                                 break
                             }
@@ -3841,13 +3807,7 @@ architecture_compound_floorplans_keep_one_exposed_primary_entrance :: proc(t: ^t
         .Church,
         .Fortress_Gate,
     }
-    sizes := [5][3]f32 {
-        {12, 12, 7.2},
-        {18, 18, 9.6},
-        {24, 18, 12},
-        {30, 24, 24},
-        {60, 36, 48},
-    }
+    sizes := [5][3]f32{{12, 12, 7.2}, {18, 18, 9.6}, {24, 18, 12}, {30, 24, 24}, {60, 36, 48}}
     for archetype in archetypes {
         for size in sizes {
             for seed in 0 ..< 128 {
@@ -3957,18 +3917,17 @@ architecture_broad_occupied_frontages_scale_primary_entrances_by_public_role :: 
             }
             testing.expectf(t, found, "broad frontage lacks primary entrance archetype=%v seed=%d", archetype, seed)
             if !found do continue
-            urban :=
-                archetype == .Townhouse ||
-                archetype == .Shop_House ||
-                archetype == .Mixed_Use_Dwelling
+            urban := archetype == .Townhouse || archetype == .Shop_House || archetype == .Mixed_Use_Dwelling
             minimum_width := urban ? f32(3.0) : f32(3.2)
             maximum_width := urban ? f32(3.4) : f32(4.0)
             minimum_height := urban ? f32(4.0) : f32(4.2)
             maximum_height := urban ? f32(4.5) : f32(4.8)
             testing.expectf(
                 t,
-                entrance.width >= minimum_width && entrance.width <= maximum_width &&
-                    entrance.height >= minimum_height && entrance.height <= maximum_height,
+                entrance.width >= minimum_width &&
+                entrance.width <= maximum_width &&
+                entrance.height >= minimum_height &&
+                entrance.height <= maximum_height,
                 "broad entrance lost role scale archetype=%v seed=%d size=(%.2f,%.2f) expected=(%.2f..%.2f,%.2f..%.2f)",
                 archetype,
                 seed,
@@ -4095,32 +4054,8 @@ architecture_attached_eaves_reserve_clear_wall_bands_around_their_roofline :: pr
     footprint.masses[1] = {0, 4, 12, 11.5, .60}
     footprint.count = 2
 
-    testing.expect(
-        t,
-        architecture.architecture_opening_occluded_by_mass(
-            footprint,
-            0,
-            .Front,
-            0,
-            12,
-            1.4,
-            .4,
-            20,
-        ),
-    )
-    testing.expect(
-        t,
-        !architecture.architecture_opening_occluded_by_mass(
-            footprint,
-            0,
-            .Front,
-            0,
-            13,
-            1.4,
-            1,
-            20,
-        ),
-    )
+    testing.expect(t, architecture.architecture_opening_occluded_by_mass(footprint, 0, .Front, 0, 12, 1.4, .4, 20))
+    testing.expect(t, !architecture.architecture_opening_occluded_by_mass(footprint, 0, .Front, 0, 13, 1.4, 1, 20))
 }
 
 @(test)
@@ -4231,8 +4166,7 @@ architecture_window_bays_never_overlap_on_a_facade :: proc(t: ^testing.T) {
                         if a.kind == .Door || a.kind == .Service_Door do continue
                         for b in layout.openings[a_index + 1:layout.count] {
                             if b.kind == .Door || b.kind == .Service_Door || a.face != b.face do continue
-                            horizontal_gap :=
-                                math.abs(a.horizontal - b.horizontal) - (a.width + b.width) * .5
+                            horizontal_gap := math.abs(a.horizontal - b.horizontal) - (a.width + b.width) * .5
                             vertical_overlap := math.abs(a.y - b.y) < (a.height + b.height) * .5 - .001
                             if horizontal_gap < architecture.ARCHITECTURE_WINDOW_PIER_MARGIN - .001 &&
                                vertical_overlap {
@@ -5013,13 +4947,7 @@ architecture_low_barn_avoids_a_sealed_work_range :: proc(t: ^testing.T) {
 
 @(test)
 architecture_mediterranean_barn_ranges_keep_serviceable_connections :: proc(t: ^testing.T) {
-    sizes := [5][3]f32 {
-        {12, 12, 9.6},
-        {14, 12, 9.6},
-        {18, 16, 12},
-        {24, 18, 24},
-        {30, 24, 48},
-    }
+    sizes := [5][3]f32{{12, 12, 9.6}, {14, 12, 9.6}, {18, 16, 12}, {24, 18, 24}, {30, 24, 48}}
     for size in sizes {
         for seed in 0 ..< 64 {
             structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
@@ -6326,14 +6254,7 @@ architecture_generated_windows_never_collapse_to_pinhole_glazing :: proc(t: ^tes
         .Church,
         .Fortress_Gate,
     }
-    sizes := [6][3]f32 {
-        {8, 6, 4.5},
-        {14, 14, 7.2},
-        {18, 18, 9.6},
-        {30, 24, 24},
-        {60, 36, 48},
-        {96, 54, 72},
-    }
+    sizes := [6][3]f32{{8, 6, 4.5}, {14, 14, 7.2}, {18, 18, 9.6}, {30, 24, 24}, {60, 36, 48}, {96, 54, 72}}
     for archetype in archetypes {
         for size in sizes {
             for seed in 0 ..< 128 {
@@ -6390,57 +6311,57 @@ architecture_broad_compound_faces_respect_actual_glazing_ceiling :: proc(t: ^tes
     for archetype in archetypes {
         profile := architecture.facade_profile(archetype)
         for size in sizes {
-          for seed in 0 ..< 128 {
-            structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
-            structure.width, structure.depth, structure.height = size[0], size[1], size[2]
-            structure.kind = .Architecture
-            structure.seed = u32(seed)
-            structure.building.archetype = archetype
-            footprint := architecture.architecture_footprint(structure)
-            primary := architecture.architecture_frontage_mass_index(structure)
-            for _, mass_index in footprint.masses[:footprint.count] {
-                layout := architecture.architecture_opening_layout(structure, mass_index, primary)
-                for face in faces {
-                    glazing_area := f32(0)
-                    for opening in layout.openings[:layout.count] {
-                        if opening.face == face && opening.kind == .Window {
-                            glazing_area += opening.width * opening.height
-                            testing.expectf(
-                                t,
-                                opening.width >= .55 && opening.height >= .75,
-                                "broad exposed-area normalization made a pinhole archetype=%v seed=%d mass=%d face=%v dimensions=(%.2f,%.2f)",
-                                archetype,
-                                seed,
-                                mass_index,
-                                face,
-                                opening.width,
-                                opening.height,
-                            )
+            for seed in 0 ..< 128 {
+                structure := terrain.structure_make(1300, 1300, size[0], size[1], 4, size[2])
+                structure.width, structure.depth, structure.height = size[0], size[1], size[2]
+                structure.kind = .Architecture
+                structure.seed = u32(seed)
+                structure.building.archetype = archetype
+                footprint := architecture.architecture_footprint(structure)
+                primary := architecture.architecture_frontage_mass_index(structure)
+                for _, mass_index in footprint.masses[:footprint.count] {
+                    layout := architecture.architecture_opening_layout(structure, mass_index, primary)
+                    for face in faces {
+                        glazing_area := f32(0)
+                        for opening in layout.openings[:layout.count] {
+                            if opening.face == face && opening.kind == .Window {
+                                glazing_area += opening.width * opening.height
+                                testing.expectf(
+                                    t,
+                                    opening.width >= .55 && opening.height >= .75,
+                                    "broad exposed-area normalization made a pinhole archetype=%v seed=%d mass=%d face=%v dimensions=(%.2f,%.2f)",
+                                    archetype,
+                                    seed,
+                                    mass_index,
+                                    face,
+                                    opening.width,
+                                    opening.height,
+                                )
+                            }
                         }
+                        if glazing_area <= .001 do continue
+                        wall_area := architecture.architecture_exposed_face_area(
+                            footprint,
+                            mass_index,
+                            face,
+                            structure.height,
+                        )
+                        if wall_area <= .001 do continue
+                        actual_ratio := glazing_area / wall_area
+                        testing.expectf(
+                            t,
+                            actual_ratio <= profile.opening_ratio_max + .001,
+                            "broad compound face exceeds glazing ceiling archetype=%v seed=%d mass=%d face=%v ratio=%.3f target=%.3f",
+                            archetype,
+                            seed,
+                            mass_index,
+                            face,
+                            actual_ratio,
+                            profile.opening_ratio_max,
+                        )
                     }
-                    if glazing_area <= .001 do continue
-                    wall_area := architecture.architecture_exposed_face_area(
-                        footprint,
-                        mass_index,
-                        face,
-                        structure.height,
-                    )
-                    if wall_area <= .001 do continue
-                    actual_ratio := glazing_area / wall_area
-                    testing.expectf(
-                        t,
-                        actual_ratio <= profile.opening_ratio_max + .001,
-                        "broad compound face exceeds glazing ceiling archetype=%v seed=%d mass=%d face=%v ratio=%.3f target=%.3f",
-                        archetype,
-                        seed,
-                        mass_index,
-                        face,
-                        actual_ratio,
-                        profile.opening_ratio_max,
-                    )
                 }
             }
-          }
         }
     }
 }
@@ -6486,8 +6407,7 @@ architecture_broad_exposed_compound_faces_meet_actual_glazing_floor :: proc(t: ^
                         if exposed_area < full_area * .75 do continue
                         glazing_area := f32(0)
                         for opening in layout.openings[:layout.count] {
-                            if opening.face == face &&
-                               (opening.kind == .Window || opening.kind == .Loggia) {
+                            if opening.face == face && (opening.kind == .Window || opening.kind == .Loggia) {
                                 glazing_area += opening.width * opening.height
                             }
                         }
@@ -6520,13 +6440,7 @@ architecture_broad_exposed_compound_faces_meet_actual_glazing_floor :: proc(t: ^
 
 @(test)
 architecture_broad_service_faces_respect_actual_ventilation_ceiling :: proc(t: ^testing.T) {
-    archetypes := [5]buildings.Archetype {
-        .Workshop,
-        .Storehouse,
-        .Fishery,
-        .Barn_Granary,
-        .Mill,
-    }
+    archetypes := [5]buildings.Archetype{.Workshop, .Storehouse, .Fishery, .Barn_Granary, .Mill}
     faces := [4]architecture.Face{.Front, .Rear, .Left, .Right}
     sizes := [3][3]f32{{30, 24, 24}, {60, 36, 48}, {96, 54, 72}}
     for archetype in archetypes {
@@ -6546,8 +6460,7 @@ architecture_broad_service_faces_respect_actual_ventilation_ceiling :: proc(t: ^
                     for face in faces {
                         ventilation_area := f32(0)
                         for opening in layout.openings[:layout.count] {
-                            if opening.face == face &&
-                               (opening.kind == .Vent || opening.kind == .Window) {
+                            if opening.face == face && (opening.kind == .Vent || opening.kind == .Window) {
                                 ventilation_area += opening.width * opening.height
                             }
                         }

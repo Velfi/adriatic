@@ -182,12 +182,7 @@ customization_back_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectang
 }
 
 customization_preview_bounds :: proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
-    return {
-        panel.x,
-        customization_y(panel, 96),
-        panel.width * .39,
-        panel.height - 96 * customization_scale_y(panel),
-    }
+    return {panel.x, customization_y(panel, 96), panel.width * .39, panel.height - 96 * customization_scale_y(panel)}
 }
 
 customization_rgb_to_hsv :: proc(color: canvas2d.Color) -> (hue, saturation, lightness: f32) {
@@ -376,18 +371,13 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     if canvas2d.IsKeyDown(.RIGHT) || gamepad_down(.Dpad_Right) do navigation_x = 1
     if canvas2d.IsKeyDown(.UP) || gamepad_down(.Dpad_Up) do navigation_y = -1
     if canvas2d.IsKeyDown(.DOWN) || gamepad_down(.Dpad_Down) do navigation_y = 1
-    stick_x, stick_y := game_input.menu_steps(
-        &editor.runtime_input,
-        navigation_x,
-        navigation_y,
-        delta_seconds,
-    )
+    stick_x, stick_y := game_input.menu_steps(&editor.runtime_input, navigation_x, navigation_y, delta_seconds)
     horizontal := stick_x
     vertical := stick_y
     if canvas2d.IsKeyPressed(.TAB) {
         direction := shift_key_down() ? -1 : 1
-        editor.customization_focus = (editor.customization_focus + direction + CUSTOMIZATION_BACK_FOCUS + 1) %
-                                     (CUSTOMIZATION_BACK_FOCUS + 1)
+        editor.customization_focus =
+            (editor.customization_focus + direction + CUSTOMIZATION_BACK_FOCUS + 1) % (CUSTOMIZATION_BACK_FOCUS + 1)
         horizontal, vertical = 0, 0
         game_input.reset_menu_repeat(&editor.runtime_input)
     }
@@ -398,8 +388,8 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
         if gamepad_pressed(.Right_Shoulder) do shoulder_step = 1
         if shoulder_step != 0 {
             scarf_index := editor.customization_focus - CUSTOMIZATION_SCARF_START
-            scarf_index = (scarf_index + shoulder_step + CUSTOMIZATION_SCARF_CONTROL_COUNT) %
-                          CUSTOMIZATION_SCARF_CONTROL_COUNT
+            scarf_index =
+                (scarf_index + shoulder_step + CUSTOMIZATION_SCARF_CONTROL_COUNT) % CUSTOMIZATION_SCARF_CONTROL_COUNT
             editor.customization_focus = CUSTOMIZATION_SCARF_START + scarf_index
             horizontal, vertical = 0, 0
             game_input.reset_menu_repeat(&editor.runtime_input)
@@ -416,7 +406,8 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
 
     mouse := canvas2d.GetMousePosition()
     mouse_delta := canvas2d.GetMouseDelta()
-    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse_active :=
+        canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     if canvas2d.IsMouseButtonPressed(.LEFT) && canvas2d.CheckCollisionPointRec(mouse, preview) {
         editor.customization_preview_dragging = true
         editor.customization_preview_drag_x = mouse.x
@@ -475,7 +466,12 @@ customization_scene_process_input :: proc(editor: ^Editor, width, height: i32, d
     }
 }
 
-customization_card :: proc(bounds: canvas2d.Rectangle, label: cstring, selected, focused: bool, swatch: canvas2d.Color = {}) {
+customization_card :: proc(
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    selected, focused: bool,
+    swatch: canvas2d.Color = {},
+) {
     hovered := pause_menu_pointer_enabled && canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
     state := UI_Control_State.Resting
     if hovered do state = .Hovered
@@ -636,13 +632,12 @@ customization_scene_draw :: proc(editor: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRounded(controls_panel, .02, 10, ui_theme_surface())
     canvas2d.DrawRectangleRoundedLinesEx(panel, .025, 12, 1, ui_theme_border())
     pause_menu_draw_header(panel, "", "CUSTOMIZE MOUSE")
-    slider_focused := editor.customization_focus > CUSTOMIZATION_SCARF_START &&
-                      editor.customization_focus < CUSTOMIZATION_BACK_FOCUS
-    hint: cstring = slider_focused ? "LEFT/RIGHT ADJUST  /  SHIFT = FINE  /  TAB NEXT" :
-                                     "SAVES AUTOMATICALLY  /  ARROWS + ENTER"
+    slider_focused :=
+        editor.customization_focus > CUSTOMIZATION_SCARF_START && editor.customization_focus < CUSTOMIZATION_BACK_FOCUS
+    hint: cstring =
+        slider_focused ? "LEFT/RIGHT ADJUST  /  SHIFT = FINE  /  TAB NEXT" : "SAVES AUTOMATICALLY  /  ARROWS + ENTER"
     if controller_prompt_active(editor) {
-        hint = slider_focused ? "LEFT/RIGHT ADJUST  /  LB/RB NEXT" :
-                                "SAVES AUTOMATICALLY  /  D-PAD + A"
+        hint = slider_focused ? "LEFT/RIGHT ADJUST  /  LB/RB NEXT" : "SAVES AUTOMATICALLY  /  D-PAD + A"
     }
     hint_size := ui_measure_text(.Data, hint, .2)
     ui_draw_text(

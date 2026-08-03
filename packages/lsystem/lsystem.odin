@@ -254,9 +254,12 @@ interpret :: proc(word: []u8, config: Turtle_Config) -> Interpret_Result {
     leaf_capacity := 0
     for symbol in word {
         switch symbol {
-        case '[': branch_capacity += 1
-        case 'F': segment_capacity += 1
-        case 'L': leaf_capacity += 1
+        case '[':
+            branch_capacity += 1
+        case 'F':
+            segment_capacity += 1
+        case 'L':
+            leaf_capacity += 1
         }
     }
     stack := make([dynamic]Turtle_State, 0, branch_capacity)

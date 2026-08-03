@@ -1,7 +1,7 @@
 package tests
 
-import chase_camera "../packages/chase_camera"
 import air_effects "../packages/air_effects"
+import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
 import "core:math"
 import "core:testing"
@@ -116,7 +116,9 @@ wind_buffet_has_calm_gusts_and_crosswind_exposure :: proc(t: ^testing.T) {
 
 @(test)
 wind_buffet_moves_camera_without_reusing_flyby_vibration :: proc(t: ^testing.T) {
-    target := chase_camera.Target{basis = flight.identity_basis()}
+    target := chase_camera.Target {
+        basis = flight.identity_basis(),
+    }
     pose := chase_camera.desired_pose(target, 0, 0)
     calm := chase_camera.buffet_pose(pose, target, 1.7, 0)
     gust := chase_camera.buffet_pose(pose, target, 1.7, .3)

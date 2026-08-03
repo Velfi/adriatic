@@ -172,8 +172,12 @@ settlement_density_smoothed :: proc(frame: ^markov.Frame, grid_size, gx, gz: int
 
 settlement_terrain_slope :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
     SAMPLE :: f32(8)
-    dx := terrain.sample_surface_height(project, 0, x + SAMPLE, z) - terrain.sample_surface_height(project, 0, x - SAMPLE, z)
-    dz := terrain.sample_surface_height(project, 0, x, z + SAMPLE) - terrain.sample_surface_height(project, 0, x, z - SAMPLE)
+    dx :=
+        terrain.sample_surface_height(project, 0, x + SAMPLE, z) -
+        terrain.sample_surface_height(project, 0, x - SAMPLE, z)
+    dz :=
+        terrain.sample_surface_height(project, 0, x, z + SAMPLE) -
+        terrain.sample_surface_height(project, 0, x, z - SAMPLE)
     return linalg.length([2]f32{dx, dz}) / (SAMPLE * 2)
 }
 

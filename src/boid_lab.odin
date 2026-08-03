@@ -214,11 +214,32 @@ boid_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         boid_lab_paused ? "   PAUSED" : boid_lab_follow ? "   FOLLOW" : "",
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "1 harbor   2 fishing   3 both   W wind", {38, 103}, 13, 1, {171, 201, 207, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "SPACE pause   R reset   V velocity vectors", {38, 127}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "1 harbor   2 fishing   3 both   W wind",
+        {38, 103},
+        13,
+        1,
+        {171, 201, 207, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "SPACE pause   R reset   V velocity vectors",
+        {38, 127},
+        13,
+        1,
+        {171, 201, 207, 255},
+    )
     camera_status := fmt.ctprintf("C follow / overview   N next boid   tracking %d", boid_lab_follow_index + 1)
     canvas2d.DrawTextEx(canvas2d.Font{}, camera_status, {38, 151}, 13, 1, {171, 201, 207, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "Gold: harbor anchor   Cyan: fishing anchor", {38, 175}, 12, 1, {214, 192, 139, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "Gold: harbor anchor   Cyan: fishing anchor",
+        {38, 175},
+        12,
+        1,
+        {214, 192, 139, 255},
+    )
     _ = width
     _ = height
 }

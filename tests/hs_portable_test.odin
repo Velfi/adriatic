@@ -466,9 +466,9 @@ portable_test_fixture_map_config :: proc() -> hs.Portable_Config {
 @(test)
 hs_portable_retain_tag_keeps_only_explicit_fixture_map_fields :: proc(t: ^testing.T) {
     source := Portable_Retain_Tag_Source {
-        value = 71,
+        value     = 71,
         map_value = 72,
-        scratch = 73,
+        scratch   = 73,
     }
 
     normal, normal_error, normal_ok := hs.portable_encode(

@@ -19,12 +19,12 @@ World_Cell_Key :: struct {
 }
 
 World_Static_Object :: struct {
-    id:         u64,
-    bounds:     World_Bounds_2D,
-    cell:       World_Cell_Key,
-    oversized:  bool,
+    id:                                u64,
+    bounds:                            World_Bounds_2D,
+    cell:                              World_Cell_Key,
+    oversized:                         bool,
     source_revision, terrain_revision: u64,
-    cluster_first, cluster_count: int,
+    cluster_first, cluster_count:      int,
 }
 
 World_Render_Bin :: enum u8 {
@@ -140,12 +140,14 @@ world_spatial_cell_for_bounds :: proc(source: World_Bounds_2D) -> (World_Cell_Ke
         size := world_spatial_cell_size(level)
         key := World_Cell_Key {
             level = u8(level),
-            x = i32(math.floor(f64(center_x / size))),
-            z = i32(math.floor(f64(center_z / size))),
+            x     = i32(math.floor(f64(center_x / size))),
+            z     = i32(math.floor(f64(center_z / size))),
         }
         loose_bounds := world_spatial_cell_bounds(key)
-        if bounds.min_x >= loose_bounds.min_x && bounds.max_x <= loose_bounds.max_x &&
-           bounds.min_z >= loose_bounds.min_z && bounds.max_z <= loose_bounds.max_z {
+        if bounds.min_x >= loose_bounds.min_x &&
+           bounds.max_x <= loose_bounds.max_x &&
+           bounds.min_z >= loose_bounds.min_z &&
+           bounds.max_z <= loose_bounds.max_z {
             return key, true
         }
     }
@@ -155,8 +157,8 @@ world_spatial_cell_for_bounds :: proc(source: World_Bounds_2D) -> (World_Cell_Ke
 world_spatial_index_init :: proc(index: ^World_Spatial_Index) {
     if index == nil do return
     index^ = {
-        objects = make(map[u64]World_Static_Object),
-        cells = make(map[World_Cell_Key][dynamic]u64),
+        objects   = make(map[u64]World_Static_Object),
+        cells     = make(map[World_Cell_Key][dynamic]u64),
         oversized = make([dynamic]u64),
     }
 }

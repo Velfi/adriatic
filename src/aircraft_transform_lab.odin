@@ -1,10 +1,10 @@
 package main
 
-import "core:math"
-import "core:math/linalg"
 import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
 import third_person "../packages/third_person"
+import "core:math"
+import "core:math/linalg"
 
 aircraft_transform_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     if editor == nil do return false
@@ -30,9 +30,9 @@ aircraft_transform_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     return true
 }
 
-aircraft_transform_lab_world :: proc(_: ^Editor) {}
-aircraft_transform_lab_input :: proc(_: ^Editor) {}
-aircraft_transform_lab_ui :: proc(_: ^Editor, _: i32, _: i32) {}
+aircraft_transform_lab_world :: proc(_: ^Editor) {  }
+aircraft_transform_lab_input :: proc(_: ^Editor) {  }
+aircraft_transform_lab_ui :: proc(_: ^Editor, _: i32, _: i32) {  }
 aircraft_transform_lab_exit :: proc(editor: ^Editor) {
     if editor != nil {
         editor.capture_postale_bank_grid = false

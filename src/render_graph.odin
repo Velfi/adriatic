@@ -329,7 +329,8 @@ render_graph_terrain :: proc(user_data: rawptr) {
         vk.CmdBindVertexBuffers(cmd, 0, 1, &level_buffer.handle, &ctx.offset)
         if level == first_level {
             index_buffer := first_level == 0 ? &world_renderer.clipmap_index : &world_renderer.clipmap_outer_full_index
-            index_count := first_level == 0 ? world_renderer.clipmap_full_indices : world_renderer.clipmap_outer_full_indices
+            index_count :=
+                first_level == 0 ? world_renderer.clipmap_full_indices : world_renderer.clipmap_outer_full_indices
             vk.CmdBindIndexBuffer(cmd, index_buffer.handle, 0, .UINT32)
             vk.CmdDrawIndexed(cmd, index_count, 1, 0, 0, 0)
         } else {

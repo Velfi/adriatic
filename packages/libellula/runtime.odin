@@ -149,7 +149,8 @@ step :: proc(runtime: ^Runtime, control: Control, ground_height, delta_seconds: 
             9.81 /
             max_f32(runtime.airframe.maximum_collective_force * upright * ground_effect, 1)
         throttle_target =
-            hover_throttle + (desired_vertical_speed - (runtime.body.velocity.y - wind.y)) * runtime.tuning.vertical_speed_gain
+            hover_throttle +
+            (desired_vertical_speed - (runtime.body.velocity.y - wind.y)) * runtime.tuning.vertical_speed_gain
     }
     runtime.throttle = approach(runtime.throttle, clamp(throttle_target, 0, 1), runtime.tuning.throttle_response * dt)
 

@@ -19,6 +19,7 @@ when ODIN_TEST {
         control_hint_texture:    int,
         paint_icon_texture:      int,
         authoring_tool_texture:  int,
+        sculpt_tool_texture:     int,
         tarot_texture:           int,
         postale_base_vertices:   int,
         libellula_base_vertices: int,
@@ -204,6 +205,7 @@ when ODIN_TEST {
             control_hint_texture = editor.control_hint_atlases.keyboard_mouse.id,
             paint_icon_texture = editor.vehicle_paint_tool_icons.id,
             authoring_tool_texture = editor.authoring_tool_atlas.id,
+            sculpt_tool_texture = editor.sculpt_tool_atlas.id,
             tarot_texture = editor.tarot_atlas.id,
             postale_base_vertices = editor.postale_base_mesh.vertex_count,
             libellula_base_vertices = editor.libellula_base_mesh.vertex_count,
@@ -218,6 +220,7 @@ when ODIN_TEST {
             editor.control_hint_atlases.keyboard_mouse.id == snapshot.control_hint_texture &&
             editor.vehicle_paint_tool_icons.id == snapshot.paint_icon_texture &&
             editor.authoring_tool_atlas.id == snapshot.authoring_tool_texture &&
+            editor.sculpt_tool_atlas.id == snapshot.sculpt_tool_texture &&
             editor.tarot_atlas.id == snapshot.tarot_texture &&
             editor.postale_base_mesh.vertex_count == snapshot.postale_base_vertices &&
             editor.libellula_base_mesh.vertex_count == snapshot.libellula_base_vertices &&
@@ -236,6 +239,7 @@ when ODIN_TEST {
         editor.control_hint_atlases.keyboard_mouse.id = 0x111
         editor.vehicle_paint_tool_icons.id = 0x222
         editor.authoring_tool_atlas.id = 0x2aa
+        editor.sculpt_tool_atlas.id = 0x2bb
         editor.tarot_atlas.id = 0x333
         editor.postale_base_mesh = new(vehicles.Aircraft_Mesh)
         editor.car_base_mesh = new(vehicles.Aircraft_Mesh)
@@ -333,8 +337,10 @@ when ODIN_TEST {
         if loaded {
             testing.expect(
                 t,
-                editor.project.structure_count == 1 && editor.project.structures[0].id == 0x300 &&
-                    editor.default_map_regeneration_seeds[0] == 0x10203040 && editor.marina_authored,
+                editor.project.structure_count == 1 &&
+                editor.project.structures[0].id == 0x300 &&
+                editor.default_map_regeneration_seeds[0] == 0x10203040 &&
+                editor.marina_authored,
             )
         }
         fixture_editor_test_destroy(editor)
@@ -497,10 +503,7 @@ when ODIN_TEST {
 
         invalid_map_source := fixture_editor_test_source()
         invalid_map_source.map_source.inline_bytes[len(invalid_map_source.map_source.inline_bytes) - 1] ~= 0xff
-        invalid_map, invalid_map_error, invalid_map_ok := fixture_codec_encode(
-            invalid_map_source,
-            context.allocator,
-        )
+        invalid_map, invalid_map_error, invalid_map_ok := fixture_codec_encode(invalid_map_source, context.allocator)
         testing.expect(t, invalid_map_ok && invalid_map_error.kind == .None)
         fixture_codec_error_dispose(&invalid_map_error)
         fixture_editor_test_source_destroy(invalid_map_source)
@@ -594,8 +597,7 @@ when ODIN_TEST {
         testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.routes.geometry.count")
         hostile_counts.settlement_plan.routes[0].geometry.count = 0
         hostile_counts.settlement_plan.route_count = 0
-        hostile_counts.settlement_plan.growth_event_count =
-            len(hostile_counts.settlement_plan.growth_events) + 1
+        hostile_counts.settlement_plan.growth_event_count = len(hostile_counts.settlement_plan.growth_events) + 1
         testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.growth_event_count")
         hostile_counts.settlement_plan.growth_event_count = 0
         hostile_counts.settlement_plan.garden_count = len(hostile_counts.settlement_plan.gardens) + 1
@@ -604,8 +606,7 @@ when ODIN_TEST {
         hostile_counts.settlement_plan.patio_count = len(hostile_counts.settlement_plan.patios) + 1
         testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "settlement_plan.patio_count")
         hostile_counts.settlement_plan.patio_count = 0
-        hostile_counts.harbor_authored_plan.structure_count =
-            len(hostile_counts.harbor_authored_plan.structures) + 1
+        hostile_counts.harbor_authored_plan.structure_count = len(hostile_counts.harbor_authored_plan.structures) + 1
         testing.expect(t, fixture_editor_load_preflight(hostile_counts) == "harbor_authored_plan.count")
         hostile_counts.harbor_authored_plan.structure_count = 0
         hostile_counts.harbor_authored_plan.shoreline.count =

@@ -41,14 +41,24 @@ terrain_history_push_redo :: proc(editor: ^Editor) {
 }
 
 terrain_undo :: proc(editor: ^Editor) {
-    if editor == nil || editor.terrain_undo_count <= 0 do return
+    if editor == nil do return
+    if editor.terrain_sculpt.session.active {
+        terrain_sculpt_cancel(editor)
+        return
+    }
+    if editor.terrain_undo_count <= 0 do return
     terrain_history_push_redo(editor)
     editor.terrain_undo_count -= 1
     terrain_history_restore(editor, &editor.terrain_undo[editor.terrain_undo_count])
 }
 
 terrain_redo :: proc(editor: ^Editor) {
-    if editor == nil || editor.terrain_redo_count <= 0 do return
+    if editor == nil do return
+    if editor.terrain_sculpt.session.active {
+        terrain_sculpt_cancel(editor)
+        return
+    }
+    if editor.terrain_redo_count <= 0 do return
     if editor.terrain_undo_count < TERRAIN_HISTORY_CAPACITY {
         terrain_history_capture(editor, &editor.terrain_undo[editor.terrain_undo_count])
         editor.terrain_undo_count += 1

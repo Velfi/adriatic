@@ -42,7 +42,10 @@ world_label_bounds :: proc(
     anchor: canvas2d.Vector2,
     viewport_width, viewport_height: f32,
     style: World_Label_Style,
-) -> (canvas2d.Rectangle, bool) {
+) -> (
+    canvas2d.Rectangle,
+    bool,
+) {
     x := anchor.x - style.width * .5
     y := anchor.y + style.gap
     #partial switch style.placement {
@@ -87,8 +90,10 @@ world_label_draw :: proc(
     // label identify something just beyond an edge without creating UI for a
     // point that is nowhere near the current view.
     allowance := max(resolved_style.width, resolved_style.height)
-    if projected.position.x < -allowance || projected.position.x > f32(width) + allowance ||
-       projected.position.y < -allowance || projected.position.y > f32(height) + allowance {
+    if projected.position.x < -allowance ||
+       projected.position.x > f32(width) + allowance ||
+       projected.position.y < -allowance ||
+       projected.position.y > f32(height) + allowance {
         return false
     }
 
@@ -109,8 +114,10 @@ screen_label_draw :: proc(
         resolved_style = world_label_style()
     }
     allowance := max(resolved_style.width, resolved_style.height)
-    if anchor.x < -allowance || anchor.x > f32(width) + allowance ||
-       anchor.y < -allowance || anchor.y > f32(height) + allowance {
+    if anchor.x < -allowance ||
+       anchor.x > f32(width) + allowance ||
+       anchor.y < -allowance ||
+       anchor.y > f32(height) + allowance {
         return false
     }
 
@@ -131,6 +138,13 @@ screen_label_draw :: proc(
         // the requested em size instead; this matches DrawTextEx's visual ink.
         bounds.y + (bounds.height - resolved_style.font_size) * .5,
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, text, text_position, resolved_style.font_size, resolved_style.text_spacing, resolved_style.text)
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        text,
+        text_position,
+        resolved_style.font_size,
+        resolved_style.text_spacing,
+        resolved_style.text,
+    )
     return true
 }

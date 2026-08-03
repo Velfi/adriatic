@@ -323,7 +323,8 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             topology.vertex_count,
             topology.index_count,
         )
-        color := index == car_generator_lab_selected ? canvas2d.Color{247, 205, 121, 255} : canvas2d.Color{224, 219, 197, 255}
+        color :=
+            index == car_generator_lab_selected ? canvas2d.Color{247, 205, 121, 255} : canvas2d.Color{224, 219, 197, 255}
         canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 107 + f32(index) * 15}, 12, 1, color)
     }
     _ = width

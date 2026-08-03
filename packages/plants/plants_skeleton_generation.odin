@@ -53,13 +53,15 @@ olive_skeleton :: proc(seed: u64, maturity: f32, iterations: int) -> lsystem.Int
         root_phase := olive_random_signed(&root_random) * math.PI
         for root_index in 0 ..< 3 {
             angle := root_phase + f32(root_index) * math.PI * 2 / 3
-            reach := .34 + f32(lsystem.random_next(&root_random) % 9) * .010
+            reach := .27 + f32(lsystem.random_next(&root_random) % 7) * .008
             radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
             tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
             bow := olive_random_signed(&root_random) * reach * .16
-            root_start := radial * .035 + lsystem.Vec3{0, .045, 0}
-            root_mid := radial * reach * .56 + tangent * bow + lsystem.Vec3{0, .025, 0}
-            root_end := radial * reach + tangent * bow * .45 + lsystem.Vec3{0, .010, 0}
+            root_start := radial * .035 + lsystem.Vec3{0, .030, 0}
+            root_mid := radial * reach * .58 + tangent * bow + lsystem.Vec3{0, -.006, 0}
+            // Finish below grade with a useful radius. The old exposed,
+            // near-zero tip read as a wooden spike laid on the ground.
+            root_end := radial * reach + tangent * bow * .45 + lsystem.Vec3{0, -.030, 0}
             root_depth := -1 - root_index
             append(
                 &result.plant.segments,
@@ -74,7 +76,7 @@ olive_skeleton :: proc(seed: u64, maturity: f32, iterations: int) -> lsystem.Int
                     start = root_mid,
                     end = root_end,
                     radius_start = trunk_base_radius * .22,
-                    radius_end = trunk_base_radius * .06,
+                    radius_end = trunk_base_radius * .10,
                     depth = root_depth,
                 },
             )
@@ -92,7 +94,7 @@ olive_skeleton :: proc(seed: u64, maturity: f32, iterations: int) -> lsystem.Int
     for leader_index in 0 ..< leader_count {
         // Stagger leader origins over the upper trunk instead of creating a
         // single swollen umbrella hub.
-        origin_index := clamp(trunk_segments - 1 + leader_index % 2, 1, trunk_segments)
+        origin_index := clamp(trunk_segments - 2 + leader_index % 3, 1, trunk_segments)
         origin := trunk_points[origin_index]
         pair_count := max(leader_count / 2, 1)
         pair_index := leader_index % pair_count
@@ -414,6 +416,8 @@ generate_skeleton_stage :: proc(
         interpreted = hydrangea_skeleton(config.species, config.seed, maturity, config.detail)
     } else if config.species == .Grapevine {
         interpreted = grapevine_skeleton(config.seed, maturity, config.detail)
+    } else if config.species == .Bougainvillea {
+        interpreted = bougainvillea_skeleton(config.seed, maturity, config.detail)
     } else if config.species == .Star_Jasmine {
         interpreted = star_jasmine_skeleton(config.seed, maturity, config.detail)
     } else if config.species == .Wisteria {

@@ -339,10 +339,7 @@ when ODIN_TEST {
         testing.expect(t, custom_darker == vehicle_paint_shade_ramp(custom)[1])
 
         other_base := VEHICLE_PAINT_COLORS[6]
-        other_darker, other_changed := vehicle_paint_shade_step(
-            {other_base.r, other_base.g, other_base.b, 255},
-            false,
-        )
+        other_darker, other_changed := vehicle_paint_shade_step({other_base.r, other_base.g, other_base.b, 255}, false)
         testing.expect(t, other_changed)
         testing.expect(t, other_darker == vehicle_paint_shade_ramp(other_base)[1])
     }
@@ -521,13 +518,7 @@ when ODIN_TEST {
         testing.expect(t, !vehicle_paint_part_is_paintable(.Marking))
         testing.expect(t, !vehicle_paint_part_is_paintable(.Strap))
 
-        wing_parts := [5]vehicles.Aircraft_Mesh_Part {
-            .Wing,
-            .Left_Flap,
-            .Right_Flap,
-            .Left_Aileron,
-            .Right_Aileron,
-        }
+        wing_parts := [5]vehicles.Aircraft_Mesh_Part{.Wing, .Left_Flap, .Right_Flap, .Left_Aileron, .Right_Aileron}
         for part in wing_parts do testing.expect_value(t, vehicle_paint_component_for_part(part), 1)
 
         rotor_parts := [6]vehicles.Aircraft_Mesh_Part {

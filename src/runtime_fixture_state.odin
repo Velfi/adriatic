@@ -600,6 +600,7 @@ Fixture :: struct {
     tweak_status:                                   Tweak_Status `fixture:"-"`,
     tweak_panel_visible:                            bool `fixture:"-"`,
     tweak_panel_toggle_down:                        bool `fixture:"-"`,
+    tweak_teleport_on_click:                        bool `fixture:"-"`,
     notes_visible:                                  bool `fixture:"-"`,
     default_map_regeneration_active:                bool `hs:"-" fixture:"-"`,
     default_map_regeneration_loading_ready:         bool `hs:"-" fixture:"-"`,

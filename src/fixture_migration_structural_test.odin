@@ -813,11 +813,7 @@ when ODIN_TEST {
 
         valid_payload, valid_payload_ok := fixture_migration_structural_payload(1, 1, 1, 1, 1, 1)
         testing.expect(t, valid_payload_ok)
-        result, error, ok := fixture_migration_test_run_through_v0005(
-            valid_payload,
-            1,
-            runtime.default_allocator(),
-        )
+        result, error, ok := fixture_migration_test_run_through_v0005(valid_payload, 1, runtime.default_allocator())
         testing.expect(t, ok && error.kind == .None)
         testing.expect(t, result.fixture != nil)
         testing.expect(t, result.fixture.story_state.quest.definition_id == "two-island-story")

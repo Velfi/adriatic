@@ -6,9 +6,9 @@ import "core:reflect"
 import "core:strconv"
 import "core:strings"
 
-import "zelda_engine:spy"
 import "../toml"
 import "base:runtime"
+import "zelda_engine:spy"
 
 Err :: Maybe(string)
 

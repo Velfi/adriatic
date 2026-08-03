@@ -1,6 +1,6 @@
 ---
 name: capture-adriatic
-description: Build and run Adriatic's deterministic command-line capture and cinematic export tools to produce PNG screenshots, animated GIFs, MP4 videos, or vehicle turntable frames. Use when the user asks to capture, render, animate, or inspect a specific Adriatic scene, lab, mode, named target, camera angle, resolution, GIF, video, cinematic, or turntable from the built app. Do not use for a screenshot of the already-running game; use hotshot for that live workflow.
+description: Build and run Adriatic's deterministic command-line capture and cinematic export tools to produce PNG screenshots, plant reference sheets, animated GIFs, MP4 videos, or vehicle turntable frames. Use when the user asks to capture, render, animate, or inspect a specific Adriatic scene, lab, mode, named target, camera angle, resolution, contact sheet, GIF, video, cinematic, or turntable from the built app. Do not use for a screenshot of the already-running game; use hotshot for that live workflow.
 ---
 
 # Capture Adriatic
@@ -24,6 +24,20 @@ Use the built app's `capture` or `cinematic-export` command. They launch a short
    The process launches the macOS app briefly. Request GUI permission when required.
 6. Treat a nonzero exit or missing/empty output as failure. After success, inspect the PNG visually and retry with corrected target, camera, dimensions, or settle frames if the requested subject is not presented well.
 7. Return the absolute output path and render the image in the final response.
+
+## Plant reference sheets
+
+For a plant reference sheet with matched front, side, and overhead views plus a plant information card, use:
+
+```sh
+python3 tools/plant_capture_sheet.py <species> --output <absolute-output.png>
+```
+
+The tool uses the Plant Generator's `*-sheet` capture target, which hides both the lab header and shared Actions panel without changing ordinary Plant Generator captures. It writes the composed PNG and a JSON manifest beside it. Inspect the composed sheet, not only the individual frames, before returning it.
+
+Use `--seed` for a deterministic specimen. Supply `--size "<height> high x <spread> wide"` when exact specimen dimensions are known; otherwise the card uses the species size class. Add concise card lines with repeatable `--note`. Use `--keep-frames` when the three source views are useful to the user or for diagnosis.
+
+Run `python3 tools/plant_capture_sheet.py --help` to discover supported species and current options instead of copying a species list into the skill. Pass `--build` when the app is absent or stale. Use `--reuse-frames` only to recompose an existing matching front/side/top frame set; it does not recapture the plant.
 
 ## GIFs
 

@@ -4,10 +4,10 @@ import "core:fmt"
 import "core:strings"
 import "core:sync"
 
-import "zelda_engine:spy"
 import "base:intrinsics"
 import "base:runtime"
 import "dates"
+import "zelda_engine:spy"
 
 log :: fmt.print
 logf :: fmt.printf

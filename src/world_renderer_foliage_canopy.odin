@@ -292,7 +292,8 @@ world_foliage_lobe :: proc(
             if base_lift <= 0 {
                 if ring == 0 {
                     terrain_offsets[segment] =
-                        terrain.sample_surface_height(&world_renderer.editor.project, 0, world_x, world_z) - structure.base_y
+                        terrain.sample_surface_height(&world_renderer.editor.project, 0, world_x, world_z) -
+                        structure.base_y
                 }
                 contour_lift += terrain_offsets[segment]
             }

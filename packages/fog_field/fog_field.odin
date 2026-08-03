@@ -15,9 +15,9 @@ World_Bounds :: struct {
 }
 
 Fog_Bank :: struct {
-    center:       Vec2,
-    radii:        Vec2,
-    axis:         Vec2,
+    center:        Vec2,
+    radii:         Vec2,
+    axis:          Vec2,
     base_altitude: f32,
     top_altitude:  f32,
     edge_softness: f32,
@@ -53,14 +53,23 @@ smoothstep :: #force_inline proc(edge0, edge1, value: f32) -> f32 {
     return t * t * (3 - 2 * t)
 }
 
-generation :: proc(seed: u32, front: i64, weather: atmosphere.Weather_State, bounds: World_Bounds) -> [MAX_BANKS]Fog_Bank {
+generation :: proc(
+    seed: u32,
+    front: i64,
+    weather: atmosphere.Weather_State,
+    bounds: World_Bounds,
+) -> [MAX_BANKS]Fog_Bank {
     result: [MAX_BANKS]Fog_Bank
     min_x := finite_or(min(bounds.minimum.x, bounds.maximum.x), -4000)
     max_x := finite_or(max(bounds.minimum.x, bounds.maximum.x), 4000)
     min_z := finite_or(min(bounds.minimum.y, bounds.maximum.y), -4000)
     max_z := finite_or(max(bounds.minimum.y, bounds.maximum.y), 4000)
     width, depth := max(max_x - min_x, f32(100)), max(max_z - min_z, f32(100))
-    weather_density := clamp((finite_or(weather.haze, 0) - .06) * 1.45 + finite_or(weather.precipitation, 0) * .42, 0, 1)
+    weather_density := clamp(
+        (finite_or(weather.haze, 0) - .06) * 1.45 + finite_or(weather.precipitation, 0) * .42,
+        0,
+        1,
+    )
     for index in 0 ..< MAX_BANKS {
         salt := seed ~ u32(front) * 0x9e3779b9 ~ u32(index + 1) * 0x85ebca6b
         angle := random01(salt ~ 1) * 2 * f32(math.PI)
@@ -71,19 +80,13 @@ generation :: proc(seed: u32, front: i64, weather: atmosphere.Weather_State, bou
         water_bias := index < 2 ? f32(.62) : f32(.34)
         center_x := random_x + ((min_x + max_x) * .5 - random_x) * water_bias
         result[index] = {
-            center = {
-                center_x,
-                min_z + (.12 + random01(salt ~ 3) * .76) * depth,
-            },
-            radii = {
-                width * (.075 + random01(salt ~ 4) * .105),
-                depth * (.050 + random01(salt ~ 5) * .080),
-            },
-            axis = {f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))},
+            center        = {center_x, min_z + (.12 + random01(salt ~ 3) * .76) * depth},
+            radii         = {width * (.075 + random01(salt ~ 4) * .105), depth * (.050 + random01(salt ~ 5) * .080)},
+            axis          = {f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))},
             base_altitude = -18 + random01(salt ~ 6) * 14,
-            top_altitude = 120 + random01(salt ~ 7) * 230,
+            top_altitude  = 120 + random01(salt ~ 7) * 230,
             edge_softness = .34 + random01(salt ~ 8) * .22,
-            peak_density = weather_density * (.62 + random01(salt ~ 9) * .38),
+            peak_density  = weather_density * (.62 + random01(salt ~ 9) * .38),
         }
     }
     return result
@@ -130,9 +133,14 @@ sample_bank :: proc(bank: Fog_Bank, position: Vec3) -> f32 {
     offset := Vec2{position.x - bank.center.x, position.z - bank.center.y}
     along := offset.x * bank.axis.x + offset.y * bank.axis.y
     across := -offset.x * bank.axis.y + offset.y * bank.axis.x
-    radial := f32(math.sqrt(f64((along / bank.radii.x) * (along / bank.radii.x) + (across / bank.radii.y) * (across / bank.radii.y))))
+    radial := f32(
+        math.sqrt(
+            f64((along / bank.radii.x) * (along / bank.radii.x) + (across / bank.radii.y) * (across / bank.radii.y)),
+        ),
+    )
     horizontal := 1 - smoothstep(1 - clamp(bank.edge_softness, .01, .95), 1, radial)
-    vertical := smoothstep(bank.base_altitude, bank.base_altitude + 28, position.y) *
+    vertical :=
+        smoothstep(bank.base_altitude, bank.base_altitude + 28, position.y) *
         (1 - smoothstep(bank.top_altitude * .62, bank.top_altitude, position.y))
     return clamp(horizontal * vertical * bank.peak_density, 0, 1)
 }

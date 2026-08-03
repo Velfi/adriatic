@@ -790,7 +790,8 @@ settlement_route_find :: proc(
             distance := linalg.length(b - a)
             if distance <= .01 do continue
             rise := math.abs(
-                terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1]),
+                terrain.sample_surface_height(project, 0, b[0], b[1]) -
+                terrain.sample_surface_height(project, 0, a[0], a[1]),
             )
             chord: Settlement_Route
             chord.points[0], chord.points[1], chord.count = a, b, 2
@@ -822,7 +823,10 @@ settlement_route_length_and_grade :: proc(
         a, b := route.points[index], route.points[index + 1]
         segment_length := linalg.length(b - a)
         if segment_length <= .01 do continue
-        rise := math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1]))
+        rise := math.abs(
+            terrain.sample_surface_height(project, 0, b[0], b[1]) -
+            terrain.sample_surface_height(project, 0, a[0], a[1]),
+        )
         grade := rise / segment_length
         length += segment_length
         weighted_grade += grade * segment_length

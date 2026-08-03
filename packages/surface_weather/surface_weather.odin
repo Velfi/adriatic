@@ -6,9 +6,9 @@ RESOLUTION :: 32
 CELL_COUNT :: RESOLUTION * RESOLUTION
 
 Field :: struct {
-    wetness:        [CELL_COUNT]f32,
-    cursor:         int,
-    half_extent:    f32,
+    wetness:     [CELL_COUNT]f32,
+    cursor:      int,
+    half_extent: f32,
 }
 
 initialize :: proc(field: ^Field, half_extent: f32) {

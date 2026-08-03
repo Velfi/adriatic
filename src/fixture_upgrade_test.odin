@@ -113,10 +113,10 @@ when ODIN_TEST {
         testing.expect(
             t,
             migrated_ok &&
-                migrated_error.kind == .None &&
-                migrated_result.schema_migrated &&
-                migrated_result.externalized_map &&
-                migrated_result.changed,
+            migrated_error.kind == .None &&
+            migrated_result.schema_migrated &&
+            migrated_result.externalized_map &&
+            migrated_result.changed,
         )
         fixture_upgrade_error_dispose(&migrated_error)
         if !migrated_ok do return
@@ -192,11 +192,11 @@ when ODIN_TEST {
         testing.expect(
             t,
             current_dry_ok &&
-                current_dry_error.kind == .None &&
-                current_dry_result.source_version == FIXTURE_SCHEMA_VERSION &&
-                !current_dry_result.schema_migrated &&
-                current_dry_result.externalized_map &&
-                current_dry_result.changed,
+            current_dry_error.kind == .None &&
+            current_dry_result.source_version == FIXTURE_SCHEMA_VERSION &&
+            !current_dry_result.schema_migrated &&
+            current_dry_result.externalized_map &&
+            current_dry_result.changed,
         )
         fixture_upgrade_error_dispose(&current_dry_error)
         fixture_upgrade_test_expect_file(t, current_path, current_snapshot)
@@ -212,8 +212,8 @@ when ODIN_TEST {
         testing.expect(
             t,
             current_inline.fixture.map_source.kind == .Inline &&
-                expected_sidecar_derived &&
-                fixture_map_sidecar_valid(expected_sidecar),
+            expected_sidecar_derived &&
+            fixture_map_sidecar_valid(expected_sidecar),
         )
         expected_sidecar_path, expected_sidecar_resolved := fixture_map_sidecar_resolve(
             current_path,
@@ -229,10 +229,10 @@ when ODIN_TEST {
         testing.expect(
             t,
             current_ok &&
-                current_error.kind == .None &&
-                !current_result.schema_migrated &&
-                current_result.externalized_map &&
-                current_result.changed,
+            current_error.kind == .None &&
+            !current_result.schema_migrated &&
+            current_result.externalized_map &&
+            current_result.changed,
         )
         fixture_upgrade_error_dispose(&current_error)
         if !current_ok do return
@@ -249,9 +249,9 @@ when ODIN_TEST {
         testing.expect(
             t,
             current_decoded.fixture.map_source.kind == .Sidecar &&
-                len(current_decoded.fixture.map_source.inline_bytes) == 0 &&
-                current_sidecar == expected_sidecar &&
-                fixture_map_sidecar_valid(current_sidecar),
+            len(current_decoded.fixture.map_source.inline_bytes) == 0 &&
+            current_sidecar == expected_sidecar &&
+            fixture_map_sidecar_valid(current_sidecar),
         )
         current_sidecar_path, current_sidecar_resolved := fixture_map_sidecar_resolve(
             current_path,
@@ -280,10 +280,10 @@ when ODIN_TEST {
         testing.expect(
             t,
             current_repeat_ok &&
-                current_repeat_error.kind == .None &&
-                !current_repeat_result.schema_migrated &&
-                !current_repeat_result.externalized_map &&
-                !current_repeat_result.changed,
+            current_repeat_error.kind == .None &&
+            !current_repeat_result.schema_migrated &&
+            !current_repeat_result.externalized_map &&
+            !current_repeat_result.changed,
         )
         fixture_upgrade_error_dispose(&current_repeat_error)
         fixture_upgrade_test_expect_file(t, current_path, current_externalized_snapshot)

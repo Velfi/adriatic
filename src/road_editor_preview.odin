@@ -115,7 +115,12 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
                     }
                 }
                 if found {
-                    best_position.y = terrain.sample_surface_height(&editor.project, 0, best_position.x, best_position.z)
+                    best_position.y = terrain.sample_surface_height(
+                        &editor.project,
+                        0,
+                        best_position.x,
+                        best_position.z,
+                    )
                     result.kind, result.position, result.guide_from = .Tangent, best_position, start
                     return result
                 }

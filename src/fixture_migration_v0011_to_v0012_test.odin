@@ -30,7 +30,10 @@ when ODIN_TEST {
         defer delete(payload)
 
         result, migration_error, migrated := fixture_migration_run(
-            payload, 11, FIXTURE_SCHEMA_VERSION, runtime.default_allocator(),
+            payload,
+            11,
+            FIXTURE_SCHEMA_VERSION,
+            runtime.default_allocator(),
         )
         defer fixture_migration_error_dispose(&migration_error)
         defer fixture_migration_result_dispose(&result)

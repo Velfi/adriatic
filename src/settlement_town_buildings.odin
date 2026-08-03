@@ -372,7 +372,12 @@ settlement_plan_generate_buildings :: proc(
                         route_origin[1] - route_normal[1] * court_offset * side_sign,
                     }
                     first_height := terrain.sample_surface_height(project, 0, first_center[0], first_center[1])
-                    opposite_height := terrain.sample_surface_height(project, 0, opposite_center[0], opposite_center[1])
+                    opposite_height := terrain.sample_surface_height(
+                        project,
+                        0,
+                        opposite_center[0],
+                        opposite_center[1],
+                    )
                     if first_height <= project.sea_level + .6 || opposite_height > first_height + 1 {
                         side_sign = -side_sign
                     }

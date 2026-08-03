@@ -121,10 +121,10 @@ Ground_Grass_Cached_Instance :: struct {
 }
 
 Ground_Grass_Chunk :: struct {
-    entries:     [GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS]Ground_Grass_Cached_Instance,
-    count:       int,
-    built_cells: int,
-    last_used:   u64,
+    entries:        [GROUND_GRASS_CHUNK_CELLS * GROUND_GRASS_CHUNK_CELLS]Ground_Grass_Cached_Instance,
+    count:          int,
+    built_cells:    int,
+    last_used:      u64,
     stream_emitted: bool,
 }
 

@@ -9,12 +9,12 @@ TOE_COUNT :: 3
 // A transient result supplied by gameplay physics. It deliberately contains
 // no allocator-owned data and lives only in the player presentation rig.
 Paw_Surface_Sample :: struct {
-    position:       third_person.Vec3,
-    normal:         third_person.Vec3,
-    body:           u32,
-    body_position:  third_person.Vec3,
-    body_rotation:  [4]f32,
-    valid:          bool,
+    position:      third_person.Vec3,
+    normal:        third_person.Vec3,
+    body:          u32,
+    body_position: third_person.Vec3,
+    body_rotation: [4]f32,
+    valid:         bool,
 }
 
 Resolved_Toe_Pose :: struct {
@@ -53,14 +53,14 @@ Contact_Event :: enum u8 {
 }
 
 Contact :: struct {
-    anchor:            third_person.Vec3,
-    local_anchor:      third_person.Vec3,
-    local_normal:      third_person.Vec3,
-    support_body:      u32,
-    plant_yaw_radians: f32,
-    compression:       f32,
+    anchor:               third_person.Vec3,
+    local_anchor:         third_person.Vec3,
+    local_normal:         third_person.Vec3,
+    support_body:         u32,
+    plant_yaw_radians:    f32,
+    compression:          f32,
     compression_velocity: f32,
-    phase:             Contact_Phase,
+    phase:                Contact_Phase,
 }
 
 Rig :: struct {
@@ -154,7 +154,11 @@ store_support_local :: proc(contact: ^Contact, sample: Paw_Surface_Sample) {
     contact.local_normal = quat_conjugate_rotate(sample.body_rotation, sample.normal)
 }
 
-support_world_position :: proc(contact: Contact, body_position: third_person.Vec3, body_rotation: [4]f32) -> third_person.Vec3 {
+support_world_position :: proc(
+    contact: Contact,
+    body_position: third_person.Vec3,
+    body_rotation: [4]f32,
+) -> third_person.Vec3 {
     return body_position + quat_rotate(body_rotation, contact.local_anchor)
 }
 
@@ -192,7 +196,10 @@ resolve_toe :: proc(
     sample: Paw_Surface_Sample,
     toe_length: f32,
 ) -> Resolved_Toe_Pose {
-    result := Resolved_Toe_Pose{root = root, tip = desired}
+    result := Resolved_Toe_Pose {
+        root = root,
+        tip  = desired,
+    }
     if !sample.valid {
         result.tip.y -= max(toe_length, f32(0)) * .28
         return result

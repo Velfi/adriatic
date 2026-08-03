@@ -154,7 +154,10 @@ mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
     mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
     for index in 1 ..< mouse_tail.POINT_COUNT {
         point := state.points[index].position
-        floor := terrain.sample_surface_height(project, 0, point.x, point.z) + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN
+        floor :=
+            terrain.sample_surface_height(project, 0, point.x, point.z) +
+            config.radius +
+            mouse_tail.TERRAIN_CONTACT_SKIN
         testing.expect(t, point.y >= floor - .0001)
     }
 }

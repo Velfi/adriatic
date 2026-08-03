@@ -1,7 +1,7 @@
 package main
 
-import road_planner "../packages/road_planner"
 import road_designer "../packages/road_designer"
+import road_planner "../packages/road_planner"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -16,29 +16,29 @@ ROAD_PLANNING_LAB_SLIDER_COUNT :: 9
 ROAD_PLANNING_LAB_INPUT_DEBOUNCE_SECONDS :: f64(.20)
 
 Road_Planning_Lab_State :: struct {
-    config:       road_planner.Config,
-    workspace:    ^road_planner.Workspace,
-    heights:      [ROAD_PLANNING_LAB_SAMPLE_COUNT]f32,
-    result:       road_planner.Result,
-    points:       [2]road_planner.Point,
-    point_count:  int,
-    seed:         u32,
-    next_endpoint:int,
-    graph_too_complex: bool,
-    route_bend_count:  int,
-    dragging:      int,
-    editing:       int,
-    input:         [24]u8,
-    input_length:  int,
-    regen_pending: bool,
-    regen_at:      f64,
-    optimizer:     ^road_designer.Optimizer,
-    design_work:   ^road_designer.Workspace,
-    pavement:      roads.Pavement,
-    alternative:   road_designer.Named_Alternative,
-    paused:        bool,
-    show_all:      bool,
-    committed:     bool,
+    config:                road_planner.Config,
+    workspace:             ^road_planner.Workspace,
+    heights:               [ROAD_PLANNING_LAB_SAMPLE_COUNT]f32,
+    result:                road_planner.Result,
+    points:                [2]road_planner.Point,
+    point_count:           int,
+    seed:                  u32,
+    next_endpoint:         int,
+    graph_too_complex:     bool,
+    route_bend_count:      int,
+    dragging:              int,
+    editing:               int,
+    input:                 [24]u8,
+    input_length:          int,
+    regen_pending:         bool,
+    regen_at:              f64,
+    optimizer:             ^road_designer.Optimizer,
+    design_work:           ^road_designer.Workspace,
+    pavement:              roads.Pavement,
+    alternative:           road_designer.Named_Alternative,
+    paused:                bool,
+    show_all:              bool,
+    committed:             bool,
     evaluations_per_frame: int,
 }
 
@@ -60,15 +60,24 @@ road_planning_lab_input_bounds :: proc(width, index: int) -> canvas2d.Rectangle 
 
 road_planning_lab_slider_value :: proc(index: int) -> (value, low, high: f32) {
     switch index {
-    case 0: return road_planning_lab.config.cell_size, 6, 48
-    case 1: return road_planning_lab.config.length_cost, .1, 4
-    case 2: return road_planning_lab.config.grade_cost, 0, 150
-    case 3: return road_planning_lab.config.steep_grade_cost, 0, 1000
-    case 4: return road_planning_lab.config.water_cost, 0, 1500
-    case 5: return road_planning_lab.config.turn_cost, 0, 30
-    case 6: return road_planning_lab.config.switchback_cost, 0, 100
-    case 7: return road_planning_lab.config.maximum_grade, .02, .6
-    case 8: return road_planning_lab.config.heuristic_weight, .8, 1.5
+    case 0:
+        return road_planning_lab.config.cell_size, 6, 48
+    case 1:
+        return road_planning_lab.config.length_cost, .1, 4
+    case 2:
+        return road_planning_lab.config.grade_cost, 0, 150
+    case 3:
+        return road_planning_lab.config.steep_grade_cost, 0, 1000
+    case 4:
+        return road_planning_lab.config.water_cost, 0, 1500
+    case 5:
+        return road_planning_lab.config.turn_cost, 0, 30
+    case 6:
+        return road_planning_lab.config.switchback_cost, 0, 100
+    case 7:
+        return road_planning_lab.config.maximum_grade, .02, .6
+    case 8:
+        return road_planning_lab.config.heuristic_weight, .8, 1.5
     }
     return 0, 0, 1
 }
@@ -78,15 +87,24 @@ road_planning_lab_set_slider :: proc(index: int, normalized: f32) -> bool {
     value := low + clamp(normalized, 0, 1) * (high - low)
     if value == previous do return false
     switch index {
-    case 0: road_planning_lab.config.cell_size = value
-    case 1: road_planning_lab.config.length_cost = value
-    case 2: road_planning_lab.config.grade_cost = value
-    case 3: road_planning_lab.config.steep_grade_cost = value
-    case 4: road_planning_lab.config.water_cost = value
-    case 5: road_planning_lab.config.turn_cost = value
-    case 6: road_planning_lab.config.switchback_cost = value
-    case 7: road_planning_lab.config.maximum_grade = value
-    case 8: road_planning_lab.config.heuristic_weight = value
+    case 0:
+        road_planning_lab.config.cell_size = value
+    case 1:
+        road_planning_lab.config.length_cost = value
+    case 2:
+        road_planning_lab.config.grade_cost = value
+    case 3:
+        road_planning_lab.config.steep_grade_cost = value
+    case 4:
+        road_planning_lab.config.water_cost = value
+    case 5:
+        road_planning_lab.config.turn_cost = value
+    case 6:
+        road_planning_lab.config.switchback_cost = value
+    case 7:
+        road_planning_lab.config.maximum_grade = value
+    case 8:
+        road_planning_lab.config.heuristic_weight = value
     }
     road_planner.set_generation_config(road_planning_lab.config)
     return true
@@ -221,8 +239,11 @@ road_planning_lab_sample_grid :: proc() -> road_planner.Grid {
     for z in 0 ..< ROAD_PLANNING_LAB_GRID {
         for x in 0 ..< ROAD_PLANNING_LAB_GRID {
             world_x, world_z := origin + f32(x) * config.cell_size, origin + f32(z) * config.cell_size
-            road_planning_lab.heights[z * ROAD_PLANNING_LAB_GRID + x] =
-                road_planning_lab_height(world_x, world_z, road_planning_lab.seed)
+            road_planning_lab.heights[z * ROAD_PLANNING_LAB_GRID + x] = road_planning_lab_height(
+                world_x,
+                world_z,
+                road_planning_lab.seed,
+            )
         }
     }
     return {
@@ -361,11 +382,16 @@ road_planning_lab_status :: proc() -> cstring {
     if road_planning_lab.optimizer != nil && road_planning_lab.result.found {
         state := "RUNNING"
         switch road_planning_lab.optimizer.status {
-        case .Complete:  state = "COMPLETE"
-        case .Cancelled: state = "CANCELLED"
-        case .No_Route:  state = "NO ROUTE"
-        case .Capacity:  state = "CAPACITY"
-        case .Idle:      state = "IDLE"
+        case .Complete:
+            state = "COMPLETE"
+        case .Cancelled:
+            state = "CANCELLED"
+        case .No_Route:
+            state = "NO ROUTE"
+        case .Capacity:
+            state = "CAPACITY"
+        case .Idle:
+            state = "IDLE"
         case .Running:
         }
         return fmt.ctprintf(
@@ -380,10 +406,26 @@ road_planning_lab_status :: proc() -> cstring {
     if road_planning_lab.config.cell_size <= 0 do return "CELL SIZE MUST BE GREATER THAN ZERO"
     grid := road_planning_lab_sample_grid()
     start, finish := road_planning_lab.points[0], road_planning_lab.points[1]
-    start_x := clamp(int(math.round((start.x - grid.origin_x) / road_planning_lab.config.cell_size)), 0, grid.width - 1)
-    start_z := clamp(int(math.round((start.z - grid.origin_z) / road_planning_lab.config.cell_size)), 0, grid.height - 1)
-    finish_x := clamp(int(math.round((finish.x - grid.origin_x) / road_planning_lab.config.cell_size)), 0, grid.width - 1)
-    finish_z := clamp(int(math.round((finish.z - grid.origin_z) / road_planning_lab.config.cell_size)), 0, grid.height - 1)
+    start_x := clamp(
+        int(math.round((start.x - grid.origin_x) / road_planning_lab.config.cell_size)),
+        0,
+        grid.width - 1,
+    )
+    start_z := clamp(
+        int(math.round((start.z - grid.origin_z) / road_planning_lab.config.cell_size)),
+        0,
+        grid.height - 1,
+    )
+    finish_x := clamp(
+        int(math.round((finish.x - grid.origin_x) / road_planning_lab.config.cell_size)),
+        0,
+        grid.width - 1,
+    )
+    finish_z := clamp(
+        int(math.round((finish.z - grid.origin_z) / road_planning_lab.config.cell_size)),
+        0,
+        grid.height - 1,
+    )
     if start_x == finish_x && start_z == finish_z do return "ENDPOINTS SNAP TO THE SAME PLANNER CELL"
     return fmt.ctprintf("SEARCH EXHAUSTED AFTER %d EXPANDED STATES", road_planning_lab.result.expanded)
 }
@@ -392,16 +434,16 @@ road_planning_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     if editor == nil do return false
     if road_planning_lab.workspace != nil do free(road_planning_lab.workspace)
     road_planning_lab = {
-        config = road_planner.default_config(),
-        workspace = new(road_planner.Workspace),
-        seed = 0x524f4144,
-        dragging = -1,
-        editing = -1,
-        optimizer = new(road_designer.Optimizer),
-        design_work = new(road_designer.Workspace),
-        pavement = .Gravel,
-        alternative = .Recommended,
-        show_all = true,
+        config                = road_planner.default_config(),
+        workspace             = new(road_planner.Workspace),
+        seed                  = 0x524f4144,
+        dragging              = -1,
+        editing               = -1,
+        optimizer             = new(road_designer.Optimizer),
+        design_work           = new(road_designer.Workspace),
+        pavement              = .Gravel,
+        alternative           = .Recommended,
+        show_all              = true,
         evaluations_per_frame = 8,
     }
     road_planning_lab.points = {{-720, -420}, {720, 430}}
@@ -421,9 +463,9 @@ road_planning_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     distance := f32(math.sqrt(f64(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)))
     editor.editor_focus = target
     editor.editor_camera = {
-        yaw_radians = f32(math.atan2(f64(delta.x), f64(delta.z))),
+        yaw_radians   = f32(math.atan2(f64(delta.x), f64(delta.z))),
         pitch_radians = f32(math.asin(f64(clamp(delta.y / distance, -1, 1)))),
-        distance = distance,
+        distance      = distance,
     }
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
@@ -453,13 +495,7 @@ road_planning_lab_cursor_position :: proc(editor: ^Editor) -> (x, z: f32, hit: b
     if !world_mouse_inside do return 0, 0, false
     world_render_width, world_render_height := canvas2d.GetWorldRenderSize()
     camera := perspective_camera(editor.camera_pose, 1.35)
-    return terrain_under_cursor_3d(
-        editor,
-        camera,
-        world_mouse,
-        world_render_width,
-        world_render_height,
-    )
+    return terrain_under_cursor_3d(editor, camera, world_mouse, world_render_width, world_render_height)
 }
 
 road_planning_lab_process_input :: proc(editor: ^Editor) {
@@ -502,7 +538,8 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
             road_planning_lab.regen_pending = true
             road_planning_lab.regen_at = canvas2d.GetTime() + ROAD_PLANNING_LAB_INPUT_DEBOUNCE_SECONDS
         }
-        if canvas2d.IsKeyPressed(.ENTER) || canvas2d.IsKeyPressed(.ESCAPE) ||
+        if canvas2d.IsKeyPressed(.ENTER) ||
+           canvas2d.IsKeyPressed(.ESCAPE) ||
            (canvas2d.IsMouseButtonPressed(.LEFT) && !canvas2d.CheckCollisionPointRec(mouse, input_bounds)) {
             if road_planning_lab.regen_pending {
                 changed = true
@@ -514,10 +551,8 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
     }
     if canvas2d.IsMouseButtonDown(.LEFT) && road_planning_lab.dragging >= 0 {
         bounds := road_planning_lab_slider_bounds(int(width), road_planning_lab.dragging)
-        changed = road_planning_lab_set_slider(
-            road_planning_lab.dragging,
-            (mouse.x - bounds.x) / bounds.width,
-        ) || changed
+        changed =
+            road_planning_lab_set_slider(road_planning_lab.dragging, (mouse.x - bounds.x) / bounds.width) || changed
     }
     if canvas2d.IsMouseButtonReleased(.LEFT) do road_planning_lab.dragging = -1
     if !pointer_in_panel && canvas2d.IsMouseButtonPressed(.LEFT) {
@@ -525,10 +560,7 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
         if cursor_hit {
             slot := road_planning_lab.next_endpoint
             extent := f32(ROAD_PLANNING_LAB_GRID - 1) * road_planning_lab.config.cell_size * .5
-            road_planning_lab.points[slot] = {
-                clamp(cursor_x, -extent, extent),
-                clamp(cursor_z, -extent, extent),
-            }
+            road_planning_lab.points[slot] = {clamp(cursor_x, -extent, extent), clamp(cursor_z, -extent, extent)}
             road_planning_lab.point_count = min(road_planning_lab.point_count + 1, 2)
             road_planning_lab.next_endpoint = (slot + 1) % 2
             changed = true
@@ -542,11 +574,16 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
     if canvas2d.IsKeyPressed(.SPACE) do changed = true
     if canvas2d.IsKeyPressed(.S) {
         switch road_planning_lab.pavement {
-        case .Asphalt:     road_planning_lab.pavement = .Gravel
-        case .Gravel:      road_planning_lab.pavement = .Cobblestone
-        case .Cobblestone: road_planning_lab.pavement = .Dirt
-        case .Dirt:        road_planning_lab.pavement = .Asphalt
-        case .Steps:       road_planning_lab.pavement = .Gravel
+        case .Asphalt:
+            road_planning_lab.pavement = .Gravel
+        case .Gravel:
+            road_planning_lab.pavement = .Cobblestone
+        case .Cobblestone:
+            road_planning_lab.pavement = .Dirt
+        case .Dirt:
+            road_planning_lab.pavement = .Asphalt
+        case .Steps:
+            road_planning_lab.pavement = .Gravel
         }
         changed = true
     }
@@ -561,7 +598,9 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
         road_planning_lab.regen_pending = false
     }
     if changed do road_planning_lab_rebuild_road(editor)
-    if road_planning_lab.optimizer != nil && !road_planning_lab.paused && !road_planning_lab.committed &&
+    if road_planning_lab.optimizer != nil &&
+       !road_planning_lab.paused &&
+       !road_planning_lab.committed &&
        road_planning_lab.optimizer.status == .Running {
         started := canvas2d.GetTime()
         _ = road_designer.step(road_planning_lab.optimizer, road_planning_lab.evaluations_per_frame)
@@ -576,8 +615,8 @@ road_planning_lab_process_input :: proc(editor: ^Editor) {
         if selected, ok := road_designer.candidate(road_planning_lab.optimizer, road_planning_lab.alternative); ok {
             graph: roads.Graph
             design_id := road_design_next_id(&graph)
-            if result := road_designer.materialize(selected, &graph, design_id); result.ok &&
-               road_design_commit_graph(editor, graph, design_id) {
+            if result := road_designer.materialize(selected, &graph, design_id);
+               result.ok && road_design_commit_graph(editor, graph, design_id) {
                 road_planning_lab.committed = true
                 road_planning_lab.paused = true
             }
@@ -590,16 +629,29 @@ world_road_planning_lab :: proc(editor: ^Editor) {
     graph := &editor.project.road_graph
     if !road_planning_lab.committed && road_planning_lab.result.found && road_planning_lab.result.point_count >= 2 {
         previous_point := road_planning_lab.result.points[0]
-        previous := roads.Vec3{previous_point.x, terrain.sample_surface_height(&editor.project, 0, previous_point.x, previous_point.z), previous_point.z}
+        previous := roads.Vec3 {
+            previous_point.x,
+            terrain.sample_surface_height(&editor.project, 0, previous_point.x, previous_point.z),
+            previous_point.z,
+        }
         for point in road_planning_lab.result.points[1:road_planning_lab.result.point_count] {
-            current := roads.Vec3{point.x, terrain.sample_surface_height(&editor.project, 0, point.x, point.z), point.z}
+            current := roads.Vec3 {
+                point.x,
+                terrain.sample_surface_height(&editor.project, 0, point.x, point.z),
+                point.z,
+            }
             world_road_editor_link(previous, current, 2.2, {211, 177, 101, 90})
             previous = current
         }
     }
     if !road_planning_lab.committed && road_planning_lab.optimizer != nil {
         alternatives := [4]road_designer.Named_Alternative{.Recommended, .Cheapest, .Fastest, .Lightest_Impact}
-        colors := [4]canvas2d.Color{{75, 211, 239, 235}, {245, 190, 82, 190}, {238, 112, 99, 190}, {125, 211, 129, 190}}
+        colors := [4]canvas2d.Color {
+            {75, 211, 239, 235},
+            {245, 190, 82, 190},
+            {238, 112, 99, 190},
+            {125, 211, 129, 190},
+        }
         for alternative, alternative_index in alternatives {
             if !road_planning_lab.show_all && alternative != road_planning_lab.alternative do continue
             selected, ok := road_designer.candidate(road_planning_lab.optimizer, alternative)
@@ -616,7 +668,10 @@ world_road_planning_lab :: proc(editor: ^Editor) {
     // The planner result remains useful even when it contains more bends than
     // the fixed road graph can store. Show that route directly so a capacity
     // warning never reduces the world view to endpoint handles alone.
-    if road_planning_lab.optimizer == nil && graph.edge_count == 0 && road_planning_lab.result.found && road_planning_lab.result.point_count >= 2 {
+    if road_planning_lab.optimizer == nil &&
+       graph.edge_count == 0 &&
+       road_planning_lab.result.found &&
+       road_planning_lab.result.point_count >= 2 {
         previous_point := road_planning_lab.result.points[0]
         previous := roads.Vec3 {
             previous_point.x,
@@ -665,11 +720,25 @@ road_planning_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     canvas2d.DrawRectangleRounded(panel, .05, 9, {15, 23, 26, 244})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .05, 9, 1, {75, 211, 239, 255})
     ui_draw_text(.Label, "ROAD PLANNING", {panel.x + 20, panel.y + 18}, .54, {111, 222, 239, 255})
-    ui_draw_text(.Data, "EDIT COSTS • UPDATES AUTOMATICALLY", {panel.x + 20, panel.y + 50}, .19, {152, 179, 183, 255})
+    ui_draw_text(
+        .Data,
+        "EDIT COSTS • UPDATES AUTOMATICALLY",
+        {panel.x + 20, panel.y + 50},
+        .19,
+        {152, 179, 183, 255},
+    )
     status := road_planning_lab_status()
     ui_draw_text(.Data, status, {panel.x + 20, panel.y + 76}, .20, {181, 216, 218, 255})
     labels := [ROAD_PLANNING_LAB_SLIDER_COUNT]cstring {
-        "CELL SIZE", "LENGTH COST", "GRADE", "STEEP GRADE", "WATER", "TURN", "SWITCHBACK", "MAX GRADE", "HEURISTIC",
+        "CELL SIZE",
+        "LENGTH COST",
+        "GRADE",
+        "STEEP GRADE",
+        "WATER",
+        "TURN",
+        "SWITCHBACK",
+        "MAX GRADE",
+        "HEURISTIC",
     }
     for label, index in labels {
         value, low, high := road_planning_lab_slider_value(index)
@@ -678,10 +747,26 @@ road_planning_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
         input_bounds := road_planning_lab_input_bounds(int(width), index)
         ui_draw_text(.Label, label, {panel.x + 20, bounds.y + 7}, .22, {188, 201, 202, 255})
         canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 10, bounds.width, 8}, 1, 4, {44, 57, 60, 255})
-        canvas2d.DrawRectangleRounded({bounds.x, bounds.y + 10, bounds.width * normalized, 8}, 1, 4, {75, 211, 239, 255})
+        canvas2d.DrawRectangleRounded(
+            {bounds.x, bounds.y + 10, bounds.width * normalized, 8},
+            1,
+            4,
+            {75, 211, 239, 255},
+        )
         canvas2d.DrawCircleV({bounds.x + bounds.width * normalized, bounds.y + 14}, 7, {236, 242, 235, 255})
-        canvas2d.DrawRectangleRounded(input_bounds, .14, 5, index == road_planning_lab.editing ? canvas2d.Color{42, 63, 68, 255} : canvas2d.Color{30, 42, 45, 255})
-        canvas2d.DrawRectangleRoundedLinesEx(input_bounds, .14, 5, 1, index == road_planning_lab.editing ? canvas2d.Color{111, 222, 239, 255} : canvas2d.Color{67, 88, 92, 255})
+        canvas2d.DrawRectangleRounded(
+            input_bounds,
+            .14,
+            5,
+            index == road_planning_lab.editing ? canvas2d.Color{42, 63, 68, 255} : canvas2d.Color{30, 42, 45, 255},
+        )
+        canvas2d.DrawRectangleRoundedLinesEx(
+            input_bounds,
+            .14,
+            5,
+            1,
+            index == road_planning_lab.editing ? canvas2d.Color{111, 222, 239, 255} : canvas2d.Color{67, 88, 92, 255},
+        )
         display: cstring
         if index == road_planning_lab.editing {
             display = fmt.ctprintf("%s", road_planning_lab_input_text())
@@ -696,9 +781,12 @@ road_planning_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
     }
     selected_name := "RECOMMENDED"
     switch road_planning_lab.alternative {
-    case .Cheapest:        selected_name = "CHEAPEST"
-    case .Fastest:         selected_name = "FASTEST"
-    case .Lightest_Impact: selected_name = "LIGHTEST IMPACT"
+    case .Cheapest:
+        selected_name = "CHEAPEST"
+    case .Fastest:
+        selected_name = "FASTEST"
+    case .Lightest_Impact:
+        selected_name = "LIGHTEST IMPACT"
     case .Recommended:
     }
     summary_y := panel.y + 548
@@ -734,7 +822,25 @@ road_planning_lab_draw_ui :: proc(_: ^Editor, width, _: i32) {
             )
         }
     }
-    ui_draw_text(.Data, "1–4 ALT • S SURFACE • P PAUSE • O OVERLAYS", {panel.x + 20, panel.y + panel.height - 54}, .15, {160, 180, 181, 255})
-    ui_draw_text(.Data, "ENTER COMMIT • CLICK MAP MOVE ENDPOINT • R TERRAIN", {panel.x + 20, panel.y + panel.height - 34}, .15, {160, 180, 181, 255})
-    ui_draw_text(.Data, "COMPARE LENGTH, GRADE, WATER, AND TURNS", {panel.x + 20, panel.y + panel.height - 16}, .15, {239, 178, 91, 255})
+    ui_draw_text(
+        .Data,
+        "1–4 ALT • S SURFACE • P PAUSE • O OVERLAYS",
+        {panel.x + 20, panel.y + panel.height - 54},
+        .15,
+        {160, 180, 181, 255},
+    )
+    ui_draw_text(
+        .Data,
+        "ENTER COMMIT • CLICK MAP MOVE ENDPOINT • R TERRAIN",
+        {panel.x + 20, panel.y + panel.height - 34},
+        .15,
+        {160, 180, 181, 255},
+    )
+    ui_draw_text(
+        .Data,
+        "COMPARE LENGTH, GRADE, WATER, AND TURNS",
+        {panel.x + 20, panel.y + panel.height - 16},
+        .15,
+        {239, 178, 91, 255},
+    )
 }

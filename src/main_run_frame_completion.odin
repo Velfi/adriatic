@@ -30,7 +30,19 @@ import physics "zelda_engine:physics"
 run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) -> bool {
     // Player captures wait long enough for the Verlet tail and pose blends
     // to settle; frame two only showed the first few links as a short nub.
-    if capture_mode && request != nil && request.sequence_frames > 0 {
+    if capture_mode && request != nil && request.seed_frames > 0 {
+        next_capture_frame := seed_frame_index == 0 ? capture_frame : seed_last_capture_frame + 2
+        if seed_frame_index < request.seed_frames && frame >= next_capture_frame {
+            seed := request.seed_start + u64(seed_frame_index)
+            canvas2d.TakeScreenshot(fmt.ctprintf("%s/seed-%d.png", capture_output, seed))
+            seed_last_capture_frame = frame
+            seed_frame_index += 1
+            if seed_frame_index < request.seed_frames {
+                plant_generator_seed = request.seed_start + u64(seed_frame_index)
+                plant_generator_rebuild()
+            }
+        }
+    } else if capture_mode && request != nil && request.sequence_frames > 0 {
         if sequence_frame_index < request.sequence_frames && frame >= capture_frame {
             canvas2d.TakeScreenshot(fmt.ctprintf("%s/frame-%06d.png", capture_output, sequence_frame_index))
             sequence_last_capture_frame = frame
@@ -50,6 +62,13 @@ run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_st
     // presented frames after the request so capture mode always writes its PNG.
     if capture_mode &&
        request != nil &&
+       request.seed_frames > 0 &&
+       seed_frame_index >= request.seed_frames &&
+       frame >= seed_last_capture_frame + 12 {
+        return false
+    }
+    if capture_mode &&
+       request != nil &&
        request.sequence_frames > 0 &&
        sequence_frame_index >= request.sequence_frames &&
        frame >= sequence_last_capture_frame + 1 {
@@ -63,25 +82,15 @@ run_frame_finish_capture_or_reload :: proc(using run: ^Run_State, using frame_st
         return false
     }
     if capture_mode &&
-       (request == nil || (request.turntable_frames == 0 && request.sequence_frames == 0)) &&
+       (request == nil || (request.turntable_frames == 0 && request.sequence_frames == 0 && request.seed_frames == 0)) &&
        frame >= max(32, capture_frame + 12) {
         return false
     }
     if instrument_duration_seconds > 0 && canvas2d.GetTime() - instrument_started_at >= instrument_duration_seconds {
         if editor.flame_graph.history_count > 0 {
             last_order := editor.flame_graph.history_count - 1
-            _ = dio.flame_graph_write_source_range(
-                &editor.flame_graph,
-                dio.FLAME_GRAPH_DUMP_PATH,
-                0,
-                last_order,
-            )
-            _ = dio.flame_graph_write_source_folded(
-                &editor.flame_graph,
-                dio.FLAME_GRAPH_DUMP_PATH,
-                0,
-                last_order,
-            )
+            _ = dio.flame_graph_write_source_range(&editor.flame_graph, dio.FLAME_GRAPH_DUMP_PATH, 0, last_order)
+            _ = dio.flame_graph_write_source_folded(&editor.flame_graph, dio.FLAME_GRAPH_DUMP_PATH, 0, last_order)
         }
         editor.quit_requested = true
     }

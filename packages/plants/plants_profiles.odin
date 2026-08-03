@@ -32,7 +32,14 @@ cypress_generated_cluster_size :: proc(detail: Detail_Level, maturity: f32, seed
 support_hash :: proc(support: Support_Surface) -> u64 {
     if support.signature != 0 do return support.signature
     hash := u64(0xcbf29ce484222325)
-    values := []f32{support.width, support.height, support.plane_z, support.root_x}
+    values := []f32 {
+        support.width,
+        support.height,
+        support.plane_z,
+        support.root_x,
+        support.left_corner_x,
+        support.left_return_depth,
+    }
     for value in values {
         bits := transmute(u32)value
         hash = (hash ~ u64(bits)) * 0x100000001b3

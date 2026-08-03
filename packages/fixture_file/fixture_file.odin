@@ -175,15 +175,24 @@ fixture_container_decode :: proc(
         if !sectioned_ok {
             kind := Fixture_Container_Error_Kind.Invalid_Argument
             #partial switch sectioned_error.kind {
-            case .Truncated: kind = .Truncated
-            case .Invalid_Magic: kind = .Invalid_Magic
-            case .Unsupported_Version: kind = .Unsupported_Version
-            case .Unsupported_Flags: kind = .Unsupported_Flags
-            case .Limit_Exceeded: kind = .Limit_Exceeded
-            case .Overflow: kind = .Overflow
-            case .Trailing_Bytes: kind = .Trailing_Bytes
-            case .Checksum_Mismatch: kind = .Checksum_Mismatch
-            case: kind = .Invalid_Argument
+            case .Truncated:
+                kind = .Truncated
+            case .Invalid_Magic:
+                kind = .Invalid_Magic
+            case .Unsupported_Version:
+                kind = .Unsupported_Version
+            case .Unsupported_Flags:
+                kind = .Unsupported_Flags
+            case .Limit_Exceeded:
+                kind = .Limit_Exceeded
+            case .Overflow:
+                kind = .Overflow
+            case .Trailing_Bytes:
+                kind = .Trailing_Bytes
+            case .Checksum_Mismatch:
+                kind = .Checksum_Mismatch
+            case:
+                kind = .Invalid_Argument
             }
             return {}, fixture_container_error(kind, sectioned_error.offset, sectioned_error.message), false
         }

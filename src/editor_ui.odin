@@ -177,6 +177,7 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
 
 authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     if editor == nil do return
+    if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
     // ClimbingLeaves is retained only as a frozen Fixture enum value. Route
     // legacy selection and the old L shortcut into the unified plant stamp.
     resolved := selected
@@ -447,6 +448,25 @@ editor_ui_draw_tool_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canv
     canvas2d.DrawTexturePro(editor.authoring_tool_atlas, source, destination, tint)
 }
 
+editor_ui_draw_sculpt_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canvas2d.Rectangle) {
+    if editor == nil || !editor.sculpt_tool_atlas.ready do return
+    cell_width := f32(editor.sculpt_tool_atlas.width) / 5
+    source := canvas2d.Rectangle {
+        f32(atlas_index) * cell_width,
+        0,
+        cell_width,
+        f32(editor.sculpt_tool_atlas.height),
+    }
+    size := min(bounds.width - 8, bounds.height - 6)
+    destination := canvas2d.Rectangle {
+        bounds.x + (bounds.width - size) * .5,
+        bounds.y + (bounds.height - size) * .5,
+        size,
+        size,
+    }
+    canvas2d.DrawTexturePro(editor.sculpt_tool_atlas, source, destination, {255, 255, 255, 255})
+}
+
 editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool) {
     name := authoring_tool_name(tool)
     shortcut := authoring_tool_shortcut(tool)
@@ -656,6 +676,23 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor.structure_moving do return "Move the selected formation; release to commit."
     switch editor.authoring_tool {
     case .Sculpt:
+        if editor.terrain_sculpt.session.active {
+            return(
+                editor.terrain_sculpt.session.valid ? "Release to commit. Esc cancels." : "Keep the gesture on one island." \
+            )
+        }
+        switch editor.terrain_sculpt.mode {
+        case .Shape:
+            return "[Left] to raise   [Right] to lower   [Wheel] to zoom"
+        case .Level:
+            return "Drag up or down to set the level; release to commit."
+        case .Grade:
+            return "Drag a path on one island; release to commit the grade."
+        case .Terrace:
+            return "Drag up or down to terrace the selected ground."
+        case .Erode:
+            return "Drag up or down to relax steep ground."
+        }
         return "[Left] to raise   [Right] to lower   [Wheel] to zoom"
     case .Smooth:
         return "[Left or Right] to smooth   [Wheel] to zoom"
@@ -831,7 +868,55 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
 
     row := 0
     switch editor.authoring_tool {
-    case .Sculpt, .Smooth, .Paint:
+    case .Sculpt:
+        bounds := editor_ui_slider_bounds(layout, row)
+        gap := f32(4)
+        button_size := f32(30)
+        row_width := button_size * 5 + gap * 4
+        row_x := bounds.x + (bounds.width - row_width) * .5
+        labels := [5]cstring{"SHAPE", "LEVEL", "GRADE", "TERRACE", "ERODE"}
+        for mode in 0 ..< len(labels) {
+            button_bounds := canvas2d.Rectangle {
+                row_x + f32(mode) * (button_size + gap),
+                bounds.y + 12,
+                button_size,
+                button_size,
+            }
+            editor_ui_panel_button(
+                button_bounds,
+                "",
+                int(editor.terrain_sculpt.mode) == mode,
+            )
+            editor_ui_draw_sculpt_icon(editor, mode, button_bounds)
+        }
+        row += 1
+        if editor.terrain_sculpt.mode == .Level ||
+           editor.terrain_sculpt.mode == .Terrace ||
+           editor.terrain_sculpt.mode == .Erode {
+            area_bounds := editor_ui_slider_bounds(layout, row)
+            half := (area_bounds.width - 6) * .5
+            editor_ui_panel_button({area_bounds.x, area_bounds.y + 24, half, 30}, "BRUSH", !editor.terrain_sculpt.area)
+            editor_ui_panel_button(
+                {area_bounds.x + half + 6, area_bounds.y + 24, half, 30},
+                "AREA",
+                editor.terrain_sculpt.area,
+            )
+            row += 1
+        }
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "RADIUS (m)",
+            editor.radius,
+            terrain.BASE_CELL_SIZE,
+            400,
+            0,
+        )
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", editor.strength, 0, 1, 2)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HARDNESS", editor.hardness, 0, 1, 2)
+        row += 1
+    case .Smooth, .Paint:
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
             "RADIUS (m)",
@@ -1400,7 +1485,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
     }
 
-    world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 276)
+    world_y := min(panel.y + 82 + f32(max(row, 3)) * 48 + 12, panel.y + panel.height - 174)
     editor_ui_section_title("WORLD", panel.x + 14, world_y, panel.width - 28)
     data_y := world_y + 32
     if editor.cursor_hit {
@@ -1421,33 +1506,6 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     } else {
         ui_draw_text(.Data, "CURSOR   —", {panel.x + 14, data_y}, .4, {139, 149, 160, 255})
     }
-    minutes := int(editor.atmosphere.world_minutes)
-    ui_draw_text(
-        .Data,
-        fmt.ctprintf(
-            "TIME     %02d:%02d   %s",
-            minutes / 60,
-            minutes % 60,
-            atmosphere.preset_name(editor.atmosphere.override),
-        ),
-        {panel.x + 14, data_y + 48},
-        .4,
-        {209, 215, 222, 255},
-    )
-    ui_draw_text(
-        .Data,
-        fmt.ctprintf(
-            "OBJECTS  %d forms   %d roads",
-            editor.project.structure_count,
-            editor.project.road_graph.edge_count,
-        ),
-        {panel.x + 14, data_y + 72},
-        .4,
-        {209, 215, 222, 255},
-    )
-    sea_bounds := canvas2d.Rectangle{panel.x + 14, data_y + 98, panel.width - 28, 42}
-    editor_ui_slider_draw(sea_bounds, "SEA LEVEL (m)", editor.project.sea_level, -50, 50, 1)
-
     undo_enabled := editor.tool == .Structure ? editor.structure_undo_count > 0 : editor.terrain_undo_count > 0
     redo_enabled := editor.tool == .Structure ? editor.structure_redo_count > 0 : editor.terrain_redo_count > 0
     project_dirty := editor.project.revision != editor.terrain_saved_revision
@@ -1466,10 +1524,22 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     fixture_path := fixture_editor_current_path(editor)
     fixture_label: cstring = fixture_path != "" ? fmt.ctprintf("FIXTURE  %s", fixture_path) : "FIXTURE  UNSAVED"
     ui_draw_text(.Data, fixture_label, {16, 18}, .4, {209, 215, 222, 255})
+    minutes := int(editor.atmosphere.world_minutes)
+    header_status := fmt.ctprintf(
+        "TIME  %02d:%02d  %s     OBJECTS  %d forms  %d roads",
+        minutes / 60,
+        minutes % 60,
+        atmosphere.preset_name(editor.atmosphere.override),
+        editor.project.structure_count,
+        editor.project.road_graph.edge_count,
+    )
+    header_status_size := ui_measure_text(.Data, header_status, .4)
+    header_status_x := f32(width) - header_status_size.x - 16
+    ui_draw_text(.Data, header_status, {header_status_x, 18}, .4, {209, 215, 222, 255})
     if editor.terrain_file_status != nil && f32(canvas2d.GetTime()) < editor.terrain_file_status_until {
         status := fmt.ctprintf("%s", editor.terrain_file_status)
         status_size := ui_measure_text(.Data, status, .4)
-        ui_draw_text(.Data, status, {f32(width) - status_size.x - 16, 18}, .4, {151, 161, 172, 255})
+        ui_draw_text(.Data, status, {header_status_x - status_size.x - 24, 18}, .4, {151, 161, 172, 255})
     }
     editor_ui_draw_left(editor, layout)
     editor_ui_draw_inspector(editor, layout)
@@ -1597,7 +1667,47 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
     row := 0
     switch editor.authoring_tool {
-    case .Sculpt, .Smooth, .Paint:
+    case .Sculpt:
+        bounds := editor_ui_slider_bounds(layout, row)
+        gap := f32(4)
+        button_size := f32(30)
+        row_width := button_size * 5 + gap * 4
+        row_x := bounds.x + (bounds.width - row_width) * .5
+        if pressed {
+            for mode in 0 ..< 5 {
+                button := canvas2d.Rectangle {
+                    row_x + f32(mode) * (button_size + gap),
+                    bounds.y + 12,
+                    button_size,
+                    button_size,
+                }
+                if canvas2d.CheckCollisionPointRec(mouse, button) {
+                    if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
+                    editor.terrain_sculpt.mode = Terrain_Sculpt_Mode(mode)
+                }
+            }
+        }
+        row += 1
+        if editor.terrain_sculpt.mode == .Level ||
+           editor.terrain_sculpt.mode == .Terrace ||
+           editor.terrain_sculpt.mode == .Erode {
+            area_bounds := editor_ui_slider_bounds(layout, row)
+            half := (area_bounds.width - 6) * .5
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, {area_bounds.x, area_bounds.y + 24, half, 30}) {
+                editor.terrain_sculpt.area = false
+            } else if pressed &&
+               canvas2d.CheckCollisionPointRec(mouse, {area_bounds.x + half + 6, area_bounds.y + 24, half, 30}) {
+                editor.terrain_sculpt.area = true
+            }
+            row += 1
+        }
+        _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 2, row, &editor.strength, 0, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 3, row, &editor.hardness, 0, 1, .01)
+        row += 1
+    case .Smooth, .Paint:
         _ = editor_ui_slider_input(editor, layout, 1, row, &editor.radius, terrain.BASE_CELL_SIZE, 400, 1)
         row += 1
         _ = editor_ui_slider_input(editor, layout, 2, row, &editor.strength, 0, 1, .01)
@@ -1979,25 +2089,6 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         row += 2
     case .Obstacles:
         row += 0
-    }
-
-    world_y := min(
-        layout.inspector.y + 82 + f32(max(row, 3)) * 48 + 12,
-        layout.inspector.y + layout.inspector.height - 276,
-    )
-    sea_bounds := canvas2d.Rectangle{layout.inspector.x + 14, world_y + 32 + 122, layout.inspector.width - 28, 42}
-    if pressed && canvas2d.CheckCollisionPointRec(mouse, sea_bounds) {
-        editor.editor_ui.active_slider = 11
-        terrain_history_push_undo(editor)
-    }
-    if editor.editor_ui.active_slider == 11 {
-        if canvas2d.IsMouseButtonReleased(.LEFT) {
-            editor.editor_ui.active_slider = 0
-        } else if canvas2d.IsMouseButtonDown(.LEFT) {
-            normalized := clamp((mouse.x - sea_bounds.x) / sea_bounds.width, 0, 1)
-            editor.project.sea_level = f32(int((-50 + normalized * 100) * 10 + .5)) / 10
-            editor.project.revision += 1
-        }
     }
 
     if pressed {

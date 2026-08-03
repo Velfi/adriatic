@@ -60,27 +60,28 @@ def main() -> int:
 
     frame_dir = output.with_suffix("")
     frame_dir.mkdir(parents=True, exist_ok=True)
-    source_indices = [round(index * 15 / max(args.frames - 1, 1)) for index in range(args.frames)]
-    for output_index, phase_index in enumerate(source_indices):
-        frame = frame_dir / f"frame-{output_index:03d}.png"
-        target = f"{args.species}-{args.weather}-phase16-{phase_index}"
-        run(
-            [
-                str(app),
-                "capture",
-                "plant-generator",
-                "--output",
-                str(frame),
-                "--target",
-                target,
-                "--width",
-                str(args.width),
-                "--height",
-                str(args.height),
-                "--settle-frames",
-                "2",
-            ]
-        )
+    run(
+        [
+            str(app),
+            "capture",
+            "plant-generator",
+            "--output",
+            str(frame_dir),
+            "--target",
+            f"{args.species}-{args.weather}-phase16-0",
+            "--width",
+            str(args.width),
+            "--height",
+            str(args.height),
+            "--settle-frames",
+            "2",
+            "--wind-phase-frames",
+            str(args.frames),
+        ]
+    )
+    for output_index in range(args.frames):
+        captured = frame_dir / f"frame-{output_index:06d}.png"
+        captured.rename(frame_dir / f"frame-{output_index:03d}.png")
 
     # Reverse the interior frames to make the review loop seamlessly even
     # though foliage uses several deliberately incommensurate gust frequencies.

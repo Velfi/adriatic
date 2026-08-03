@@ -91,10 +91,7 @@ wing_trails_wait_for_flying_speed_and_expire :: proc(t: ^testing.T) {
 wing_trail_lifetime_tightens_at_extreme_speed :: proc(t: ^testing.T) {
     testing.expect(t, particle_systems.wing_trail_lifetime_scale(46) == 1)
     testing.expect(t, particle_systems.wing_trail_lifetime_scale(90) == .65)
-    testing.expect(
-        t,
-        particle_systems.wing_trail_lifetime_scale(72) < particle_systems.wing_trail_lifetime_scale(58),
-    )
+    testing.expect(t, particle_systems.wing_trail_lifetime_scale(72) < particle_systems.wing_trail_lifetime_scale(58))
 }
 
 @(test)

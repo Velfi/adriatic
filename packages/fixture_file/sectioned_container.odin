@@ -12,13 +12,13 @@ Sectioned_Container_Max_Section_Bytes :: 64 * 1024 * 1024
 
 Artifact_Kind :: enum u16 {
     Fixture = 1,
-    Map = 2,
+    Map     = 2,
 }
 
 Section_Kind :: enum u32 {
-    Core = 1,
+    Core       = 1,
     Road_Proxy = 2,
-    Road_Tile = 3,
+    Road_Tile  = 3,
 }
 
 Section_Key :: struct {
@@ -41,11 +41,11 @@ Section_Entry :: struct {
 }
 
 Sectioned_Container_View :: struct {
-    artifact_kind: Artifact_Kind,
-    schema_version: u32,
+    artifact_kind:     Artifact_Kind,
+    schema_version:    u32,
     generator_version: u64,
-    entries: []Section_Entry,
-    data:    []byte,
+    entries:           []Section_Entry,
+    data:              []byte,
 }
 
 Sectioned_Container_Error_Kind :: enum {
@@ -70,7 +70,11 @@ Sectioned_Container_Error :: struct {
     message: string,
 }
 
-sectioned_error :: proc(kind: Sectioned_Container_Error_Kind, offset: int, message: string) -> Sectioned_Container_Error {
+sectioned_error :: proc(
+    kind: Sectioned_Container_Error_Kind,
+    offset: int,
+    message: string,
+) -> Sectioned_Container_Error {
     return {kind = kind, offset = offset, message = message}
 }
 
@@ -84,11 +88,7 @@ sectioned_get_i32 :: proc(data: []byte, offset: int) -> i32 {
 
 // Validate the untrusted directory shape before callers allocate its entry
 // buffer. Full range and checksum validation remains in decode.
-sectioned_container_directory_count :: proc(data: []byte) -> (
-    count: int,
-    error: Sectioned_Container_Error,
-    ok: bool,
-) {
+sectioned_container_directory_count :: proc(data: []byte) -> (count: int, error: Sectioned_Container_Error, ok: bool) {
     if len(data) < Sectioned_Container_Header_Size {
         return 0, sectioned_error(.Truncated, len(data), "sectioned container header is truncated"), false
     }
@@ -106,7 +106,8 @@ sectioned_container_directory_count :: proc(data: []byte) -> (
         return 0, sectioned_error(.Overflow, 24, "section directory size overflows host size"), false
     }
     directory_size := count * Sectioned_Container_Entry_Size
-    if directory_offset < Sectioned_Container_Header_Size || directory_offset > len(data) ||
+    if directory_offset < Sectioned_Container_Header_Size ||
+       directory_offset > len(data) ||
        directory_size > len(data) - directory_offset {
         return 0, sectioned_error(.Invalid_Directory, 32, "section directory lies outside the container"), false
     }
@@ -119,7 +120,11 @@ sectioned_container_encode :: proc(
     generator_version: u64,
     sections: []Section_Input,
     alloc := context.allocator,
-) -> (data: []byte, error: Sectioned_Container_Error, ok: bool) {
+) -> (
+    data: []byte,
+    error: Sectioned_Container_Error,
+    ok: bool,
+) {
     if alloc.procedure == nil || schema_version == 0 || len(sections) == 0 {
         return nil, sectioned_error(.Invalid_Argument, 0, "sectioned container arguments are invalid"), false
     }
@@ -184,7 +189,11 @@ sectioned_container_encode :: proc(
 sectioned_container_decode :: proc(
     data: []byte,
     entries: []Section_Entry,
-) -> (view: Sectioned_Container_View, error: Sectioned_Container_Error, ok: bool) {
+) -> (
+    view: Sectioned_Container_View,
+    error: Sectioned_Container_Error,
+    ok: bool,
+) {
     if len(data) < Sectioned_Container_Header_Size {
         return {}, sectioned_error(.Truncated, len(data), "sectioned container header is truncated"), false
     }
@@ -209,7 +218,9 @@ sectioned_container_decode :: proc(
     if directory_offset_u64 > u64(max(int)) do return {}, sectioned_error(.Overflow, 32, "directory offset overflows"), false
     directory_offset := int(directory_offset_u64)
     directory_size := section_count * Sectioned_Container_Entry_Size
-    if directory_offset < Sectioned_Container_Header_Size || directory_offset > len(data) || directory_size > len(data) - directory_offset {
+    if directory_offset < Sectioned_Container_Header_Size ||
+       directory_offset > len(data) ||
+       directory_size > len(data) - directory_offset {
         return {}, sectioned_error(.Invalid_Directory, 32, "section directory lies outside the container"), false
     }
     directory := data[directory_offset:directory_offset + directory_size]
@@ -238,11 +249,22 @@ sectioned_container_decode :: proc(
             return {}, sectioned_error(.Overflow, entry_offset + 16, "section range overflows host size"), false
         }
         offset, size := int(entry.offset), int(entry.size)
-        if size > Sectioned_Container_Max_Section_Bytes || offset < directory_offset + directory_size || offset > len(data) || size > len(data) - offset {
-            return {}, sectioned_error(.Invalid_Directory, entry_offset + 16, "section range lies outside the container"), false
+        if size > Sectioned_Container_Max_Section_Bytes ||
+           offset < directory_offset + directory_size ||
+           offset > len(data) ||
+           size > len(data) - offset {
+            return {},
+                sectioned_error(.Invalid_Directory, entry_offset + 16, "section range lies outside the container"),
+                false
         }
         if offset != expected_payload_offset {
-            return {}, sectioned_error(.Invalid_Directory, entry_offset + 16, "section records are not contiguous in directory order"), false
+            return {},
+                sectioned_error(
+                    .Invalid_Directory,
+                    entry_offset + 16,
+                    "section records are not contiguous in directory order",
+                ),
+                false
         }
         if hash.fnv64a(data[offset:offset + size]) != entry.checksum {
             return {}, sectioned_error(.Checksum_Mismatch, entry_offset + 32, "section checksum does not match"), false
@@ -251,15 +273,19 @@ sectioned_container_decode :: proc(
         expected_payload_offset = offset + size
     }
     if expected_payload_offset != len(data) {
-        return {}, sectioned_error(.Trailing_Bytes, expected_payload_offset, "sectioned container has trailing bytes"), false
+        return {},
+            sectioned_error(.Trailing_Bytes, expected_payload_offset, "sectioned container has trailing bytes"),
+            false
     }
     return {
-        artifact_kind = artifact_kind,
-        schema_version = fixture_container_get_u32(data, 12),
-        generator_version = fixture_container_get_u64(data, 16),
-        entries = entries[:section_count],
-        data = data,
-    }, {}, true
+            artifact_kind = artifact_kind,
+            schema_version = fixture_container_get_u32(data, 12),
+            generator_version = fixture_container_get_u64(data, 16),
+            entries = entries[:section_count],
+            data = data,
+        },
+        {},
+        true
 }
 
 sectioned_container_section :: proc(view: ^Sectioned_Container_View, key: Section_Key) -> ([]byte, bool) {

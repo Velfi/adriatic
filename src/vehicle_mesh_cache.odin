@@ -14,14 +14,14 @@ POSTALE_MESH_CACHE_VERSION :: u32(3)
 CAR_MESH_CACHE_VERSION :: u32(1)
 
 Vehicle_Mesh_Cache_Header :: struct {
-    magic:          [8]u8,
-    version:        u32,
-    vertex_stride:  u32,
-    triangle_stride:u32,
-    vertex_count:   u32,
-    triangle_count: u32,
-    payload_size:   u64,
-    checksum:       u64,
+    magic:           [8]u8,
+    version:         u32,
+    vertex_stride:   u32,
+    triangle_stride: u32,
+    vertex_count:    u32,
+    triangle_count:  u32,
+    payload_size:    u64,
+    checksum:        u64,
 }
 
 vehicle_mesh_cache_path :: proc(allocator := context.allocator) -> (string, bool) {
@@ -51,7 +51,10 @@ vehicle_mesh_cache_directory :: proc(allocator := context.allocator) -> (string,
 vehicle_mesh_cache_payload :: proc(mesh: ^vehicles.Libellula_Mesh) -> (vertices, triangles: []u8) {
     if mesh == nil || mesh.vertex_count <= 0 || mesh.triangle_count <= 0 do return
     vertices = mem.slice_ptr(cast([^]u8)raw_data(mesh.vertices), mesh.vertex_count * size_of(vehicles.Mesh_Vertex))
-    triangles = mem.slice_ptr(cast([^]u8)raw_data(mesh.triangles), mesh.triangle_count * size_of(vehicles.Mesh_Triangle))
+    triangles = mem.slice_ptr(
+        cast([^]u8)raw_data(mesh.triangles),
+        mesh.triangle_count * size_of(vehicles.Mesh_Triangle),
+    )
     return
 }
 
@@ -71,8 +74,10 @@ vehicle_mesh_cache_load :: proc(mesh: ^vehicles.Libellula_Mesh, path: string) ->
        header.version != VEHICLE_MESH_CACHE_VERSION ||
        header.vertex_stride != u32(size_of(vehicles.Mesh_Vertex)) ||
        header.triangle_stride != u32(size_of(vehicles.Mesh_Triangle)) ||
-       header.vertex_count == 0 || int(header.vertex_count) > len(mesh.vertices) ||
-       header.triangle_count == 0 || int(header.triangle_count) > len(mesh.triangles) {
+       header.vertex_count == 0 ||
+       int(header.vertex_count) > len(mesh.vertices) ||
+       header.triangle_count == 0 ||
+       int(header.triangle_count) > len(mesh.triangles) {
         return false
     }
     vertex_size := int(header.vertex_count) * size_of(vehicles.Mesh_Vertex)
@@ -87,7 +92,10 @@ vehicle_mesh_cache_load :: proc(mesh: ^vehicles.Libellula_Mesh, path: string) ->
     if hash.fnv64a(payload) != header.checksum do return false
 
     cached_vertices := mem.slice_ptr(cast([^]vehicles.Mesh_Vertex)raw_data(vertex_bytes), int(header.vertex_count))
-    cached_triangles := mem.slice_ptr(cast([^]vehicles.Mesh_Triangle)raw_data(triangle_bytes), int(header.triangle_count))
+    cached_triangles := mem.slice_ptr(
+        cast([^]vehicles.Mesh_Triangle)raw_data(triangle_bytes),
+        int(header.triangle_count),
+    )
     for vertex in cached_vertices {
         for component in vertex.position {
             if math.is_nan(component) || math.is_inf(component, 0) do return false
@@ -125,7 +133,7 @@ vehicle_mesh_cache_store :: proc(mesh: ^vehicles.Libellula_Mesh, path: string) -
     if !directory_ok do return false
     directory_error := os.make_directory_all(directory)
     if directory_error != nil && directory_error != .Exist do return false
-    header := Vehicle_Mesh_Cache_Header{
+    header := Vehicle_Mesh_Cache_Header {
         magic           = VEHICLE_MESH_CACHE_MAGIC,
         version         = VEHICLE_MESH_CACHE_VERSION,
         vertex_stride   = u32(size_of(vehicles.Mesh_Vertex)),
@@ -144,8 +152,13 @@ vehicle_mesh_cache_store :: proc(mesh: ^vehicles.Libellula_Mesh, path: string) -
     vertices_written, vertices_error := os.write(file, vertices)
     triangles_written, triangles_error := os.write(file, triangles)
     close_error := os.close(file)
-    if header_error != nil || vertices_error != nil || triangles_error != nil || close_error != nil ||
-       header_written != len(header_bytes) || vertices_written != len(vertices) || triangles_written != len(triangles) {
+    if header_error != nil ||
+       vertices_error != nil ||
+       triangles_error != nil ||
+       close_error != nil ||
+       header_written != len(header_bytes) ||
+       vertices_written != len(vertices) ||
+       triangles_written != len(triangles) {
         _ = os.remove(temporary)
         return false
     }
@@ -163,8 +176,10 @@ aircraft_mesh_cache_load :: proc(mesh: ^vehicles.Aircraft_Mesh, path: string, ve
        header.version != version ||
        header.vertex_stride != u32(size_of(vehicles.Mesh_Vertex)) ||
        header.triangle_stride != u32(size_of(vehicles.Mesh_Triangle)) ||
-       header.vertex_count == 0 || int(header.vertex_count) > len(mesh.vertices) ||
-       header.triangle_count == 0 || int(header.triangle_count) > len(mesh.triangles) {
+       header.vertex_count == 0 ||
+       int(header.vertex_count) > len(mesh.vertices) ||
+       header.triangle_count == 0 ||
+       int(header.triangle_count) > len(mesh.triangles) {
         return false
     }
     vertex_size := int(header.vertex_count) * size_of(vehicles.Mesh_Vertex)
@@ -175,7 +190,10 @@ aircraft_mesh_cache_load :: proc(mesh: ^vehicles.Aircraft_Mesh, path: string, ve
     }
     payload := data[size_of(Vehicle_Mesh_Cache_Header):]
     if hash.fnv64a(payload) != header.checksum do return false
-    cached_vertices := mem.slice_ptr(cast([^]vehicles.Mesh_Vertex)raw_data(payload[:vertex_size]), int(header.vertex_count))
+    cached_vertices := mem.slice_ptr(
+        cast([^]vehicles.Mesh_Vertex)raw_data(payload[:vertex_size]),
+        int(header.vertex_count),
+    )
     cached_triangles := mem.slice_ptr(
         cast([^]vehicles.Mesh_Triangle)raw_data(payload[vertex_size:]),
         int(header.triangle_count),
@@ -211,19 +229,13 @@ aircraft_mesh_cache_load :: proc(mesh: ^vehicles.Aircraft_Mesh, path: string, ve
 
 aircraft_mesh_cache_store :: proc(mesh: ^vehicles.Aircraft_Mesh, path: string, version: u32) -> bool {
     if mesh == nil || path == "" || mesh.vertex_count <= 0 || mesh.triangle_count <= 0 do return false
-    vertices := mem.slice_ptr(
-        cast([^]u8)&mesh.vertices[0],
-        mesh.vertex_count * size_of(vehicles.Mesh_Vertex),
-    )
-    triangles := mem.slice_ptr(
-        cast([^]u8)&mesh.triangles[0],
-        mesh.triangle_count * size_of(vehicles.Mesh_Triangle),
-    )
+    vertices := mem.slice_ptr(cast([^]u8)&mesh.vertices[0], mesh.vertex_count * size_of(vehicles.Mesh_Vertex))
+    triangles := mem.slice_ptr(cast([^]u8)&mesh.triangles[0], mesh.triangle_count * size_of(vehicles.Mesh_Triangle))
     directory, directory_ok := vehicle_mesh_cache_directory(context.temp_allocator)
     if !directory_ok do return false
     directory_error := os.make_directory_all(directory)
     if directory_error != nil && directory_error != .Exist do return false
-    header := Vehicle_Mesh_Cache_Header{
+    header := Vehicle_Mesh_Cache_Header {
         magic           = VEHICLE_MESH_CACHE_MAGIC,
         version         = version,
         vertex_stride   = u32(size_of(vehicles.Mesh_Vertex)),
@@ -242,8 +254,13 @@ aircraft_mesh_cache_store :: proc(mesh: ^vehicles.Aircraft_Mesh, path: string, v
     vertices_written, vertices_error := os.write(file, vertices)
     triangles_written, triangles_error := os.write(file, triangles)
     close_error := os.close(file)
-    if header_error != nil || vertices_error != nil || triangles_error != nil || close_error != nil ||
-       header_written != len(header_bytes) || vertices_written != len(vertices) || triangles_written != len(triangles) {
+    if header_error != nil ||
+       vertices_error != nil ||
+       triangles_error != nil ||
+       close_error != nil ||
+       header_written != len(header_bytes) ||
+       vertices_written != len(vertices) ||
+       triangles_written != len(triangles) {
         _ = os.remove(temporary)
         return false
     }

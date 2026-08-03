@@ -167,11 +167,9 @@ apparent_airflow_speed :: proc(
 ) -> f32 {
     relative_x := wind_x - listener_velocity_x
     relative_z := wind_z - listener_velocity_z
-    return f32(math.sqrt(f64(
-        relative_x * relative_x +
-        listener_velocity_y * listener_velocity_y +
-        relative_z * relative_z,
-    )))
+    return f32(
+        math.sqrt(f64(relative_x * relative_x + listener_velocity_y * listener_velocity_y + relative_z * relative_z)),
+    )
 }
 
 next_noise :: proc "contextless" (synth: ^Synth) -> f32 {

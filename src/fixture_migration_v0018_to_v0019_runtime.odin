@@ -45,7 +45,11 @@ fixture_migration_step_v0018_to_v0019 :: proc(
             return {kind = error_kind}
         }
         hs.portable_error_dispose(&portable_error)
-        return fixture_migrate_v0018_to_v0019(historical_ptr^, step_context.tentative, step_context.transaction_allocator)
+        return fixture_migrate_v0018_to_v0019(
+            historical_ptr^,
+            step_context.tentative,
+            step_context.transaction_allocator,
+        )
     }
     return fixture_v0019_apply_map_source("", step_context.tentative, step_context.transaction_allocator)
 }

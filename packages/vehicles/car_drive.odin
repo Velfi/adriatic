@@ -9,9 +9,9 @@ Car_Handling_Model :: enum {
 }
 
 Car_Racer_Assist :: struct {
-    steering:               f32,
-    drift_amount:           f32,
-    rear_grip_scale:        f32,
+    steering:                f32,
+    drift_amount:            f32,
+    rear_grip_scale:         f32,
     target_lateral_velocity: f32,
 }
 
@@ -89,32 +89,32 @@ CAR_DRIVE_DEFAULT_SURFACE :: Car_Drive_Surface {
 }
 
 CAR_DRIVE_SEDAN_TUNE :: Car_Drive_Tune {
-    acceleration         = 6.8,
-    brake                = 14,
+    acceleration = 6.8,
+    brake = 14,
     reverse_acceleration = 5.2,
-    max_forward          = 24,
-    max_reverse          = 8.5,
-    steering_response    = 10,
-    yaw_response         = 8.5,
-    turn_curvature       = .18,
-    max_yaw_rate         = 1.2,
-    high_speed_steering  = .55,
-    reverse_steering     = .78,
-    lateral_grip         = 8.4,
-    handbrake_grip       = .95,
-    coast_deceleration   = 1.25,
+    max_forward = 24,
+    max_reverse = 8.5,
+    steering_response = 10,
+    yaw_response = 8.5,
+    turn_curvature = .18,
+    max_yaw_rate = 1.2,
+    high_speed_steering = .55,
+    reverse_steering = .78,
+    lateral_grip = 8.4,
+    handbrake_grip = .95,
+    coast_deceleration = 1.25,
     racer = {
-        steering_authority_low  = 1.08,
+        steering_authority_low = 1.08,
         steering_authority_high = 1.32,
-        drift_min_speed         = 5,
-        drift_full_speed        = 14,
-        drift_steering_start    = .18,
-        drift_steering_full     = .70,
-        drift_rear_grip         = .28,
-        drift_slip_ratio        = .18,
-        drift_engage_response   = 8,
-        drift_release_response  = 2.4,
-        drift_lateral_response  = 7,
+        drift_min_speed = 5,
+        drift_full_speed = 14,
+        drift_steering_start = .18,
+        drift_steering_full = .70,
+        drift_rear_grip = .28,
+        drift_slip_ratio = .18,
+        drift_engage_response = 8,
+        drift_release_response = 2.4,
+        drift_lateral_response = 7,
     },
 }
 
@@ -177,8 +177,7 @@ car_racer_arcade_assist :: proc(
     speed_ratio := clamp(speed / max(tune.max_forward, f32(.01)), 0, 1)
     shaped_steering := car_drive_speed_sensitive_steering(steering, longitudinal_speed, tune)
     steering_authority :=
-        racer.steering_authority_low +
-        (racer.steering_authority_high - racer.steering_authority_low) * speed_ratio
+        racer.steering_authority_low + (racer.steering_authority_high - racer.steering_authority_low) * speed_ratio
 
     steering_range := max(racer.drift_steering_full - racer.drift_steering_start, f32(.01))
     committed_steering := clamp((math.abs(steering) - racer.drift_steering_start) / steering_range, 0, 1)
@@ -200,17 +199,16 @@ car_racer_arcade_assist :: proc(
     }
     response := drift_target > runtime.drift_amount ? racer.drift_engage_response : racer.drift_release_response
     if countersteering do response *= 2.5
-    runtime.drift_amount +=
-        (drift_target - runtime.drift_amount) * clamp(max(response, f32(0)) * dt, 0, 1)
+    runtime.drift_amount += (drift_target - runtime.drift_amount) * clamp(max(response, f32(0)) * dt, 0, 1)
     runtime.drift_amount = clamp(runtime.drift_amount, 0, 1)
     drift := runtime.drift_amount
 
     slip_direction := math.sign(steering)
     if slip_direction == 0 && math.abs(lateral_speed) > .01 do slip_direction = math.sign(lateral_speed)
     return {
-        steering                = clamp(shaped_steering * steering_authority, -1, 1),
-        drift_amount            = drift,
-        rear_grip_scale         = 1 + (clamp(racer.drift_rear_grip, 0, 1) - 1) * drift,
+        steering = clamp(shaped_steering * steering_authority, -1, 1),
+        drift_amount = drift,
+        rear_grip_scale = 1 + (clamp(racer.drift_rear_grip, 0, 1) - 1) * drift,
         target_lateral_velocity = slip_direction * speed * racer.drift_slip_ratio * drift,
     }
 }

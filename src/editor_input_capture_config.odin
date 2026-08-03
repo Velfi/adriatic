@@ -78,13 +78,20 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                         edge.control_from.x += dx
                         edge.control_from.z += dz
                         edge.control_from.y =
-                            terrain.sample_surface_height(&editor.project, 0, edge.control_from.x, edge.control_from.z) + .08
+                            terrain.sample_surface_height(
+                                &editor.project,
+                                0,
+                                edge.control_from.x,
+                                edge.control_from.z,
+                            ) +
+                            .08
                     }
                     if edge.to == editor.road_drag_node {
                         edge.control_to.x += dx
                         edge.control_to.z += dz
                         edge.control_to.y =
-                            terrain.sample_surface_height(&editor.project, 0, edge.control_to.x, edge.control_to.z) + .08
+                            terrain.sample_surface_height(&editor.project, 0, edge.control_to.x, edge.control_to.z) +
+                            .08
                     }
                 }
                 editor.project.revision += 1
@@ -215,6 +222,10 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
 
 editor_cancel_interaction :: proc(editor: ^Editor) {
     if editor == nil do return
+    if editor.terrain_sculpt.session.active {
+        terrain_sculpt_cancel(editor)
+        return
+    }
     if editor.road_mode && editor.road_selected_node >= 0 && editor.road_construction_phase != .Idle {
         editor.road_construction_phase = .Idle
         editor.road_preview_control_from = {}
@@ -473,7 +484,12 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     editor.car.position = {center + half_extent * terrain.DEFAULT_ISLAND_RADIUS, 0, center}
-    editor.car.position.y = terrain.sample_surface_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+    editor.car.position.y = terrain.sample_surface_height(
+        &editor.project,
+        0,
+        editor.car.position.x,
+        editor.car.position.z,
+    )
     editor.car.yaw_radians = math.PI * .5
     car_physics_teleport(editor)
     editor.pilot.position = editor.car.position
@@ -565,7 +581,11 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     attendant := airport_service_position(editor.attendant_position)
     player_place(
         editor,
-        {attendant.x + 20, terrain.sample_surface_height(&editor.project, 0, attendant.x + 20, attendant.z), attendant.z},
+        {
+            attendant.x + 20,
+            terrain.sample_surface_height(&editor.project, 0, attendant.x + 20, attendant.z),
+            attendant.z,
+        },
         .Scene_Setup,
     )
     editor.in_map = true

@@ -148,7 +148,10 @@ gameplay_options_default :: proc() -> Gameplay_Options {
 }
 
 anti_aliasing_samples :: proc(value: Anti_Aliasing) -> u32 {
-    switch value { case .MSAA_2X: return 2; case .MSAA_4X: return 4; case .Off: return 1 }
+    switch value {case .MSAA_2X:
+        return 2; case .MSAA_4X:
+        return 4; case .Off:
+        return 1}
     return 1
 }
 
@@ -626,7 +629,8 @@ scrapbook_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
     if count == 0 do return
     mouse := canvas2d.GetMousePosition()
     mouse_delta := canvas2d.GetMouseDelta()
-    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse_active :=
+        canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     if mouse_active && !scrapbook_viewing {
         panel := canvas2d.Rectangle{32, 26, f32(width) - 64, f32(height) - 52}
         page_start := (scrapbook_focus / SCRAPBOOK_PAGE_SIZE) * SCRAPBOOK_PAGE_SIZE
@@ -1226,7 +1230,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
     }
     if pressed && canvas2d.CheckCollisionPointRec(mouse, options_menu_back_bounds(panel)) {
         editor.options_focus = OPTIONS_BACK_FOCUS
-            menu_scene_set(editor, editor.main_menu_active ? .Closed : .Pause)
+        menu_scene_set(editor, editor.main_menu_active ? .Closed : .Pause)
         editor.options_scroll_dragging = false
     }
 }
@@ -1463,9 +1467,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
             return
         }
     } else if menu_scene_current(editor) == .World_Map ||
-              menu_scene_current(editor) == .Journal ||
-              menu_scene_current(editor) == .Mail ||
-              menu_scene_current(editor) == .Scrapbook {
+       menu_scene_current(editor) == .Journal ||
+       menu_scene_current(editor) == .Mail ||
+       menu_scene_current(editor) == .Scrapbook {
         if gamepad_pressed(.Back) {
             pause_menu_resume(editor)
             return
@@ -1475,8 +1479,9 @@ pause_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_seco
             return
         }
     } else if (menu_scene_current(editor) == .Pause ||
-               menu_scene_current(editor) == .Options ||
-               menu_scene_current(editor) == .Customization) && gamepad_pressed(.Back) {
+           menu_scene_current(editor) == .Options ||
+           menu_scene_current(editor) == .Customization) &&
+       gamepad_pressed(.Back) {
         game_menu_open(editor)
         return
     } else if menu_scene_current(editor) == .Photo && gamepad_pressed(.Back) {
@@ -2087,12 +2092,7 @@ scrapbook_draw :: proc(editor: ^Editor, width, height: i32) {
             ui_theme_surface_elevated(),
         )
         scrapbook_draw_photo({preview.x, preview.y, preview.width, preview.height + 36}, photo)
-        label := fmt.ctprintf(
-            "%02d  /  %02d     PHOTO %02d",
-            scrapbook_focus + 1,
-            count,
-            photo + 1,
-        )
+        label := fmt.ctprintf("%02d  /  %02d     PHOTO %02d", scrapbook_focus + 1, count, photo + 1)
         ui_draw_text(.Label, label, {preview.x + 8, preview.y + preview.height + 19}, .38, ui_theme_text())
         if scrapbook_favorites[photo] do ui_draw_text(.Data, "FAVORITE", {preview.x + preview.width - 76, preview.y + 12}, .2, {255, 247, 228, 255})
     } else {
@@ -2287,7 +2287,13 @@ world_map_draw_weather_key :: proc(map_bounds: canvas2d.Rectangle) {
         x := key.x + 10 + f32(dash) * 9
         canvas2d.DrawLineEx({x, key.y + 47}, {x + 5, key.y + 47}, 1.7, canvas2d.Color{159, 205, 215, 135})
     }
-    ui_draw_text(.Data, "HISTORY: 1 / 2 MINUTES AGO", {key.x + 43, key.y + 42}, .105, canvas2d.Color{204, 224, 228, 220})
+    ui_draw_text(
+        .Data,
+        "HISTORY: 1 / 2 MINUTES AGO",
+        {key.x + 43, key.y + 42},
+        .105,
+        canvas2d.Color{204, 224, 228, 220},
+    )
     canvas2d.DrawLineEx({key.x + 10, key.y + 65}, {key.x + 35, key.y + 65}, 2.5, canvas2d.Color{242, 231, 190, 235})
     canvas2d.DrawLineEx({key.x + 35, key.y + 65}, {key.x + 29, key.y + 61}, 2.5, canvas2d.Color{242, 231, 190, 235})
     canvas2d.DrawLineEx({key.x + 35, key.y + 65}, {key.x + 29, key.y + 69}, 2.5, canvas2d.Color{242, 231, 190, 235})

@@ -1030,7 +1030,14 @@ cemetery_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         1,
         {171, 201, 207, 255},
     )
-    canvas2d.DrawTextEx(canvas2d.Font{}, "LEFT / RIGHT density     UP / DOWN grounds size", {38, 148}, 13, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "LEFT / RIGHT density     UP / DOWN grounds size",
+        {38, 148},
+        13,
+        1,
+        {171, 201, 207, 255},
+    )
     _ = width
     _ = height
 }

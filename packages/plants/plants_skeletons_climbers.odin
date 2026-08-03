@@ -336,7 +336,14 @@ star_jasmine_skeleton :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
         lateral_target := cane_count <= 1 ? f32(0) : -1 + f32(cane_index) * 2 / f32(cane_count - 1)
         position: lsystem.Vec3
         cane_points[cane_index][0] = position
-        height_variation := 1 + olive_random_signed(&random) * .085
+        // Searching canes do not form an evenly clipped fan. Seed each leader
+        // with its own reach, height, and directional bias so neighboring
+        // plants choose visibly different routes around the same support.
+        // Keeping these values constant for the full cane preserves connected
+        // joints while allowing some leaders to finish below upper openings.
+        height_variation := 1 + olive_random_signed(&random) * .20
+        lateral_reach := .72 + f32(lsystem.random_next(&random) % 10_000) / 10_000 * .48
+        lateral_bias := olive_random_signed(&random) * .16
         radius := .010 * (.30 + maturity * .70)
         for level_index in 0 ..< level_count {
             progress := f32(level_index + 1) / f32(level_count)
@@ -346,8 +353,9 @@ star_jasmine_skeleton :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
             // Linear lateral growth gave every cane the same perfect V edge.
             lateral_progress := f32(math.pow(f64(progress), .72))
             cane_bias := olive_random_signed(&random) * .035 * progress
+            seeded_target := clamp(lateral_target * lateral_reach + lateral_bias * progress, f32(-1.18), f32(1.18))
             next := lsystem.Vec3 {
-                (lateral_target * lateral_progress + meander + cane_bias) * growth,
+                (seeded_target * lateral_progress + meander + cane_bias) * growth,
                 progress * growth * height_variation,
                 f32(math.sin(f64(progress * math.PI * 2 + lateral_target * 1.7))) * .12 * growth,
             }
@@ -387,6 +395,89 @@ star_jasmine_skeleton :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
                         forward = direction,
                         up = {0, 0, 1},
                         depth = level_index + 1,
+                    },
+                )
+            }
+        }
+    }
+    return result
+}
+
+bougainvillea_skeleton :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> lsystem.Interpret_Result {
+    // Bougainvillea establishes several long searching canes across masonry,
+    // then clothes those connected routes with short flowering laterals. The
+    // generic recursive grammar begins from a narrow freestanding silhouette;
+    // projecting that silhouette onto a wall saturates neighboring branches
+    // into a few vertical clumps instead of occupying the support broadly.
+    result := star_jasmine_skeleton(seed ~ 0x626f756761696e76, maturity, detail)
+    cane_count := detail == .Near ? 9 : detail == .Medium ? 7 : 5
+    level_count := 5
+    center_cane := cane_count / 2
+    center_start := center_cane * level_count
+    center_end := center_start + level_count
+    structural_segment_count := len(result.plant.segments)
+    structural_height := f32(0)
+    for &segment, segment_index in result.plant.segments[:structural_segment_count] {
+        // The frontage renderer samples depth zero as one continuous main
+        // leader. Star jasmine assigns depth by vertical level, which makes
+        // depth zero contain the basal segment of every cane. Sampling those
+        // segments in storage order sweeps sideways through the entire fan.
+        // Reserve depth zero for the center cane from root to tip instead.
+        segment.depth = segment_index >= center_start && segment_index < center_end ? 0 : segment.depth + 1
+        segment.radius_start *= 1.72
+        segment.radius_end *= 1.72
+        structural_height = max(structural_height, max(segment.start[1], segment.end[1]))
+    }
+
+    // Established bougainvillea does not leave its searching canes bare. A
+    // dense succession of short, leafy flowering laterals breaks from nearly
+    // every cane interval and overlaps into an irregular shrub-like mantle.
+    // Author those shoots in the skeleton so every renderer and LOD inherits
+    // the same habit instead of hiding sparse topology behind larger cards.
+    lateral_random := seed ~ 0x62757368792d7669
+    if lateral_random == 0 do lateral_random = 1
+    lateral_count := detail == .Near ? 2 : 1
+    if maturity < .34 do lateral_count = 0
+    cane_segment_count := cane_count * level_count
+    for segment_index in 0 ..< cane_segment_count {
+        source := result.plant.segments[segment_index]
+        level_index := segment_index % level_count
+        if level_index == 0 && maturity < .72 do continue
+        source_direction := linalg.normalize0(source.end - source.start)
+        node := source.end
+        cane_index := segment_index / level_count
+        radial_sign := cane_index < center_cane ? f32(-1) : f32(1)
+        if cane_index == center_cane {
+            radial_sign = level_index % 2 == 0 ? f32(-1) : f32(1)
+        }
+        for lateral_index in 0 ..< lateral_count {
+            side := lateral_index == 0 ? radial_sign : -radial_sign
+            reach := (.13 + f32(level_index) * .012) * (.72 + maturity * .28)
+            reach *= 1 + olive_random_signed(&lateral_random) * .16
+            lift := .045 + f32((level_index + lateral_index) % 3) * .018
+            depth_offset := olive_random_signed(&lateral_random) * .070
+            lateral_direction := linalg.normalize0(
+                lsystem.Vec3{side, .28 + olive_random_signed(&lateral_random) * .10, depth_offset} +
+                    source_direction * .18,
+            )
+            tip := node + lateral_direction * reach + lsystem.Vec3{0, lift, 0}
+            tip[1] = min(tip[1], structural_height)
+            lateral_depth := 8 + level_index
+            lateral_radius := max(source.radius_end * .42, f32(.0018))
+            append(
+                &result.plant.segments,
+                lsystem.Segment{node, tip, lateral_radius, lateral_radius * .46, lateral_depth},
+            )
+            lateral_leaf_count := detail == .Near ? 5 : detail == .Medium ? 4 : 3
+            for leaf_index in 0 ..< lateral_leaf_count {
+                fraction := (f32(leaf_index) + .55) / f32(lateral_leaf_count)
+                append(
+                    &result.plant.leaves,
+                    lsystem.Leaf {
+                        position = linalg.lerp(node, tip, fraction),
+                        forward = lateral_direction,
+                        up = {0, 0, 1},
+                        depth = lateral_depth,
                     },
                 )
             }

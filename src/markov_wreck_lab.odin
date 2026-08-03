@@ -790,7 +790,11 @@ markov_wreck_attached_box :: proc(center, size: third_person.Vec3, color: canvas
     )
 }
 
-markov_wreck_attached_box_between :: proc(a, b, up_hint: third_person.Vec3, width, height: f32, color: canvas2d.Color) {
+markov_wreck_attached_box_between :: proc(
+    a, b, up_hint: third_person.Vec3,
+    width, height: f32,
+    color: canvas2d.Color,
+) {
     world_box_between(
         markov_wreck_attached_point(a),
         markov_wreck_attached_point(b),
@@ -1372,7 +1376,12 @@ world_markov_wreck :: proc(editor: ^Editor) {
             p10 := markov_wreck_ring_point(x_index + 1, a0)
             seed := markov_wreck_seed ~ u32(x_index * 0x9e37) ~ u32(segment)
             exterior := markov_wreck_panel_color(seed, fractured)
-            interior := canvas2d.Color{u8(f32(exterior.r) * .52), u8(f32(exterior.g) * .55), u8(f32(exterior.b) * .56), 255}
+            interior := canvas2d.Color {
+                u8(f32(exterior.r) * .52),
+                u8(f32(exterior.g) * .55),
+                u8(f32(exterior.b) * .56),
+                255,
+            }
             world_quad(p00, p10, p11, p01, exterior)
             q00 := markov_wreck_ring_point(x_index, a0, 1.4)
             q01 := markov_wreck_ring_point(x_index, a1, 1.4)
@@ -1663,20 +1672,21 @@ world_authored_wrecks :: proc(editor: ^Editor, include_authored := true) {
     if editor == nil do return
     markov_wreck_authored_render = true
     if include_authored {
-    for &wreck in editor.wrecks[:editor.wreck_count] {
-        scale := wreck.scale > 0 ? wreck.scale : f32(1)
-        radius := f32(MARKOV_WRECK_LENGTH) * MARKOV_WRECK_CELL * scale * .55
-        if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(
-            editor,
-            {wreck.origin_x, editor.project.sea_level + MARKOV_WRECK_HULL_CENTER_Y * scale, wreck.origin_z},
-            radius,
-            8,
-        ) {
-            continue
+        for &wreck in editor.wrecks[:editor.wreck_count] {
+            scale := wreck.scale > 0 ? wreck.scale : f32(1)
+            radius := f32(MARKOV_WRECK_LENGTH) * MARKOV_WRECK_CELL * scale * .55
+            if !world_renderer.retained_patio_rebuilding &&
+               !world_sphere_in_view(
+                       editor,
+                       {wreck.origin_x, editor.project.sea_level + MARKOV_WRECK_HULL_CENTER_Y * scale, wreck.origin_z},
+                       radius,
+                       8,
+                   ) {
+                continue
+            }
+            markov_wreck_instance_load(&wreck)
+            world_markov_wreck(editor)
         }
-        markov_wreck_instance_load(&wreck)
-        world_markov_wreck(editor)
-    }
     }
     if editor.wreck_paint_mode && editor.wreck_preview_valid {
         scale := editor.wreck_preview.scale > 0 ? editor.wreck_preview.scale : f32(1)
@@ -1712,7 +1722,10 @@ markov_wreck_process_input :: proc(editor: ^Editor) {
         mouse := canvas2d.GetMousePosition()
         if canvas2d.CheckCollisionPointRec(mouse, markov_wreck_spawn_button_bounds(canvas2d.GetScreenHeight())) {
             _ = markov_wreck_spawn_postale(editor)
-        } else if canvas2d.CheckCollisionPointRec(mouse, markov_wreck_randomize_button_bounds(canvas2d.GetScreenHeight())) {
+        } else if canvas2d.CheckCollisionPointRec(
+            mouse,
+            markov_wreck_randomize_button_bounds(canvas2d.GetScreenHeight()),
+        ) {
             _ = markov_wreck_randomize(editor)
         }
     }
@@ -1723,7 +1736,8 @@ markov_wreck_draw_ui :: proc(_: ^Editor, _: i32, height: i32) {
     mouse := canvas2d.GetMousePosition()
     spawn := markov_wreck_spawn_button_bounds(height)
     randomize := markov_wreck_randomize_button_bounds(height)
-    spawn_fill := canvas2d.CheckCollisionPointRec(mouse, spawn) ? canvas2d.Color{52, 125, 131, 248} : canvas2d.Color{34, 79, 85, 244}
+    spawn_fill :=
+        canvas2d.CheckCollisionPointRec(mouse, spawn) ? canvas2d.Color{52, 125, 131, 248} : canvas2d.Color{34, 79, 85, 244}
     randomize_fill :=
         canvas2d.CheckCollisionPointRec(mouse, randomize) ? canvas2d.Color{111, 91, 52, 248} : canvas2d.Color{72, 61, 40, 244}
     canvas2d.DrawRectangleRounded(spawn, .18, 8, spawn_fill)
@@ -1731,5 +1745,12 @@ markov_wreck_draw_ui :: proc(_: ^Editor, _: i32, height: i32) {
     canvas2d.DrawTextEx(canvas2d.Font{}, "SPAWN POSTALE", {spawn.x + 22, spawn.y + 13}, 19, 1, {242, 252, 245, 255})
     canvas2d.DrawRectangleRounded(randomize, .18, 8, randomize_fill)
     canvas2d.DrawRectangleRoundedLinesEx(randomize, .18, 8, 1.5, {224, 195, 132, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "RANDOMIZE WRECK", {randomize.x + 17, randomize.y + 13}, 18, .8, {255, 243, 211, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        "RANDOMIZE WRECK",
+        {randomize.x + 17, randomize.y + 13},
+        18,
+        .8,
+        {255, 243, 211, 255},
+    )
 }

@@ -37,7 +37,9 @@ racer_arcade_handbrake_opens_drift_without_brake :: proc(t: ^testing.T) {
 
 @(test)
 racer_arcade_slip_sustains_after_brake_release :: proc(t: ^testing.T) {
-    runtime := Car_Racer_Runtime{drift_amount = .8}
+    runtime := Car_Racer_Runtime {
+        drift_amount = .8,
+    }
     assist := car_racer_arcade_assist(&runtime, .55, 18, 2.6, 0, false, 1.0 / 60)
     testing.expect(t, assist.drift_amount > .78)
     testing.expect(t, assist.rear_grip_scale < .5)
@@ -45,7 +47,9 @@ racer_arcade_slip_sustains_after_brake_release :: proc(t: ^testing.T) {
 
 @(test)
 racer_arcade_countersteer_releases_drift :: proc(t: ^testing.T) {
-    runtime := Car_Racer_Runtime{drift_amount = .8}
+    runtime := Car_Racer_Runtime {
+        drift_amount = .8,
+    }
     for _ in 0 ..< 30 {
         _ = car_racer_arcade_assist(&runtime, -.5, 18, 2.6, 0, false, 1.0 / 60)
     }

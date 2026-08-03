@@ -4,9 +4,9 @@ import "core:mem"
 import "core:reflect"
 import "core:strings"
 
-import "zelda_engine:spy"
 import "base:runtime"
 import "dates"
+import "zelda_engine:spy"
 
 marshal :: proc(ptr: ^$T, alloc := context.allocator, loc := #caller_location) -> ^Table {
     if ptr == nil do spy.panicf("Cannot marshal nil TOML source pointer", loc = loc)

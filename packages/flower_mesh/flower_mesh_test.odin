@@ -129,9 +129,7 @@ ball_clusters_support_flattened_mophead_proportions :: proc(t: ^testing.T) {
         gradient_length := math.sqrt(gradient[0] * gradient[0] + gradient[1] * gradient[1] + gradient[2] * gradient[2])
         gradient /= gradient_length
         alignment :=
-            gradient[0] * instance.normal[0] +
-            gradient[1] * instance.normal[1] +
-            gradient[2] * instance.normal[2]
+            gradient[0] * instance.normal[0] + gradient[1] * instance.normal[1] + gradient[2] * instance.normal[2]
         testing.expect(t, alignment > .999)
     }
     testing.expect(t, minimum_z < 0 && maximum_z > 0)

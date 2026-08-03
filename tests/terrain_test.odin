@@ -56,7 +56,8 @@ terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
     testing.expect(t, project.structures[index].base_y > original_level)
     testing.expect(
         t,
-        project.structures[index].base_y == terrain.sample_surface_height(project, 0, building.center_x, building.center_z),
+        project.structures[index].base_y ==
+        terrain.sample_surface_height(project, 0, building.center_x, building.center_z),
     )
 }
 
@@ -111,7 +112,8 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     )
     testing.expect(
         t,
-        terrain.sample_surface_height(soft, 0, center_x, center_z) == terrain.sample_surface_height(hard, 0, center_x, center_z),
+        terrain.sample_surface_height(soft, 0, center_x, center_z) ==
+        terrain.sample_surface_height(hard, 0, center_x, center_z),
     )
 }
 
@@ -514,7 +516,10 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
             testing.expect(t, math.abs(to.x - from.x - half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2) < .001)
             for sample_index in 0 ..= 8 {
                 sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
-                testing.expect(t, math.abs(terrain.sample_surface_height(project, 0, sample_x, from.z) - from.y) < .001)
+                testing.expect(
+                    t,
+                    math.abs(terrain.sample_surface_height(project, 0, sample_x, from.z) - from.y) < .001,
+                )
             }
         }
     }
@@ -670,7 +675,8 @@ clipmap_transition_converges_fine_edge_onto_coarse_surface :: proc(t: ^testing.T
     last := terrain.CLIPMAP_LEVELS - 1
     testing.expect(
         t,
-        terrain.sample_clipmap_transition_height(project, last, x, z, 1) == terrain.sample_surface_height(project, last, x, z),
+        terrain.sample_clipmap_transition_height(project, last, x, z, 1) ==
+        terrain.sample_surface_height(project, last, x, z),
     )
 }
 
@@ -688,7 +694,8 @@ structure_placement_snaps_and_follows_terrain :: proc(t: ^testing.T) {
     testing.expect(t, project.structures[index].center_x == terrain.snap_to_grid(13.2, cell))
     testing.expect(
         t,
-        project.structures[index].base_y == terrain.sample_surface_height(project, 0, structure.center_x, structure.center_z),
+        project.structures[index].base_y ==
+        terrain.sample_surface_height(project, 0, structure.center_x, structure.center_z),
     )
 }
 

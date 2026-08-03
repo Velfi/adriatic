@@ -47,7 +47,12 @@ quest_log_layout :: proc(width, height: i32) -> Quest_Log_Layout {
         panel.x + panel.width - 24 - (list.x + list.width + gap),
         content_height,
     }
-    track_button := canvas2d.Rectangle{detail.x + 24, detail.y + detail.height - 58, max(detail.width - 48, f32(80)), 40}
+    track_button := canvas2d.Rectangle {
+        detail.x + 24,
+        detail.y + detail.height - 58,
+        max(detail.width - 48, f32(80)),
+        40,
+    }
     return {
         panel = panel,
         header = {panel.x, panel.y, panel.width, header_height},
@@ -219,7 +224,8 @@ quest_log_process_input :: proc(editor: ^Editor, width, height: i32, delta_secon
 
     mouse := canvas2d.GetMousePosition()
     mouse_delta := canvas2d.GetMouseDelta()
-    mouse_active := canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
+    mouse_active :=
+        canvas2d.IsMouseButtonPressed(.LEFT) || math.abs(mouse_delta.x) > .01 || math.abs(mouse_delta.y) > .01
     if canvas2d.IsMouseButtonPressed(.LEFT) {
         for tab in Quest_Log_Tab {
             if canvas2d.CheckCollisionPointRec(mouse, quest_log_tab_bounds(layout, tab)) {

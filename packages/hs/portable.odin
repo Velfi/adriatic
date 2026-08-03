@@ -1933,7 +1933,12 @@ portable_decode_value :: proc(
                     path_ok: bool
                     checkpoint, field_path, path_ok = portable_path_field_push(&ctx.path, field.name)
                     if !path_ok {
-                        portable_decoder_fail(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
+                        portable_decoder_fail(
+                            ctx,
+                            .Limit_Exceeded,
+                            string(ctx.path[:]),
+                            "field path allocation failed",
+                        )
                         return
                     }
                 }

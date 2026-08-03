@@ -91,8 +91,11 @@ mouse_paw_support_anchor_follows_body_translation_and_rotation :: proc(t: ^testi
     half_turn_sine := math.sin(f32(math.PI * .25))
     half_turn_cosine := math.cos(f32(math.PI * .25))
     sample := mouse_paws.Paw_Surface_Sample {
-        position = {3, 2, 4}, body = 7, body_position = {2, 2, 4},
-        body_rotation = {0, 0, 0, 1}, valid = true,
+        position      = {3, 2, 4},
+        body          = 7,
+        body_position = {2, 2, 4},
+        body_rotation = {0, 0, 0, 1},
+        valid         = true,
     }
     mouse_paws.store_support_local(&contact, sample)
     moved := mouse_paws.support_world_position(contact, {5, 2, 6}, {0, half_turn_sine, 0, half_turn_cosine})
@@ -128,8 +131,16 @@ mouse_paw_toes_resolve_independently_and_bound_ledge_drape :: proc(t: ^testing.T
 @(test)
 mouse_paw_resolved_render_reads_are_immutable :: proc(t: ^testing.T) {
     rig: mouse_paws.Rig
-    rig.authored[0] = {socket = {1, 2, 3}, desired = {4, 5, 6}, valid = true}
-    rig.resolved[0] = {pad_position = {7, 8, 9}, pad_normal = {0, 1, 0}, valid = true}
+    rig.authored[0] = {
+        socket  = {1, 2, 3},
+        desired = {4, 5, 6},
+        valid   = true,
+    }
+    rig.resolved[0] = {
+        pad_position = {7, 8, 9},
+        pad_normal   = {0, 1, 0},
+        valid        = true,
+    }
     before := rig
     for _ in 0 ..< 32 {
         _ = mouse_paws.authored_pose(&rig, 0)
@@ -141,8 +152,10 @@ mouse_paw_resolved_render_reads_are_immutable :: proc(t: ^testing.T) {
 @(test)
 mouse_paw_moving_support_keeps_contact_beyond_the_old_ray :: proc(t: ^testing.T) {
     contact := mouse_paws.Contact {
-        anchor = {}, local_anchor = {}, support_body = 9,
-        phase = .Stance,
+        anchor       = {},
+        local_anchor = {},
+        support_body = 9,
+        phase        = .Stance,
     }
     moved_anchor := mouse_paws.support_world_position(contact, {2, .5, 0}, {0, 0, 0, 1})
     contact.anchor = moved_anchor

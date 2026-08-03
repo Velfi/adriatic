@@ -114,11 +114,19 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
         target_clearance := blowout_view ? f32(.45) : f32(1.05)
         inspection_pose := third_person.camera_look_at(
             {eye_x, eye_ground + eye_clearance, eye_z},
-            {target_x, terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + target_clearance, target_z},
+            {
+                target_x,
+                terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + target_clearance,
+                target_z,
+            },
         )
         // Keep the mouse behind the inspection camera while vegetation
         // streaming follows the visible field around its target.
-        editor.player.position = {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z + 18), eye_z + 18}
+        editor.player.position = {
+            eye_x,
+            terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z + 18),
+            eye_z + 18,
+        }
         editor.player.grounded = true
         editor.pilot.position = editor.player.position
         editor.postale_visible = false
@@ -139,7 +147,11 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
             {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z) + 8.5, eye_z},
             {target_x, terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + 2.6, target_z},
         )
-        player_place(editor, {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z), eye_z}, .Scene_Setup)
+        player_place(
+            editor,
+            {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z), eye_z},
+            .Scene_Setup,
+        )
         editor.postale_visible = false
         editor.libellula_visible = true
         editor.rondine_visible = false

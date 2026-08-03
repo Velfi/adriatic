@@ -3,11 +3,11 @@ package terrain
 import "core:math"
 
 Terrain_Operator_Area :: struct {
-    owner:              Island_ID,
-    start_x, start_z:   f32,
-    end_x, end_z:       f32,
-    target_height:      f32,
-    boundary_blend:     f32,
+    owner:            Island_ID,
+    start_x, start_z: f32,
+    end_x, end_z:     f32,
+    target_height:    f32,
+    boundary_blend:   f32,
 }
 
 terrain_operator_source_point :: proc(project: ^Project, owner: Island_ID, world_x, world_z: f32) -> (f32, f32, bool) {
@@ -16,7 +16,8 @@ terrain_operator_source_point :: proc(project: ^Project, owner: Island_ID, world
     if !ok do return 0, 0, false
     transform := island_transform_at(project, index)
     return world_x - (transform.current_x - transform.source_x),
-        world_z - (transform.current_z - transform.source_z), true
+        world_z - (transform.current_z - transform.source_z),
+        true
 }
 
 terrain_operator_authored_level :: proc(project: ^Project, min_x, min_z, max_x, max_z: f32) -> int {
@@ -37,13 +38,19 @@ terrain_operator_propagate :: proc(project: ^Project, authored_level: int, cente
     for level in 0 ..< authored_level {
         finer := &project.levels[level]
         min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
-            finer, center_x - radius, center_z - radius, center_x + radius, center_z + radius,
+            finer,
+            center_x - radius,
+            center_z - radius,
+            center_x + radius,
+            center_z + radius,
         )
         if !overlaps do continue
         for z in min_z ..= max_z {
             sample_z := finer.origin_z + f32(z) * finer.cell_size
             for x in min_x ..= max_x {
                 sample_x := finer.origin_x + f32(x) * finer.cell_size
+                dx, dz := sample_x - center_x, sample_z - center_z
+                if dx * dx + dz * dz > radius * radius do continue
                 if !level_contains(source, sample_x, sample_z) do continue
                 index := sample_index(x, z)
                 finer.heights[index] = sample_level_height(source, sample_x, sample_z)
@@ -55,13 +62,19 @@ terrain_operator_propagate :: proc(project: ^Project, authored_level: int, cente
         finer := &project.levels[level - 1]
         coarse := &project.levels[level]
         min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
-            coarse, center_x - radius, center_z - radius, center_x + radius, center_z + radius,
+            coarse,
+            center_x - radius,
+            center_z - radius,
+            center_x + radius,
+            center_z + radius,
         )
         if !overlaps do continue
         for z in min_z ..= max_z {
             sample_z := coarse.origin_z + f32(z) * coarse.cell_size
             for x in min_x ..= max_x {
                 sample_x := coarse.origin_x + f32(x) * coarse.cell_size
+                dx, dz := sample_x - center_x, sample_z - center_z
+                if dx * dx + dz * dz > radius * radius do continue
                 if !level_contains(finer, sample_x, sample_z) do continue
                 index := sample_index(x, z)
                 coarse.heights[index] = sample_level_height(finer, sample_x, sample_z)
@@ -72,15 +85,27 @@ terrain_operator_propagate :: proc(project: ^Project, authored_level: int, cente
 }
 
 apply_level_operator :: proc(
-    project: ^Project, owner: Island_ID, world_x, world_z, radius, target, amount, hardness: f32,
+    project: ^Project,
+    owner: Island_ID,
+    world_x, world_z, radius, target, amount, hardness: f32,
 ) -> bool {
     source_x, source_z, valid := terrain_operator_source_point(project, owner, world_x, world_z)
     if !valid || radius <= 0 || amount <= 0 do return false
-    authored := terrain_operator_authored_level(project, source_x - radius, source_z - radius, source_x + radius, source_z + radius)
+    authored := terrain_operator_authored_level(
+        project,
+        source_x - radius,
+        source_z - radius,
+        source_x + radius,
+        source_z + radius,
+    )
     data := &project.levels[authored]
     effective_radius := max(radius, data.cell_size * 1.5)
     min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
-        data, source_x - effective_radius, source_z - effective_radius, source_x + effective_radius, source_z + effective_radius,
+        data,
+        source_x - effective_radius,
+        source_z - effective_radius,
+        source_x + effective_radius,
+        source_z + effective_radius,
     )
     if !overlaps do return false
     changed := false
@@ -111,11 +136,19 @@ apply_level_area_operator :: proc(project: ^Project, area: Terrain_Operator_Area
     min_world_z, max_world_z := min(start_z, end_z), max(start_z, end_z)
     blend := max(area.boundary_blend * (1 - clamp(hardness, f32(0), f32(1))), f32(0))
     authored := terrain_operator_authored_level(
-        project, min_world_x - blend, min_world_z - blend, max_world_x + blend, max_world_z + blend,
+        project,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
     )
     data := &project.levels[authored]
     min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
-        data, min_world_x - blend, min_world_z - blend, max_world_x + blend, max_world_z + blend,
+        data,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
     )
     if !overlaps do return false
     changed := false
@@ -143,9 +176,9 @@ apply_level_area_operator :: proc(project: ^Project, area: Terrain_Operator_Area
 }
 
 apply_grade_operator :: proc(
-    project: ^Project, owner: Island_ID,
-    start_world_x, start_world_z, start_height, end_world_x, end_world_z, end_height,
-    width, side_blend, amount: f32,
+    project: ^Project,
+    owner: Island_ID,
+    start_world_x, start_world_z, start_height, end_world_x, end_world_z, end_height, width, side_blend, amount: f32,
 ) -> bool {
     start_x, start_z, start_ok := terrain_operator_source_point(project, owner, start_world_x, start_world_z)
     end_x, end_z, end_ok := terrain_operator_source_point(project, owner, end_world_x, end_world_z)
@@ -158,7 +191,13 @@ apply_grade_operator :: proc(
     bounds_min_z, bounds_max_z := min(start_z, end_z) - outer, max(start_z, end_z) + outer
     authored := terrain_operator_authored_level(project, bounds_min_x, bounds_min_z, bounds_max_x, bounds_max_z)
     data := &project.levels[authored]
-    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(data, bounds_min_x, bounds_min_z, bounds_max_x, bounds_max_z)
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        bounds_min_x,
+        bounds_min_z,
+        bounds_max_x,
+        bounds_max_z,
+    )
     if !overlaps do return false
     changed := false
     for z in min_z ..= max_z {
@@ -187,14 +226,28 @@ apply_grade_operator :: proc(
 }
 
 apply_terrace_operator :: proc(
-    project: ^Project, owner: Island_ID, world_x, world_z, radius, interval, offset, amount, hardness: f32,
+    project: ^Project,
+    owner: Island_ID,
+    world_x, world_z, radius, interval, offset, amount, hardness: f32,
 ) -> bool {
     source_x, source_z, valid := terrain_operator_source_point(project, owner, world_x, world_z)
     if !valid || radius <= 0 || interval <= 0 || amount <= 0 do return false
-    authored := terrain_operator_authored_level(project, source_x - radius, source_z - radius, source_x + radius, source_z + radius)
+    authored := terrain_operator_authored_level(
+        project,
+        source_x - radius,
+        source_z - radius,
+        source_x + radius,
+        source_z + radius,
+    )
     data := &project.levels[authored]
     effective_radius := max(radius, data.cell_size * 1.5)
-    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(data, source_x - effective_radius, source_z - effective_radius, source_x + effective_radius, source_z + effective_radius)
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        source_x - effective_radius,
+        source_z - effective_radius,
+        source_x + effective_radius,
+        source_z + effective_radius,
+    )
     if !overlaps do return false
     changed := false
     for z in min_z ..= max_z {
@@ -217,15 +270,81 @@ apply_terrace_operator :: proc(
     return true
 }
 
+apply_terrace_area_operator :: proc(
+    project: ^Project,
+    area: Terrain_Operator_Area,
+    interval, offset, amount, hardness: f32,
+) -> bool {
+    start_x, start_z, start_ok := terrain_operator_source_point(project, area.owner, area.start_x, area.start_z)
+    end_x, end_z, end_ok := terrain_operator_source_point(project, area.owner, area.end_x, area.end_z)
+    if !start_ok || !end_ok || interval <= 0 || amount <= 0 do return false
+    min_world_x, max_world_x := min(start_x, end_x), max(start_x, end_x)
+    min_world_z, max_world_z := min(start_z, end_z), max(start_z, end_z)
+    blend := max(area.boundary_blend * (1 - clamp(hardness, f32(0), f32(1))), f32(0))
+    authored := terrain_operator_authored_level(
+        project,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
+    )
+    data := &project.levels[authored]
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
+    )
+    if !overlaps do return false
+    changed := false
+    for z in min_z ..= max_z {
+        sample_z := data.origin_z + f32(z) * data.cell_size
+        for x in min_x ..= max_x {
+            sample_x := data.origin_x + f32(x) * data.cell_size
+            outside_x := max(max(min_world_x - sample_x, f32(0)), sample_x - max_world_x)
+            outside_z := max(max(min_world_z - sample_z, f32(0)), sample_z - max_world_z)
+            outside := f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z)))
+            mask := outside <= 0 ? f32(1) : blend > 0 ? clamp(1 - outside / blend, f32(0), f32(1)) : 0
+            index := sample_index(x, z)
+            if mask <= 0 || data.heights[index] <= project.sea_level + SHORELINE_EPSILON do continue
+            stepped := offset + f32(math.round(f64((data.heights[index] - offset) / interval))) * interval
+            data.heights[index] += (stepped - data.heights[index]) * mask * clamp(amount, f32(0), f32(1))
+            changed = true
+        }
+    }
+    if !changed do return false
+    center_x, center_z := (min_world_x + max_world_x) * .5, (min_world_z + max_world_z) * .5
+    dx, dz := max_world_x - min_world_x + blend * 2, max_world_z - min_world_z + blend * 2
+    radius := f32(math.sqrt(f64(dx * dx + dz * dz))) * .5 + data.cell_size * 2
+    terrain_operator_propagate(project, authored, center_x, center_z, radius)
+    project.revision += 1
+    return true
+}
+
 apply_erode_operator :: proc(
-    project: ^Project, owner: Island_ID, world_x, world_z, radius, talus, amount, hardness: f32,
+    project: ^Project,
+    owner: Island_ID,
+    world_x, world_z, radius, talus, amount, hardness: f32,
 ) -> bool {
     source_x, source_z, valid := terrain_operator_source_point(project, owner, world_x, world_z)
     if !valid || radius <= 0 || amount <= 0 do return false
-    authored := terrain_operator_authored_level(project, source_x - radius, source_z - radius, source_x + radius, source_z + radius)
+    authored := terrain_operator_authored_level(
+        project,
+        source_x - radius,
+        source_z - radius,
+        source_x + radius,
+        source_z + radius,
+    )
     data := &project.levels[authored]
     effective_radius := max(radius, data.cell_size * 1.5)
-    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(data, source_x - effective_radius, source_z - effective_radius, source_x + effective_radius, source_z + effective_radius)
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        source_x - effective_radius,
+        source_z - effective_radius,
+        source_x + effective_radius,
+        source_z + effective_radius,
+    )
     if !overlaps do return false
     width, height := max_x - min_x + 1, max_z - min_z + 1
     source := make([]f32, width * height)
@@ -256,6 +375,70 @@ apply_erode_operator :: proc(
     }
     if !changed do return false
     terrain_operator_propagate(project, authored, source_x, source_z, effective_radius + data.cell_size * 2)
+    project.revision += 1
+    return true
+}
+
+apply_erode_area_operator :: proc(
+    project: ^Project,
+    area: Terrain_Operator_Area,
+    talus, amount, hardness: f32,
+) -> bool {
+    start_x, start_z, start_ok := terrain_operator_source_point(project, area.owner, area.start_x, area.start_z)
+    end_x, end_z, end_ok := terrain_operator_source_point(project, area.owner, area.end_x, area.end_z)
+    if !start_ok || !end_ok || amount <= 0 do return false
+    min_world_x, max_world_x := min(start_x, end_x), max(start_x, end_x)
+    min_world_z, max_world_z := min(start_z, end_z), max(start_z, end_z)
+    blend := max(area.boundary_blend * (1 - clamp(hardness, f32(0), f32(1))), f32(0))
+    authored := terrain_operator_authored_level(
+        project,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
+    )
+    data := &project.levels[authored]
+    min_x, min_z, max_x, max_z, overlaps := level_sample_bounds(
+        data,
+        min_world_x - blend,
+        min_world_z - blend,
+        max_world_x + blend,
+        max_world_z + blend,
+    )
+    if !overlaps do return false
+    width, height := max_x - min_x + 1, max_z - min_z + 1
+    source := make([]f32, width * height)
+    defer delete(source)
+    for z in min_z ..= max_z do for x in min_x ..= max_x {
+        source[(z - min_z) * width + x - min_x] = data.heights[sample_index(x, z)]
+    }
+    changed := false
+    for z in min_z ..= max_z {
+        sample_z := data.origin_z + f32(z) * data.cell_size
+        for x in min_x ..= max_x {
+            sample_x := data.origin_x + f32(x) * data.cell_size
+            outside_x := max(max(min_world_x - sample_x, f32(0)), sample_x - max_world_x)
+            outside_z := max(max(min_world_z - sample_z, f32(0)), sample_z - max_world_z)
+            outside := f32(math.sqrt(f64(outside_x * outside_x + outside_z * outside_z)))
+            mask := outside <= 0 ? f32(1) : blend > 0 ? clamp(1 - outside / blend, f32(0), f32(1)) : 0
+            local := (z - min_z) * width + x - min_x
+            center := source[local]
+            if mask <= 0 || center <= project.sea_level + SHORELINE_EPSILON do continue
+            left := source[(z - min_z) * width + clamp(x - 1, min_x, max_x) - min_x]
+            right := source[(z - min_z) * width + clamp(x + 1, min_x, max_x) - min_x]
+            up := source[(clamp(z - 1, min_z, max_z) - min_z) * width + x - min_x]
+            down := source[(clamp(z + 1, min_z, max_z) - min_z) * width + x - min_x]
+            average := (left + right + up + down) * .25
+            if abs(center - average) <= max(talus, f32(0)) do continue
+            data.heights[sample_index(x, z)] += (average - center) * mask * clamp(amount, f32(0), f32(1))
+            changed = true
+        }
+    }
+    if !changed do return false
+    center_x, center_z := (min_world_x + max_world_x) * .5, (min_world_z + max_world_z) * .5
+    dx, dz := max_world_x - min_world_x + blend * 2, max_world_z - min_world_z + blend * 2
+    radius := f32(math.sqrt(f64(dx * dx + dz * dz))) * .5 + data.cell_size * 2
+    terrain_operator_propagate(project, authored, center_x, center_z, radius)
     project.revision += 1
     return true
 }

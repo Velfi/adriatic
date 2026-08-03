@@ -316,7 +316,7 @@ package_filter_matches :: proc(data: ^Package_Exclude_Filter_Data, loc: runtime.
         return false
     }
 
-    package_name := loc.package_name
+    package_name := source_package_name(loc)
     if package_name == "" {
         return false
     }

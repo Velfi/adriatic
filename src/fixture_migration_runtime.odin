@@ -139,7 +139,8 @@ fixture_migration_step_v0001_to_v0002 :: proc(
     return step_error
 }
 
-fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION - 1]Fixture_Migration_Step = {
+fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION -
+1]Fixture_Migration_Step = {
     {
         from_version = FIXTURE_MIGRATION_V0001_TO_V0002_FROM_VERSION,
         to_version = FIXTURE_MIGRATION_V0001_TO_V0002_TO_VERSION,

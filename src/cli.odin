@@ -37,6 +37,9 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --camera-distance <n> set distance from camera target")
     fmt.println("    --camera-offset <x,y,z> translate authored camera and target")
     fmt.println("    --turntable-frames <n> capture a 360° sequence into the output directory (1–360)")
+    fmt.println("    --wind-phase-frames <n> capture plant wind phases into the output directory (1–16)")
+    fmt.println("    --seed-frames <n> capture consecutive plant seeds into the output directory (1–256)")
+    fmt.println("    --seed-start <n> first unsigned seed for --seed-frames (default 0)")
     fmt.println(
         "    --select <kind[:id]>  dynamically select character, vehicle, structure, prop, plant, or selection",
     )
@@ -310,11 +313,14 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     photo_filter_mode := Photo_Filter_Mode.Off
     photo_filter_enabled := false
     turntable_frames := 0
+    wind_phase_frames := 0
     camera_eye, camera_look_at, camera_offset: [3]f32
     camera_orbit: [2]f32
     camera_eye_set, camera_look_at_set := false, false
     camera_orbit_set, camera_distance_set, camera_offset_set := false, false, false
     camera_distance: f32
+    seed_frames := 0
+    seed_start := u64(0)
     list_targets := false
     selector, selector_pick, presentation := "", "", "fit"
     selector_filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
@@ -359,6 +365,9 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--camera-distance" ||
            argument == "--camera-offset" ||
            argument == "--turntable-frames" ||
+           argument == "--wind-phase-frames" ||
+           argument == "--seed-frames" ||
+           argument == "--seed-start" ||
            argument == "--select" ||
            argument == "--where" ||
            argument == "--pick" ||
@@ -462,6 +471,21 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 1, 360)
                 if !ok do return true, false
                 turntable_frames = parsed
+            case "--wind-phase-frames":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 1, 16)
+                if !ok do return true, false
+                wind_phase_frames = parsed
+            case "--seed-frames":
+                parsed, ok := adriatic_cli_parse_bounded_int(argument, value, 1, 256)
+                if !ok do return true, false
+                seed_frames = parsed
+            case "--seed-start":
+                parsed, ok := strconv.parse_int(value)
+                if !ok || parsed < 0 {
+                    fmt.eprintf("adriatic: --seed-start must be an unsigned integer, got %s\n", value)
+                    return true, false
+                }
+                seed_start = u64(parsed)
             case "--select":
                 if selector != "" {
                     fmt.eprintln("adriatic: --select was specified more than once")
@@ -649,6 +673,26 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintln("adriatic: --turntable-frames currently requires capture mode vehicle-showcase")
         return true, false
     }
+    if wind_phase_frames > 0 && kind != .Plant_Generator_Lab {
+        fmt.eprintln("adriatic: --wind-phase-frames requires capture mode plant-generator")
+        return true, false
+    }
+    if seed_frames > 0 && kind != .Plant_Generator_Lab {
+        fmt.eprintln("adriatic: --seed-frames requires capture mode plant-generator")
+        return true, false
+    }
+    if seed_frames == 0 && seed_start != 0 {
+        fmt.eprintln("adriatic: --seed-start requires --seed-frames")
+        return true, false
+    }
+    if seed_frames > 0 && (wind_phase_frames > 0 || turntable_frames > 0) {
+        fmt.eprintln("adriatic: --seed-frames cannot be combined with wind-phase or turntable capture")
+        return true, false
+    }
+    if wind_phase_frames > 0 && turntable_frames > 0 {
+        fmt.eprintln("adriatic: --wind-phase-frames cannot be combined with --turntable-frames")
+        return true, false
+    }
     if turntable_frames > 0 && target == "" do target = "car"
     if camera_eye_set != camera_look_at_set {
         fmt.eprintln("adriatic: --camera-eye and --camera-look-at must be provided together")
@@ -671,20 +715,24 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     output, resolved := adriatic_cli_absolute_path(requested_output)
     if !resolved do return true, false
-    output_directory := turntable_frames > 0 ? output : os.dir(output)
+    output_directory := turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 ? output : os.dir(output)
     if err := os.make_directory_all(output_directory); err != nil && err != .Exist {
         fmt.eprintf("adriatic: cannot create output directory: %v\n", err)
         return true, false
     }
     if target == "" && len(mode) >= 6 && mode[:6] == "player" do target = mode
-    if turntable_frames == 0 {
+    if turntable_frames == 0 && wind_phase_frames == 0 && seed_frames == 0 {
         if err := os.remove(output); err != nil && err != .Not_Exist {
             fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
             return true, false
         }
     } else {
-        for frame_index in 0 ..< turntable_frames {
+        frame_count := max(turntable_frames, wind_phase_frames)
+        if seed_frames > 0 do frame_count = seed_frames
+        for frame_index in 0 ..< frame_count {
             frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            if wind_phase_frames > 0 do frame_path = fmt.tprintf("%s/frame-%06d.png", output, frame_index)
+            if seed_frames > 0 do frame_path = fmt.tprintf("%s/seed-%d.png", output, seed_start + u64(frame_index))
             if err := os.remove(frame_path); err != nil && err != .Not_Exist {
                 fmt.eprintf("adriatic: cannot replace %s: %v\n", frame_path, err)
                 return true, false
@@ -713,6 +761,10 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         camera_offset           = camera_offset,
         camera_offset_set       = camera_offset_set,
         turntable_frames        = turntable_frames,
+        seed_frames             = seed_frames,
+        seed_start              = seed_start,
+        sequence_frames         = wind_phase_frames,
+        sequence_fps            = 1,
         selector                = selector,
         selector_filters        = selector_filters,
         selector_filter_count   = selector_filter_count,
@@ -736,16 +788,20 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     _ = adriatic_run(nil, request = &request)
     if request.selector_failed do return true, false
-    if turntable_frames > 0 {
-        for frame_index in 0 ..< turntable_frames {
+    if turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 {
+        frame_count := max(turntable_frames, wind_phase_frames)
+        if seed_frames > 0 do frame_count = seed_frames
+        for frame_index in 0 ..< frame_count {
             frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            if wind_phase_frames > 0 do frame_path = fmt.tprintf("%s/frame-%06d.png", output, frame_index)
+            if seed_frames > 0 do frame_path = fmt.tprintf("%s/seed-%d.png", output, seed_start + u64(frame_index))
             info, screenshot_error := os.stat(frame_path, context.temp_allocator)
             if screenshot_error != nil || info.size == 0 {
-                fmt.eprintf("adriatic: turntable did not write a non-empty image to %s\n", frame_path)
+                fmt.eprintf("adriatic: capture sequence did not write a non-empty image to %s\n", frame_path)
                 return true, false
             }
         }
-        fmt.printf("turntable: wrote %d frames to %s\n", turntable_frames, output)
+        fmt.printf("capture sequence: wrote %d frames to %s\n", frame_count, output)
     } else {
         info, screenshot_error := os.stat(output, context.temp_allocator)
         if screenshot_error != nil || info.size == 0 {

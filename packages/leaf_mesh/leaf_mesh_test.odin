@@ -83,11 +83,7 @@ fleshy_node_is_closed_thick_and_tapered :: proc(t: ^testing.T) {
     config.segments = 12
     mesh := generate(config)
     testing.expect_value(t, mesh.vertex_count, (config.segments + 1) * FLESHY_SIDES)
-    testing.expect_value(
-        t,
-        mesh.index_count,
-        config.segments * FLESHY_SIDES * 6 + (FLESHY_SIDES - 2) * 6,
-    )
+    testing.expect_value(t, mesh.index_count, config.segments * FLESHY_SIDES * 6 + (FLESHY_SIDES - 2) * 6)
 
     minimum_z, maximum_z := f32(1e9), f32(-1e9)
     positive_z_normal, negative_z_normal := false, false

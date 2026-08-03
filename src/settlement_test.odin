@@ -31,8 +31,14 @@ settlement_cemetery_scales_with_settlement_and_preserves_regional_style :: proc(
     testing.expect(t, city_depth > village_depth)
     testing.expect(t, city_density > village_density)
 
-    adriatic := cemeteries.generate(17, {width = village_width, depth = village_depth, density = village_density, style = .Adriatic_Medieval})
-    aegean := cemeteries.generate(17, {width = village_width, depth = village_depth, density = village_density, style = .Classical_Aegean})
+    adriatic := cemeteries.generate(
+        17,
+        {width = village_width, depth = village_depth, density = village_density, style = .Adriatic_Medieval},
+    )
+    aegean := cemeteries.generate(
+        17,
+        {width = village_width, depth = village_depth, density = village_density, style = .Classical_Aegean},
+    )
     testing.expect(t, adriatic.valid && aegean.valid)
     for grave in adriatic.graves[:adriatic.grave_count] do testing.expect(t, cemeteries.style_supports_marker(.Adriatic_Medieval, grave.marker))
     for grave in aegean.graves[:aegean.grave_count] do testing.expect(t, cemeteries.style_supports_marker(.Classical_Aegean, grave.marker))
@@ -40,8 +46,14 @@ settlement_cemetery_scales_with_settlement_and_preserves_regional_style :: proc(
 
 @(test)
 settlement_cemetery_reservation_tag_does_not_match_ordinary_foliage :: proc(t: ^testing.T) {
-    ordinary := terrain.Structure{group_id = 42, kind = .Foliage}
-    reserved := terrain.Structure{group_id = SETTLEMENT_CEMETERY_GROUP_TAG | 42, kind = .Foliage}
+    ordinary := terrain.Structure {
+        group_id = 42,
+        kind     = .Foliage,
+    }
+    reserved := terrain.Structure {
+        group_id = SETTLEMENT_CEMETERY_GROUP_TAG | 42,
+        kind     = .Foliage,
+    }
     testing.expect(t, !settlement_cemetery_structure_is_reservation(ordinary))
     testing.expect(t, settlement_cemetery_structure_is_reservation(reserved))
 }
@@ -50,7 +62,10 @@ settlement_cemetery_reservation_tag_does_not_match_ordinary_foliage :: proc(t: ^
 settlement_cemetery_outer_radius_includes_macro_cell_extent :: proc(t: ^testing.T) {
     plan: Settlement_Plan
     plan.request.center = {10, 20}
-    plan.macro_cells[0] = {center = {13, 24}, radius = 7}
+    plan.macro_cells[0] = {
+        center = {13, 24},
+        radius = 7,
+    }
     plan.macro_cell_count = 1
     testing.expect(t, math.abs(settlement_cemetery_outer_radius(&plan) - 12) < .001)
 }
@@ -140,7 +155,10 @@ settlement_planting_reservations_are_not_rendered_as_foliage_hulls :: proc(t: ^t
         structure = {id = 41, kind = .Foliage},
     }
     plan.site_count = 1
-    plan.decorative_foliage[0] = {id = 73, kind = .Foliage}
+    plan.decorative_foliage[0] = {
+        id   = 73,
+        kind = .Foliage,
+    }
     plan.decorative_foliage_count = 1
 
     testing.expect(t, settlement_structure_is_park_reservation(&plan, 41))
@@ -463,24 +481,11 @@ settlement_straight_stoops_turn_aside_before_entering_roads :: proc(t: ^testing.
     to := roads.add_node(&project.road_graph, {0, 0, 20}, 0)
     _ = roads.add_straight_edge(&project.road_graph, from, to, 2, .5, .Gravel)
 
-    choice := settlement_stoop_layout_choice(
-        project,
-        structure,
-        {0, 5},
-        {0, 1},
-        {1, 0},
-        1.8,
-        2.2,
-        0,
-    )
+    choice := settlement_stoop_layout_choice(project, structure, {0, 5}, {0, 1}, {1, 0}, 1.8, 2.2, 0)
     testing.expect_value(t, choice, 2)
 
     project.road_graph.edge_count = 0
-    testing.expect_value(
-        t,
-        settlement_stoop_layout_choice(project, structure, {0, 5}, {0, 1}, {1, 0}, 1.8, 2.2, 0),
-        0,
-    )
+    testing.expect_value(t, settlement_stoop_layout_choice(project, structure, {0, 5}, {0, 1}, {1, 0}, 1.8, 2.2, 0), 0)
 }
 
 @(test)
@@ -608,9 +613,18 @@ settlement_access_surface_palette_tracks_route_hierarchy :: proc(t: ^testing.T) 
 
 @(test)
 settlement_hillside_stoops_only_serve_access_backed_primary_doors :: proc(t: ^testing.T) {
-    primary := architecture.Opening{kind = .Door, primary = true}
-    service := architecture.Opening{kind = .Service_Door, primary = false}
-    window := architecture.Opening{kind = .Window, primary = true}
+    primary := architecture.Opening {
+        kind    = .Door,
+        primary = true,
+    }
+    service := architecture.Opening {
+        kind    = .Service_Door,
+        primary = false,
+    }
+    window := architecture.Opening {
+        kind    = .Window,
+        primary = true,
+    }
     testing.expect(t, world_architecture_opening_needs_stoop(primary))
     testing.expect(t, !world_architecture_opening_needs_stoop(service))
     testing.expect(t, !world_architecture_opening_needs_stoop(window))
@@ -867,9 +881,18 @@ settlement_agricultural_village_groups_compact_barns_with_farmsteads :: proc(t: 
                 host_identity := architecture.architecture_resolve_legacy_identity(host)
                 if host_identity.archetype != .Farmstead do continue
                 compound := farm_compound_derive(region, host, project)
-                nearest_yard = min(nearest_yard, linalg.length([2]f32{structure.center_x, structure.center_z} - compound.yard_center))
+                nearest_yard = min(
+                    nearest_yard,
+                    linalg.length([2]f32{structure.center_x, structure.center_z} - compound.yard_center),
+                )
             }
-            testing.expectf(t, nearest_yard <= 13, "barn is detached from every farm yard region=%v distance=%.2f", region, nearest_yard)
+            testing.expectf(
+                t,
+                nearest_yard <= 13,
+                "barn is detached from every farm yard region=%v distance=%.2f",
+                region,
+                nearest_yard,
+            )
         }
         testing.expectf(t, farmsteads >= 1, "agricultural village has no compound host region=%v", region)
         testing.expectf(t, barns >= 1, "agricultural village has no compact barn range region=%v", region)
@@ -1781,13 +1804,13 @@ settlement_metrics_are_idempotent :: proc(t: ^testing.T) {
     }
     plan.sites[1] = {
         structure = {base_y = 3},
-        kind      = .Ordinary,
-        accepted  = true,
+        kind = .Ordinary,
+        accepted = true,
     }
     plan.sites[2] = {
         structure = {base_y = 9},
-        kind      = .Ordinary,
-        accepted  = true,
+        kind = .Ordinary,
+        accepted = true,
     }
     plan.site_count = 3
     settlement_plan_measure(&plan)
@@ -1841,21 +1864,9 @@ settlement_town_ruin_is_compact_and_integrated :: proc(t: ^testing.T) {
 
 @(test)
 settlement_town_medium_density_builds_three_house_terraces :: proc(t: ^testing.T) {
-    testing.expect_value(
-        t,
-        settlement_town_district_building_target({density = .25, age = .5}),
-        3,
-    )
-    testing.expect_value(
-        t,
-        settlement_town_district_building_target({density = .23, age = .5}),
-        2,
-    )
-    testing.expect_value(
-        t,
-        settlement_town_district_building_target({density = .4, age = .3}),
-        4,
-    )
+    testing.expect_value(t, settlement_town_district_building_target({density = .25, age = .5}), 3)
+    testing.expect_value(t, settlement_town_district_building_target({density = .23, age = .5}), 2)
+    testing.expect_value(t, settlement_town_district_building_target({density = .4, age = .3}), 4)
 }
 
 @(test)
@@ -1868,7 +1879,10 @@ settlement_town_singleton_rescue_adds_an_attached_frontage_neighbor :: proc(t: ^
     road_end := roads.add_node(&project.road_graph, {center + 40, 0, center}, 0)
     _ = roads.add_straight_edge(&project.road_graph, road_start, road_end, 4, 1, .Gravel)
     plan: Settlement_Plan
-    plan.request = {scale = .Town, region = .Adriatic}
+    plan.request = {
+        scale  = .Town,
+        region = .Adriatic,
+    }
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
     first := terrain.Structure {
@@ -1881,13 +1895,7 @@ settlement_town_singleton_rescue_adds_an_attached_frontage_neighbor :: proc(t: ^
         seed     = 91,
     }
     first.building = architecture.architecture_identity(
-        {
-            region           = .Adriatic,
-            purpose          = .Dwelling,
-            density          = .3,
-            attached         = true,
-            purpose_explicit = true,
-        },
+        {region = .Adriatic, purpose = .Dwelling, density = .3, attached = true, purpose_explicit = true},
         first.seed,
     )
     append(&city.structures, first)
@@ -1947,8 +1955,8 @@ settlement_town_medium_density_seed_suite_stays_dense_and_connected :: proc(t: ^
         plan: Settlement_Plan
         plan.request = {
             region = .Adriatic,
-            scale = .Town,
-            seed = u32(seed),
+            scale  = .Town,
+            seed   = u32(seed),
             center = {center, center},
             radius = 100,
         }
@@ -1962,15 +1970,12 @@ settlement_town_medium_density_seed_suite_stays_dense_and_connected :: proc(t: ^
         plan.route_count = 1
         for district in 0 ..< 8 {
             plan.macro_cells[district] = {
-                center = {
-                    center + (f32(district) - 3.5) * 24,
-                    center + (district & 1 == 0 ? f32(-5) : f32(5)),
-                },
-                radius = 13,
-                density = .26,
-                age = .5,
+                center      = {center + (f32(district) - 3.5) * 24, center + (district & 1 == 0 ? f32(-5) : f32(5))},
+                radius      = 13,
+                density     = .26,
+                age         = .5,
                 suitability = 1,
-                tissue = .Hillside_Accretion,
+                tissue      = .Hillside_Accretion,
             }
         }
         plan.macro_cell_count = 8
@@ -2129,10 +2134,7 @@ settlement_import_keeps_hero_buildings_as_planned_landmarks :: proc(t: ^testing.
     plan: Settlement_Plan
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    landmark_kinds := [2]buildings.Landmark_Kind{
-        buildings.Landmark_Kind.Post_Office,
-        buildings.Landmark_Kind.Clinic,
-    }
+    landmark_kinds := [2]buildings.Landmark_Kind{buildings.Landmark_Kind.Post_Office, buildings.Landmark_Kind.Clinic}
     for landmark_kind in landmark_kinds {
         structure := terrain.structure_make(0, 0, 24, 15, 0, 8)
         structure.kind = .Architecture
@@ -2156,37 +2158,43 @@ settlement_cities_plan_purpose_built_hero_buildings :: proc(t: ^testing.T) {
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
     for region in Settlement_Region {
         for seed in 0 ..< 8 {
-                plan: Settlement_Plan
-                plan.request = {region = region, scale = .City, seed = u32(seed), center = {center, center}, radius = 100}
-                plan.routes[0].geometry.points[0] = {center - 100, center}
-                plan.routes[0].geometry.points[1] = {center + 100, center}
-                plan.routes[0].geometry.count = 2
-                plan.routes[0].class = .Street
-                plan.routes[0].width = 4
-                plan.routes[0].shoulder = 1
-                plan.routes[0].drivable = true
-                plan.route_count = 1
-                for district in 0 ..< 4 {
-                    plan.macro_cells[district] = {
-                        center = {center + (f32(district) - 1.5) * 42, center + 12},
-                        radius = 18,
-                        density = .62,
-                        suitability = 1,
-                        tissue = region == .Aegean ? .Cycladic_Accretion : .Dalmatian_Planned,
-                    }
+            plan: Settlement_Plan
+            plan.request = {
+                region = region,
+                scale  = .City,
+                seed   = u32(seed),
+                center = {center, center},
+                radius = 100,
+            }
+            plan.routes[0].geometry.points[0] = {center - 100, center}
+            plan.routes[0].geometry.points[1] = {center + 100, center}
+            plan.routes[0].geometry.count = 2
+            plan.routes[0].class = .Street
+            plan.routes[0].width = 4
+            plan.routes[0].shoulder = 1
+            plan.routes[0].drivable = true
+            plan.route_count = 1
+            for district in 0 ..< 4 {
+                plan.macro_cells[district] = {
+                    center      = {center + (f32(district) - 1.5) * 42, center + 12},
+                    radius      = 18,
+                    density     = .62,
+                    suitability = 1,
+                    tissue      = region == .Aegean ? .Cycladic_Accretion : .Dalmatian_Planned,
                 }
-                plan.macro_cell_count = 4
-                rng := settlement_rng_new(u32(seed) ~ u32(region) * 0x9e37 ~ u32(Settlement_Scale.City) * 0x85eb)
-                city := settlement_plan_generate_buildings(&plan, project, &rng)
-                post_offices, clinics := 0, 0
-                for structure in city.structures[:city.count] {
-                    identity := architecture.architecture_resolve_legacy_identity(structure)
-                    if identity.archetype == .Post_Office do post_offices += 1
-                    if identity.archetype == .Clinic do clinics += 1
-                }
-                testing.expect_value(t, post_offices, 1)
-                testing.expect_value(t, clinics, 1)
-                architecture.city_plan_destroy(&city)
+            }
+            plan.macro_cell_count = 4
+            rng := settlement_rng_new(u32(seed) ~ u32(region) * 0x9e37 ~ u32(Settlement_Scale.City) * 0x85eb)
+            city := settlement_plan_generate_buildings(&plan, project, &rng)
+            post_offices, clinics := 0, 0
+            for structure in city.structures[:city.count] {
+                identity := architecture.architecture_resolve_legacy_identity(structure)
+                if identity.archetype == .Post_Office do post_offices += 1
+                if identity.archetype == .Clinic do clinics += 1
+            }
+            testing.expect_value(t, post_offices, 1)
+            testing.expect_value(t, clinics, 1)
+            architecture.city_plan_destroy(&city)
         }
     }
 }
@@ -2881,12 +2889,12 @@ settlement_access_scoring_prefers_square_doorways_and_simple_junctions :: proc(t
     testing.expect(
         t,
         settlement_access_connection_shape_penalty(&city, square, outward, false) <
-            settlement_access_connection_shape_penalty(&city, shallow, outward, false),
+        settlement_access_connection_shape_penalty(&city, shallow, outward, false),
     )
     testing.expect(
         t,
         settlement_access_connection_shape_penalty(&city, square_join, outward, true) <
-            settlement_access_connection_shape_penalty(&city, skewed_join, outward, true),
+        settlement_access_connection_shape_penalty(&city, skewed_join, outward, true),
     )
 
     // Adding an arm to an existing T is costlier than making the same clean
@@ -3123,7 +3131,10 @@ settlement_access_collapses_anonymous_degree_two_slivers :: proc(t: ^testing.T) 
     defer architecture.city_plan_destroy(&city)
     append(&city.alleys, architecture.City_Alley{start_x = -4, end_x = 0, half_width = .5, start_terminal = .Road})
     append(&city.alleys, architecture.City_Alley{start_x = 0, end_x = .24, half_width = .5})
-    append(&city.alleys, architecture.City_Alley{start_x = .24, end_x = 4, half_width = .5, end_terminal = .Public_Space})
+    append(
+        &city.alleys,
+        architecture.City_Alley{start_x = .24, end_x = 4, half_width = .5, end_terminal = .Public_Space},
+    )
     city.alley_count = 3
     plan: Settlement_Plan
 
@@ -3188,11 +3199,7 @@ settlement_access_network_relaxation_shortens_only_anonymous_bends :: proc(t: ^t
 settlement_access_shared_house_trunks_widen_by_demand :: proc(t: ^testing.T) {
     town_threshold := settlement_access_preferred_half_width(.Town, .Dwelling)
     testing.expect_value(t, town_threshold, f32(.8))
-    testing.expect_value(
-        t,
-        settlement_access_route_pavement(.05, town_threshold * 2),
-        roads.Pavement.Gravel,
-    )
+    testing.expect_value(t, settlement_access_route_pavement(.05, town_threshold * 2), roads.Pavement.Gravel)
     testing.expect(t, settlement_access_shared_desired_half_width(.5, 2) < .9)
     testing.expect(t, settlement_access_shared_desired_half_width(.5, 3) >= .9)
     testing.expect(t, settlement_access_shared_desired_half_width(.7, 4) >= .9)
@@ -3507,25 +3514,9 @@ settlement_access_prunes_anonymous_leaf_from_a_served_junction :: proc(t: ^testi
     )
     append(
         &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 4,
-            end_z = 0,
-            half_width = .5,
-            end_terminal = .Door,
-        },
+        architecture.City_Alley{start_x = 0, start_z = 0, end_x = 4, end_z = 0, half_width = .5, end_terminal = .Door},
     )
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 0,
-            end_z = 3,
-            half_width = .5,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley{start_x = 0, start_z = 0, end_x = 0, end_z = 3, half_width = .5})
     city.alley_count = 3
 
     plan: Settlement_Plan
@@ -3551,16 +3542,7 @@ settlement_access_prunes_anonymous_leaf_from_a_degree_two_chain :: proc(t: ^test
             start_terminal = .Road,
         },
     )
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 4,
-            start_z = 0,
-            end_x = 7,
-            end_z = 2,
-            half_width = .5,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley{start_x = 4, start_z = 0, end_x = 7, end_z = 2, half_width = .5})
     city.alley_count = 2
 
     plan: Settlement_Plan
@@ -4939,7 +4921,9 @@ settlement_road_gateways_do_not_use_runways :: proc(t: ^testing.T) {
     west := roads.add_node(&project.road_graph, {-100, 0, 0}, 0)
     east := roads.add_node(&project.road_graph, {100, 0, 0}, 0)
     _ = roads.add_straight_edge(&project.road_graph, west, east, runway_half_width * 2, 2, .Asphalt)
-    plan := Settlement_Plan{request = {center = {0, 0}, radius = 60, scale = .Town}}
+    plan := Settlement_Plan {
+        request = {center = {0, 0}, radius = 60, scale = .Town},
+    }
     gateways: [SETTLEMENT_ROAD_GATEWAY_CAPACITY][2]f32
 
     testing.expect_value(t, settlement_plan_road_gateways(&plan, project, &gateways), 0)
@@ -4976,7 +4960,10 @@ settlement_streets_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
         a, b := route.points[index], route.points[index + 1]
         distance := linalg.length(b - a)
         grade :=
-            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
+            math.abs(
+                terrain.sample_surface_height(project, 0, b[0], b[1]) -
+                terrain.sample_surface_height(project, 0, a[0], a[1]),
+            ) /
             distance
         maximum_grade = max(maximum_grade, grade)
     }
@@ -5005,14 +4992,7 @@ settlement_routes_pay_a_large_cost_to_cross_runways :: proc(t: ^testing.T) {
     runway_half_width := f32(terrain.WORLD_SIZE_METERS * .5) * terrain.DEFAULT_RUNWAY_HALF_WIDTH
     from := roads.add_node(&project.road_graph, {-20, 0, 0}, 0)
     to := roads.add_node(&project.road_graph, {20, 0, 0}, 0)
-    testing.expect(t, roads.add_straight_edge(
-        &project.road_graph,
-        from,
-        to,
-        runway_half_width * 2,
-        2,
-        .Asphalt,
-    ) >= 0)
+    testing.expect(t, roads.add_straight_edge(&project.road_graph, from, to, runway_half_width * 2, 2, .Asphalt) >= 0)
 
     testing.expect(t, settlement_route_segment_crosses_runway(project, {-30, -30}, {30, 30}))
     testing.expect(t, settlement_route_segment_crosses_runway(project, {0, -30}, {0, 30}))
@@ -5023,11 +5003,10 @@ settlement_routes_pay_a_large_cost_to_cross_runways :: proc(t: ^testing.T) {
     route := settlement_route_find(project, -30, -30, 30, 30, .Street)
     testing.expect(t, route.count > 2)
     for index in 0 ..< route.count - 1 {
-        testing.expect(t, !settlement_route_segment_crosses_runway(
-            project,
-            route.points[index],
-            route.points[index + 1],
-        ))
+        testing.expect(
+            t,
+            !settlement_route_segment_crosses_runway(project, route.points[index], route.points[index + 1]),
+        )
     }
 }
 
@@ -5105,7 +5084,10 @@ settlement_short_street_detours_instead_of_accepting_an_over_grade_chord :: proc
         a, b := route.points[index], route.points[index + 1]
         distance := linalg.length(b - a)
         grade :=
-            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
+            math.abs(
+                terrain.sample_surface_height(project, 0, b[0], b[1]) -
+                terrain.sample_surface_height(project, 0, a[0], a[1]),
+            ) /
             max(distance, f32(.01))
         maximum_grade = max(maximum_grade, grade)
     }
@@ -5212,27 +5194,27 @@ settlement_water_crossings_select_regional_bridge_plans :: proc(t: ^testing.T) {
     editor.settlement_plan.valid = true
     editor.settlement_plan.request = {
         region = .Adriatic,
-        scale = .Town,
-        center = {10,20},
+        scale  = .Town,
+        center = {10, 20},
         radius = 80,
-        seed = 211,
+        seed   = 211,
     }
-    adriatic,found := world_settlement_bridge_plan(editor,{10,4,20},32,5,5,3)
-    testing.expect(t,found)
-    testing.expect_value(t,adriatic.region,bridges.Region.Adriatic)
-    testing.expect_value(t,adriatic.archetype,bridges.Archetype.Dalmatian_Multi_Arch)
-    testing.expect(t,adriatic.pier_count > 0)
+    adriatic, found := world_settlement_bridge_plan(editor, {10, 4, 20}, 32, 5, 5, 3)
+    testing.expect(t, found)
+    testing.expect_value(t, adriatic.region, bridges.Region.Adriatic)
+    testing.expect_value(t, adriatic.archetype, bridges.Archetype.Dalmatian_Multi_Arch)
+    testing.expect(t, adriatic.pier_count > 0)
 
     editor.settlement_plan.request.region = .Aegean
     editor.settlement_plan.request.scale = .Village
     aegean: bridges.Plan
-    aegean,found = world_settlement_bridge_plan(editor,{10,4,20},15,3,4,3)
-    testing.expect(t,found)
-    testing.expect_value(t,aegean.region,bridges.Region.Aegean)
-    testing.expect_value(t,aegean.archetype,bridges.Archetype.Cycladic_Rural)
+    aegean, found = world_settlement_bridge_plan(editor, {10, 4, 20}, 15, 3, 4, 3)
+    testing.expect(t, found)
+    testing.expect_value(t, aegean.region, bridges.Region.Aegean)
+    testing.expect_value(t, aegean.archetype, bridges.Archetype.Cycladic_Rural)
 
-    _,found = world_settlement_bridge_plan(editor,{500,4,500},15,3,4,3)
-    testing.expect(t,!found)
+    _, found = world_settlement_bridge_plan(editor, {500, 4, 500}, 15, 3, 4, 3)
+    testing.expect(t, !found)
 }
 
 @(test)
