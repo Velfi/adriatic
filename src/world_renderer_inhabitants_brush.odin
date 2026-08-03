@@ -296,7 +296,7 @@ world_story_meeting :: proc(editor: ^Editor) {
             grounded = true,
         },
         1.02,
-        TOWN_MOUSE_CACHE_COUNT - 2,
+        TOWN_MOUSE_CACHE_MEETING_NIKO,
     )
     world_town_mouse_model_scaled_cached(
         editor,
@@ -313,7 +313,7 @@ world_story_meeting :: proc(editor: ^Editor) {
             grounded = true,
         },
         iva_portrait_scale,
-        TOWN_MOUSE_CACHE_COUNT - 1,
+        TOWN_MOUSE_CACHE_MEETING_IVA,
     )
     if story.resident_has_unseen_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
@@ -456,7 +456,7 @@ world_town_mice :: proc(editor: ^Editor) {
                     grounded = true,
                 },
                 resident.scale,
-                island_index * len(residents) + resident_index,
+                TOWN_MOUSE_CACHE_TOWN_FIRST + island_index * len(residents) + resident_index,
             )
             if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
                 world_mouse_interaction_indicator(editor, {x, ground_y, z})
@@ -479,7 +479,7 @@ world_town_mice :: proc(editor: ^Editor) {
                 grounded = true,
             },
             1.05,
-            len(residents) + 5,
+            TOWN_MOUSE_CACHE_ZORA,
         )
         if story.resident_has_unseen_action(&editor.story_state, .Zora) {
             world_mouse_interaction_indicator(editor, zora_position)
@@ -505,7 +505,7 @@ world_town_mice :: proc(editor: ^Editor) {
                 grounded = true,
             },
             1,
-            TOWN_MOUSE_CACHE_COUNT - 4 + postal_index,
+            TOWN_MOUSE_CACHE_POSTAL_FIRST + postal_index,
         )
         if story.resident_has_unseen_action(&editor.story_state, postal_resident) ||
            player_mail_available_count(editor) > 0 {

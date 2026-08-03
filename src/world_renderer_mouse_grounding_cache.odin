@@ -301,6 +301,22 @@ town_mouse_ground_cache_matches :: proc(
     )
 }
 
+town_mouse_geometry_cache_matches :: proc(
+    entry: ^Town_Mouse_Geometry_Cache_Entry,
+    model: Mouse_Model,
+    scale: f32,
+    project_revision, terrain_revision: u64,
+) -> bool {
+    return(
+        entry != nil &&
+        entry.valid &&
+        entry.model == model &&
+        entry.scale == scale &&
+        entry.project_revision == project_revision &&
+        entry.terrain_revision == terrain_revision \
+    )
+}
+
 when ODIN_TEST {
     @(test)
     town_mouse_ground_cache_keys_stationary_model_and_world_revisions :: proc(t: ^testing.T) {
@@ -328,6 +344,28 @@ when ODIN_TEST {
         testing.expect(t, !town_mouse_ground_cache_matches(&entry, model, .9, 8, 11))
         testing.expect(t, !town_mouse_ground_cache_matches(&entry, model, .9, 7, 12))
     }
+
+    @(test)
+    town_mouse_geometry_cache_keys_baked_model_and_world_revisions :: proc(t: ^testing.T) {
+        model := Mouse_Model {
+            position      = {12, 3, -8},
+            rotation      = .4,
+            build         = 1.1,
+            scarf_enabled = true,
+            grounded      = true,
+        }
+        entry := Town_Mouse_Geometry_Cache_Entry {
+            valid            = true,
+            model            = model,
+            scale            = .9,
+            project_revision = 7,
+            terrain_revision = 11,
+        }
+        testing.expect(t, town_mouse_geometry_cache_matches(&entry, model, .9, 7, 11))
+        testing.expect(t, !town_mouse_geometry_cache_matches(&entry, model, 1, 7, 11))
+        testing.expect(t, !town_mouse_geometry_cache_matches(&entry, model, .9, 8, 11))
+        testing.expect(t, !town_mouse_geometry_cache_matches(&entry, model, .9, 7, 12))
+    }
 }
 
 world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model, scale: f32, cache_index: int) {
@@ -336,13 +374,13 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
         return
     }
     entry := &world_renderer.town_mouse_geometry_cache[cache_index]
-    wind := model.scarf_enabled ? editor.atmosphere.weather.wind : [2]f32{}
-    if entry.valid &&
-       entry.model == model &&
-       entry.scale == scale &&
-       entry.wind == wind &&
-       entry.project_revision == editor.project.revision &&
-       entry.terrain_revision == editor.terrain_revision {
+    if town_mouse_geometry_cache_matches(
+        entry,
+        model,
+        scale,
+        editor.project.revision,
+        editor.terrain_revision,
+    ) {
         world_renderer.town_mouse_cache_reuses += 1
         profile := dio.flame_graph_begin(dio.flame_graph_current(), "town_mouse_cache_reuse")
         append(&world_renderer.vertices, ..entry.vertices[:])
@@ -386,7 +424,6 @@ world_town_mouse_model_scaled_cached :: proc(editor: ^Editor, model: Mouse_Model
     // map time out of this cache key prevents procedural mesh generation from
     // returning to the frame builder as frame rate falls.
     entry.animation_bucket = 0
-    entry.wind = wind
     entry.project_revision = editor.project.revision
     entry.terrain_revision = editor.terrain_revision
 }

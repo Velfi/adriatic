@@ -211,7 +211,13 @@ Climbing_Leaf_Geometry_Cache_Entry :: struct {
     cards:                  [dynamic]Bougainvillea_Card_Descriptor,
 }
 
-TOWN_MOUSE_CACHE_COUNT :: len(terrain.DEFAULT_ISLAND_SIGNS) * 7 + 4
+TOWN_MOUSE_CACHE_TOWN_FIRST   :: 0
+TOWN_MOUSE_CACHE_TOWN_COUNT   :: len(terrain.DEFAULT_ISLAND_SIGNS) * 8
+TOWN_MOUSE_CACHE_ZORA         :: TOWN_MOUSE_CACHE_TOWN_FIRST + TOWN_MOUSE_CACHE_TOWN_COUNT
+TOWN_MOUSE_CACHE_POSTAL_FIRST :: TOWN_MOUSE_CACHE_ZORA + 1
+TOWN_MOUSE_CACHE_MEETING_NIKO :: TOWN_MOUSE_CACHE_POSTAL_FIRST + 2
+TOWN_MOUSE_CACHE_MEETING_IVA  :: TOWN_MOUSE_CACHE_MEETING_NIKO + 1
+TOWN_MOUSE_CACHE_COUNT        :: TOWN_MOUSE_CACHE_MEETING_IVA + 1
 TOWN_MOUSE_PORTRAIT_ANIMATION_HZ :: f32(30)
 TOWN_MOUSE_TERRAIN_RADIUS :: f32(2.5)
 TOWN_MOUSE_GROUND_SAMPLE_COUNT :: 32
@@ -221,7 +227,6 @@ Town_Mouse_Geometry_Cache_Entry :: struct {
     model:                   Mouse_Model,
     scale:                   f32,
     animation_bucket:        i64,
-    wind:                    [2]f32,
     project_revision:        u64,
     terrain_revision:        u64,
     ground_valid:            bool,
