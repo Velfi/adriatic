@@ -126,6 +126,7 @@ World_Pass_Context :: struct {
     depth_view:         vk.ImageView,
     framebuffer_extent: vk.Extent2D,
     logical_extent:     [2]i32,
+    sample_count:       vk.SampleCountFlags,
 }
 World_Pass_Callback :: #type proc(pass: ^World_Pass_Context, user_data: rawptr)
 Ui_Pass_Context :: struct {
@@ -352,6 +353,11 @@ State :: struct {
     glyph_cache_evictions:                     u64,
     glyph_cache_failures:                      u64,
     depth:                                     resources.Image,
+    world_msaa_color:                          resources.Image,
+    world_msaa_depth:                          resources.Image,
+    world_msaa_color_initialized:              bool,
+    world_sample_count_requested:              u32,
+    world_sample_count_effective:              u32,
     depth_initialized:                         bool,
     depth_sample_ready:                        bool,
     world_scene:                               resources.Image,
@@ -456,6 +462,25 @@ State_Abi_Version :: proc() -> u64 {
 SetWorldRenderSize :: proc(width, height: u32) {
     state.world_render_width = width
     state.world_render_height = height
+}
+
+SetWorldSampleCount :: proc(samples: u32) {
+    requested := samples
+    if requested != 2 && requested != 4 do requested = 1
+    state.world_sample_count_requested = requested
+}
+
+WorldSampleCountSupported :: proc(samples: u32) -> bool {
+    if samples == 1 do return true
+    if state == nil || !state.ctx.initialized || !state.ctx.caps.supports_min_depth_resolve do return false
+    if samples == 2 do return ._2 in state.ctx.caps.framebuffer_sample_counts
+    if samples == 4 do return ._4 in state.ctx.caps.framebuffer_sample_counts
+    return false
+}
+
+GetWorldSampleCount :: proc() -> u32 {
+    if state == nil do return 1
+    return max(state.world_sample_count_effective, 1)
 }
 
 // SetWorldPostProcessEnabled resolves the world through the consumer's post

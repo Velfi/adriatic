@@ -72,6 +72,8 @@ Vk_Device_Caps :: struct {
     api_version:                u32,
     supports_timestamp_queries: bool,
     timestamp_period:           f32,
+    framebuffer_sample_counts: vk.SampleCountFlags,
+    supports_min_depth_resolve: bool,
     swapchain_format:           vk.Format,
     present_mode:               vk.PresentModeKHR,
     swapchain_extent:           vk.Extent2D,

@@ -201,7 +201,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     }
     vk.CmdSetViewport(pass.frame.command_buffer, 0, 1, &viewport)
     vk.CmdSetScissor(pass.frame.command_buffer, 0, 1, &scissor)
-    pipeline_index := pass.color_format == vk.Format.R16G16B16A16_SFLOAT ? 1 : 0
+    pipeline_index := render3d.color_pipeline_variant_index(pass.color_format, pass.sample_count)
     render_camera_pose :=
         menu_scene_current(editor) == .Customization ? customization_preview_camera_pose() : editor.camera_pose
     camera := perspective_camera(render_camera_pose, focal_length)

@@ -867,12 +867,19 @@ world_scene_extent :: proc() -> vk.Extent2D {
 
 ensure_depth_attachment :: proc() -> bool {
     extent := world_scene_extent()
-    if state.depth.width == extent.width && state.depth.height == extent.height && state.depth.view != vk.ImageView(0) do return true
-    _ = vk.DeviceWaitIdle(state.ctx.device)
-    resources.image_destroy(&state.depth, &state.ctx)
-    created := resources.depth_create(&state.ctx, extent.width, extent.height, &state.depth)
-    state.depth_initialized = false
-    state.depth_sample_ready = false
+    requested := max(state.world_sample_count_requested, 1)
+    effective := u32(1)
+    if requested >= 4 && WorldSampleCountSupported(4) {
+        effective = 4
+    } else if requested >= 2 && WorldSampleCountSupported(2) {
+        effective = 2
+    }
+    msaa_valid := effective == 1 ||
+        (state.world_msaa_depth.width == extent.width && state.world_msaa_depth.height == extent.height &&
+         state.world_msaa_depth.view != vk.ImageView(0) && state.world_sample_count_effective == effective)
+    if state.depth.width == extent.width && state.depth.height == extent.height && state.depth.view != vk.ImageView(0) && msaa_valid do return true
+    replacement_depth, replacement_msaa_depth: resources.Image
+    created := resources.depth_create(&state.ctx, extent.width, extent.height, &replacement_depth)
     if created {
         sampler_info := vk.SamplerCreateInfo {
             sType = .SAMPLER_CREATE_INFO,
@@ -883,13 +890,57 @@ ensure_depth_attachment :: proc() -> bool {
             addressModeW = .CLAMP_TO_EDGE,
             maxLod = 0,
         }
-        if vk.CreateSampler(state.ctx.device, &sampler_info, nil, &state.depth.sampler) != .SUCCESS {
-            resources.image_destroy(&state.depth, &state.ctx)
+        if vk.CreateSampler(state.ctx.device, &sampler_info, nil, &replacement_depth.sampler) != .SUCCESS {
+            resources.image_destroy(&replacement_depth, &state.ctx)
             return false
         }
-        engine.vk_set_debug_name(&state.ctx, .SAMPLER, auto_cast state.depth.sampler, "canvas world depth sampler")
+        engine.vk_set_debug_name(&state.ctx, .SAMPLER, auto_cast replacement_depth.sampler, "canvas world depth sampler")
+        if effective > 1 {
+            samples := effective == 4 ? vk.SampleCountFlags{._4} : vk.SampleCountFlags{._2}
+            if !resources.depth_create(&state.ctx, extent.width, extent.height, &replacement_msaa_depth, samples) {
+                resources.image_destroy(&replacement_depth, &state.ctx)
+                return false
+            }
+        }
     }
-    return created
+    if !created do return false
+    _ = vk.DeviceWaitIdle(state.ctx.device)
+    resources.image_destroy(&state.depth, &state.ctx)
+    resources.image_destroy(&state.world_msaa_depth, &state.ctx)
+    resources.image_destroy(&state.world_msaa_color, &state.ctx)
+    state.depth = replacement_depth
+    state.world_msaa_depth = replacement_msaa_depth
+    state.world_sample_count_effective = effective
+    state.depth_initialized = false
+    state.depth_sample_ready = false
+    state.world_msaa_color_initialized = false
+    return true
+}
+
+ensure_world_msaa_color :: proc(extent: vk.Extent2D, format: vk.Format) -> bool {
+    if state.world_sample_count_effective <= 1 do return true
+    target := &state.world_msaa_color
+    if target.width == extent.width && target.height == extent.height && target.format == format && target.view != vk.ImageView(0) do return true
+    samples := state.world_sample_count_effective == 4 ? vk.SampleCountFlags{._4} : vk.SampleCountFlags{._2}
+    replacement: resources.Image
+    if !resources.image_create(
+        &state.ctx,
+        extent.width,
+        extent.height,
+        format,
+        {.COLOR_ATTACHMENT},
+        {.COLOR},
+        samples,
+        &replacement,
+        "canvas multisampled world color",
+    ) {
+        return false
+    }
+    _ = vk.DeviceWaitIdle(state.ctx.device)
+    resources.image_destroy(target, &state.ctx)
+    target^ = replacement
+    state.world_msaa_color_initialized = false
+    return true
 }
 
 ensure_world_scene :: proc() -> bool {

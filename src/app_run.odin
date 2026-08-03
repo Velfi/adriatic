@@ -532,6 +532,7 @@ adriatic_run :: proc(
         }
     }
     crunchiness_apply(editor.gameplay_options.crunchiness)
+    anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
     dither_apply(editor)
     ui_theme_set_mode(editor.gameplay_options.theme_mode)
     editor.runtime_input = game_input.default_state()

@@ -6,7 +6,7 @@ import "core:strings"
 
 MOUSE_PREFERENCE_MAGIC :: [8]u8{'A', 'D', 'R', 'M', 'O', 'U', 'S', 'E'}
 MOUSE_PREFERENCE_MAGIC_V5 :: [8]u8{'A', 'D', 'R', 'P', 'R', 'E', 'F', 'S'}
-MOUSE_PREFERENCE_VERSION :: u32(5)
+MOUSE_PREFERENCE_VERSION :: u32(6)
 
 Mouse_Preference_Payload :: struct {
     fur:                 u8,
@@ -25,13 +25,38 @@ Mouse_Preference_Payload :: struct {
     dither_mode:         u8,
     hdr_exposure:        bool,
     theme_mode:          u8,
+    anti_aliasing:       u8,
+}
+
+Mouse_Preference_Payload_V5 :: struct {
+    fur, pattern, headgear: u8,
+    scarf_enabled: bool,
+    scarf_color: [4]u8,
+    look_sensitivity, sound_fx_level: f32,
+    invert_look_x, invert_look_y, invert_flight_pitch, show_hud: bool,
+    crunchiness, visual_style, dither_mode: u8,
+    hdr_exposure: bool,
+    theme_mode: u8,
 }
 
 Mouse_Preference_File_V4 :: struct {
     magic:    [8]u8,
     version:  u32,
-    payload:  Mouse_Preference_Payload,
+    payload:  Mouse_Preference_Payload_V5,
     checksum: u64,
+}
+
+Mouse_Preference_File_V5 :: struct {
+    header: Mouse_Preference_Header,
+    payload: Mouse_Preference_Payload_V5,
+    checksum: u64,
+}
+
+mouse_preference_checksum_v5 :: proc(payload: ^Mouse_Preference_Payload_V5) -> u64 {
+    bytes := mem.slice_ptr(cast([^]u8)payload, size_of(payload^))
+    hash: u64 = 14695981039346656037
+    for byte in bytes do hash = (hash ~ u64(byte)) * 1099511628211
+    return hash
 }
 
 Mouse_Preference_Header :: struct {
@@ -173,6 +198,7 @@ mouse_preference_payload :: proc(editor: ^Editor) -> Mouse_Preference_Payload {
         dither_mode = u8(editor.gameplay_options.dither_mode),
         hdr_exposure = editor.gameplay_options.hdr_exposure,
         theme_mode = u8(editor.gameplay_options.theme_mode),
+        anti_aliasing = u8(editor.gameplay_options.anti_aliasing),
     }
 }
 
@@ -282,6 +308,7 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
+            anti_aliasing       = .MSAA_4X,
         }
         return true
     }
@@ -326,15 +353,17 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             dither_mode         = Dither_Mode(payload.dither_mode),
             hdr_exposure        = payload.hdr_exposure,
             theme_mode          = UI_Theme_Mode(payload.theme_mode),
+            anti_aliasing       = .MSAA_4X,
         }
         return true
     }
-    if len(bytes) == size_of(Mouse_Preference_File_V4) {
+    if len(bytes) == size_of(Mouse_Preference_File_V4) &&
+       (cast(^Mouse_Preference_File_V4)raw_data(bytes)).version == 4 {
         file_data := cast(^Mouse_Preference_File_V4)raw_data(bytes)
         payload := &file_data.payload
         if file_data.magic != MOUSE_PREFERENCE_MAGIC ||
            file_data.version != 4 ||
-           file_data.checksum != mouse_preference_checksum(payload) ||
+           file_data.checksum != mouse_preference_checksum_v5(payload) ||
            int(payload.fur) >= CUSTOMIZATION_COLOR_COUNT ||
            int(payload.pattern) >= CUSTOMIZATION_PATTERN_COUNT ||
            int(payload.headgear) >= CUSTOMIZATION_HEADGEAR_COUNT ||
@@ -368,6 +397,39 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
             dither_mode = Dither_Mode(payload.dither_mode),
             hdr_exposure = payload.hdr_exposure,
             theme_mode = UI_Theme_Mode(payload.theme_mode),
+            anti_aliasing = .MSAA_4X,
+        }
+        return true
+    }
+    if len(bytes) == size_of(Mouse_Preference_File_V5) &&
+       (cast(^Mouse_Preference_File_V5)raw_data(bytes)).header.version == 5 {
+        file_data := cast(^Mouse_Preference_File_V5)raw_data(bytes)
+        payload := &file_data.payload
+        if file_data.header.magic != MOUSE_PREFERENCE_MAGIC_V5 || file_data.header.version != 5 ||
+           file_data.header.payload_size != u32(size_of(Mouse_Preference_Payload_V5)) ||
+           file_data.checksum != mouse_preference_checksum_v5(payload) ||
+           int(payload.fur) >= CUSTOMIZATION_COLOR_COUNT || int(payload.pattern) >= CUSTOMIZATION_PATTERN_COUNT ||
+           int(payload.headgear) >= CUSTOMIZATION_HEADGEAR_COUNT || payload.look_sensitivity < .004 ||
+           payload.look_sensitivity > .024 || payload.sound_fx_level < 0 || payload.sound_fx_level > 1 ||
+           int(payload.crunchiness) > int(Crunchiness.Full) || int(payload.visual_style) > 2 ||
+           int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
+           (Visual_Style(payload.visual_style) == .Dither && payload.dither_mode == u8(Dither_Mode.Off)) ||
+           int(payload.theme_mode) > int(UI_Theme_Mode.Dark) {
+            return false
+        }
+        editor.mouse_fur = Mouse_Fur(payload.fur)
+        editor.mouse_pattern = Mouse_Fur_Pattern(payload.pattern)
+        editor.mouse_headgear = Mouse_Accessory(payload.headgear)
+        editor.mouse_scarf_enabled = payload.scarf_enabled
+        editor.mouse_scarf_color = {payload.scarf_color[0], payload.scarf_color[1], payload.scarf_color[2], payload.scarf_color[3]}
+        editor.gameplay_options = {
+            look_sensitivity = payload.look_sensitivity, sound_fx_level = payload.sound_fx_level,
+            invert_look_x = payload.invert_look_x, invert_look_y = payload.invert_look_y,
+            invert_flight_pitch = payload.invert_flight_pitch, show_hud = payload.show_hud,
+            crunchiness = Crunchiness(payload.crunchiness),
+            visual_style = payload.visual_style == 2 ? .Standard : Visual_Style(payload.visual_style),
+            dither_mode = Dither_Mode(payload.dither_mode), hdr_exposure = payload.hdr_exposure,
+            theme_mode = UI_Theme_Mode(payload.theme_mode), anti_aliasing = .MSAA_4X,
         }
         return true
     }
@@ -391,7 +453,8 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
        int(payload.visual_style) > 2 ||
        int(payload.dither_mode) > int(Dither_Mode.Matriax_8) ||
        (Visual_Style(payload.visual_style) == .Dither && payload.dither_mode == u8(Dither_Mode.Off)) ||
-       int(payload.theme_mode) > int(UI_Theme_Mode.Dark) {
+       int(payload.theme_mode) > int(UI_Theme_Mode.Dark) ||
+       int(payload.anti_aliasing) > int(Anti_Aliasing.MSAA_4X) {
         return false
     }
     editor.mouse_fur = Mouse_Fur(payload.fur)
@@ -416,6 +479,7 @@ mouse_preference_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
         dither_mode         = Dither_Mode(payload.dither_mode),
         hdr_exposure        = payload.hdr_exposure,
         theme_mode          = UI_Theme_Mode(payload.theme_mode),
+        anti_aliasing       = Anti_Aliasing(payload.anti_aliasing),
     }
     return true
 }

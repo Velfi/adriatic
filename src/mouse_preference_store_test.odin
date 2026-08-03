@@ -46,6 +46,7 @@ when ODIN_TEST {
         source.gameplay_options.dither_mode = .Blue_Noise
         source.gameplay_options.hdr_exposure = false
         source.gameplay_options.theme_mode = .Dark
+        source.gameplay_options.anti_aliasing = .MSAA_2X
 
         testing.expect(t, mouse_preference_save_to_path(source, path))
         testing.expect(t, mouse_preference_load_from_path(restored, path))
@@ -126,7 +127,7 @@ when ODIN_TEST {
                 theme_mode = u8(UI_Theme_Mode.Dark),
             },
         }
-        legacy.checksum = mouse_preference_checksum(&legacy.payload)
+        legacy.checksum = mouse_preference_checksum_v5(&legacy.payload)
         legacy_bytes := mem.slice_ptr(cast([^]u8)&legacy, size_of(legacy))
         testing.expect(t, os.write_entire_file(path, legacy_bytes) == nil)
 
@@ -136,6 +137,7 @@ when ODIN_TEST {
         testing.expect_value(t, restored.gameplay_options.look_sensitivity, f32(.018))
         testing.expect_value(t, restored.gameplay_options.visual_style, Visual_Style.Dither)
         testing.expect_value(t, restored.gameplay_options.theme_mode, UI_Theme_Mode.Dark)
+        testing.expect_value(t, restored.gameplay_options.anti_aliasing, Anti_Aliasing.MSAA_4X)
     }
 
 

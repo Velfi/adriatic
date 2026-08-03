@@ -310,12 +310,23 @@ vk_push_unique_queue :: proc(values: ^[3]u32, count: ^u32, value: u32) {
 vk_fill_device_caps :: proc(ctx: ^Vk_Context, configured_ceiling_fraction: f32) {
     props: vk.PhysicalDeviceProperties
     vk.GetPhysicalDeviceProperties(ctx.physical_device, &props)
+    depth_resolve := vk.PhysicalDeviceDepthStencilResolveProperties {
+        sType = .PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES,
+    }
+    props2 := vk.PhysicalDeviceProperties2 {
+        sType = .PHYSICAL_DEVICE_PROPERTIES_2,
+        pNext = &depth_resolve,
+    }
+    vk.GetPhysicalDeviceProperties2(ctx.physical_device, &props2)
     ctx.caps.api_version = props.apiVersion
     write_fixed_string(ctx.caps.adapter_name[:], fixed_string(props.deviceName[:]))
     write_fixed_string(ctx.caps.adapter_type[:], vk_device_type_name(props.deviceType))
     ctx.caps.supports_timestamp_queries =
         props.limits.timestampComputeAndGraphics == true && props.limits.timestampPeriod > 0
     ctx.caps.timestamp_period = props.limits.timestampPeriod
+    ctx.caps.framebuffer_sample_counts =
+        props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts
+    ctx.caps.supports_min_depth_resolve = .MIN in depth_resolve.supportedDepthResolveModes
     ctx.caps.supports_memory_budget_ext = vk_device_extension_available(
         ctx.physical_device,
         vk.EXT_MEMORY_BUDGET_EXTENSION_NAME,

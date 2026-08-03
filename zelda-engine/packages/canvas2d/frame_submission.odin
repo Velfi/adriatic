@@ -409,6 +409,11 @@ EndDrawing :: proc() {
             if !ensure_world_post_ping(index, target_extent) do return
         }
     }
+    world_extent := ctx.swapchain_extent
+    if fixed_world_configured do world_extent = {state.world_render_width, state.world_render_height}
+    world_color_format := world_resolve_configured ? ctx.swapchain_format : (hdr_active ? vk.Format.R16G16B16A16_SFLOAT : ctx.swapchain_format)
+    if state.world_pass != nil && !ensure_world_msaa_color(world_extent, world_color_format) do return
+    msaa_active := state.world_sample_count_effective > 1
     acquire_marker := gfx_profile_begin(.Acquire_Frame)
     frame, ok := engine.vk_begin_frame(ctx)
     gfx_profile_end(.Acquire_Frame, acquire_marker)
@@ -418,9 +423,7 @@ EndDrawing :: proc() {
     if detailed_gfx do frame_setup_marker = gfx_profile_begin(.Frame_Setup)
     upload_dynamic_textures(ctx, frame)
     extent := ctx.swapchain_extent
-    world_extent := extent
     world_resolve := world_resolve_configured
-    if fixed_world_configured do world_extent = {state.world_render_width, state.world_render_height}
     image := ctx.swapchain_images[frame.image_index]
     swapchain_old_layout := vk.ImageLayout.PRESENT_SRC_KHR
     if !ctx.swapchain_image_initialized[frame.image_index] {
@@ -463,6 +466,32 @@ EndDrawing :: proc() {
             .DEPTH_ATTACHMENT_OPTIMAL,
             {.DEPTH},
         )
+        if msaa_active {
+            engine.vk_cmd_image_barrier2(
+                ctx,
+                frame.command_buffer,
+                state.world_msaa_depth.image,
+                state.depth_initialized ? vk.PipelineStageFlags2{.LATE_FRAGMENT_TESTS} : vk.PipelineStageFlags2{.TOP_OF_PIPE},
+                {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+                state.depth_initialized ? vk.AccessFlags2{.DEPTH_STENCIL_ATTACHMENT_WRITE} : vk.AccessFlags2{},
+                {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+                state.depth_initialized ? vk.ImageLayout.DEPTH_ATTACHMENT_OPTIMAL : vk.ImageLayout.UNDEFINED,
+                .DEPTH_ATTACHMENT_OPTIMAL,
+                {.DEPTH},
+            )
+            engine.vk_cmd_image_barrier2(
+                ctx,
+                frame.command_buffer,
+                state.world_msaa_color.image,
+                state.world_msaa_color_initialized ? vk.PipelineStageFlags2{.COLOR_ATTACHMENT_OUTPUT} : vk.PipelineStageFlags2{.TOP_OF_PIPE},
+                {.COLOR_ATTACHMENT_OUTPUT},
+                state.world_msaa_color_initialized ? vk.AccessFlags2{.COLOR_ATTACHMENT_WRITE} : vk.AccessFlags2{},
+                {.COLOR_ATTACHMENT_WRITE},
+                state.world_msaa_color_initialized ? vk.ImageLayout.COLOR_ATTACHMENT_OPTIMAL : vk.ImageLayout.UNDEFINED,
+                .COLOR_ATTACHMENT_OPTIMAL,
+            )
+            state.world_msaa_color_initialized = true
+        }
         state.depth_initialized = true
         state.depth_sample_ready = false
     }
@@ -494,19 +523,29 @@ EndDrawing :: proc() {
     if hdr_active do engine.vk_cmd_image_barrier2(ctx, frame.command_buffer, state.hdr_scene.image, {.TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, {.COLOR_ATTACHMENT_WRITE}, .UNDEFINED, .COLOR_ATTACHMENT_OPTIMAL)
     color_attachment := vk.RenderingAttachmentInfo {
         sType       = .RENDERING_ATTACHMENT_INFO,
-        imageView   = world_resolve ? state.world_scene.view : (hdr_active ? state.hdr_scene.view : ctx.swapchain_image_views[frame.image_index]),
+        imageView   = msaa_active ? state.world_msaa_color.view : (world_resolve ? state.world_scene.view : (hdr_active ? state.hdr_scene.view : ctx.swapchain_image_views[frame.image_index])),
         imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
         loadOp      = .CLEAR,
         storeOp     = .STORE,
         clearValue  = color_clear,
     }
+    if msaa_active {
+        color_attachment.resolveMode = {.AVERAGE}
+        color_attachment.resolveImageView = world_resolve ? state.world_scene.view : (hdr_active ? state.hdr_scene.view : ctx.swapchain_image_views[frame.image_index])
+        color_attachment.resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL
+    }
     depth_attachment := vk.RenderingAttachmentInfo {
         sType       = .RENDERING_ATTACHMENT_INFO,
-        imageView   = state.depth.view,
+        imageView   = msaa_active ? state.world_msaa_depth.view : state.depth.view,
         imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
         loadOp      = .CLEAR,
         storeOp     = .STORE,
         clearValue  = depth_clear,
+    }
+    if msaa_active {
+        depth_attachment.resolveMode = {.MIN}
+        depth_attachment.resolveImageView = state.depth.view
+        depth_attachment.resolveImageLayout = .DEPTH_ATTACHMENT_OPTIMAL
     }
     rendering := vk.RenderingInfo {
         sType = .RENDERING_INFO,
@@ -522,10 +561,11 @@ EndDrawing :: proc() {
         ctx                = ctx,
         frame              = frame,
         color_view         = color_attachment.imageView,
-        color_format       = world_resolve ? ctx.swapchain_format : (hdr_active ? vk.Format.R16G16B16A16_SFLOAT : ctx.swapchain_format),
-        depth_view         = state.depth.view,
+        color_format       = world_color_format,
+        depth_view         = depth_attachment.imageView,
         framebuffer_extent = world_extent,
         logical_extent     = {state.width, state.height},
+        sample_count       = msaa_active ? (state.world_sample_count_effective == 4 ? vk.SampleCountFlags{._4} : vk.SampleCountFlags{._2}) : vk.SampleCountFlags{._1},
     }
     if detailed_gfx do gfx_profile_end(.Frame_Setup, frame_setup_marker)
     if state.world_pre_pass != nil {

@@ -145,6 +145,8 @@ backend_destroy :: proc() {
         for frame in 0 ..< engine.MAX_FRAMES_IN_FLIGHT do engine.vk_destroy_buffer(&state.ctx, &state.dynamic_staging[i][frame])
         delete(state.dynamic_pixels[i])}
     resources.image_destroy(&state.depth, &state.ctx)
+    resources.image_destroy(&state.world_msaa_color, &state.ctx)
+    resources.image_destroy(&state.world_msaa_depth, &state.ctx)
     resources.image_destroy(&state.world_scene, &state.ctx)
     for &target in state.world_post_ping do resources.image_destroy(&target, &state.ctx)
     resources.image_destroy(&state.hdr_scene, &state.ctx)

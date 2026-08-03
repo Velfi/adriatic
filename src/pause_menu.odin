@@ -114,6 +114,13 @@ Gameplay_Options :: struct {
     dither_mode:         Dither_Mode,
     hdr_exposure:        bool,
     theme_mode:          UI_Theme_Mode,
+    anti_aliasing:       Anti_Aliasing,
+}
+
+Anti_Aliasing :: enum u8 {
+    Off,
+    MSAA_2X,
+    MSAA_4X,
 }
 
 Crunchiness :: enum {
@@ -136,7 +143,38 @@ gameplay_options_default :: proc() -> Gameplay_Options {
         dither_mode = .Off,
         hdr_exposure = true,
         theme_mode = .Light,
+        anti_aliasing = .MSAA_4X,
     }
+}
+
+anti_aliasing_samples :: proc(value: Anti_Aliasing) -> u32 {
+    switch value { case .MSAA_2X: return 2; case .MSAA_4X: return 4; case .Off: return 1 }
+    return 1
+}
+
+anti_aliasing_apply :: proc(value: Anti_Aliasing) {
+    canvas2d.SetWorldSampleCount(anti_aliasing_samples(value))
+}
+
+anti_aliasing_supported_value :: proc(value: Anti_Aliasing) -> Anti_Aliasing {
+    candidate := int(value)
+    for candidate >= 0 {
+        samples := anti_aliasing_samples(Anti_Aliasing(candidate))
+        if samples == 1 || canvas2d.WorldSampleCountSupported(samples) do return Anti_Aliasing(candidate)
+        candidate -= 1
+    }
+    return .Off
+}
+
+anti_aliasing_adjust :: proc(value: Anti_Aliasing, direction: int) -> Anti_Aliasing {
+    candidate := clamp(int(value) + direction, 0, 2)
+    step := direction >= 0 ? 1 : -1
+    for candidate >= 0 && candidate <= 2 {
+        samples := anti_aliasing_samples(Anti_Aliasing(candidate))
+        if samples == 1 || canvas2d.WorldSampleCountSupported(samples) do return Anti_Aliasing(candidate)
+        candidate += step
+    }
+    return value
 }
 
 crunchiness_label :: proc(value: Crunchiness) -> cstring {
@@ -252,10 +290,10 @@ world_select_start_bounds :: #force_inline proc(panel: canvas2d.Rectangle) -> ca
     return {panel.x + panel.width - 254, panel.y + panel.height - 108, 220, 44}
 }
 
-OPTIONS_ROW_COUNT :: 12
+OPTIONS_ROW_COUNT :: 13
 OPTIONS_RESTORE_FOCUS :: OPTIONS_ROW_COUNT
 OPTIONS_BACK_FOCUS :: OPTIONS_ROW_COUNT + 1
-OPTIONS_CONTENT_HEIGHT :: f32(930)
+OPTIONS_CONTENT_HEIGHT :: f32(1000)
 
 @(no_instrumentation)
 options_menu_viewport :: #force_inline proc(panel: canvas2d.Rectangle) -> canvas2d.Rectangle {
@@ -884,6 +922,9 @@ options_menu_adjust_focused :: proc(editor: ^Editor, direction: int) {
     case 10:
         editor.gameplay_options.theme_mode = direction > 0 ? .Dark : .Light
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
+    case 11:
+        editor.gameplay_options.anti_aliasing = anti_aliasing_adjust(editor.gameplay_options.anti_aliasing, direction)
+        anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
     }
 }
 
@@ -956,12 +997,16 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         case 10:
             editor.gameplay_options.theme_mode = editor.gameplay_options.theme_mode == .Dark ? .Light : .Dark
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
+        case 11:
+            editor.gameplay_options.anti_aliasing = anti_aliasing_adjust(editor.gameplay_options.anti_aliasing, 1)
+            anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
         case OPTIONS_RESTORE_FOCUS:
             editor.gameplay_options = gameplay_options_default()
             crunchiness_apply(editor.gameplay_options.crunchiness)
             dither_apply(editor)
             ui_theme_set_mode(editor.gameplay_options.theme_mode)
-        case 11:
+            anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
+        case 12:
             menu_scene_push(editor, .Customization)
             editor.customization_focus = 0
         case OPTIONS_BACK_FOCUS:
@@ -974,7 +1019,8 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
            editor.options_focus != 7 &&
            editor.options_focus != 8 &&
            editor.options_focus != 9 &&
-           editor.options_focus != 10 {
+           editor.options_focus != 10 &&
+           editor.options_focus != 11 {
             return
         }
     }
@@ -1101,6 +1147,7 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
         crunchiness_apply(editor.gameplay_options.crunchiness)
         dither_apply(editor)
         ui_theme_set_mode(editor.gameplay_options.theme_mode)
+        anti_aliasing_apply(editor.gameplay_options.anti_aliasing)
         return
     }
     style := options_menu_row_bounds(panel, 7, scroll_y)
@@ -1160,6 +1207,19 @@ options_menu_process_input :: proc(editor: ^Editor, width, height: i32, delta_se
        pressed &&
        canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 11, scroll_y)) {
         editor.options_focus = 11
+        x := mouse.x - options_menu_row_bounds(panel, 11, scroll_y).x
+        selected := Anti_Aliasing(clamp(int(x / max(options_menu_row_bounds(panel, 11, scroll_y).width / 3, 1)), 0, 2))
+        samples := anti_aliasing_samples(selected)
+        if samples == 1 || canvas2d.WorldSampleCountSupported(samples) {
+            editor.gameplay_options.anti_aliasing = selected
+            anti_aliasing_apply(selected)
+        }
+        return
+    }
+    if content_hovered &&
+       pressed &&
+       canvas2d.CheckCollisionPointRec(mouse, options_menu_row_bounds(panel, 12, scroll_y)) {
+        editor.options_focus = 12
         menu_scene_push(editor, .Customization)
         editor.customization_focus = 0
         return
@@ -1824,11 +1884,27 @@ options_menu_draw :: proc(editor: ^Editor, panel: canvas2d.Rectangle) {
         editor.options_focus == 10,
     )
 
+    aa := options_menu_row_bounds(panel, 11, scroll_y)
+    ui_draw_text(.Label, "ANTI-ALIASING", {aa.x, aa.y + 2}, .4, ui_theme_text())
+    aa_gap := f32(6)
+    aa_width := (aa.width - aa_gap * 2) / 3
+    aa_labels := [3]cstring{"OFF", "2X", "4X"}
+    effective_samples := canvas2d.GetWorldSampleCount()
+    for index in 0 ..< 3 {
+        samples := anti_aliasing_samples(Anti_Aliasing(index))
+        supported := samples == 1 || canvas2d.WorldSampleCountSupported(samples)
+        pause_menu_button(
+            {aa.x + f32(index) * (aa_width + aa_gap), aa.y + 28, aa_width, 30},
+            aa_labels[index],
+            supported && effective_samples == samples,
+        )
+    }
+
     pause_menu_button(
-        options_menu_row_bounds(panel, 11, scroll_y),
+        options_menu_row_bounds(panel, 12, scroll_y),
         "CUSTOMIZE MOUSE",
         true,
-        editor.options_focus == 11,
+        editor.options_focus == 12,
     )
 
     pause_menu_button(
