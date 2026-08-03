@@ -236,6 +236,7 @@ SDF_Obstacle_Interaction :: struct {
     drag_anchor_screen:       [2]f32,
     transform_snapshot:       SDF_Torus_Obstacle,
     transform_snapshot_valid: bool,
+    transform_snapshot_slot:  int,
     inspector_euler:          flight.Vec3,
     inspector_euler_valid:    bool,
 }

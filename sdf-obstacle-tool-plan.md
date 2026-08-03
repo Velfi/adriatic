@@ -13,8 +13,8 @@ the playground in code.
 
 ## Current phase
 
-Phase 4 — Milestones 1 through 3 are accepted. Milestone 4 translation gizmo
-is the active slice.
+Phase 5 — Milestones 1 through 4 are accepted. Milestone 5 rotation gizmo is
+the active slice. Non-uniform scale remains Milestone 6.
 
 The feature is split into seven ordered milestones. A subagent implements one
 milestone at a time in the current workspace. The primary agent reviews the
@@ -415,6 +415,41 @@ compact layout.
 Move tori by each handle and by every `G` mode from near and far camera
 distances. Confirm commit, cancel, selection switching, and camera-key
 suppression.
+
+### Implementation evidence
+
+- Global X/Y/Z shafts with endpoint handles and a free-move center render only
+  for a valid selected torus while the Obstacles tool is active. Their world
+  size scales with camera distance and remains clamped to a usable range.
+- Screen-space hit testing distinguishes each projected axis from the center.
+  Axis movement solves the closest point against the selected world axis and
+  preserves the two untouched snapshot coordinates; free movement intersects a
+  camera-facing plane through the snapshot position.
+- Translation snapshots once at modal start. Direct handle clicks and `G`
+  start it; `X`, `Y`, and `Z` constrain it. Release commits, while Escape,
+  right-click, disabled UI, invalid ray, tool switch, and map transition cancel
+  and restore the exact snapshot.
+- Plain `G` stays reserved for a valid Obstacles selection instead of switching
+  to Greek Assets. Modal/start input also blocks editor-camera input.
+- Modal ownership keeps the original selected slot transiently. Editor UI and
+  generic authoring shortcuts are bypassed during a live modal; a defensive
+  selection mismatch cancels without touching the new selection. `G` also
+  requires a valid initial ray before creating modal state. A failed first
+  direct-handle solve cancels immediately rather than leaving a modal active.
+- Both direct handles and `G` anchor to their first solved ray contact, so
+  start leaves position unchanged and later motion applies only contact delta.
+  Constraint switching re-solves and re-anchors before writing, preventing an
+  X/Y/Z snap.
+- Gizmo world scale now derives from camera-forward depth, focal length, and
+  viewport height for a fixed 48-pixel perpendicular axis. Rendering and hit
+  testing use the same helper; no world-size clamp remains. Near/far projection
+  coverage verifies the fixed pixel length, including the vehicle showcase's
+  2.0 focal length.
+- `make sdf-obstacle-test` passes 4/4 in 3.95 ms. `make
+  fixture-schema-check`, `make check`, and `make build` pass. No
+  fixture-reachable state, schema, manifest, history, or migration changed.
+- Sis accepted the completed translation workflow by advancing the tool to
+  rotation and scale gizmos.
 
 ### Midpoint sunk-cost check
 

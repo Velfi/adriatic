@@ -36,6 +36,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         cinematic_export_time = f32(max(frame - capture_frame, 0)) / f32(max(request.sequence_fps, 1))
     }
     editor.last_frame_time = frame_now
+    if editor.in_map && sdf_obstacle_modal_active(editor) do sdf_obstacle_modal_finish(editor, true)
     // map_time drives low-frequency presentation animation. Keep it
     // separate from the f64 clock used for simulation deltas: subtracting
     // absolute f32 timestamps loses frame-scale precision as uptime grows.
@@ -192,8 +193,10 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     if !pause_menu_is_open(editor) && editor_debug_toggle_pressed(editor) {
         editor.tweak_panel_visible = !editor.tweak_panel_visible
     }
-    if !editor.in_map && !pause_menu_is_open(editor) do editor_ui_process_input(editor, width, height)
-    if !editor.in_map && !pause_menu_is_open(editor) {
+    if !editor.in_map && !pause_menu_is_open(editor) && !sdf_obstacle_modal_active(editor) {
+        editor_ui_process_input(editor, width, height)
+    }
+    if !editor.in_map && !pause_menu_is_open(editor) && !sdf_obstacle_modal_active(editor) {
         if editor.authoring_tool == .ClimbingLeaves {
             editor.plant_stamp_mode = .Climbing
             authoring_select_tool(editor, .Foliage)
@@ -222,7 +225,11 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                 if !control_key_down() && canvas2d.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
                 if !control_key_down() && canvas2d.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
                 if canvas2d.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
-                if !control_key_down() && canvas2d.IsKeyPressed(.G) do authoring_select_tool(editor, .GreekAssets)
+                if !control_key_down() &&
+                   canvas2d.IsKeyPressed(.G) &&
+                   !(editor.authoring_tool == .Obstacles && sdf_obstacle_selected_ptr(editor) != nil) {
+                    authoring_select_tool(editor, .GreekAssets)
+                }
             }
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
             if !imgui_captures_keyboard() && editor.authoring_tool == .Sculpt {
@@ -298,7 +305,13 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             }
         }
         viewport_ui_hit := editor_ui_hit(editor, canvas2d.GetMousePosition(), width, height)
-        update_editor_camera(editor, min(frame_delta, f32(.05)))
+        starting_obstacle_translate :=
+            editor.authoring_tool == .Obstacles &&
+            sdf_obstacle_selected_ptr(editor) != nil &&
+            canvas2d.IsKeyPressed(.G)
+        if !sdf_obstacle_modal_active(editor) && !starting_obstacle_translate {
+            update_editor_camera(editor, min(frame_delta, f32(.05)))
+        }
         viewport_wheel := viewport_ui_hit ? f32(0) : canvas2d.GetMouseWheelMove()
         if editor.road_mode {
             wheel := viewport_wheel
