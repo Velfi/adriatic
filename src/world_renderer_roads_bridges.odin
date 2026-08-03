@@ -500,6 +500,18 @@ world_road_cache_chunk_finish :: proc(first_vertex: int) {
     )
 }
 
+world_road_geometry_cache_preserve_outside_bounds :: proc(editor: ^Editor, dirty: Terrain_Dirty_Bounds) {
+    if editor == nil || !dirty.valid || !world_renderer.road_geometry_valid do return
+    for chunk in world_renderer.road_geometry_chunks {
+        closest_x := clamp(chunk.center.x, dirty.min_x, dirty.max_x)
+        closest_z := clamp(chunk.center.z, dirty.min_z, dirty.max_z)
+        dx, dz := chunk.center.x - closest_x, chunk.center.z - closest_z
+        if dx * dx + dz * dz <= chunk.radius * chunk.radius do return
+    }
+    world_renderer.road_geometry_revision = editor.project.revision
+    world_renderer.road_geometry_terrain_revision = editor.terrain_revision
+}
+
 world_retained_roads_prepare :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "retained_roads_prepare")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)

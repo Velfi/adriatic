@@ -23,6 +23,16 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         max_x    = x + radius,
         max_z    = z + radius,
     }
+    cache_dirty := &world_renderer.clipmap_cache_dirty
+    if cache_dirty.valid {
+        cache_dirty.min_x = min(cache_dirty.min_x, changed.min_x)
+        cache_dirty.min_z = min(cache_dirty.min_z, changed.min_z)
+        cache_dirty.max_x = max(cache_dirty.max_x, changed.max_x)
+        cache_dirty.max_z = max(cache_dirty.max_z, changed.max_z)
+        cache_dirty.revision = revision
+    } else {
+        cache_dirty^ = changed
+    }
     for &dirty in world_renderer.clipmap_dirty {
         if dirty.valid {
             if dirty.revision + 1 != revision do dirty.full_rebuild = true
@@ -38,11 +48,13 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
     ground_grass_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     generated_plant_world_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     world_bathymetry_geometry_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
+    world_ocean_sample_grid_invalidate_bounds(changed)
     // Terrain strokes also advance Project.revision. Record that revision here
     // so the next render keeps the unaffected chunks instead of treating the
     // localized edit as an unrelated project-wide topology change.
     world_renderer.grass_cache_project_revision = editor.project.revision
     if world_renderer.road_revision != 0 do world_renderer.road_revision = editor.project.revision
+    world_road_geometry_cache_preserve_outside_bounds(editor, changed)
     if world_renderer.pavement_query_revision != 0 {
         world_renderer.pavement_query_revision = editor.project.revision
     }
@@ -67,6 +79,13 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         influence_radius := TOWN_MOUSE_TERRAIN_RADIUS * entry.scale
         if dx * dx + dz * dz <= influence_radius * influence_radius {
             entry.valid = false
+            continue
+        }
+        entry.project_revision = editor.project.revision
+        entry.terrain_revision = editor.terrain_revision
+        if entry.ground_valid {
+            entry.ground_project_revision = editor.project.revision
+            entry.ground_terrain_revision = editor.terrain_revision
         }
     }
 }
@@ -81,6 +100,9 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
     editor.terrain_revision += 1
     ground_grass_cache_clear()
     generated_plant_world_cache_clear()
+    world_renderer.ocean_cache_valid = false
+    world_renderer.ocean_sample_grid_valid = false
+    world_renderer.ocean_sample_grid_dirty = {}
     for &entry in world_renderer.bathymetry_geometry_cache do entry.valid = false
     for &dirty in world_renderer.clipmap_dirty {
         dirty = {
@@ -88,6 +110,11 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
             full_rebuild = true,
             revision     = editor.terrain_revision,
         }
+    }
+    world_renderer.clipmap_cache_dirty = {
+        valid        = true,
+        full_rebuild = true,
+        revision     = editor.terrain_revision,
     }
     for &entry in world_renderer.static_geometry_cache do entry.valid = false
     world_renderer.retained_static_dirty = true
@@ -138,7 +165,7 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32, 
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_update")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     cache_revision_changed := world_renderer.clipmap_cache_revision != editor.terrain_revision
-    dirty := &world_renderer.clipmap_dirty[frame_index]
+    dirty := &world_renderer.clipmap_cache_dirty
     localized_revision :=
         cache_revision_changed && dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     target := [2]f32{editor.camera_pose.target.x, editor.camera_pose.target.z}
@@ -233,6 +260,7 @@ clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32, 
     }
     world_renderer.clipmap_cache_revision = editor.terrain_revision
     world_renderer.clipmap_revision[frame_index] = editor.terrain_revision
+    world_renderer.clipmap_cache_dirty = {}
     for &frame_dirty in world_renderer.clipmap_dirty do frame_dirty = {}
 }
 

@@ -163,6 +163,52 @@ world_ocean_sample_grid_rebuild :: proc(
     world_renderer.ocean_sample_grid_valid = true
 }
 
+world_ocean_sample_grid_invalidate_bounds :: proc(changed: Terrain_Dirty_Bounds) {
+    if !changed.valid do return
+    dirty := &world_renderer.ocean_sample_grid_dirty
+    if !dirty.valid {
+        dirty^ = changed
+        return
+    }
+    dirty.min_x = min(dirty.min_x, changed.min_x)
+    dirty.min_z = min(dirty.min_z, changed.min_z)
+    dirty.max_x = max(dirty.max_x, changed.max_x)
+    dirty.max_z = max(dirty.max_z, changed.max_z)
+    dirty.revision = changed.revision
+}
+
+world_ocean_sample_grid_refresh_bounds :: proc(
+    editor: ^Editor,
+    dirty: Terrain_Dirty_Bounds,
+    ocean_y: f32,
+    color: canvas2d.Color,
+) {
+    if !dirty.valid do return
+    grid_min_x := world_renderer.ocean_sample_grid_center[0] - OCEAN_LOCAL_EXTENT
+    grid_min_z := world_renderer.ocean_sample_grid_center[1] - OCEAN_LOCAL_EXTENT
+    grid_max_x := grid_min_x + OCEAN_LOCAL_CELL * f32(OCEAN_LOCAL_DIVISIONS)
+    grid_max_z := grid_min_z + OCEAN_LOCAL_CELL * f32(OCEAN_LOCAL_DIVISIONS)
+    if dirty.max_x < grid_min_x || dirty.min_x > grid_max_x ||
+       dirty.max_z < grid_min_z || dirty.min_z > grid_max_z {
+        return
+    }
+    first_x := clamp(int(math.floor(f64((dirty.min_x - OCEAN_LOCAL_CELL - grid_min_x) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
+    last_x := clamp(int(math.ceil(f64((dirty.max_x + OCEAN_LOCAL_CELL - grid_min_x) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
+    first_z := clamp(int(math.floor(f64((dirty.min_z - OCEAN_LOCAL_CELL - grid_min_z) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
+    last_z := clamp(int(math.ceil(f64((dirty.max_z + OCEAN_LOCAL_CELL - grid_min_z) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
+    for z in first_z ..< last_z + 1 {
+        world_z := grid_min_z + f32(z) * OCEAN_LOCAL_CELL
+        for x in first_x ..< last_x + 1 {
+            world_x := grid_min_x + f32(x) * OCEAN_LOCAL_CELL
+            world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)] = world_ocean_vertex(
+                editor,
+                {world_x, ocean_y, world_z},
+                color,
+            )
+        }
+    }
+}
+
 world_ocean_sample_grid_shift :: proc(
     editor: ^Editor,
     center: [2]f32,
@@ -308,10 +354,17 @@ world_ocean :: proc(editor: ^Editor) {
     local_center_z := f32(math.floor(f64(camera.position.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
     markov_island := lab_scene_is_active(editor, "markov-island")
     dunes := lab_scene_is_active(editor, "dunes")
+    dirty := world_renderer.ocean_sample_grid_dirty
+    localized_terrain_change :=
+        dirty.valid &&
+        !dirty.full_rebuild &&
+        dirty.revision == editor.terrain_revision
+    revisions_match :=
+        world_renderer.ocean_cache_project_revision == editor.project.revision &&
+        world_renderer.ocean_cache_terrain_revision == editor.terrain_revision
     cache_state_matches :=
         world_renderer.ocean_cache_valid &&
-        world_renderer.ocean_cache_project_revision == editor.project.revision &&
-        world_renderer.ocean_cache_terrain_revision == editor.terrain_revision &&
+        (revisions_match || localized_terrain_change) &&
         world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
         world_renderer.ocean_cache_in_map == editor.in_map &&
         world_renderer.ocean_cache_markov_island == markov_island &&
@@ -320,7 +373,8 @@ world_ocean :: proc(editor: ^Editor) {
     if cache_state_matches &&
        world_renderer.ocean_cache_center == local_center &&
        world_renderer.ocean_sample_grid_valid &&
-       world_renderer.ocean_sample_grid_center == local_center {
+       world_renderer.ocean_sample_grid_center == local_center &&
+       !localized_terrain_change {
         append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
         return
     }
@@ -343,6 +397,8 @@ world_ocean :: proc(editor: ^Editor) {
        !world_renderer.ocean_sample_grid_valid ||
        !world_ocean_sample_grid_shift(editor, local_center, local_ocean_y, color) {
         world_ocean_sample_grid_rebuild(editor, local_center, local_ocean_y, color)
+    } else if localized_terrain_change {
+        world_ocean_sample_grid_refresh_bounds(editor, dirty, local_ocean_y, color)
     }
     world_ocean_cache_build(
         editor,
@@ -354,6 +410,7 @@ world_ocean :: proc(editor: ^Editor) {
         ocean_y,
         color,
     )
+    world_renderer.ocean_sample_grid_dirty = {}
 }
 
 world_river_water_spline :: proc(editor: ^Editor, spline: ^terrain.River_Water_Spline) {
