@@ -421,6 +421,21 @@ Lab_Scene_Request :: struct {
 
 LAB_SCENES := [?]Lab_Scene_Definition {
     {
+        name = "witch",
+        configure = witch_lab_configure,
+        world_overlay = world_witch_lab,
+        process_input = witch_lab_process_input,
+        draw_ui = witch_lab_draw_ui,
+        exit = witch_lab_exit,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
+    },
+    {
         name = "aircraft-transform",
         configure = aircraft_transform_lab_configure,
         world_overlay = aircraft_transform_lab_world,

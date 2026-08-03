@@ -86,11 +86,19 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     gameplay_physics_sync_boats(editor, simulation_delta)
     markov_marina_buoy_physics_step(editor, simulation_delta)
     wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
+    witch_audio := lab_scene_is_active(editor,"witch")
+    if witch_audio {
+        wind_x,wind_z = witch_lab.broom.wind.x,witch_lab.broom.wind.z
+    }
     wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
     listener_yaw = editor.in_map ? editor.camera.yaw_radians : editor.editor_camera.yaw_radians
     listener_velocity_x, listener_velocity_y, listener_velocity_z := f32(0), f32(0), f32(0)
     if editor.in_map {
-        if driving_aircraft(editor) {
+        if witch_audio {
+            listener_yaw = witch_lab.broom.yaw
+            listener_velocity_x,listener_velocity_y,listener_velocity_z =
+                witch_lab.broom.velocity.x,witch_lab.broom.velocity.y,witch_lab.broom.velocity.z
+        } else if driving_aircraft(editor) {
             listener_body := active_aircraft_body(editor)
             listener_velocity_x, listener_velocity_y, listener_velocity_z =
                 listener_body.velocity.x, listener_body.velocity.y, listener_body.velocity.z

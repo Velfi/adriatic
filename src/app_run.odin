@@ -160,6 +160,7 @@ adriatic_run_impl :: proc(
         capture_lab_name = "aegean-village"
     }
     if capture_kind == .Shadow_Lab do capture_lab_name = "shadow"
+    if capture_kind == .Witch_Lab do capture_lab_name = "witch"
     if capture_kind == .Rock_Lab do capture_lab_name = "rock"
     if capture_kind == .Screen_Pops_Lab do capture_lab_name = "screen-pops"
     if capture_wildflower_lab_mode do capture_lab_name = "wildflower"
@@ -196,6 +197,7 @@ adriatic_run_impl :: proc(
         capture_grass_wind_mode ||
         capture_wildflower_lab_mode ||
         capture_markov_town_mode ||
+        capture_kind == .Witch_Lab ||
         capture_kind == .Screen_Pops_Lab ||
         capture_kind == .Rainbow_Lab ||
         capture_kind == .Shadow_Lab ||
@@ -482,7 +484,21 @@ adriatic_run_impl :: proc(
     map_source := "generated"
     map_load_started_at := time.tick_now()
     use_baked_map := !capture_mode && !interactive_lab_mode && !benchmark_mode
-    map_loaded := false
+    active_lab_definition := interactive_lab_request.definition
+    if active_lab_definition == nil && capture_lab_mode {
+        active_lab_definition = lab_scene_find(capture_lab_name)
+    }
+    // Replacement labs own their focused world and skip ordinary map startup.
+    mapless_lab_mode := active_lab_definition != nil && active_lab_definition.replace_world
+    map_loaded := mapless_lab_mode
+    if mapless_lab_mode {
+        // Labs own any focused terrain they need through lab_terrain_load.
+        // Start every lab without loading or procedurally generating a map.
+        editor.project.revision = 1
+        editor.project.next_structure_id = 1
+        editor.terrain_revision = 1
+        map_source = "lab"
+    }
     if use_baked_map {
         artifact, map_error, map_read := map_artifact_read(map_path)
         if map_read {
@@ -669,7 +685,7 @@ adriatic_run_impl :: proc(
     run_finish_startup(editor, state_loaded, show_loading_screen, initial_width, initial_height, postcard)
     startup_timings.ready_ms = startup_checkpoint(&startup_timings)
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Bridge_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Witch_Lab || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Bridge_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose, selector_capture_pose_set, selector_ok := run_capture_selector(
         editor,
