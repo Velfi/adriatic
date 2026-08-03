@@ -28,6 +28,13 @@
   `spy.error` for developer-relevant status and failures. Do not use `fmt` output
   for runtime logging.
 
+## Odin setup
+
+- Missing or wrong locked Odin version is never a blocker. Run `make bootstrap-fork`,
+  then continue work.
+- `make bootstrap-fork` serializes concurrent setup with `.tools/bootstrap-odin-fork.lock`;
+  stale locks expire after 5 minutes.
+
 ## Screenshot capture
 
 - Build the app, then use its capture tool at `build/dev/adriatic capture`.

@@ -16,6 +16,45 @@ command -v make >/dev/null 2>&1 || { echo "error: make is required" >&2; exit 1;
 
 SOURCE_DIR="$ROOT/.tools/odin/catermujo-src"
 INSTALL_DIR="$ROOT/.tools/odin/$ODIN_FORK_VERSION"
+# Atomic mkdir lock; heartbeat keeps active setup fresh, stale locks expire.
+LOCK_PATH="$ROOT/.tools/bootstrap-odin-fork.lock"
+LOCK_STALE_SECONDS=300
+LOCK_HEARTBEAT_SECONDS=30
+
+bootstrap_lock_cleanup() {
+	if [ -n "${BOOTSTRAP_LOCK_HEARTBEAT_PID:-}" ]; then
+		kill "$BOOTSTRAP_LOCK_HEARTBEAT_PID" 2>/dev/null || true
+		wait "$BOOTSTRAP_LOCK_HEARTBEAT_PID" 2>/dev/null || true
+	fi
+	if [ -f "$LOCK_PATH/pid" ] && [ "$(cat "$LOCK_PATH/pid")" = "$$" ]; then
+		rm -rf "$LOCK_PATH"
+	fi
+}
+
+mkdir -p "$(dirname "$LOCK_PATH")"
+while ! mkdir "$LOCK_PATH" 2>/dev/null; do
+	now=$(date +%s)
+	heartbeat=$(stat -f %m "$LOCK_PATH/heartbeat" 2>/dev/null || stat -f %m "$LOCK_PATH" 2>/dev/null || echo 0)
+	if [ "$heartbeat" -gt 0 ] && [ $((now - heartbeat)) -ge "$LOCK_STALE_SECONDS" ]; then
+		rm -rf "$LOCK_PATH"
+		continue
+	fi
+	sleep 1
+done
+printf '%s\n' "$$" > "$LOCK_PATH/pid"
+: > "$LOCK_PATH/heartbeat"
+trap bootstrap_lock_cleanup EXIT
+trap 'exit 1' HUP INT TERM
+(
+	while sleep "$LOCK_HEARTBEAT_SECONDS"; do
+		if [ -f "$LOCK_PATH/pid" ] && [ "$(cat "$LOCK_PATH/pid")" = "$$" ]; then
+			touch "$LOCK_PATH/heartbeat"
+		else
+			exit 0
+		fi
+	done
+) &
+BOOTSTRAP_LOCK_HEARTBEAT_PID=$!
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	mkdir -p "$(dirname "$SOURCE_DIR")"
