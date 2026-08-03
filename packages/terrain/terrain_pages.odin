@@ -36,6 +36,7 @@ Water_Interface_Sample :: struct {
 terrain_pages_rebuild :: proc(project: ^Project) {
     if project == nil do return
     delete(project.terrain_pages)
+    project.terrain_pages = nil
     for level, level_index in project.levels {
         project.terrain_level_layout[level_index] = {level.cell_size, level.origin_x, level.origin_z}
         pages_axis := TERRAIN_RESOLUTION / TERRAIN_PAGE_RESOLUTION

@@ -22,6 +22,24 @@ terrain_pages_omit_ocean_and_restore_land :: proc(t: ^testing.T) {
 }
 
 @(test)
+terrain_pages_rebuild_replaces_freed_page_storage :: proc(t: ^testing.T) {
+    project := new(Project)
+    defer free_project(project)
+    project.sea_level = 0
+    for &level in project.levels {
+        level.cell_size = 1
+        level.origin_x = -256
+        level.origin_z = -256
+    }
+    project.levels[0].heights[sample_index(12, 13)] = 4
+
+    terrain_pages_rebuild(project)
+    testing.expect_value(t, len(project.terrain_pages), 1)
+    terrain_pages_rebuild(project)
+    testing.expect_value(t, len(project.terrain_pages), 1)
+}
+
+@(test)
 terrain_pages_restore_omitted_ocean_at_negative_sea_level :: proc(t: ^testing.T) {
     project := new(Project)
     defer free_project(project)
