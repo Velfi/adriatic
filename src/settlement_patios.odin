@@ -407,7 +407,7 @@ world_retained_patio_rebuild :: proc(editor: ^Editor) {
         world_settlement_patio(patio, false)
     }
     world_farm_compounds(editor)
-    world_settlement_cemetery(editor)
+    world_settlement_cemetery(editor, true, false)
     world_authored_farmland(editor)
     world_authored_wrecks(editor)
     world_settlement_inhabitants(editor, false, true)

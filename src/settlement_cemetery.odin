@@ -217,7 +217,7 @@ settlement_cemetery_world_point :: proc(site: Settlement_Cemetery, local_x, loca
     return world_rotate_xz(site.origin[0], site.origin[1], local_x, local_z, site.rotation)
 }
 
-world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
+world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true, include_trees := true) {
     site := settlement_cemetery_derive(editor)
     if !site.valid do return
     if !world_renderer.retained_patio_rebuilding &&
@@ -231,6 +231,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     }
 
     if !include_stable {
+        if !include_trees do return
         for tree, tree_index in site.plan.trees[:site.plan.tree_count] {
             x, z := settlement_cemetery_world_point(site, tree.x, tree.z)
             y := terrain.sample_surface_height(&editor.project, 0, x, z)
@@ -313,6 +314,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     memorial_y := terrain.sample_surface_height(&editor.project, 0, memorial.x, memorial.z)
     cemetery_lab_draw_memorial(memorial, path_color, memorial_y)
 
+    if !include_trees do return
     for tree, tree_index in site.plan.trees[:site.plan.tree_count] {
         x, z := settlement_cemetery_world_point(site, tree.x, tree.z)
         y := terrain.sample_surface_height(&editor.project, 0, x, z)
