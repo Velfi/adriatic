@@ -21,6 +21,7 @@ import "core:time"
 
 FLAME_AUTO_INSTRUMENT :: #config(FLAME_AUTO_INSTRUMENT, false)
 FLAME_GRAPH :: #config(DIO_FLAME_GRAPH, true)
+FLAME_GRAPH_FULL_SESSION :: #config(DIO_FLAME_GRAPH_FULL_SESSION, false)
 FLAME_GRAPH_DEVELOPER_EXPORTS :: #config(DIO_FLAME_GRAPH_DEVELOPER_EXPORTS, ODIN_DEBUG)
 FLAME_GRAPH_DUMP_PATH :: #config(FLAME_GRAPH_DUMP_PATH, "flame.graph")
 FLAME_GRAPH_HISTORY_SAMPLES :: #config(DIO_FLAME_GRAPH_HISTORY_SAMPLES, 180)
@@ -29,6 +30,7 @@ FLAME_GRAPH_TICK_FREQUENCY_HZ :: u64(1_000_000_000)
 FLAME_GRAPH_SLOT_CAPACITY_DEFAULT :: #config(DIO_FLAME_GRAPH_SLOT_CAPACITY_DEFAULT, 256)
 FLAME_AUTO_DEPTH_CAP :: #config(FLAME_AUTO_DEPTH_CAP, 4096)
 FLAME_AUTO_SLOT_CAP :: #config(FLAME_AUTO_SLOT_CAP, 262144)
+FLAME_SESSION_RECORDING :: FLAME_AUTO_INSTRUMENT || FLAME_GRAPH_FULL_SESSION
 
 FLAME_GRAPH_DEFAULT_HEIGHT :: f32(420)
 FLAME_GRAPH_SLOT_HEIGHT :: f32(20)
@@ -113,6 +115,7 @@ Flame_Export_Summary :: struct {
     worst_frame_id:     u64,
     total_ms:           f64,
     avg_ms:             f64,
+    worst_ms:           f64,
     total_wait_ms:      f64,
     avg_wait_ms:        f64,
     total_cpu_ms:       f64,
@@ -166,6 +169,7 @@ Flame_Graph :: struct {
     session_path:          string,
     session_frame_count:   int,
     session_byte_count:    i64,
+    session_summary:       Flame_Export_Summary,
     export_thread:         ^thread.Thread,
     export_job:            ^Flame_Export_Job,
     export_ok:             bool,
@@ -359,39 +363,45 @@ flame_graph_history_summary :: proc(graph: ^Flame_Graph) -> Flame_Range_Summary 
 
 flame_graph_export_summary :: proc(graph: ^Flame_Graph) -> Flame_Export_Summary {
     if graph == nil || graph.history_count <= 0 do return {}
-    range := flame_graph_history_summary(graph)
-    if !range.valid do return {}
-
-    out := Flame_Export_Summary {
-        kind           = "history",
-        freq_hz        = FLAME_GRAPH_TICK_FREQUENCY_HZ,
-        frame_count    = range.count,
-        first_frame_id = range.first_frame,
-        last_frame_id  = range.last_frame,
-        worst_frame_id = range.worst_frame,
-        total_ms       = f64(range.total_ms),
-        avg_ms         = f64(range.average_ms),
-    }
+    out: Flame_Export_Summary
     for order in 0 ..< graph.history_count {
         entry := flame_graph_history_at(graph, order)
-        if entry == nil do continue
-        out.total_wait_ms += f64(entry.wait_ms)
-        out.total_cpu_ms += f64(entry.cpu_ms)
-        out.dropped_slots += entry.dropped_slots
-        if entry.gpu_valid {
-            out.gpu_frame_count += 1
-            out.total_gpu_ms += f64(entry.gpu_ms)
-            if entry.gpu_ms > f32(out.worst_gpu_ms) {
-                out.worst_gpu_ms = f64(entry.gpu_ms)
-                out.worst_gpu_frame_id = entry.frame_id
-            }
+        flame_graph_export_summary_append(&out, entry)
+    }
+    return out
+}
+
+flame_graph_export_summary_append :: proc(summary: ^Flame_Export_Summary, entry: ^Flame_Frame_History) {
+    if summary == nil || entry == nil do return
+
+    if summary.frame_count == 0 {
+        summary.kind = "history"
+        summary.freq_hz = FLAME_GRAPH_TICK_FREQUENCY_HZ
+        summary.first_frame_id = entry.frame_id
+    }
+    summary.frame_count += 1
+    summary.last_frame_id = entry.frame_id
+    summary.total_ms += f64(entry.total_ms)
+    summary.total_wait_ms += f64(entry.wait_ms)
+    summary.total_cpu_ms += f64(entry.cpu_ms)
+    summary.dropped_slots += entry.dropped_slots
+    if summary.frame_count == 1 || entry.total_ms > f32(summary.worst_ms) {
+        summary.worst_ms = f64(entry.total_ms)
+        summary.worst_frame_id = entry.frame_id
+    }
+    if entry.gpu_valid {
+        summary.gpu_frame_count += 1
+        summary.total_gpu_ms += f64(entry.gpu_ms)
+        if summary.gpu_frame_count == 1 || entry.gpu_ms > f32(summary.worst_gpu_ms) {
+            summary.worst_gpu_ms = f64(entry.gpu_ms)
+            summary.worst_gpu_frame_id = entry.frame_id
         }
     }
-    count := f64(max(out.frame_count, 1))
-    out.avg_wait_ms = out.total_wait_ms / count
-    out.avg_cpu_ms = out.total_cpu_ms / count
-    out.avg_gpu_ms = out.total_gpu_ms / f64(max(out.gpu_frame_count, 1))
-    return out
+    count := f64(summary.frame_count)
+    summary.avg_ms = summary.total_ms / count
+    summary.avg_wait_ms = summary.total_wait_ms / count
+    summary.avg_cpu_ms = summary.total_cpu_ms / count
+    summary.avg_gpu_ms = summary.total_gpu_ms / f64(max(summary.gpu_frame_count, 1))
 }
 
 @(no_instrumentation)
@@ -532,6 +542,7 @@ flame_graph_session_close :: proc(graph: ^Flame_Graph, remove_file := false) {
     graph.session_path = ""
     graph.session_frame_count = 0
     graph.session_byte_count = 0
+    graph.session_summary = {}
 }
 
 @(no_instrumentation)
@@ -584,7 +595,7 @@ flame_graph_session_read_bytes :: proc(file: ^os.File, bytes: []byte) -> bool {
 
 @(no_instrumentation)
 flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_History) {
-    when !FLAME_AUTO_INSTRUMENT do return
+    when !FLAME_SESSION_RECORDING do return
     if graph == nil || entry == nil || len(entry.slots) == 0 do return
 
     for slot in entry.slots {
@@ -633,6 +644,7 @@ flame_graph_session_record :: proc(graph: ^Flame_Graph, entry: ^Flame_Frame_Hist
     entry.session_offset = graph.session_byte_count
     graph.session_byte_count += i64(len(graph.session_frame_buffer))
     graph.session_frame_count += 1
+    flame_graph_export_summary_append(&graph.session_summary, entry)
 }
 
 @(no_instrumentation)
@@ -761,20 +773,25 @@ flame_graph_reset :: proc(graph: ^Flame_Graph) {
 flame_graph_destroy :: proc(graph: ^Flame_Graph) {
     if graph == nil do return
 
-    flame_graph_export_poll(graph)
-    when FLAME_AUTO_INSTRUMENT {
-        if _flame_graph_current == graph do flame_graph_end_frame(graph)
-        if graph.history_count > 0 {
-            last_order := graph.history_count - 1
-            _ = flame_graph_write_source_range(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
-            _ = flame_graph_write_source_folded(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
+    flame_graph_export_stop(graph)
+    if _flame_graph_current == graph do flame_graph_end_frame(graph)
+    when FLAME_SESSION_RECORDING {
+        if graph.session_frame_count > 0 {
+            session_exported := flame_graph_export_begin(graph)
+            if session_exported {
+                flame_graph_export_stop(graph)
+                session_exported = graph.export_ok
+            }
+            if !session_exported {
+                last_order := graph.history_count - 1
+                _ = flame_graph_write_source_range(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
+                _ = flame_graph_write_source_folded(graph, FLAME_GRAPH_DUMP_PATH, 0, last_order)
+            }
         }
     } else {
-        if _flame_graph_current == graph do flame_graph_end_frame(graph)
         _ = flame_graph_write_exports(graph)
     }
 
-    flame_graph_export_stop(graph)
     flame_graph_session_close(graph, true)
     if _flame_graph_current == graph {
         flame_graph_set_current(nil)
@@ -1464,22 +1481,20 @@ flame_graph_export_stop :: proc(graph: ^Flame_Graph) {
 }
 
 flame_graph_export_begin :: proc(graph: ^Flame_Graph, path: string = FLAME_GRAPH_DUMP_PATH) -> bool {
-    when !FLAME_AUTO_INSTRUMENT do return false
-    if graph == nil || graph.history_count <= 0 || graph.session_file == nil do return false
+    when !FLAME_SESSION_RECORDING do return false
+    if graph == nil || graph.session_frame_count <= 0 || graph.session_file == nil do return false
     flame_graph_export_poll(graph)
     if graph.export_thread != nil do return false
     _ = os.sync(graph.session_file)
 
-    summary := flame_graph_export_summary(graph)
-    if summary.frame_count <= 0 do return false
-    first_entry := flame_graph_history_at(graph, 0)
-    if first_entry == nil || first_entry.session_offset < 0 do return false
+    summary := graph.session_summary
+    if summary.frame_count != graph.session_frame_count do return false
     job := new(Flame_Export_Job)
     job.scopes_path = flame_graph_source_path(path, ".scopes.ndjson")
     job.frames_path = flame_graph_source_path(path, ".frames.ndjson")
     job.folded_path = flame_graph_source_path(path, ".folded")
     job.session_path = graph.session_path
-    job.session_offset = first_entry.session_offset
+    job.session_offset = 0
     job.summary = summary
     job.session_frames = summary.frame_count
     job.progress_total = job.session_frames
@@ -1575,7 +1590,7 @@ flame_graph_write_source_folded :: proc(graph: ^Flame_Graph, path: string, first
 
 flame_graph_write_exports :: proc(graph: ^Flame_Graph, path: string = FLAME_GRAPH_DUMP_PATH) -> bool {
     if graph == nil do return false
-    when FLAME_AUTO_INSTRUMENT {
+    when FLAME_SESSION_RECORDING {
         if !flame_graph_export_begin(graph, path) do return false
         flame_graph_export_stop(graph)
         return graph.export_ok
@@ -1685,7 +1700,7 @@ flame_graph_widget :: proc(
         when FLAME_GRAPH_DEVELOPER_EXPORTS {
             im.SameLine()
             if im.Button("Export history") {
-                when FLAME_AUTO_INSTRUMENT {
+                when FLAME_SESSION_RECORDING {
                     _ = flame_graph_export_begin(graph)
                 } else {
                     _ = flame_graph_write_exports(graph)
