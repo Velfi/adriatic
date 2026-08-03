@@ -146,6 +146,34 @@ world_architecture_window_room :: proc(
 ) -> f32 {
     key := structure.seed ~ u32(row * 0x45d9f3b) ~ u32(column * 0x119de1f3) ~ u32(face) * u32(0x9e3779b9)
     variant := f32((key >> 5) % 6)
+    identity := architecture.architecture_resolve_legacy_identity(structure)
+    switch identity.archetype {
+    case .Dwelling, .Townhouse, .Farmstead:
+        variant = 0 // Dwelling
+    case .Shop_House, .Mixed_Use_Dwelling:
+        variant = row == 0 ? 1 : 0 // Shop below, dwelling above
+    case .Market_Hall:
+        variant = 1 // Shop
+    case .Workshop:
+        variant = 2 // Workshop
+    case .Barn_Granary, .Mill, .Fishery, .Storehouse:
+        variant = 3 // Storehouse
+    case .Campanile,
+         .Palace_Loggia,
+         .Church,
+         .Monastery,
+         .Fortress_Gate,
+         .Harbor_Office,
+         .Cycladic_Bell,
+         .Post_Office,
+         .Lighthouse:
+        variant = 4 // Civic
+    case .Clinic:
+        variant = 5 // Clinic
+    case .Legacy:
+    // Legacy structures retain deterministic variety until their product
+    // identity is resolved by settlement generation.
+    }
     depth := f32(.52) + f32((key >> 13) & 255) / 255 * .38
     // The integer selects a procedural room family. world_glass_panel packs
     // depth and pane aspect into the fractional payload; zero remains flat glass.

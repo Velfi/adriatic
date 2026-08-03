@@ -1122,12 +1122,74 @@ float3 shade_architecture(VertexOutput input) {
     return base * lerp(.72, 1.0, visibility);
 }
 
+float ray_box_distance(float3 ray_origin, float3 ray_direction, float3 box_center, float3 box_half_extent) {
+    float3 safe_direction = float3(
+        abs(ray_direction.x) < .0001 ? (ray_direction.x < 0.0 ? -.0001 : .0001) : ray_direction.x,
+        abs(ray_direction.y) < .0001 ? (ray_direction.y < 0.0 ? -.0001 : .0001) : ray_direction.y,
+        abs(ray_direction.z) < .0001 ? (ray_direction.z < 0.0 ? -.0001 : .0001) : ray_direction.z
+    );
+    float3 inverse_direction = 1.0 / safe_direction;
+    float3 near_plane = (box_center - box_half_extent - ray_origin) * inverse_direction;
+    float3 far_plane = (box_center + box_half_extent - ray_origin) * inverse_direction;
+    float3 near_axis = min(near_plane, far_plane);
+    float3 far_axis = max(near_plane, far_plane);
+    float near_distance = max(near_axis.x, max(near_axis.y, near_axis.z));
+    float far_distance = min(far_axis.x, min(far_axis.y, far_axis.z));
+    return far_distance >= max(near_distance, 0.0) ? max(near_distance, 0.0) : 1e6;
+}
+
 float3 shade_window_room(VertexOutput input, float3 view, float facing) {
     float encoded = input.material.y;
     float variant = max(floor(encoded) - 1.0, 0.0);
+    int purpose = int(variant + .5);
     float payload = floor(frac(encoded) * 4096.0);
-    float room_depth = lerp(.35, .95, floor(payload / 64.0) / 63.0);
+    float encoded_depth = lerp(.35, .95, floor(payload / 64.0) / 63.0);
     float pane_aspect = lerp(.25, 4.0, fmod(payload, 64.0) / 63.0);
+    float decor = frac(encoded_depth * 19.19 + pane_aspect * 7.31);
+    float form_variation_a = frac(decor * 7.17 + .31);
+    float form_variation_b = frac(decor * 13.73 + .57);
+    float form_variation_c = frac(decor * 23.41 + .19);
+    // Treat the pane as an aperture into a normally proportioned room rather
+    // than making the pane itself the room cross-section. The room expands to
+    // contain wide panes and crops horizontally behind narrow panes.
+    float canonical_room_aspect = 1.35;
+    float height_scale = 1.10;
+    float depth_scale = 1.0;
+    float window_center_height = .02;
+    if (purpose == 1) {
+        canonical_room_aspect = 1.80;
+        height_scale = 1.18;
+        depth_scale = 1.18;
+        window_center_height = .075;
+    } else if (purpose == 2) {
+        canonical_room_aspect = 1.65;
+        height_scale = 1.16;
+        depth_scale = 1.12;
+        window_center_height = .055;
+    } else if (purpose == 3) {
+        canonical_room_aspect = 1.55;
+        height_scale = 1.12;
+        depth_scale = 1.28;
+        window_center_height = .025;
+    } else if (purpose == 4) {
+        canonical_room_aspect = 1.75;
+        height_scale = 1.34;
+        depth_scale = 1.22;
+        window_center_height = .075;
+    } else if (purpose == 5) {
+        canonical_room_aspect = 1.45;
+        height_scale = 1.12;
+        depth_scale = .92;
+        window_center_height = .025;
+    }
+    canonical_room_aspect *= lerp(.95, 1.05, form_variation_a);
+    height_scale *= lerp(.96, 1.04, form_variation_b);
+    depth_scale *= lerp(.94, 1.07, form_variation_c);
+    window_center_height += lerp(-.012, .012, form_variation_a);
+    float room_height = max(1.0, pane_aspect / canonical_room_aspect) * height_scale;
+    float room_width = canonical_room_aspect * room_height;
+    float room_depth = encoded_depth * room_height * depth_scale;
+    float2 room_half_extent = float2(room_width, room_height) * .5;
     float3 normal = normalize(input.normal);
     float3 up = float3(0.0, 1.0, 0.0);
     float3 right = normalize(cross(up, normal));
@@ -1135,68 +1197,543 @@ float3 shade_window_room(VertexOutput input, float3 view, float facing) {
     float3 ray_world = -view;
     float3 ray = float3(
         dot(ray_world, right),
-        dot(ray_world, up) * pane_aspect,
+        dot(ray_world, up),
         dot(ray_world, inward)
     );
     ray.z = max(ray.z, .035);
-    float3 origin = float3(input.uv.x - .5, .5 - input.uv.y, 0.0);
+    float3 origin = float3(
+        (input.uv.x - .5) * pane_aspect,
+        .5 - input.uv.y + window_center_height * room_height,
+        0.0
+    );
 
-    float side_x = ray.x >= 0.0 ? .5 : -.5;
-    float side_y = ray.y >= 0.0 ? .5 : -.5;
-    float tx = (side_x - origin.x) / (abs(ray.x) < .0001 ? (ray.x < 0.0 ? -.0001 : .0001) : ray.x);
-    float ty = (side_y - origin.y) / (abs(ray.y) < .0001 ? (ray.y < 0.0 ? -.0001 : .0001) : ray.y);
+    // Purpose and seed can reshape the primary shell itself. Taper is measured
+    // from the window plane to the back wall; ceiling drop produces a shed
+    // profile while leaving the floor flat.
+    float wall_taper = 0.0;
+    if (purpose == 0) wall_taper = lerp(-.14, -.06, form_variation_a);
+    if (purpose == 1) wall_taper = lerp(.04, .12, form_variation_b);
+    if (purpose == 2) wall_taper = lerp(-.08, .02, form_variation_c);
+    if (purpose == 4) wall_taper = lerp(.04, .10, form_variation_a);
+    float ceiling_drop = 0.0;
+    if (purpose == 0 && form_variation_c > .55) ceiling_drop = room_height * lerp(.04, .09, form_variation_b);
+    if (purpose == 2) ceiling_drop = room_height * lerp(.12, .20, form_variation_a);
+    if (purpose == 3) ceiling_drop = room_height * lerp(.08, .16, form_variation_b);
+
+    float side_sign = ray.x >= 0.0 ? 1.0 : -1.0;
+    float side_x = side_sign * room_half_extent.x;
+    float side_y = ray.y >= 0.0 ? room_half_extent.y : -room_half_extent.y;
+    float taper_rate = wall_taper / max(room_depth, .001);
+    float wall_denominator = ray.x - side_sign * room_half_extent.x * taper_rate * ray.z;
+    wall_denominator = abs(wall_denominator) < .0001 ?
+                       (wall_denominator < 0.0 ? -.0001 : .0001) : wall_denominator;
+    float wall_numerator = side_sign * room_half_extent.x * (1.0 + taper_rate * origin.z) - origin.x;
+    float tx = wall_numerator / wall_denominator;
+    float ty = 0.0;
+    if (ray.y >= 0.0 && ceiling_drop > 0.0) {
+        float ceiling_slope = ceiling_drop / max(room_depth, .001);
+        float ceiling_denominator = ray.y + ceiling_slope * ray.z;
+        ceiling_denominator = abs(ceiling_denominator) < .0001 ? .0001 : ceiling_denominator;
+        ty = (room_half_extent.y - origin.y - ceiling_slope * origin.z) / ceiling_denominator;
+    } else {
+        float safe_ray_y = abs(ray.y) < .0001 ? (ray.y < 0.0 ? -.0001 : .0001) : ray.y;
+        ty = (side_y - origin.y) / safe_ray_y;
+    }
+    if (purpose == 4) {
+        // Elliptical barrel vault, extruded through the room depth. Solve the
+        // upper ellipse intersection directly so the curved ceiling has true
+        // parallax instead of behaving like back-wall decoration.
+        float vault_origin_x = origin.x / room_width;
+        float vault_origin_y = origin.y / room_height - .32;
+        float vault_ray_x = ray.x / room_width;
+        float vault_ray_y = ray.y / room_height;
+        float vault_a = vault_ray_x * vault_ray_x / (.5 * .5) +
+                        vault_ray_y * vault_ray_y / (.18 * .18);
+        float vault_b = 2.0 * (vault_origin_x * vault_ray_x / (.5 * .5) +
+                               vault_origin_y * vault_ray_y / (.18 * .18));
+        float vault_c = vault_origin_x * vault_origin_x / (.5 * .5) +
+                        vault_origin_y * vault_origin_y / (.18 * .18) - 1.0;
+        float vault_discriminant = vault_b * vault_b - 4.0 * vault_a * vault_c;
+        if (vault_a > .000001 && vault_discriminant >= 0.0) {
+            float vault_t = (-vault_b + sqrt(vault_discriminant)) / (2.0 * vault_a);
+            if (vault_t > 0.0) ty = min(ty, vault_t);
+        }
+    }
     float tz = room_depth / ray.z;
     float distance = min(tx, min(ty, tz));
     float3 hit = origin + ray * distance;
+    float3 room_hit = float3(
+        hit.x / room_width,
+        hit.y / room_height,
+        hit.z / room_height
+    );
+    float normalized_room_depth = room_depth / room_height;
 
     bool back = tz <= tx && tz <= ty;
     bool horizontal = !back && ty <= tx;
-    float3 unlit_back = input.color.rgb * float3(.27, .30, .29);
-    float warmth = frac(variant * .381966);
-    float3 lit_back = lerp(
-        srgb_to_linear(float3(.34, .20, .095)),
-        srgb_to_linear(float3(.34, .29, .19)),
-        warmth
-    );
+    // Some purposes continue through a rear opening instead of terminating at
+    // one flat wall. Moving the analytic hit plane creates a real secondary
+    // volume with view-dependent parallax, not just a painted dark rectangle.
+    float rear_x = room_hit.x;
+    float rear_y = room_hit.y;
+    float dwelling_door_x = (decor < .5 ? -1.0 : 1.0) * lerp(.22, .29, form_variation_b);
+    float dwelling_door_half = lerp(.12, .15, form_variation_c);
+    float shop_bay_half = lerp(.29, .34, form_variation_a);
+    float workshop_bay_center = lerp(.23, .29, form_variation_b);
+    float workshop_bay_half = lerp(.145, .18, form_variation_c);
+    float civic_arch_half = lerp(.245, .29, form_variation_a);
+    float clinic_corridor_edge = lerp(-.20, -.14, form_variation_b);
+    bool dwelling_door = purpose == 0 && abs(rear_x - dwelling_door_x) < dwelling_door_half &&
+                         rear_y > -.36 && rear_y < .29;
+    bool shop_bay = purpose == 1 && abs(rear_x) < shop_bay_half && rear_y > -.31 && rear_y < .36;
+    bool workshop_bay = purpose == 2 && abs(rear_x - workshop_bay_center) < workshop_bay_half &&
+                        rear_y > -.30 && rear_y < .32;
+    bool civic_arch = purpose == 4 && abs(rear_x) < civic_arch_half &&
+                      (rear_y < .16 || length(float2(rear_x / civic_arch_half, (rear_y - .16) / .19)) < 1.0);
+    bool clinic_corridor = purpose == 5 && rear_x < clinic_corridor_edge && rear_y > -.34 && rear_y < .38;
+    bool rear_bay = back && (dwelling_door || shop_bay || workshop_bay || civic_arch || clinic_corridor);
+    float rear_jamb = 0.0;
+    if (back && purpose == 0 && abs(rear_x - dwelling_door_x) < dwelling_door_half + .04 && rear_y > -.39 && rear_y < .33) {
+        float edge = min(abs(abs(rear_x - dwelling_door_x) - dwelling_door_half),
+                         min(abs(rear_y + .36), abs(rear_y - .29)));
+        rear_jamb = 1.0 - smoothstep(.012, .034, edge);
+    } else if (back && purpose == 1 && abs(rear_x) < shop_bay_half + .04 && rear_y > -.35 && rear_y < .40) {
+        float edge = min(abs(abs(rear_x) - shop_bay_half), min(abs(rear_y + .31), abs(rear_y - .36)));
+        rear_jamb = 1.0 - smoothstep(.012, .035, edge);
+    } else if (back && purpose == 2 && abs(rear_x - workshop_bay_center) < workshop_bay_half + .04 && rear_y > -.34 && rear_y < .36) {
+        float edge = min(abs(abs(rear_x - workshop_bay_center) - workshop_bay_half),
+                         min(abs(rear_y + .30), abs(rear_y - .32)));
+        rear_jamb = 1.0 - smoothstep(.012, .034, edge);
+    } else if (back && purpose == 4 && abs(rear_x) < civic_arch_half + .04 && rear_y < .39) {
+        float vertical_edge = abs(abs(rear_x) - civic_arch_half);
+        float arch_edge = abs(length(float2(rear_x / civic_arch_half, (rear_y - .16) / .19)) - 1.0) * .19;
+        float edge = rear_y < .16 ? vertical_edge : arch_edge;
+        rear_jamb = 1.0 - smoothstep(.012, .032, edge);
+    } else if (back && purpose == 5 && rear_x < clinic_corridor_edge + .04 && rear_y > -.38 && rear_y < .42) {
+        float edge = min(abs(rear_x - clinic_corridor_edge), min(abs(rear_y + .34), abs(rear_y - .38)));
+        rear_jamb = 1.0 - smoothstep(.012, .034, edge);
+    }
+    if (rear_bay) {
+        float recess_depth = room_height * (purpose == 5 ? .24 : (purpose == 0 ? .14 : .18)) *
+                             lerp(.90, 1.10, form_variation_c);
+        distance = (room_depth + recess_depth) / ray.z;
+        hit = origin + ray * distance;
+        room_hit = float3(hit.x / room_width, hit.y / room_height, hit.z / room_height);
+        normalized_room_depth += recess_depth / room_height;
+    }
+    float3 purpose_color = srgb_to_linear(float3(.52, .38, .22));
+    if (purpose == 1) purpose_color = srgb_to_linear(float3(.58, .40, .17));
+    if (purpose == 2) purpose_color = srgb_to_linear(float3(.43, .37, .26));
+    if (purpose == 3) purpose_color = srgb_to_linear(float3(.36, .37, .25));
+    if (purpose == 4) purpose_color = srgb_to_linear(float3(.31, .42, .45));
+    if (purpose == 5) purpose_color = srgb_to_linear(float3(.48, .54, .46));
+    float3 unlit_back = lerp(input.color.rgb * float3(.23, .26, .25), purpose_color * .42, .35);
+    float3 lit_back = purpose_color;
     float occupied = saturate(input.material.x);
-    float3 back_color = lerp(unlit_back, lit_back, occupied);
+    // Daylight entering through the pane keeps unlit rooms from collapsing
+    // into identical blue rectangles. It remains deliberately weaker than an
+    // occupied room's authored light.
+    float daylight_ambient = saturate(push.sun.w) * .48; // indirect window fill
+    float room_illumination = max(occupied, daylight_ambient);
+    float3 back_color = lerp(unlit_back, lit_back, room_illumination);
     float3 room = back_color;
     if (horizontal) {
         bool floor_surface = side_y < 0.0;
         room *= floor_surface ? float3(.72, .66, .55) : float3(.34, .36, .37);
         if (floor_surface) {
-            float boards = .88 + .12 * step(.52, frac((hit.x + hit.z * .37) * 9.0 + variant));
-            room *= boards;
+            if (purpose <= 1) {
+                // Long boards run into the room; staggered end joints keep the
+                // perspective legible without producing diagonal striping.
+                float board_frequency = purpose == 0 ? 7.0 : 5.0;
+                float board_index = floor((room_hit.x + .5) * board_frequency + decor);
+                float board_x = frac((room_hit.x + .5) * board_frequency + decor);
+                float board_edge = 1.0 - smoothstep(.025, .065, min(board_x, 1.0 - board_x));
+                float board_z = frac(room_hit.z * 3.2 + board_index * .43);
+                float end_joint = 1.0 - smoothstep(.018, .05, min(board_z, 1.0 - board_z));
+                room = lerp(room, room * .56, max(board_edge, end_joint * .52));
+            } else if (purpose == 2) {
+                // Large poured-concrete bays with restrained saw cuts.
+                float2 joint_uv = frac(float2((room_hit.x + .5) * 2.4, room_hit.z * 2.0));
+                float joint = 1.0 - smoothstep(.018, .055, min(min(joint_uv.x, 1.0 - joint_uv.x),
+                                                               min(joint_uv.y, 1.0 - joint_uv.y)));
+                room = lerp(room * float3(.76, .77, .73), room * .48, joint * .52);
+            } else if (purpose == 3) {
+                // Broad offset stone slabs suit a heavy storage floor.
+                float slab_row = floor(room_hit.z * 3.0);
+                float2 slab_uv = frac(float2((room_hit.x + .5) * 3.0 + slab_row * .5, room_hit.z * 3.0));
+                float slab_edge = 1.0 - smoothstep(.025, .07, min(min(slab_uv.x, 1.0 - slab_uv.x),
+                                                                  min(slab_uv.y, 1.0 - slab_uv.y)));
+                room = lerp(room * float3(.73, .70, .61), room * .44, slab_edge * .62);
+            } else {
+                // Formal and clinical rooms use regular tile modules; the
+                // civic floor is darker and subtly alternating.
+                float tile_frequency = purpose == 4 ? 4.0 : 5.0;
+                float2 tile_coord = float2((room_hit.x + .5) * tile_frequency, room_hit.z * tile_frequency);
+                float2 tile_uv = frac(tile_coord);
+                float tile_edge = 1.0 - smoothstep(.018, .055, min(min(tile_uv.x, 1.0 - tile_uv.x),
+                                                                  min(tile_uv.y, 1.0 - tile_uv.y)));
+                float checker = fmod(floor(tile_coord.x) + floor(tile_coord.y), 2.0);
+                float tile_tone = purpose == 4 ? lerp(.78, .92, checker) : lerp(.91, 1.0, checker);
+                room *= tile_tone;
+                room = lerp(room, room * .50, tile_edge * .62);
+            }
+        } else if (purpose == 4) {
+            float vault_band = frac(room_hit.z * 5.0 + decor * .35);
+            float vault_rib = 1.0 - smoothstep(.025, .075, min(vault_band, 1.0 - vault_band));
+            float vault_center_fill = 1.0 - saturate(abs(room_hit.x) * 1.7);
+            room *= lerp(.86, 1.08, vault_center_fill);
+            room = lerp(room, room * .46, vault_rib * .62);
         }
     } else if (!back) {
-        room *= float3(.56, .60, .59);
+        // A gentle falloff along the side walls makes their depth legible even
+        // when the view is nearly head-on.
+        float wall_depth = saturate(room_hit.z / max(normalized_room_depth, .001));
+        room *= lerp(float3(.68, .70, .67), float3(.48, .52, .52), wall_depth);
     } else {
-        float panel = smoothstep(.025, .055, abs(frac((hit.x + .5) * 2.0 + variant * .17) - .5));
-        room *= lerp(.82, 1.04, panel);
+        float2 wall_uv = room_hit.xy + .5;
+        if (rear_bay) room *= .84;
+        if (purpose == 0) {
+            // Domestic plaster, low paneling, and one framed picture.
+            float panel = smoothstep(.025, .055, abs(frac(wall_uv.x * 3.0) - .5));
+            room *= lerp(.86, 1.04, panel);
+            float picture_x = lerp(-.18, .20, decor);
+            bool picture = abs(room_hit.x - picture_x) < .13 && abs(room_hit.y - .12) < .11;
+            bool picture_inner = abs(room_hit.x - picture_x) < .105 && abs(room_hit.y - .12) < .085;
+            room = picture ? lerp(room, srgb_to_linear(float3(.16, .11, .07)), .75) : room;
+            room = picture_inner ? lerp(room, srgb_to_linear(float3(.30, .22, .14)), .72) : room;
+        } else if (purpose == 1) {
+            // Repeated shelves and small stock shapes read as a shop display.
+            float shelf = 1.0 - smoothstep(.012, .025, min(abs(room_hit.y + .24), abs(room_hit.y + .02)));
+            float stock = step(.52, frac(wall_uv.x * 9.0 + floor(wall_uv.y * 5.0) * .37 + decor));
+            stock *= step(room_hit.y, .18) * step(-.28, room_hit.y);
+            room = lerp(room, room * .48, shelf);
+            room = lerp(room, srgb_to_linear(float3(.40, .22, .08)), stock * .34);
+        } else if (purpose == 2) {
+            // Pegboard points and a darker tool rail distinguish workshops.
+            float2 peg = abs(frac(wall_uv * float2(13.0, 9.0)) - .5);
+            float pegs = 1.0 - smoothstep(.08, .18, max(peg.x, peg.y));
+            float rail = 1.0 - smoothstep(.012, .026, abs(room_hit.y - .04));
+            float bench_back = 1.0 - smoothstep(-.18, -.14, room_hit.y);
+            float tool_shift = lerp(-.055, .055, decor);
+            bool long_tool = abs(room_hit.x + .22 - tool_shift) < .025 && room_hit.y > -.02 && room_hit.y < .30;
+            bool short_tool = abs(room_hit.x - .02 - tool_shift) < .035 && room_hit.y > .02 && room_hit.y < .23;
+            bool square_tool = abs(room_hit.x - .24 + tool_shift) < .065 && room_hit.y > .04 && room_hit.y < .16;
+            room = lerp(room, room * .38, pegs * .58 + rail * .78);
+            room = lerp(room, srgb_to_linear(float3(.12, .10, .075)), bench_back * .82);
+            room = (long_tool || short_tool || square_tool) ?
+                   lerp(room, srgb_to_linear(float3(.10, .085, .065)), .88) : room;
+        } else if (purpose == 3) {
+            // Offset crate fronts fill the lower storehouse wall.
+            float2 crate_uv = frac(float2(wall_uv.x * 4.0 + floor(wall_uv.y * 4.0) * .5 + decor, wall_uv.y * 4.0));
+            float crate_edge = smoothstep(.03, .08, min(min(crate_uv.x, 1.0 - crate_uv.x), min(crate_uv.y, 1.0 - crate_uv.y)));
+            float crates = step(room_hit.y, .16);
+            room *= lerp(.58, lerp(.72, 1.0, crate_edge), crates);
+        } else if (purpose == 4) {
+            // Restrained vertical paneling gives civic rooms a formal rhythm.
+            float seam = 1.0 - smoothstep(.012, .028, abs(frac(wall_uv.x * 5.0) - .5));
+            float dado = 1.0 - smoothstep(.012, .026, abs(room_hit.y + .16));
+            room = lerp(room, room * .58, max(seam * .34, dado * .68));
+            bool side_cabinet = abs(room_hit.x) > .31 && room_hit.y < .24 && room_hit.y > -.30;
+            float crest_x = lerp(-.055, .055, decor);
+            bool crest_frame = abs(room_hit.x - crest_x) < .12 && room_hit.y > .08 && room_hit.y < .27;
+            bool crest_inner = abs(room_hit.x - crest_x) < .09 && room_hit.y > .105 && room_hit.y < .245;
+            room = side_cabinet ? lerp(room, srgb_to_linear(float3(.10, .15, .16)), .76) : room;
+            room = crest_frame ? lerp(room, srgb_to_linear(float3(.12, .10, .075)), .82) : room;
+            room = crest_inner ? lerp(room, srgb_to_linear(float3(.30, .38, .38)), .72) : room;
+        } else {
+            // Pale washable wall bands and a compact cabinet suit a clinic.
+            float tile_line = 1.0 - smoothstep(.01, .022, abs(frac((wall_uv.y + .08) * 6.0) - .5));
+            room = lerp(room, room * .72, tile_line * step(room_hit.y, .12) * .45);
+            bool cabinet_back = abs(room_hit.x + .27) < .12 && room_hit.y < .18 && room_hit.y > -.30;
+            room = cabinet_back ? lerp(room, srgb_to_linear(float3(.20, .27, .24)), .62) : room;
+        }
+
+        // Shared trim gives every room a clear floor/wall and wall/ceiling
+        // junction. These thin anchors survive when bespoke decor is occluded
+        // by mullions or viewed through a small pane.
+        float baseboard = 1.0 - smoothstep(.014, .032, abs(room_hit.y + .37));
+        float cornice = 1.0 - smoothstep(.010, .026, abs(room_hit.y - .38));
+        room = lerp(room, room * .48, max(baseboard, cornice * .55));
+        room = lerp(room, srgb_to_linear(float3(.10, .085, .065)), rear_jamb * .74);
+    }
+
+    // A broad authored light pool gives occupied rooms a focal point and
+    // keeps the back wall from reading as one uniformly emissive rectangle.
+    if (back && occupied > 0.0) {
+        float lamp_x = lerp(-.20, .20, decor);
+        float2 lamp_delta = (room_hit.xy - float2(lamp_x, .24)) / float2(.34, .42);
+        float lamp_pool = 1.0 - smoothstep(.18, 1.0, length(lamp_delta));
+        float3 lamp_color = purpose == 5 ?
+                            srgb_to_linear(float3(.58, .68, .61)) :
+                            srgb_to_linear(float3(.72, .48, .24));
+        room += lamp_color * lamp_pool * occupied * .24;
     }
 
     // Analytic corner occlusion anchors the virtual walls without another
     // texture lookup or ray. It also keeps unoccupied rooms convincingly dark.
-    float edge_x = max(.5 - abs(hit.x), 0.0);
-    float edge_y = max(.5 - abs(hit.y), 0.0);
-    float edge_z = max(min(hit.z, room_depth - hit.z), 0.0);
+    float depth_fraction = saturate(room_hit.z / max(normalized_room_depth, .001));
+    float local_half_width = .5 * (1.0 + wall_taper * depth_fraction);
+    float local_ceiling = .5 - ceiling_drop / max(room_height, .001) * depth_fraction;
+    if (purpose == 4) {
+        float vault_x = saturate(abs(room_hit.x) / max(local_half_width, .001));
+        local_ceiling = .32 + .18 * sqrt(max(1.0 - vault_x * vault_x, 0.0));
+    }
+    float edge_x = max(local_half_width - abs(room_hit.x), 0.0);
+    float edge_y = max(min(local_ceiling - room_hit.y, room_hit.y + .5), 0.0);
+    float edge_z = max(min(room_hit.z, normalized_room_depth - room_hit.z), 0.0);
     float corner_distance = back ? min(edge_x, edge_y) :
                             (horizontal ? min(edge_x, edge_z) : min(edge_y, edge_z));
     float corner = smoothstep(.0, .14, corner_distance);
     room *= lerp(.42, 1.0, corner);
 
-    // One intermediate slice supplies a deterministic curtain or furniture
-    // silhouette. At distance this collapses into useful tonal asymmetry.
-    float slice_z = room_depth * lerp(.28, .56, frac(variant * .754877));
+    // Furniture and internal structure use analytic box intersections. The
+    // nearest solid face replaces the room boundary hit, so these objects have
+    // real side/top faces and parallax instead of reading as dark cards.
+    float solid_distance = distance;
+    float3 solid_center = 0.0;
+    float3 solid_half_extent = 1.0;
+    float3 solid_color = purpose_color;
+    float floor_y = -room_half_extent.y;
+    if (purpose == 0) {
+        float table_x = (dwelling_door_x < 0.0 ? .17 : -.17) * room_width;
+        float3 center = float3(table_x, floor_y + room_height * .22, room_depth * .48);
+        float3 half_extent = float3(room_width * .16, room_height * .022, room_depth * .12);
+        float candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.30, .17, .075));
+        }
+        for (int leg_index = 0; leg_index < 2; ++leg_index) {
+            float leg_x = table_x + (leg_index == 0 ? -.115 : .115) * room_width;
+            center = float3(leg_x, floor_y + room_height * .10, room_depth * .48);
+            half_extent = float3(room_width * .018, room_height * .10, room_depth * .075);
+            candidate = ray_box_distance(origin, ray, center, half_extent);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = center;
+                solid_half_extent = half_extent;
+                solid_color = srgb_to_linear(float3(.22, .12, .055));
+            }
+        }
+    } else if (purpose == 1) {
+        float counter_x = lerp(-.045, .045, form_variation_b) * room_width;
+        float3 center = float3(counter_x, floor_y + room_height * .245, room_depth * .43);
+        float3 half_extent = float3(room_width * .34, room_height * .025, room_depth * .11);
+        float candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.40, .25, .10));
+        }
+        for (int pedestal_index = 0; pedestal_index < 2; ++pedestal_index) {
+            float pedestal_x = counter_x + (pedestal_index == 0 ? -.205 : .205) * room_width;
+            center = float3(pedestal_x, floor_y + room_height * .105, room_depth * .45);
+            half_extent = float3(room_width * .105, room_height * .105, room_depth * .075);
+            candidate = ray_box_distance(origin, ray, center, half_extent);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = center;
+                solid_half_extent = half_extent;
+                solid_color = srgb_to_linear(float3(.31, .18, .07));
+            }
+        }
+    } else if (purpose == 2) {
+        float bench_x = lerp(-.08, .04, form_variation_a) * room_width;
+        float3 center = float3(bench_x, floor_y + room_height * .225, room_depth * .46);
+        float3 half_extent = float3(room_width * .33, room_height * .025, room_depth * .13);
+        float candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.15, .12, .075));
+        }
+        for (int leg_index = 0; leg_index < 2; ++leg_index) {
+            float leg_x = bench_x + (leg_index == 0 ? -.27 : .27) * room_width;
+            center = float3(leg_x, floor_y + room_height * .10, room_depth * .46);
+            half_extent = float3(room_width * .025, room_height * .10, room_depth * .085);
+            candidate = ray_box_distance(origin, ray, center, half_extent);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = center;
+                solid_half_extent = half_extent;
+                solid_color = srgb_to_linear(float3(.10, .085, .055));
+            }
+        }
+    } else if (purpose == 3) {
+        float3 deck_center = float3(0.0, floor_y + room_height * .72, room_depth * .58);
+        float3 deck_half = float3(room_width * .43, room_height * .025, room_depth * .34);
+        float candidate = ray_box_distance(origin, ray, deck_center, deck_half);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = deck_center;
+            solid_half_extent = deck_half;
+            solid_color = srgb_to_linear(float3(.25, .19, .09));
+        }
+        for (int support_index = 0; support_index < 2; ++support_index) {
+            float support_x = (support_index == 0 ? -.37 : .37) * room_width;
+            float3 support_center = float3(support_x, floor_y + room_height * .35, room_depth * .52);
+            float3 support_half = float3(room_width * .022, room_height * .35, room_depth * .025);
+            candidate = ray_box_distance(origin, ray, support_center, support_half);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = support_center;
+                solid_half_extent = support_half;
+                solid_color = srgb_to_linear(float3(.22, .16, .075));
+            }
+        }
+        for (int crate_index = 0; crate_index < 4; ++crate_index) {
+            float crate_column = float(crate_index % 2) - .5;
+            float crate_row = float(crate_index / 2);
+            float crate_jitter = frac(decor * (float(crate_index) + 3.7));
+            float3 crate_half = float3(
+                room_width * lerp(.105, .135, crate_jitter),
+                room_height * lerp(.105, .14, frac(crate_jitter * 3.1)),
+                room_depth * .09
+            );
+            float3 crate_center = float3(
+                crate_column * room_width * .34 + lerp(-.025, .025, crate_jitter) * room_width,
+                floor_y + crate_half.y,
+                room_depth * (.30 + crate_row * .25)
+            );
+            candidate = ray_box_distance(origin, ray, crate_center, crate_half);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = crate_center;
+                solid_half_extent = crate_half;
+                solid_color = srgb_to_linear(float3(.34, .25, .11));
+            }
+        }
+    } else if (purpose == 4) {
+        float desk_x = lerp(-.035, .035, form_variation_c) * room_width;
+        float3 center = float3(desk_x, floor_y + room_height * .245, room_depth * .43);
+        float3 half_extent = float3(room_width * .29, room_height * .025, room_depth * .115);
+        float candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.10, .19, .19));
+        }
+        for (int pedestal_index = 0; pedestal_index < 2; ++pedestal_index) {
+            float pedestal_x = desk_x + (pedestal_index == 0 ? -.19 : .19) * room_width;
+            center = float3(pedestal_x, floor_y + room_height * .105, room_depth * .445);
+            half_extent = float3(room_width * .075, room_height * .105, room_depth * .075);
+            candidate = ray_box_distance(origin, ray, center, half_extent);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = center;
+                solid_half_extent = half_extent;
+                solid_color = srgb_to_linear(float3(.07, .14, .15));
+            }
+        }
+    } else if (purpose == 5) {
+        float3 center = float3(-room_width * .25, floor_y + room_height * .34, room_depth * .46);
+        float3 half_extent = float3(room_width * .018, room_height * .34, room_depth * .13);
+        float candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.25, .38, .34));
+        }
+        float table_x = room_width * lerp(.10, .18, form_variation_a);
+        center = float3(table_x, floor_y + room_height * .245, room_depth * .48);
+        half_extent = float3(room_width * .23, room_height * .025, room_depth * .15);
+        candidate = ray_box_distance(origin, ray, center, half_extent);
+        if (candidate < solid_distance) {
+            solid_distance = candidate;
+            solid_center = center;
+            solid_half_extent = half_extent;
+            solid_color = srgb_to_linear(float3(.36, .48, .42));
+        }
+        for (int leg_index = 0; leg_index < 2; ++leg_index) {
+            float leg_x = table_x + (leg_index == 0 ? -.17 : .17) * room_width;
+            center = float3(leg_x, floor_y + room_height * .11, room_depth * .48);
+            half_extent = float3(room_width * .022, room_height * .11, room_depth * .09);
+            candidate = ray_box_distance(origin, ray, center, half_extent);
+            if (candidate < solid_distance) {
+                solid_distance = candidate;
+                solid_center = center;
+                solid_half_extent = half_extent;
+                solid_color = srgb_to_linear(float3(.20, .29, .25));
+            }
+        }
+    }
+    if (solid_distance < distance) {
+        float3 solid_hit = origin + ray * solid_distance;
+        float3 box_position = (solid_hit - solid_center) / max(solid_half_extent, float3(.0001));
+        float3 box_axis = abs(box_position);
+        float3 box_normal = 0.0;
+        if (box_axis.x > box_axis.y && box_axis.x > box_axis.z) {
+            box_normal.x = box_position.x < 0.0 ? -1.0 : 1.0;
+        } else if (box_axis.y > box_axis.z) {
+            box_normal.y = box_position.y < 0.0 ? -1.0 : 1.0;
+        } else {
+            box_normal.z = box_position.z < 0.0 ? -1.0 : 1.0;
+        }
+        float largest_axis = max(box_axis.x, max(box_axis.y, box_axis.z));
+        float smallest_axis = min(box_axis.x, min(box_axis.y, box_axis.z));
+        float second_axis = box_axis.x + box_axis.y + box_axis.z - largest_axis - smallest_axis;
+        float box_edge = smoothstep(.82, .98, second_axis);
+        float face_light = .58 + max(box_normal.y, 0.0) * .28 + max(-box_normal.z, 0.0) * .12;
+        float solid_depth = saturate(solid_hit.z / max(room_depth, .001));
+        room = solid_color * face_light * lerp(1.0, .72, solid_depth);
+        room *= lerp(1.0, .62, box_edge);
+    }
+
+    // Thin textiles and task-light profiles remain on an intermediate plane;
+    // all substantial furniture above is volumetric.
+    float slice_z = room_depth * lerp(.28, .56, decor);
     float slice_t = slice_z / ray.z;
     float2 slice_hit = origin.xy + ray.xy * slice_t;
-    bool slice_inside = slice_t < distance && all(abs(slice_hit) < float2(.49, .49));
-    float family = fmod(variant, 3.0);
-    bool curtain = family < 1.0 && abs(slice_hit.x + lerp(-.29, .29, frac(variant * .43))) > .24;
-    bool cabinet = family >= 1.0 && family < 2.0 && abs(slice_hit.x) < .31 && slice_hit.y < -.08;
-    bool lamp = family >= 2.0 && length((slice_hit - float2(.18, .10)) / float2(.13, .20)) < 1.0;
-    float silhouette = slice_inside && (curtain || cabinet || lamp) ? 1.0 : 0.0;
-    room = lerp(room, room * lerp(.16, .34, occupied), silhouette * .90);
+    float2 room_slice_hit = slice_hit / float2(room_width, room_height);
+    float visible_distance = min(distance, solid_distance);
+    bool slice_inside = slice_t < visible_distance && all(abs(room_slice_hit) < float2(.49, .49));
+    float curtain_position = abs(room_slice_hit.x + lerp(-.025, .025, decor));
+    bool dwelling_curtain = purpose == 0 && curtain_position > .385 && curtain_position < .485 &&
+                             room_slice_hit.y > -.38;
+    bool workshop_lamp_stem = purpose == 2 && abs(room_slice_hit.x - .18) < .014 &&
+                              room_slice_hit.y > -.06 && room_slice_hit.y < .13;
+    bool workshop_lamp_head = purpose == 2 &&
+                              length((room_slice_hit - float2(.15, .15)) / float2(.075, .04)) < 1.0;
+    bool workshop_lamp = workshop_lamp_stem || workshop_lamp_head;
+    bool silhouette_shape = dwelling_curtain || workshop_lamp;
+    float silhouette = slice_inside && silhouette_shape ? 1.0 : 0.0;
+    float3 furniture_color = srgb_to_linear(float3(.25, .10, .075));
+    if (workshop_lamp) furniture_color = srgb_to_linear(float3(.13, .11, .075));
+    room = lerp(room, furniture_color * lerp(.46, 1.05, room_illumination), silhouette * .88);
+
+    // Purpose-specific fixtures sit on the intermediate plane, so they shift
+    // against the back wall as the camera moves. Shops use paired lamps,
+    // workshops a broad metal shade, storehouses a bare bulb, civic rooms a
+    // globe, and clinics a compact fluorescent bar.
+    float fixture_x = lerp(-.16, .16, decor);
+    if (purpose == 1) fixture_x = room_slice_hit.x < 0.0 ? -.20 : .20;
+    float shade_width = purpose == 2 ? .11 : .105;
+    float shade_height = purpose == 2 ? .045 : .065;
+    bool fixture_cord = purpose < 5 && abs(room_slice_hit.x - fixture_x) < .012 &&
+                        room_slice_hit.y > .24 && room_slice_hit.y < .49;
+    float2 shade_delta = (room_slice_hit - float2(fixture_x, .22)) / float2(shade_width, shade_height);
+    bool fixture_shade = purpose < 3 && length(shade_delta) < 1.0 && room_slice_hit.y > .20;
+    float2 bulb_delta = (room_slice_hit - float2(fixture_x, .175)) / float2(.035, .045);
+    bool fixture_bulb = purpose <= 3 && length(bulb_delta) < 1.0;
+    float2 globe_delta = (room_slice_hit - float2(fixture_x, .20)) / float2(.036, .048);
+    bool civic_globe = purpose == 4 && length(globe_delta) < 1.0;
+    bool clinic_bar = purpose == 5 && abs(room_slice_hit.x) < .19 &&
+                      abs(room_slice_hit.y - .25) < .028;
+    if (slice_inside && (fixture_cord || fixture_shade)) {
+        room = lerp(room, srgb_to_linear(float3(.09, .075, .055)), .86);
+    }
+    if (slice_inside && (fixture_bulb || civic_globe || clinic_bar) && occupied > 0.0) {
+        float3 bulb_color = purpose == 5 ?
+                            srgb_to_linear(float3(.66, .82, .76)) :
+                            srgb_to_linear(float3(1.0, .70, .34));
+        room = lerp(room, bulb_color, occupied * (civic_globe ? .58 : .82));
+    }
 
     // Interior mapping degrades at grazing angles; blend smoothly back to the
     // established flat pane instead of allowing the virtual box to stretch.
@@ -1238,13 +1775,13 @@ float3 shade_glass(VertexOutput input) {
     if (input.material.y > .5) {
         // Interior-mapped panes need enough transmission for the virtual
         // walls to read head-on, while grazing views remain sky-dominant.
-        reflection_weight = lerp(.18, .84, fresnel);
+        reflection_weight = lerp(.16, .84, fresnel);
     }
     float occupied_reflection = input.material.y > .5 ?
                                 lerp(.28, .86, fresnel) :
                                 lerp(.62, .82, fresnel);
     reflection_weight = lerp(reflection_weight, occupied_reflection, interior_light);
-    reflection_weight *= lerp(1.0, .55, interior_light * night);
+    reflection_weight *= lerp(1.0, .32, interior_light * night);
     float3 color = lerp(interior, reflected_sky, reflection_weight);
     if (interior_light > 0.0) {
         // Interior light should remain a warm source without clipping into a
