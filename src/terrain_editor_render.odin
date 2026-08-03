@@ -132,6 +132,25 @@ world_under_cursor_3d :: proc(
     return camera.position.x + direction.x * distance, camera.position.z + direction.z * distance, true
 }
 
+editor_world_ray_direction :: proc(
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+) -> (third_person.Vec3, bool) {
+    if width <= 0 || height <= 0 || camera.focal_length <= 0 do return {}, false
+    screen_x := (mouse.x / f32(width) - .5) * 2
+    screen_y := (.5 - mouse.y / f32(height)) * 2
+    aspect := f32(width) / f32(height)
+    direction := linalg.normalize0(
+        third_person.Vec3 {
+            camera.forward.x + camera.right.x * screen_x * aspect / camera.focal_length + camera.up.x * screen_y / camera.focal_length,
+            camera.forward.y + camera.right.y * screen_x * aspect / camera.focal_length + camera.up.y * screen_y / camera.focal_length,
+            camera.forward.z + camera.right.z * screen_x * aspect / camera.focal_length + camera.up.z * screen_y / camera.focal_length,
+        },
+    )
+    return direction, linalg.dot(direction, direction) > 1e-8
+}
+
 terrain_under_cursor_3d :: proc(
     editor: ^Editor,
     camera: Perspective_Camera,
@@ -143,22 +162,8 @@ terrain_under_cursor_3d :: proc(
     bool,
 ) {
     if editor == nil || width <= 0 || height <= 0 do return 0, 0, false
-    screen_x := (mouse.x / f32(width) - .5) * 2
-    screen_y := (.5 - mouse.y / f32(height)) * 2
-    aspect := f32(width) / f32(height)
-    direction := linalg.normalize0(
-        third_person.Vec3 {
-            camera.forward.x +
-            camera.right.x * screen_x * aspect / camera.focal_length +
-            camera.up.x * screen_y / camera.focal_length,
-            camera.forward.y +
-            camera.right.y * screen_x * aspect / camera.focal_length +
-            camera.up.y * screen_y / camera.focal_length,
-            camera.forward.z +
-            camera.right.z * screen_x * aspect / camera.focal_length +
-            camera.up.z * screen_y / camera.focal_length,
-        },
-    )
+    direction, ray_ok := editor_world_ray_direction(camera, mouse, width, height)
+    if !ray_ok do return 0, 0, false
     step := max(f32(terrain.BASE_CELL_SIZE * .5), f32(2))
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     previous_distance := f32(.1)

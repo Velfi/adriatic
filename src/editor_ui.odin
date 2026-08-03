@@ -54,7 +54,7 @@ AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Farm,
     .Marina,
     .Wreck,
-    .GreekAssets,
+    .Obstacles,
 }
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
@@ -1355,7 +1355,37 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row += 1
     case .Obstacles:
-        row += 0
+        actions := editor_ui_slider_bounds(layout, row)
+        half := (actions.width - 6) * .5
+        editor_ui_panel_button({actions.x, actions.y + 8, half, 30}, "ADD", false, editor.sdf_obstacle_count < SDF_OBSTACLE_CAPACITY)
+        editor_ui_panel_button(
+            {actions.x + half + 6, actions.y + 8, half, 30},
+            "DELETE",
+            false,
+            editor.sdf_obstacle_selected >= 0 && editor.sdf_obstacle_selected < editor.sdf_obstacle_count,
+        )
+        row += 1
+        list_bounds := editor_ui_slider_bounds(layout, row)
+        editor_ui_section_title(fmt.ctprintf("TORI  %d/%d", editor.sdf_obstacle_count, SDF_OBSTACLE_CAPACITY), list_bounds.x, list_bounds.y, list_bounds.width)
+        previous_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 66, list_bounds.y - 4, 30, 26}
+        next_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 30, list_bounds.y - 4, 30, 26}
+        editor_ui_panel_button(previous_bounds, "<", false, editor.sdf_obstacle_interaction.list_scroll > 0)
+        editor_ui_panel_button(
+            next_bounds,
+            ">",
+            false,
+            editor.sdf_obstacle_interaction.list_scroll < sdf_obstacle_list_scroll_max(editor),
+        )
+        row += 1
+        sdf_obstacle_list_scroll_clamp(editor)
+        first := editor.sdf_obstacle_interaction.list_scroll
+        visible := min(SDF_OBSTACLE_LIST_VISIBLE_COUNT, editor.sdf_obstacle_count - first)
+        for item in 0 ..< visible {
+            index := first + item
+            entry := editor_ui_slider_bounds(layout, row + item)
+            editor_ui_panel_button(entry, fmt.ctprintf("TORUS %02d", index + 1), index == editor.sdf_obstacle_selected)
+        }
+        row += max(visible, 1)
     case .Roads:
         top_bounds := editor_ui_slider_bounds(layout, row)
         editor_ui_panel_button(
@@ -2088,7 +2118,39 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
         row += 2
     case .Obstacles:
-        row += 0
+        actions := editor_ui_slider_bounds(layout, row)
+        half := (actions.width - 6) * .5
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {actions.x, actions.y + 8, half, 30}) {
+            _ = sdf_obstacle_add(editor)
+            return
+        }
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {actions.x + half + 6, actions.y + 8, half, 30}) {
+            if sdf_obstacle_delete_selected(editor) do return
+        }
+        row += 1
+        list_bounds := editor_ui_slider_bounds(layout, row)
+        previous_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 66, list_bounds.y - 4, 30, 26}
+        next_bounds := canvas2d.Rectangle{list_bounds.x + list_bounds.width - 30, list_bounds.y - 4, 30, 26}
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, previous_bounds) {
+            sdf_obstacle_scroll(editor, -1)
+            return
+        }
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, next_bounds) {
+            sdf_obstacle_scroll(editor, 1)
+            return
+        }
+        row += 1
+        sdf_obstacle_list_scroll_clamp(editor)
+        first := editor.sdf_obstacle_interaction.list_scroll
+        visible := min(SDF_OBSTACLE_LIST_VISIBLE_COUNT, editor.sdf_obstacle_count - first)
+        for item in 0 ..< visible {
+            index := first + item
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row + item)) {
+                _ = sdf_obstacle_select(editor, index)
+                return
+            }
+        }
+        row += max(visible, 1)
     }
 
     if pressed {

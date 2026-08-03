@@ -398,7 +398,22 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         teleport_consumes_input || fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
     terrain_sculpt_consumes_input :=
         teleport_consumes_input || terrain_sculpt_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-    if !teleport_consumes_input && !note_placement_consumes_input && !terrain_sculpt_consumes_input {
+    sdf_obstacle_consumes_input :=
+        !teleport_consumes_input &&
+        !note_placement_consumes_input &&
+        !terrain_sculpt_consumes_input &&
+        sdf_obstacle_process_input(
+            editor,
+            editor_view_camera,
+            world_mouse,
+            world_render_width,
+            world_render_height,
+            world_mouse_inside && !ui_hit,
+        )
+    if !teleport_consumes_input &&
+       !note_placement_consumes_input &&
+       !terrain_sculpt_consumes_input &&
+       !sdf_obstacle_consumes_input {
         architecture_paint_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         airport_stamp_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         marina_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
@@ -422,6 +437,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
     if !note_placement_consumes_input &&
+       !sdf_obstacle_consumes_input &&
        !editor.architecture_paint_mode &&
        !editor.marina_paint_mode &&
        !editor.farm_paint_mode &&
@@ -436,7 +452,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
        editor.curve_point_count == 0 {
         structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
-    if !note_placement_consumes_input && editor.selection_tool_active {
+    if !note_placement_consumes_input && !sdf_obstacle_consumes_input && editor.selection_tool_active {
         structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
 }

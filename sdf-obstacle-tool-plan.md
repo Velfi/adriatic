@@ -13,15 +13,9 @@ the playground in code.
 
 ## Current phase
 
-Phase 3 — the durable torus foundation landed in frozen schema v19 and awaits
-sis validation. Milestone 2 is the next implementation slice.
-
-The live source declares schema v20, but its graph currently differs from the
-frozen v20 manifest at `Tweak_State.postale_tuning` / `postale_ace_tuning`.
-That is unrelated ACE work and must become an adjacent v20→v21 migration owned
-by that feature. Do not regenerate or rewrite frozen v20 artifacts as part of
-this obstacle plan. Until that owner resolves the drift, a new obstacle
-milestone cannot claim a green `make fixture-schema-check` or `make check`.
+Phase 3 — Milestones 1 and 2 are accepted. Milestone 3 property controls is
+the active slice. The next checkpoint is sis validation of one torus with
+changed color, radii, position, rotation, and non-uniform scale.
 
 The feature is split into seven ordered milestones. A subagent implements one
 milestone at a time in the current workspace. The primary agent reviews the
@@ -212,7 +206,7 @@ v20 manifest: 06cb941a8912fcc7337689760d503e0b90864644d5a16282824dfeb4c7a0e6bb (
 v20 history:  ffb5714d4f7f7fdbd94f020502bfbd08191845c2daa849b9154f42c489df6683 (1,688 lines)
 ```
 
-`FIXTURE_SCHEMA_VERSION` is 20. The frozen v18→v19 semantic report contains
+`FIXTURE_SCHEMA_VERSION` is 21. The frozen v18→v19 semantic report contains
 122 changes (115 state and seven supporting). The obstacle subset is exactly:
 
 - appended `Authoring_Tool.Obstacles = 14`;
@@ -223,7 +217,10 @@ The production v18→v19 migration and wrapper are frozen at
 `6d428086328d14a8d490bbe702fe706d29e14d0fafe852aa391457aa132ca5e1` and
 `6bc89145cf7d514bfdf280845898147d53e1a636102d3419a38e38b50d002c8c`.
 The following v19→v20 transition is a six-change car-racer migration; it does
-not alter obstacle state.
+not alter obstacle state. The independent v20→v21 ACE transition adds only
+`Tweak_State.postale_ace_tuning`; its frozen manifest and history are
+`6608496024394758b33bbf4d7de14f94eaffc87e9212c40f7deba89cf9720a9e` and
+`f690c80ee90a7d632a2df5d01ac8f02c0858eb2c67cc122440dc75aff10efcf2`.
 
 ## Milestone 1 — Fixture v19 and torus data foundation
 
@@ -248,7 +245,7 @@ not alter obstacle state.
 
 ### Acceptance
 
-- frozen v1–v20 artifacts remain unchanged;
+- frozen v1–v21 artifacts remain unchanged;
 - v18→v19 migration preserves old `Authoring_Tool` values and gives all older
   fixtures the intentional empty obstacle defaults;
 - direct v18→v19 and chained historical paths preserve the same defaults;
@@ -268,23 +265,28 @@ validation, but do not add a combinatorial hostile/OOM campaign.
   work, not this feature.
 - Frozen v19 and v20 manifests both preserve the obstacle enum value, all
   three Fixture fields, and the exact six-field torus structure.
-- The v20 live schema check currently fails before normal gates at the
-  unrelated ACE tuning change described in Current phase. No frozen manifest,
-  history package, or migration was generated or modified during this plan
-  reconciliation.
+- ACE's independent v20→v21 migration is frozen, and
+  `make fixture-schema-check` passes again. It does not alter obstacle state.
 
 ### Sis validation
 
-After the owning v20→v21 change resolves current schema drift, run the focused
-fixture gates and normal build. Confirm that existing fixture playgrounds
-still load and that an older fixture gets an empty obstacle collection. This
-data-only milestone has no visual editor workflow to approve yet.
+Run the focused fixture gates and normal build. Confirm that existing fixture
+playgrounds still load and that an older fixture gets an empty obstacle
+collection. This data-only milestone has no visual editor workflow to approve
+yet.
+
+### Verification
+
+- `make fixture-schema-check` passes at frozen v21.
+- `make fixture-codec-test` exits cleanly for both current-fixture codec
+  checks, with no leak report.
+- The direct v18→v19 fixture migration-chain proof exits cleanly; it reaches
+  the obstacle-defaulting production step as part of the current v1→v21 chain.
 
 ## Milestone 2 — Visible CRUD tool
 
 Milestone 2 adds no persisted fields and must not bump the schema. Start only
-after Milestone 1 validation and after the unrelated v20 schema drift has been
-resolved by its owner.
+after Milestone 1 validation.
 
 ### Build
 
@@ -314,6 +316,25 @@ Do not use terrain XZ footprint picking for floating or rotated obstacles.
 Create several tori, select each by list and viewport, delete middle and end
 entries, save the fixture, change the scene, then reload and confirm exact
 restoration.
+
+### Implementation evidence
+
+Sis accepted the running-editor CRUD pass. Default-color cycling is usable for
+now; manual color edits are intentionally Milestone 3.
+
+- `src/sdf_obstacles.odin` provides fixed-array creation, selection, compact
+  deletion, paged flat-list state, conservative torus SDF ray selection, and
+  16×8 smooth-lit world tessellation. Creation uses the terrain cursor or the
+  current editor focus and cycles opaque default colors.
+- The existing Obstacles enum is now present in the live tool palette. Its
+  inspector exposes ADD, DELETE, a five-entry paged torus list, and selection.
+  A viewport click chooses the nearest torus or creates one on terrain.
+- Obstacles render in the editor and gameplay world; a selected editor torus
+  uses a brighter color. M2 adds no serialized field and
+  `make fixture-schema-check` confirms frozen fixture state is unchanged.
+- `make sdf-obstacle-test` passes 2/2 in 3.758 ms with no leak report:
+  compact-array CRUD/defaults and canonical SDF nearest-hit selection.
+- `make check` and `make build` pass.
 
 ## Milestone 3 — Property inspector
 
@@ -466,7 +487,7 @@ After all milestones:
   directories;
 - confirm no generated binaries, probes, or debug logging remain;
 - inspect `rtk jj status` and `rtk jj diff --git`;
-- confirm unrelated user files and frozen v1–v20 artifacts are untouched.
+- confirm unrelated user files and frozen v1–v21 artifacts are untouched.
 
 The feature is complete only when sis confirms the full editor workflow feels
 usable in context.

@@ -145,6 +145,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_settlement_cemetery(editor, false)
     world_authored_farmland(editor, false)
     world_authored_wrecks(editor, false)
+    world_sdf_obstacles(editor)
     dio.flame_graph_end(dio.flame_graph_current(), profile_authored)
     profile_overlays := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_overlays")
     lab_scene_draw_world_overlay(editor)

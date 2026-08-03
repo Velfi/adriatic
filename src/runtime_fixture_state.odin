@@ -229,6 +229,7 @@ SDF_Obstacle_Axis :: enum {
 
 SDF_Obstacle_Interaction :: struct {
     hovered:                  int,
+    list_scroll:              int,
     gizmo_mode:               SDF_Obstacle_Gizmo_Mode,
     constrained_axis:         SDF_Obstacle_Axis,
     drag_anchor_world:        flight.Vec3,
