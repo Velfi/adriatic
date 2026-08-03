@@ -273,7 +273,12 @@ climbing_rose_spreads_flowering_canes_across_its_wall :: proc(t: ^testing.T) {
 
 @(test)
 bougainvillea_main_leader_samples_one_continuous_root_to_tip_cane :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    support := plants.Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = 0,
+    }
     result := plants.generate(
         {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
     )
@@ -298,7 +303,12 @@ bougainvillea_main_leader_samples_one_continuous_root_to_tip_cane :: proc(t: ^te
 
 @(test)
 mature_bougainvillea_clothes_its_canes_with_dense_short_laterals :: proc(t: ^testing.T) {
-    support := plants.Support_Surface{width = 8, height = 7, plane_z = .1, root_x = 0}
+    support := plants.Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = 0,
+    }
     result := plants.generate(
         {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
     )
@@ -1748,19 +1758,16 @@ climbing_branches_route_around_a_doorway :: proc(t: ^testing.T) {
 
 @(test)
 bougainvillea_routes_from_an_interior_corner_beneath_stacked_windows :: proc(t: ^testing.T) {
-    windows := [2]plants.Rect {
-        {-3.45, 1.05, -1.35, 2.35},
-        {-3.45, 3.65, -1.35, 4.95},
-    }
+    windows := [2]plants.Rect{{-3.45, 1.05, -1.35, 2.35}, {-3.45, 3.65, -1.35, 4.95}}
     support := plants.Support_Surface {
-        width      = 8,
-        height     = 7,
-        plane_z    = .18,
-        root_x     = -2.45,
-        left_corner_x = -4.16,
+        width             = 8,
+        height            = 7,
+        plane_z           = .18,
+        root_x            = -2.45,
+        left_corner_x     = -4.16,
         left_return_depth = 3.9,
-        planter    = true,
-        exclusions = windows[:],
+        planter           = true,
+        exclusions        = windows[:],
     }
     result := plants.generate(
         {species = .Bougainvillea, seed = 73, maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
@@ -1768,7 +1775,8 @@ bougainvillea_routes_from_an_interior_corner_beneath_stacked_windows :: proc(t: 
     defer plants.destroy(&result)
     testing.expect_value(t, result.error, plants.Generate_Error.None)
 
-    corner_strip_count, return_wall_count, right_jamb_count, between_windows_count, above_windows_count := 0, 0, 0, 0, 0
+    corner_strip_count, return_wall_count, right_jamb_count, between_windows_count, above_windows_count :=
+        0, 0, 0, 0, 0
     maximum_return_z := support.plane_z
     for attachment in result.plant.attachments {
         for window in windows {
@@ -1777,7 +1785,13 @@ bougainvillea_routes_from_an_interior_corner_beneath_stacked_windows :: proc(t: 
                 attachment.position[0] <= window.maximum_x &&
                 attachment.position[1] >= window.minimum_y &&
                 attachment.position[1] <= window.maximum_y
-            testing.expectf(t, !inside, "inside window position: %.3f %.3f", attachment.position[0], attachment.position[1])
+            testing.expectf(
+                t,
+                !inside,
+                "inside window position: %.3f %.3f",
+                attachment.position[0],
+                attachment.position[1],
+            )
         }
         if attachment.position[0] <= windows[0].minimum_x - .08 do corner_strip_count += 1
         if attachment.position[2] >= support.plane_z + .35 {
@@ -1804,25 +1818,29 @@ bougainvillea_routes_from_an_interior_corner_beneath_stacked_windows :: proc(t: 
 
 @(test)
 bougainvillea_seeds_choose_distinct_window_routes :: proc(t: ^testing.T) {
-    windows := [2]plants.Rect {
-        {-3.45, 1.05, -1.35, 2.35},
-        {-3.45, 3.65, -1.35, 4.95},
-    }
+    windows := [2]plants.Rect{{-3.45, 1.05, -1.35, 2.35}, {-3.45, 3.65, -1.35, 4.95}}
     support := plants.Support_Surface {
-        width      = 8,
-        height     = 7,
-        plane_z    = .18,
-        root_x     = -2.45,
-        left_corner_x = -4.16,
+        width             = 8,
+        height            = 7,
+        plane_z           = .18,
+        root_x            = -2.45,
+        left_corner_x     = -4.16,
         left_return_depth = 3.9,
-        planter    = true,
-        exclusions = windows[:],
+        planter           = true,
+        exclusions        = windows[:],
     }
     route_signatures: [16]u64
     distinct_signatures := 0
     for seed in 0 ..< len(route_signatures) {
         result := plants.generate(
-            {species = .Bougainvillea, seed = u64(seed), maturity = 1, detail = .Near, habit = .Wall_Trained, support = &support},
+            {
+                species = .Bougainvillea,
+                seed = u64(seed),
+                maturity = 1,
+                detail = .Near,
+                habit = .Wall_Trained,
+                support = &support,
+            },
         )
         testing.expect_value(t, result.error, plants.Generate_Error.None)
         signature: u64
@@ -1842,7 +1860,12 @@ bougainvillea_seeds_choose_distinct_window_routes :: proc(t: ^testing.T) {
         if unique do distinct_signatures += 1
         plants.destroy(&result)
     }
-    testing.expectf(t, distinct_signatures >= 8, "distinct 8x8 route signatures across 16 seeds: %d", distinct_signatures)
+    testing.expectf(
+        t,
+        distinct_signatures >= 8,
+        "distinct 8x8 route signatures across 16 seeds: %d",
+        distinct_signatures,
+    )
 }
 
 @(test)

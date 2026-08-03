@@ -1,13 +1,13 @@
 package branch_mesh
 
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
 
 @(test)
 connected_segments_form_a_finite_capped_hull :: proc(t: ^testing.T) {
-    segments := [3]lsystem.Segment {
+    segments := [3]plant_structure.Segment {
         {{0, 0, 0}, {0, 1, 0}, .2, .17, 0},
         {{0, 1, 0}, {.2, 2, 0}, .17, .12, 0},
         {{.2, 2, 0}, {.1, 3, .2}, .12, .06, 0},
@@ -43,7 +43,7 @@ connected_segments_form_a_finite_capped_hull :: proc(t: ^testing.T) {
 
 @(test)
 fork_depths_create_separate_watertight_hulls :: proc(t: ^testing.T) {
-    segments := [3]lsystem.Segment {
+    segments := [3]plant_structure.Segment {
         {{0, 0, 0}, {0, 1, 0}, .2, .15, 0},
         {{0, 1, 0}, {1, 2, 0}, .10, .04, 1},
         {{0, 1, 0}, {0, 2, 0}, .15, .08, 0},
@@ -59,7 +59,7 @@ fork_depths_create_separate_watertight_hulls :: proc(t: ^testing.T) {
 
 @(test)
 radial_irregularity_creates_deterministic_fluting :: proc(t: ^testing.T) {
-    segments := [1]lsystem.Segment{{{0, 0, 0}, {0, 2, 0}, .3, .24, 0}}
+    segments := [1]plant_structure.Segment{{{0, 0, 0}, {0, 2, 0}, .3, .24, 0}}
     config := Config {
         radial_segments     = 10,
         samples_per_segment = 3,

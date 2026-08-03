@@ -1,11 +1,11 @@
 package plants
 
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
-lemon_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+lemon_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     random := seed ~ 0xd1b54a32d192ed03
     if random == 0 do random = 1
     foliage_random := seed ~ 0x94d049bb133111eb
@@ -13,17 +13,17 @@ lemon_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.In
     scale := .24 + maturity * .76
 
     trunk_segments := clamp(2 + int(maturity * 2), 2, 4)
-    trunk_position: lsystem.Vec3
+    trunk_position: plant_structure.Vec3
     trunk_radius := .13 * (.30 + maturity * .70)
-    crown_origins: [5]lsystem.Vec3
+    crown_origins: [5]plant_structure.Vec3
     for index in 0 ..< trunk_segments {
         crown_origins[index] = trunk_position
-        drift := lsystem.Vec3{olive_random_signed(&random) * .025, .34, olive_random_signed(&random) * .025} * scale
+        drift := plant_structure.Vec3{olive_random_signed(&random) * .025, .34, olive_random_signed(&random) * .025} * scale
         next := trunk_position + drift
         end_radius := trunk_radius * .84
         append(
             &result.plant.segments,
-            lsystem.Segment {
+            plant_structure.Segment {
                 start = trunk_position,
                 end = next,
                 radius_start = trunk_radius,
@@ -42,15 +42,15 @@ lemon_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.In
     // jitter keep the crown from becoming a mechanical wagon wheel.
     branch_generations := generations <= 1 ? 0 : generations == 2 ? 1 : 2
     scaffold_count := generations == 0 ? 4 : generations == 1 ? 6 : 8
-    phase := f32(lsystem.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
     for scaffold_index in 0 ..< scaffold_count {
         azimuth :=
             phase + f32(scaffold_index) * math.PI * 2 / f32(scaffold_count) + olive_random_signed(&random) * .055
-        radial := lsystem.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
+        radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
         origin_index := clamp(trunk_segments - 2 + scaffold_index % 3, 1, trunk_segments)
         origin := crown_origins[origin_index]
         rise := .48 + f32(scaffold_index % 3) * .08
-        direction := linalg.normalize0(radial * (.72 + olive_random_signed(&random) * .08) + lsystem.Vec3{0, rise, 0})
+        direction := linalg.normalize0(radial * (.72 + olive_random_signed(&random) * .08) + plant_structure.Vec3{0, rise, 0})
         pair_index := scaffold_index % max(scaffold_count / 2, 1)
         length_random := seed ~ (u64(pair_index + 1) * 0x94d049bb133111eb)
         if length_random == 0 do length_random = 1
@@ -83,24 +83,24 @@ lemon_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.In
     return result
 }
 
-prickly_pear_emit_pad :: proc(plant: ^lsystem.Plant, position: lsystem.Vec3, normal_azimuth: f32, depth: int) {
+prickly_pear_emit_pad :: proc(plant: ^plant_structure.Plant, position: plant_structure.Vec3, normal_azimuth: f32, depth: int) {
     if plant == nil do return
-    normal := lsystem.Vec3{math.cos(normal_azimuth), 0, math.sin(normal_azimuth)}
-    append(&plant.leaves, lsystem.Leaf{position = position, forward = {0, 1, 0}, up = normal, depth = depth})
+    normal := plant_structure.Vec3{math.cos(normal_azimuth), 0, math.sin(normal_azimuth)}
+    append(&plant.leaves, plant_structure.Leaf{position = position, forward = {0, 1, 0}, up = normal, depth = depth})
 }
 
-prickly_pear_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+prickly_pear_architecture :: proc(seed: u64, maturity: f32) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     random := seed ~ 0x8cb92baa3f3d8dd7
     if random == 0 do random = 1
     scale := .34 + maturity * .66
     basal_count := maturity < .34 ? 1 : maturity < .64 ? 2 : 3
     child_count := maturity < .42 ? 0 : maturity < .74 ? 1 : 2
-    phase := f32(lsystem.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
 
     for basal_index in 0 ..< basal_count {
         centered := f32(basal_index) - f32(basal_count - 1) * .5
-        base := lsystem.Vec3{centered * .20 * scale, 0, olive_random_signed(&random) * .055 * scale}
+        base := plant_structure.Vec3{centered * .20 * scale, 0, olive_random_signed(&random) * .055 * scale}
         base_normal := phase + f32(basal_index) * .86 + olive_random_signed(&random) * .18
         prickly_pear_emit_pad(&result.plant, base, base_normal, 0)
         // Keep one tiny structural segment inside each basal pad so the
@@ -108,7 +108,7 @@ prickly_pear_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Res
         // brown connector sticks that made the cactus look like saplings.
         append(
             &result.plant.segments,
-            lsystem.Segment{base, base + lsystem.Vec3{0, .10 * scale, 0}, .012 * scale, .008 * scale, 0},
+            plant_structure.Segment{base, base + plant_structure.Vec3{0, .10 * scale, 0}, .012 * scale, .008 * scale, 0},
         )
 
         for child_index in 0 ..< child_count {
@@ -116,7 +116,7 @@ prickly_pear_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Res
             outward := centered == 0 ? side : (centered < 0 ? f32(-1) : f32(1))
             child_base :=
                 base +
-                lsystem.Vec3 {
+                plant_structure.Vec3 {
                         outward * (.055 + .015 * f32(child_index)) * scale,
                         (.255 + .025 * f32((basal_index + child_index) % 2)) * scale,
                         side * (.055 + olive_random_signed(&random) * .018) * scale,
@@ -128,7 +128,7 @@ prickly_pear_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Res
             top_side := (basal_index + child_index) % 2 == 0 ? f32(-1) : f32(1)
             top_base :=
                 child_base +
-                lsystem.Vec3 {
+                plant_structure.Vec3 {
                         top_side * (.040 + math.abs(olive_random_signed(&random)) * .018) * scale,
                         (.215 + olive_random_signed(&random) * .015) * scale,
                         -side * .022 * scale,
@@ -145,8 +145,8 @@ prickly_pear_skeleton :: proc(seed: u64, maturity: f32) -> lsystem.Interpret_Res
 }
 
 succulent_emit_rosette :: proc(
-    plant: ^lsystem.Plant,
-    center: lsystem.Vec3,
+    plant: ^plant_structure.Plant,
+    center: plant_structure.Vec3,
     count: int,
     phase, rise, spread: f32,
     depth: int,
@@ -154,43 +154,43 @@ succulent_emit_rosette :: proc(
     if plant == nil || count <= 0 do return
     for index in 0 ..< count {
         angle := phase + f32(index) * math.PI * 2 / f32(count)
-        radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
-        forward := linalg.normalize0(radial * spread + lsystem.Vec3{0, rise, 0})
-        tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        forward := linalg.normalize0(radial * spread + plant_structure.Vec3{0, rise, 0})
+        tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
         // Attachment `up` is the leaf-face normal; renderers derive the
         // lateral width axis as cross(forward, up). Author a normal that
         // makes that axis follow the rosette tangent. Passing the tangent as
         // `up` turned leaf width vertically and reduced rosettes to edges.
         face_normal := linalg.normalize0(linalg.cross(tangent, forward))
-        append(&plant.leaves, lsystem.Leaf{position = center, forward = forward, up = face_normal, depth = depth})
+        append(&plant.leaves, plant_structure.Leaf{position = center, forward = forward, up = face_normal, depth = depth})
     }
 }
 
-fleshy_plant_skeleton :: proc(
+fleshy_plant_architecture :: proc(
     species: Species,
     seed: u64,
     maturity: f32,
     detail: Detail_Level,
-) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     random := seed ~ 0xa0761d6478bd642f
     if random == 0 do random = 1
-    phase := f32(lsystem.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
     growth := .28 + maturity * .72
 
     // A tiny hidden segment preserves the generator's topology contract. The
     // persistent visible structure is carried entirely by fleshy attachments.
-    append(&result.plant.segments, lsystem.Segment{{}, {0, .06 * growth, 0}, .009, .006, 0})
+    append(&result.plant.segments, plant_structure.Segment{{}, {0, .06 * growth, 0}, .009, .006, 0})
     if species == .Golden_Barrel {
         rib_count := detail == .Near ? 20 : detail == .Medium ? 14 : 9
         radius := (.13 + maturity * .16)
         for index in 0 ..< rib_count {
             angle := phase + f32(index) * math.PI * 2 / f32(rib_count)
-            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
             position := radial * radius
             append(
                 &result.plant.leaves,
-                lsystem.Leaf{position = position, forward = {0, 1, 0}, up = radial, depth = 0},
+                plant_structure.Leaf{position = position, forward = {0, 1, 0}, up = radial, depth = 0},
             )
         }
         return result
@@ -235,17 +235,19 @@ fleshy_plant_skeleton :: proc(
     return result
 }
 
-succulent_catalog_skeleton :: proc(
+succulent_catalog_architecture :: proc(
     species: Species,
     seed: u64,
     maturity: f32,
     detail: Detail_Level,
-) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     phase := f32((seed ~ 0xe7037ed1a0b428db) % 10_000) / 10_000 * math.PI * 2
+    random := seed ~ 0x626c75656368616c
+    if random == 0 do random = 1
     growth := .25 + maturity * .75
     if species == .Echeveria {
-        append(&result.plant.segments, lsystem.Segment{{}, {0, .025, 0}, .008, .005, 0})
+        append(&result.plant.segments, plant_structure.Segment{{}, {0, .025, 0}, .008, .005, 0})
         succulent_emit_rosette(&result.plant, {}, detail == .Near ? 18 : detail == .Medium ? 12 : 8, phase, .32, 1, 0)
         succulent_emit_rosette(
             &result.plant,
@@ -261,18 +263,18 @@ succulent_catalog_skeleton :: proc(
     }
     if species == .Aeonium {
         height := .24 + maturity * .62
-        tip := lsystem.Vec3{0, height, 0}
-        append(&result.plant.segments, lsystem.Segment{{}, tip, .045 * growth, .026 * growth, 0})
+        tip := plant_structure.Vec3{0, height, 0}
+        append(&result.plant.segments, plant_structure.Segment{{}, tip, .045 * growth, .026 * growth, 0})
         rosette_count := detail == .Near ? 16 : detail == .Medium ? 11 : 7
         succulent_emit_rosette(&result.plant, tip, rosette_count, phase, .12, 1, 1)
         if maturity > .48 {
             branch_count := detail == .Far ? 2 : 4
             for branch in 0 ..< branch_count {
                 angle := phase + f32(branch) * math.PI * 2 / f32(branch_count)
-                radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
-                start := lsystem.Vec3{0, height * (.48 + f32(branch & 1) * .10), 0}
-                end := start + radial * .23 * growth + lsystem.Vec3{0, .18 * growth, 0}
-                append(&result.plant.segments, lsystem.Segment{start, end, .025 * growth, .014 * growth, 1})
+                radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+                start := plant_structure.Vec3{0, height * (.48 + f32(branch & 1) * .10), 0}
+                end := start + radial * .23 * growth + plant_structure.Vec3{0, .18 * growth, 0}
+                append(&result.plant.segments, plant_structure.Segment{start, end, .025 * growth, .014 * growth, 1})
                 succulent_emit_rosette(&result.plant, end, max(rosette_count - 4, 5), angle + .2, .18, 1, 2)
             }
         }
@@ -283,13 +285,13 @@ succulent_catalog_skeleton :: proc(
         node_count := detail == .Near ? 5 : detail == .Medium ? 4 : 3
         for stem in 0 ..< stem_count {
             angle := phase + f32(stem) * math.PI * 2 / f32(stem_count)
-            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+            radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
             position := radial * .035
             for node in 0 ..< node_count {
-                next := position + radial * (.030 + f32(node) * .008) * growth + lsystem.Vec3{0, .13 * growth, 0}
+                next := position + radial * (.030 + f32(node) * .008) * growth + plant_structure.Vec3{0, .13 * growth, 0}
                 append(
                     &result.plant.segments,
-                    lsystem.Segment {
+                    plant_structure.Segment {
                         position,
                         next,
                         (.024 - f32(node) * .003) * growth,
@@ -297,19 +299,19 @@ succulent_catalog_skeleton :: proc(
                         node,
                     },
                 )
-                tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
+                tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
                 axis := node & 1 == 0 ? tangent : radial
                 append(
                     &result.plant.leaves,
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = next,
-                        forward = linalg.normalize0(axis + lsystem.Vec3{0, .28, 0}),
+                        forward = linalg.normalize0(axis + plant_structure.Vec3{0, .28, 0}),
                         up = radial,
                         depth = node,
                     },
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = next,
-                        forward = linalg.normalize0(-axis + lsystem.Vec3{0, .28, 0}),
+                        forward = linalg.normalize0(-axis + plant_structure.Vec3{0, .28, 0}),
                         up = -radial,
                         depth = node,
                     },
@@ -328,23 +330,23 @@ succulent_catalog_skeleton :: proc(
         nodes := detail == .Near ? 5 : detail == .Medium ? 4 : 3
         for runner in 0 ..< runner_count {
             angle := phase + f32(runner) * math.PI * 2 / f32(runner_count)
-            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
-            tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
-            position: lsystem.Vec3
+            radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+            tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
+            position: plant_structure.Vec3
             for node in 0 ..< nodes {
-                next := position + radial * .060 * growth + lsystem.Vec3{0, .012 + f32(node) * .003, 0}
-                append(&result.plant.segments, lsystem.Segment{position, next, .010, .007, 0})
+                next := position + radial * .060 * growth + plant_structure.Vec3{0, .012 + f32(node) * .003, 0}
+                append(&result.plant.segments, plant_structure.Segment{position, next, .010, .007, 0})
                 append(
                     &result.plant.leaves,
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = next,
-                        forward = linalg.normalize0(radial * .42 + tangent * .22 + lsystem.Vec3{0, .82, 0}),
+                        forward = linalg.normalize0(radial * .42 + tangent * .22 + plant_structure.Vec3{0, .82, 0}),
                         up = tangent,
                         depth = node,
                     },
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = next + tangent * .012,
-                        forward = linalg.normalize0(radial * .18 - tangent * .48 + lsystem.Vec3{0, .86, 0}),
+                        forward = linalg.normalize0(radial * .18 - tangent * .48 + plant_structure.Vec3{0, .86, 0}),
                         up = radial,
                         depth = node,
                     },
@@ -355,64 +357,78 @@ succulent_catalog_skeleton :: proc(
         return result
     }
     if species == .Blue_Chalk_Sticks {
-        append(&result.plant.segments, lsystem.Segment{{}, {0, .03, 0}, .008, .005, 0})
-        count := detail == .Near ? 28 : detail == .Medium ? 18 : 10
-        for index in 0 ..< count {
-            angle := phase + f32(index) * 2.399963
-            radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
-            tangent := lsystem.Vec3{-radial[2], 0, radial[0]}
-            forward := linalg.normalize0(radial * .34 + lsystem.Vec3{0, 1, 0})
-            face_normal := linalg.normalize0(linalg.cross(tangent, forward))
-            append(
-                &result.plant.leaves,
-                lsystem.Leaf {
-                    position = radial * (.045 + f32(index % 5) * .025),
-                    forward = forward,
-                    up = face_normal,
-                    depth = index % 3,
-                },
-            )
+        clump_count := detail == .Near ? 6 : detail == .Medium ? 4 : 3
+        leaves_per_clump := detail == .Near ? 8 : detail == .Medium ? 6 : 4
+        previous_center: plant_structure.Vec3
+        for clump_index in 0 ..< clump_count {
+            runner_angle := phase + f32(clump_index) * 2.399963 + olive_random_signed(&random) * .18
+            runner_distance := clump_index == 0 ? f32(0) : (.09 + f32(clump_index) * .045) * growth
+            center := plant_structure.Vec3{math.cos(runner_angle) * runner_distance, .008, math.sin(runner_angle) * runner_distance}
+            if clump_index == 0 {
+                append(&result.plant.segments, plant_structure.Segment{{}, {0, .025, 0}, .007, .004, 0})
+            } else {
+                append(&result.plant.segments, plant_structure.Segment{previous_center, center, .0045, .003, 0})
+            }
+            clump_phase := runner_angle + olive_random_signed(&random) * .30
+            for leaf_index in 0 ..< leaves_per_clump {
+                angle := clump_phase + f32(leaf_index) * 2.399963
+                radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+                tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
+                lean := .18 + f32(leaf_index % 3) * .10
+                forward := linalg.normalize0(radial * lean + plant_structure.Vec3{0, 1, 0})
+                face_normal := linalg.normalize0(linalg.cross(tangent, forward))
+                append(
+                    &result.plant.leaves,
+                    plant_structure.Leaf {
+                        position = center + radial * (.012 + f32(leaf_index % 2) * .009),
+                        forward = forward,
+                        up = face_normal,
+                        depth = clump_index,
+                    },
+                )
+            }
+            previous_center = center
         }
         return result
     }
     rib_count := detail == .Near ? 18 : detail == .Medium ? 12 : 8
-    append(&result.plant.segments, lsystem.Segment{{}, {0, .12 * growth, 0}, .012, .008, 0})
+    append(&result.plant.segments, plant_structure.Segment{{}, {0, .12 * growth, 0}, .012, .008, 0})
     for rib in 0 ..< rib_count {
         angle := phase + f32(rib) * math.PI * 2 / f32(rib_count)
-        radial := lsystem.Vec3{math.cos(angle), 0, math.sin(angle)}
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
         append(
             &result.plant.leaves,
-            lsystem.Leaf{position = radial * .13 * growth, forward = {0, 1, 0}, up = radial, depth = 0},
+            plant_structure.Leaf{position = radial * .13 * growth, forward = {0, 1, 0}, up = radial, depth = 0},
         )
     }
     return result
 }
 
 almond_grow_branch :: proc(
-    plant: ^lsystem.Plant,
+    plant: ^plant_structure.Plant,
     random, foliage_random: ^u64,
-    start, initial_direction: lsystem.Vec3,
+    start, initial_direction: plant_structure.Vec3,
     length, radius: f32,
     depth, generations: int,
 ) {
     direction := linalg.normalize0(initial_direction)
     position := start
     current_radius := radius
-    roll_phase := f32(lsystem.random_next(random) % 10_000) / 10_000 * math.PI * 2
+    roll_phase := f32(plant_structure.random_next(random) % 10_000) / 10_000 * math.PI * 2
     for segment_index in 0 ..< 3 {
-        side := linalg.normalize0(linalg.cross(direction, lsystem.Vec3{0, 1, 0}))
+        side := linalg.normalize0(linalg.cross(direction, plant_structure.Vec3{0, 1, 0}))
         if linalg.dot(side, side) < .2 do side = {1, 0, 0}
         binormal := linalg.normalize0(linalg.cross(side, direction))
         direction = linalg.normalize0(
             direction +
             side * olive_random_signed(random) * .065 +
             binormal * olive_random_signed(random) * .045 +
-            lsystem.Vec3{0, .035, 0},
+            plant_structure.Vec3{0, .035, 0},
         )
         segment_length := length * (.98 - f32(segment_index) * .10) * (1 + olive_random_signed(random) * .055)
         next := position + direction * segment_length
         end_radius := current_radius * .74
-        append(&plant.segments, lsystem.Segment{position, next, current_radius, end_radius, depth})
+        append(&plant.segments, plant_structure.Segment{position, next, current_radius, end_radius, depth})
         lemon_emit_leaf(plant, foliage_random, linalg.lerp(position, next, .42), direction, depth)
         lemon_emit_leaf(plant, foliage_random, next, direction, depth)
         position = next
@@ -428,7 +444,7 @@ almond_grow_branch :: proc(
         child_direction := linalg.normalize0(
             direction * (.56 + olive_random_signed(random) * .045) +
             radial * (.65 + olive_random_signed(random) * .055) +
-            lsystem.Vec3{0, .045, 0},
+            plant_structure.Vec3{0, .045, 0},
         )
         almond_grow_branch(
             plant,
@@ -444,8 +460,8 @@ almond_grow_branch :: proc(
     }
 }
 
-almond_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+almond_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     random := seed ~ 0x8cb92baa7f3d8dd7
     if random == 0 do random = 1
     foliage_random := seed ~ 0x9e3779b97f4a7c15
@@ -456,32 +472,32 @@ almond_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.I
     // emerge from two adjacent heights so their bases remain legible instead
     // of collapsing into one procedural hub.
     trunk_segments := clamp(2 + int(maturity * 1.4), 2, 3)
-    trunk_position: lsystem.Vec3
+    trunk_position: plant_structure.Vec3
     trunk_radius := .14 * (.30 + maturity * .70)
-    crown_origins: [4]lsystem.Vec3
+    crown_origins: [4]plant_structure.Vec3
     for index in 0 ..< trunk_segments {
         crown_origins[index] = trunk_position
         next :=
             trunk_position +
-            lsystem.Vec3{olive_random_signed(&random) * .020, .38, olive_random_signed(&random) * .020} * scale
+            plant_structure.Vec3{olive_random_signed(&random) * .020, .38, olive_random_signed(&random) * .020} * scale
         end_radius := trunk_radius * .82
-        append(&result.plant.segments, lsystem.Segment{trunk_position, next, trunk_radius, end_radius, 0})
+        append(&result.plant.segments, plant_structure.Segment{trunk_position, next, trunk_radius, end_radius, 0})
         trunk_position = next
         trunk_radius = end_radius
     }
     crown_origins[trunk_segments] = trunk_position
 
     scaffold_count := maturity < .42 ? 3 : 5
-    phase := f32(lsystem.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
     for scaffold_index in 0 ..< scaffold_count {
         // Even radial sectors guarantee coverage around the trunk. Restrained
         // jitter preserves seed identity without allowing one empty half.
         azimuth := phase + f32(scaffold_index) * math.PI * 2 / f32(scaffold_count) + olive_random_signed(&random) * .10
-        radial := lsystem.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
+        radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
         origin_index := clamp(trunk_segments - 1 + scaffold_index % 2, 1, trunk_segments)
         direction := linalg.normalize0(
             radial * (.66 + olive_random_signed(&random) * .045) +
-            lsystem.Vec3{0, .78 + olive_random_signed(&random) * .045, 0},
+            plant_structure.Vec3{0, .78 + olive_random_signed(&random) * .045, 0},
         )
         almond_grow_branch(
             &result.plant,
@@ -498,8 +514,8 @@ almond_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.I
     return result
 }
 
-almond_orchard_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result := almond_skeleton(seed, maturity, generations)
+almond_orchard_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result := almond_architecture(seed, maturity, generations)
     // The shared radial topology also underpins substantially heavier trees.
     // Almond keeps the same complete vase but carries a lighter orchard trunk
     // and fine flowering scaffold, particularly visible below its open crown.
@@ -511,16 +527,16 @@ almond_orchard_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> l
     return result
 }
 
-broadleaf_tree_skeleton :: proc(
+broadleaf_tree_architecture :: proc(
     species: Species,
     seed: u64,
     maturity: f32,
     generations: int,
-) -> lsystem.Interpret_Result {
+) -> plant_structure.Interpret_Result {
     // These full-sized trees need radial scaffold authority. The generic
-    // turtle grammar advances a single leader between branch whorls, which
+    // The architecture advances a single leader between branch whorls, which
     // produced disconnected foliage shelves and hourglass silhouettes.
-    result := almond_skeleton(seed ~ 0xd1b54a32d192ed03, maturity, generations)
+    result := almond_architecture(seed ~ 0xd1b54a32d192ed03, maturity, generations)
     horizontal_scale, vertical_scale, radius_scale := f32(1), f32(1), f32(1)
     #partial switch species {
     case .Holm_Oak:
@@ -594,12 +610,12 @@ broadleaf_tree_skeleton :: proc(
     return result
 }
 
-fig_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
+fig_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
     // Figs and almonds share an orchard-tree vase, but figs are lower,
     // broader, and heavier-limbed. Reusing the balanced radial topology keeps
     // the species from falling back to the old one-sided turtle fan while
     // this deterministic transform supplies the distinct fig proportions.
-    result := almond_skeleton(seed ~ 0x6a09e667f3bcc909, maturity, generations)
+    result := almond_architecture(seed ~ 0x6a09e667f3bcc909, maturity, generations)
     for &segment in result.plant.segments {
         segment.start[0] *= 1.20
         segment.start[1] *= 1.15
@@ -618,8 +634,8 @@ fig_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Inte
     return result
 }
 
-carob_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result := fig_skeleton(seed ~ 0xa54ff53a5f1d36f1, maturity, generations)
+carob_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result := fig_architecture(seed ~ 0xa54ff53a5f1d36f1, maturity, generations)
     // Carobs mature into substantial, deep-crowned evergreens. Preserve the
     // balanced vase topology but give its persistent limbs more height and
     // weight than the lower, lighter fig.
@@ -630,18 +646,38 @@ carob_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.In
         segment.radius_end *= 1.16
     }
     for &leaf in result.plant.leaves do leaf.position[1] *= 1.08
+    if maturity > .68 {
+        // Carob pods are cauliflorous: reserve sites on persistent inner wood
+        // instead of converting arbitrary canopy leaves into fruit.
+        original_segment_count := len(result.plant.segments)
+        for segment, segment_index in result.plant.segments[:original_segment_count] {
+            if segment.depth > 1 || segment_index % 3 != 0 do continue
+            direction := linalg.normalize0(segment.end - segment.start)
+            side := linalg.normalize0(linalg.cross(direction, plant_structure.Vec3{0, 1, 0}))
+            if linalg.dot(side, side) < .1 do side = {1, 0, 0}
+            append(
+                &result.plant.leaves,
+                plant_structure.Leaf {
+                    position = linalg.lerp(segment.start, segment.end, .58),
+                    forward = linalg.normalize0(side + plant_structure.Vec3{0, -.35, 0}),
+                    up = direction,
+                    depth = -13,
+                },
+            )
+        }
+    }
     return result
 }
 
-pomegranate_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result: lsystem.Interpret_Result
+pomegranate_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result: plant_structure.Interpret_Result
     random := seed ~ 0xbb67ae8584caa73b
     if random == 0 do random = 1
     foliage_random := seed ~ 0x3c6ef372fe94f82b
     if foliage_random == 0 do foliage_random = 1
     scale := .24 + maturity * .76
     stem_count := maturity < .42 ? 3 : generations < 2 ? 4 : 5
-    phase := f32(lsystem.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
     // One lateral generation is enough to clothe five renewing canes. A
     // second recursive almond-style generation explodes into a low tangled
     // mound and hides both the vase and its fruit.
@@ -651,10 +687,10 @@ pomegranate_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsys
         // Even sectors guarantee a complete vase, while different lift and
         // reach keep those canes from becoming a mechanical radial whorl.
         azimuth := phase + f32(stem_index) * math.PI * 2 / f32(stem_count) + olive_random_signed(&random) * .12
-        radial := lsystem.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
+        radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
         direction := linalg.normalize0(
             radial * (.30 + olive_random_signed(&random) * .045) +
-            lsystem.Vec3{0, 1.06 + olive_random_signed(&random) * .07, 0},
+            plant_structure.Vec3{0, 1.06 + olive_random_signed(&random) * .07, 0},
         )
         almond_grow_branch(
             &result.plant,
@@ -671,8 +707,8 @@ pomegranate_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsys
     return result
 }
 
-strawberry_tree_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> lsystem.Interpret_Result {
-    result := pomegranate_skeleton(seed ~ 0xcbbb9d5dc1059ed8, maturity, generations)
+strawberry_tree_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
+    result := pomegranate_architecture(seed ~ 0xcbbb9d5dc1059ed8, maturity, generations)
     // Strawberry trees commonly form several red-barked leaders beneath a
     // taller rounded crown. Stretch the complete radial vase while retaining
     // enough width and fine ramification to avoid a detached top tuft.
@@ -690,6 +726,26 @@ strawberry_tree_skeleton :: proc(seed: u64, maturity: f32, generations: int) -> 
         leaf.position[0] *= 1.22
         leaf.position[1] *= 1.62
         leaf.position[2] *= 1.22
+    }
+    if maturity > .30 {
+        // Arbutus bears drooping flower and fruit clusters on terminal outer
+        // shoots. Duplicate a sparse set of those tips as explicit organ
+        // sites while retaining the subtending foliage anchor.
+        original_leaf_count := len(result.plant.leaves)
+        crown_top := f32(0)
+        for leaf in result.plant.leaves[:original_leaf_count] do crown_top = max(crown_top, leaf.position[1])
+        for leaf, leaf_index in result.plant.leaves[:original_leaf_count] {
+            if leaf.position[1] < crown_top * .68 || leaf_index % 5 != 0 do continue
+            append(
+                &result.plant.leaves,
+                plant_structure.Leaf {
+                    position = leaf.position,
+                    forward = {0, -1, 0},
+                    up = leaf.up,
+                    depth = -12,
+                },
+            )
+        }
     }
     return result
 }

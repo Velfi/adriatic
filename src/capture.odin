@@ -94,6 +94,7 @@ Capture_Request :: struct {
     camera_offset:           [3]f32,
     camera_offset_set:       bool,
     turntable_frames:        int,
+    plant_sheet_views:       bool,
     seed_frames:             int,
     seed_start:              u64,
     sequence_frames:         int,

@@ -2,6 +2,125 @@ package plants
 
 import "core:math"
 
+Architecture_Family :: enum u8 {
+    Reiterating_Tree,
+    Excurrent_Tree,
+    Renewing_Shrub,
+    Subshrub,
+    Tendril_Climber,
+    Twining_Climber,
+    Scrambling_Climber,
+    Rosette,
+    Stemmed_Succulent,
+    Cushion,
+    Cladode_Cactus,
+    Barrel_Cactus,
+    Columnar_Cactus,
+}
+
+Garden_Profile :: struct {
+    family:               Architecture_Family,
+    mature_height:        f32,
+    mature_spread:        f32,
+    basal_axis_count:     u8,
+    apical_control:       f32,
+    branch_angle:         f32,
+    phyllotactic_angle:   f32,
+    gravitropism:         f32,
+    phototropism:         f32,
+    continuous_foliage:   bool,
+    reproductive_lateral: bool,
+}
+
+// garden_profile describes the horticultural archetype represented by each
+// catalog entry. It is deliberately not a claim about a single cultivar.
+garden_profile :: proc(species: Species) -> Garden_Profile {
+    golden_angle := f32(2.399963)
+    switch species {
+    case .Olive:
+        return {.Reiterating_Tree, 5.2, 6.0, 3, .34, .78, golden_angle, .18, .10, true, true}
+    case .Italian_Cypress:
+        return {.Excurrent_Tree, 10.0, 2.0, 1, .96, .34, golden_angle, .88, .06, true, true}
+    case .Grapevine:
+        return {.Tendril_Climber, 2.4, 7.0, 1, .58, .62, math.PI, .42, .18, true, true}
+    case .Fig:
+        return {.Reiterating_Tree, 5.0, 6.4, 3, .38, .82, golden_angle, .16, .12, true, true}
+    case .Lemon:
+        return {.Reiterating_Tree, 4.0, 4.2, 3, .48, .72, golden_angle, .30, .12, true, true}
+    case .Pomegranate:
+        return {.Renewing_Shrub, 3.6, 3.2, 6, .25, .62, golden_angle, .46, .10, true, true}
+    case .Almond:
+        return {.Reiterating_Tree, 5.5, 5.6, 4, .44, .68, golden_angle, .24, .12, true, true}
+    case .Oleander:
+        return {.Renewing_Shrub, 3.5, 3.0, 7, .34, .52, math.PI, .62, .08, true, true}
+    case .Bougainvillea:
+        return {.Scrambling_Climber, 5.5, 7.5, 5, .28, .72, golden_angle, .18, .16, true, true}
+    case .Rosemary:
+        return {.Subshrub, 1.5, 1.6, 10, .32, .48, math.PI, .72, .10, true, true}
+    case .Stone_Pine:
+        return {.Excurrent_Tree, 12.0, 10.0, 1, .72, .92, golden_angle, .54, .14, false, true}
+    case .Bay_Laurel:
+        return {.Renewing_Shrub, 4.5, 3.5, 5, .52, .48, golden_angle, .72, .08, true, true}
+    case .Carob:
+        return {.Reiterating_Tree, 6.5, 8.0, 3, .36, .86, golden_angle, .20, .10, true, true}
+    case .Strawberry_Tree:
+        return {.Reiterating_Tree, 5.0, 4.8, 4, .42, .68, golden_angle, .36, .10, true, true}
+    case .Myrtle:
+        return {.Renewing_Shrub, 2.6, 2.2, 7, .34, .50, math.PI, .68, .08, true, true}
+    case .Mastic:
+        return {.Renewing_Shrub, 2.2, 3.0, 7, .24, .74, golden_angle, .44, .08, true, true}
+    case .Lavender:
+        return {.Subshrub, .75, .95, 18, .20, .42, golden_angle, .84, .10, true, true}
+    case .Thyme:
+        return {.Subshrub, .30, .75, 16, .10, .92, math.PI, .18, .08, true, true}
+    case .Sage:
+        return {.Subshrub, .85, 1.0, 9, .24, .56, math.PI, .72, .10, true, true}
+    case .Prickly_Pear:
+        return {.Cladode_Cactus, 1.2, 1.8, 5, .22, .76, golden_angle, .38, .06, false, true}
+    case .Pelargonium:
+        return {.Subshrub, .55, .75, 10, .18, .58, golden_angle, .64, .10, true, true}
+    case .Wisteria:
+        return {.Twining_Climber, 6.0, 8.0, 3, .62, .52, golden_angle, .28, .14, true, true}
+    case .Climbing_Rose:
+        return {.Scrambling_Climber, 4.5, 5.5, 5, .34, .72, golden_angle, .24, .12, true, true}
+    case .Hydrangea_Bush:
+        return {.Renewing_Shrub, 1.7, 2.0, 9, .18, .62, math.PI, .58, .08, true, true}
+    case .Hydrangea_Tree:
+        return {.Reiterating_Tree, 2.8, 2.2, 4, .52, .58, math.PI, .62, .08, true, true}
+    case .Agapanthus:
+        return {.Rosette, 1.1, .9, 1, .92, .20, golden_angle, .96, .08, true, true}
+    case .Star_Jasmine:
+        return {.Twining_Climber, 4.0, 5.5, 4, .48, .46, math.PI, .34, .12, true, true}
+    case .Holm_Oak:
+        return {.Reiterating_Tree, 8.0, 9.0, 4, .38, .88, golden_angle, .18, .12, true, true}
+    case .Oriental_Plane:
+        return {.Reiterating_Tree, 13.0, 11.0, 4, .52, .78, golden_angle, .24, .14, true, true}
+    case .European_Hackberry:
+        return {.Reiterating_Tree, 10.0, 8.0, 4, .58, .64, golden_angle, .38, .12, true, true}
+    case .White_Poplar:
+        return {.Excurrent_Tree, 13.0, 6.0, 1, .86, .48, golden_angle, .74, .12, true, true}
+    case .Golden_Barrel:
+        return {.Barrel_Cactus, .8, .8, 1, 1, 0, golden_angle, 1, 0, false, true}
+    case .Agave:
+        return {.Rosette, 1.5, 2.4, 1, 1, .20, golden_angle, 1, 0, true, true}
+    case .Aloe:
+        return {.Rosette, .9, 1.1, 3, .82, .24, golden_angle, .96, .04, true, true}
+    case .Aeonium:
+        return {.Stemmed_Succulent, 1.2, 1.0, 5, .54, .72, golden_angle, .68, .06, true, true}
+    case .Echeveria:
+        return {.Rosette, .30, .45, 1, 1, .12, golden_angle, 1, 0, true, true}
+    case .Jade_Plant:
+        return {.Stemmed_Succulent, 1.4, 1.2, 6, .42, .54, math.PI / 2, .72, .06, true, true}
+    case .Stonecrop:
+        return {.Cushion, .22, .9, 18, .08, .94, golden_angle, .12, .04, true, true}
+    case .Blue_Chalk_Sticks:
+        return {.Cushion, .45, 1.0, 20, .16, .76, golden_angle, .32, .04, true, true}
+    case .Golden_Torch_Cactus:
+        return {.Columnar_Cactus, 1.8, .55, 4, .94, .12, golden_angle, 1, 0, false, true}
+    }
+    return {}
+}
+
 cypress_generated_cluster_size :: proc(detail: Detail_Level, maturity: f32, seed: u64, index, depth: int) -> int {
     if depth == -2 {
         if detail == .Far do return 1
@@ -39,6 +158,7 @@ support_hash :: proc(support: Support_Surface) -> u64 {
         support.root_x,
         support.left_corner_x,
         support.left_return_depth,
+        support.contact_radius,
     }
     for value in values {
         bits := transmute(u32)value
@@ -52,537 +172,66 @@ support_hash :: proc(support: Support_Surface) -> u64 {
             hash = (hash ~ u64(bits)) * 0x100000001b3
         }
     }
+    for axis in support.axes {
+        axis_values := []f32 {
+            axis.start[0],
+            axis.start[1],
+            axis.start[2],
+            axis.end[0],
+            axis.end[1],
+            axis.end[2],
+            axis.radius,
+        }
+        for value in axis_values {
+            bits := transmute(u32)value
+            hash = (hash ~ u64(bits)) * 0x100000001b3
+        }
+    }
     return hash
 }
 
 Profile :: struct {
-    axiom:           string,
-    production_a:    string,
-    production_b:    string,
-    weight_a:        u32,
-    weight_b:        u32,
     base_iterations: int,
-    step:            f32,
-    step_scale:      f32,
-    angle:           f32,
-    radius:          f32,
-    radius_scale:    f32,
     width_scale:     f32,
     height_scale:    f32,
 }
 
 profile_for :: proc(species: Species) -> Profile {
     switch species {
-    case .Italian_Cypress:
-        return {
-            "FF",
-            "F[L][+&F[L]][-&F[L]][/&F[L]][\\&F[L]]F[L]",
-            "F[L][+&F[L]][-&F[L]]F[L][/&L][\\&L]",
-            3,
-            2,
-            3,
-            .42,
-            .94,
-            .30,
-            .11,
-            .73,
-            1.65,
-            2.10,
-        }
-    case .Olive:
-        // A broad, low crown carried by several crooked scaffold limbs.
-        // Every advancing shoot emits foliage; leaving the final F bare made
-        // mature trees end in conspicuous sawn-off branches.
-        return {
-            "FF[+&F[L]][-&F[L]][/^F[L]]",
-            "F[L][+&F[L]F[L]][-&F[L]F[L]][/^F[L]]F[L]",
-            "F[L][+^F[L]][-&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            4,
-            .62,
-            .85,
-            .52,
-            .17,
-            .72,
-            1.35,
-            1.00,
-        }
-    case .Fig:
-        return {"F[+F][-F]", "F[+&FL][-&FL][/FL]", "F[+FL][-FL][\\FL]", 2, 2, 3, .72, .88, .64, .19, .70, 1.22, .76}
-    case .Lemon:
-        // Citrus forms a compact, many-sided crown on several ascending
-        // scaffold limbs. Carry leaves along every advancing shoot instead
-        // of only at its tips; terminal-only foliage exposes the grammar as a
-        // narrow fan and leaves the crown hollow from oblique views.
-        return {
-            "FF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            3,
-            .48,
-            .86,
-            .78,
-            .13,
-            .69,
-            1.00,
-            1.00,
-        }
-    case .Pomegranate:
-        return {
-            "[+^F][-^F][/^F][\\^F][F]",
-            "F[+&FL][-&FL]F",
-            "F[+FL][/FL][-FL]",
-            3,
-            2,
-            3,
-            .54,
-            .88,
-            .46,
-            .045,
-            .72,
-            1.00,
-            .94,
-        }
-    case .Almond:
-        // Almonds develop an open, rounded vase above a short clear trunk.
-        // Four rising scaffold limbs keep the crown volumetric, while leaves
-        // along each continuing shoot avoid the old bare, planar leader with
-        // a single tuft at its apex.
-        return {
-            "FFF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+^F[L]][-^F[L]]F[L]",
-            "F[L][/^F[L]][\\^F[L]]F[L]",
-            3,
-            2,
-            3,
-            .60,
-            .86,
-            .55,
-            .14,
-            .70,
-            1.00,
-            1.00,
-        }
-    case .Oleander:
-        // Opposite whorls continue down each cane; terminal-only L markers
-        // leave a mature hedge as a set of bare radial spokes. Carry foliage
-        // sites on both the advancing cane and each newly forked shoot.
-        return {
-            "[+^F[L]][-^F[L]][/^F[L]][\\^F[L]][F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][+F[L]][-F[L]][/F[L]]",
-            3,
-            2,
-            3,
-            .50,
-            .87,
-            .42,
-            .04,
-            .70,
-            .96,
-            .90,
-        }
-    case .Rosemary:
-        // Rosemary carries dense opposite leaf clusters along fine, repeatedly
-        // forked, ascending shoots. Pitching every basal leader outward while
-        // retaining a central leader produces the rounded, upright habit of a
-        // mature shrub; the earlier mostly yawed fan collapsed into a flat
-        // candelabra. Keeping L on advancing stems and branch tips avoids bare
-        // radial spokes.
-        return {
-            "[+&F[L]][-^F[L]][/&F[L]][\\^F[L]][F[L]]",
-            "F[L][+&F[L][/L]][-&F[L][\\L]]F[L][/L][\\L]",
-            "F[L][/^F[L]][\\^F[L]]F[L][+L][-L]",
-            3,
-            2,
-            3,
-            .25,
-            .84,
-            .60,
-            .011,
-            .63,
-            .96,
-            .92,
-        }
-    case .Grapevine:
-        return {"FF", "F[+FL][-FL]F[+FL]", "F[+FL]F[-FL]", 3, 2, 3, .62, .91, .48, .11, .74, 1.35, .84}
-    case .Bougainvillea:
-        // Bougainvillea clothes long advancing canes as well as their branch
-        // tips. Keeping L sites on each rewritten leader section produces the
-        // continuous bracted mass seen across lintels instead of two isolated
-        // terminal pom-poms at opposite ends of a support.
-        return {
-            "[+&F[L]][-&F[L]]F[L]F[L]",
-            "F[L][+&F[L]][-&F[L]]F[L][/&F[L]]",
-            "F[L][+&F[L]]F[L][-&F[L]][\\F[L]]",
-            3,
-            2,
-            3,
-            .66,
-            .91,
-            .42,
-            .10,
-            .73,
-            1.18,
-            1.04,
-        }
-    case .Stone_Pine:
-        // A clean trunk opens into long, rising scaffold limbs and a broad
-        // umbrella crown carrying dense terminal needle bundles.
-        return {
-            "FFFF",
-            "F[+^FFL][-^FFL][/^FL][\\^FL]",
-            "F[+^FL][-^FL]F[/^FL]",
-            3,
-            2,
-            3,
-            .76,
-            .88,
-            .58,
-            .18,
-            .70,
-            2.00,
-            1.12,
-        }
-    case .Bay_Laurel:
-        return {"FF", "F[L][+&FL][-&FL][/FL]", "F[L][+FL][-FL]F[L]", 3, 2, 3, .54, .86, .46, .12, .70, 1.02, 1.10}
-    case .Carob:
-        return {
-            "FF[+F][-F]",
-            "F[L][+&FFL][-&FFL][/FL]",
-            "F[L][+FL][-FL][\\FL]",
-            3,
-            2,
-            3,
-            .68,
-            .87,
-            .56,
-            .18,
-            .71,
-            1.36,
-            .96,
-        }
-    case .Strawberry_Tree:
-        return {
-            "F[+F][-F][/F]",
-            "F[L][+&FL][-&FL]F[L]",
-            "F[L][+FL][-FL][/FL]",
-            3,
-            2,
-            3,
-            .57,
-            .87,
-            .48,
-            .13,
-            .71,
-            1.04,
-            1.05,
-        }
-    case .Myrtle:
-        return {
-            "[+&F][-^F][/&F][\\^F][F]",
-            "F[L][+&FL][-&FL]F[L]",
-            "F[L][+FL][-FL][/FL]",
-            3,
-            2,
-            3,
-            .40,
-            .85,
-            .43,
-            .024,
-            .68,
-            .78,
-            1.15,
-        }
-    case .Mastic:
-        return {
-            "[+^F][-^F][/^F][\\^F][^F][F]",
-            "F[L][+&FL][-&FL]F[L]",
-            "F[L][/FL][\\FL][-FL]",
-            3,
-            2,
-            3,
-            .32,
-            .86,
-            .52,
-            .026,
-            .69,
-            .75,
-            1.00,
-        }
-    case .Lavender:
-        return {
-            "[+&F[L]][-&F[L]][/&F[L]][\\&F[L]][F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            3,
-            .22,
-            .83,
-            .54,
-            .010,
-            .62,
-            .88,
-            .98,
-        }
-    case .Thyme:
-        return {
-            "[+&F[L]][-&F[L]][/&F[L]][\\&F[L]]",
-            "F[L][+&F[L]][-&F[L]]",
-            "F[L][/F[L]][\\F[L]]",
-            3,
-            2,
-            3,
-            .14,
-            .82,
-            .62,
-            .0045,
-            .61,
-            1.22,
-            .52,
-        }
-    case .Sage:
-        // Sage carries opposite broad leaves down its soft basal and advancing
-        // shoots. Terminal-only markers exaggerate bare gaps between plants
-        // even when their botanical crown envelopes overlap.
-        return {
-            "[+F[L]][-F[L]][/F[L]][\\F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/F[L]][\\F[L]]F[L]",
-            3,
-            2,
-            3,
-            .27,
-            .84,
-            .52,
-            .018,
-            .65,
-            .95,
-            1.00,
-        }
-    case .Prickly_Pear:
-        // Short woody links act as pad joints; the large, thick ovate leaf
-        // traits below supply the recognizable flattened cladodes.
-        return {
-            "[L][+^F[L]][-^F[L]][/^F[L]][\\^F[L]][F[L]]",
-            "F[L][+&F[L]][-&F[L]]",
-            "F[L][/&F[L]][\\&F[L]]",
-            3,
-            2,
-            2,
-            .32,
-            .88,
-            .76,
-            .025,
-            .72,
-            1.18,
-            .95,
-        }
-    case .Pelargonium:
-        // Courtyard pelargoniums form soft basal mounds with repeated,
-        // slightly ascending shoots. Broad lobed leaves clothe each advance
-        // while flower markers remain distributed throughout the crown.
-        return {
-            "[+&F[L]][-&F[L]][/&F[L]][\\&F[L]][F[L]]",
-            "F[L][+&F[L]][-&F[L]]",
-            "F[L][/&F[L]][\\&F[L]]",
-            3,
-            2,
-            3,
-            .18,
-            .82,
-            .60,
-            .006,
-            .61,
-            1.06,
-            .72,
-        }
-    case .Wisteria:
-        return {
-            "[+&F[L]][-&F[L]]FFF[L]",
-            "F[L][+&FF[L]][-&FF[L]]F[L]",
-            "F[L][/&FF[L]][\\&FF[L]]F[L]",
-            3,
-            2,
-            2,
-            .58,
-            .91,
-            .42,
-            .085,
-            .73,
-            1.32,
-            1.04,
-        }
-    case .Climbing_Rose:
-        return {
-            "[+&F[L]][-&F[L]]FF[L]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            2,
-            .48,
-            .89,
-            .52,
-            .055,
-            .71,
-            1.18,
-            1.00,
-        }
-    case .Hydrangea_Bush:
-        // Repeated low leaders form a deliberately clipped, rounded mound.
-        return {
-            "[+&F[L]][-&F[L]][/&F[L]][\\&F[L]][F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            3,
-            .31,
-            .84,
-            .58,
-            .026,
-            .66,
-            1.18,
-            .76,
-        }
-    case .Hydrangea_Tree:
-        // A clean standard trunk carries a looser elevated hydrangea crown.
-        return {
-            "FFFF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            3,
-            .42,
-            .86,
-            .54,
-            .065,
-            .69,
-            1.05,
-            1.28,
-        }
-    case .Agapanthus:
-        return {
-            "[+^FF[L]][-^FF[L]][/^FF[L]][\\^FF[L]][FF[L]]",
-            "F[L][+^F[L]]",
-            "F[L][/^F[L]]",
-            3,
-            2,
-            2,
-            .24,
-            .88,
-            .42,
-            .009,
-            .65,
-            .82,
-            1.32,
-        }
-    case .Star_Jasmine:
-        return {
-            // Several basal searching canes establish independently before
-            // their laterals knit together. Keeping a central leader as well
-            // preserves upward reach at young maturities without reducing a
-            // mature jasmine to one trunk with decorations.
-            "[+&F[L]][-&F[L]]FF[L]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            2,
-            .42,
-            .90,
-            .46,
-            .035,
-            .72,
-            1.22,
-            .94,
-        }
-    case .Holm_Oak:
-        // A low, weighty evergreen crown with crooked, spreading scaffold limbs.
-        return {
-            "FFF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/^F[L]][\\^F[L]][-F[L]]F[L]",
-            3,
-            2,
-            3,
-            .62,
-            .84,
-            .62,
-            .20,
-            .72,
-            1.48,
-            .86,
-        }
-    case .Oriental_Plane:
-        // Tall trunk and an open, monumental dome suited to streets and squares.
-        return {
-            "FFFF[+^FF[L]][-^FF[L]][/^FF[L]][\\^FF[L]]",
-            "F[L][+^F[L]][-^F[L]]F[L]",
-            "F[L][/^F[L]][\\^F[L]]F[L]",
-            3,
-            2,
-            3,
-            .72,
-            .87,
-            .57,
-            .17,
-            .71,
-            1.42,
-            1.16,
-        }
-    case .European_Hackberry:
-        // Fine ascending forks build a loose rounded crown with a light edge.
-        return {
-            "FFF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/F[L]][\\F[L]][+F[L]]",
-            3,
-            2,
-            3,
-            .58,
-            .86,
-            .49,
-            .12,
-            .70,
-            1.24,
-            1.10,
-        }
-    case .White_Poplar:
-        // A tall oval broadleaf crown, narrower and more vertical than plane or oak.
-        return {
-            "FFFF[+^F[L]][-^F[L]][/^F[L]][\\^F[L]]",
-            "F[L][+&F[L]][-&F[L]]F[L]",
-            "F[L][/&F[L]][\\&F[L]]F[L]",
-            3,
-            2,
-            3,
-            .56,
-            .86,
-            .46,
-            .13,
-            .70,
-            .90,
-            1.48,
-        }
-    case .Golden_Barrel,
-         .Agave,
-         .Aloe,
-         .Aeonium,
-         .Echeveria,
-         .Jade_Plant,
-         .Stonecrop,
-         .Blue_Chalk_Sticks,
-         .Golden_Torch_Cactus:
-        // These species bypass the branching grammar, but retain a small
-        // profile so shared maturity/detail bookkeeping stays well-defined.
-        return {"F", "F", "F", 1, 1, 1, .1, 1, .5, .01, .8, 1, 1}
+    case .Italian_Cypress: return {3, 1.65, 2.10}
+    case .Olive: return {4, 1.35, 1.00}
+    case .Fig: return {3, 1.22, .76}
+    case .Lemon: return {3, 1.00, 1.00}
+    case .Pomegranate: return {3, 1.00, .94}
+    case .Almond: return {3, 1.00, 1.00}
+    case .Oleander: return {3, .96, .90}
+    case .Rosemary: return {3, .96, .92}
+    case .Grapevine: return {3, 1.35, .84}
+    case .Bougainvillea: return {3, 1.18, 1.04}
+    case .Stone_Pine: return {3, 2.00, 1.12}
+    case .Bay_Laurel: return {3, 1.02, 1.10}
+    case .Carob: return {3, 1.36, .96}
+    case .Strawberry_Tree: return {3, 1.04, 1.05}
+    case .Myrtle: return {3, .78, 1.15}
+    case .Mastic: return {3, .75, 1.00}
+    case .Lavender: return {3, .88, .98}
+    case .Thyme: return {3, 1.22, .52}
+    case .Sage: return {3, .95, 1.00}
+    case .Prickly_Pear: return {2, 1.18, .95}
+    case .Pelargonium: return {3, 1.06, .72}
+    case .Wisteria: return {2, 1.32, 1.04}
+    case .Climbing_Rose: return {2, 1.18, 1.00}
+    case .Hydrangea_Bush: return {3, 1.18, .76}
+    case .Hydrangea_Tree: return {3, 1.05, 1.28}
+    case .Agapanthus: return {2, .82, 1.32}
+    case .Star_Jasmine: return {2, 1.22, .94}
+    case .Holm_Oak: return {3, 1.48, .86}
+    case .Oriental_Plane: return {3, 1.42, 1.16}
+    case .European_Hackberry: return {3, 1.24, 1.10}
+    case .White_Poplar: return {3, .90, 1.48}
+    case .Golden_Barrel, .Agave, .Aloe, .Aeonium, .Echeveria,
+         .Jade_Plant, .Stonecrop, .Blue_Chalk_Sticks, .Golden_Torch_Cactus:
+        return {1, 1, 1}
     }
     return {}
 }

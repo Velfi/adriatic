@@ -1,9 +1,9 @@
-// Package branch_mesh turns an L-system segment tree into smooth, capped
+// Package branch_mesh turns a plant architecture segment tree into smooth, capped
 // branch hulls. Same-depth connected segments become one spline so joints
 // share rings and normals instead of appearing as stacked primitives.
 package branch_mesh
 
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
@@ -89,27 +89,27 @@ destroy :: proc(mesh: ^Mesh) {
     mesh^ = {}
 }
 
-near :: proc(a, b: lsystem.Vec3) -> bool {
+near :: proc(a, b: plant_structure.Vec3) -> bool {
     delta := a - b
     return linalg.dot(delta, delta) < 1e-7
 }
 
-catmull_rom :: proc(a, b, c, d: lsystem.Vec3, t: f32) -> lsystem.Vec3 {
+catmull_rom :: proc(a, b, c, d: plant_structure.Vec3, t: f32) -> plant_structure.Vec3 {
     t2, t3 := t * t, t * t * t
     return (b * 2 + (c - a) * t + (a * 2 - b * 5 + c * 4 - d) * t2 + (-a + b * 3 - c * 3 + d) * t3) * .5
 }
 
 append_ring :: proc(
     mesh: ^Mesh,
-    center, tangent: lsystem.Vec3,
+    center, tangent: plant_structure.Vec3,
     radius: f32,
     radial_segments: int,
-    previous_right: ^lsystem.Vec3,
+    previous_right: ^plant_structure.Vec3,
     config: Config,
     along: f32,
 ) -> u32 {
     unit_tangent := linalg.normalize0(tangent)
-    reference := math.abs(unit_tangent[1]) > .88 ? lsystem.Vec3{1, 0, 0} : lsystem.Vec3{0, 1, 0}
+    reference := math.abs(unit_tangent[1]) > .88 ? plant_structure.Vec3{1, 0, 0} : plant_structure.Vec3{0, 1, 0}
     right := linalg.normalize0(linalg.cross(reference, unit_tangent))
     if linalg.dot(previous_right^, previous_right^) > .5 && linalg.dot(right, previous_right^) < 0 {
         right = -right
@@ -136,11 +136,11 @@ append_ring :: proc(
     return first
 }
 
-append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
+append_chain :: proc(mesh: ^Mesh, chain: []plant_structure.Segment, config: Config) {
     if mesh == nil || len(chain) == 0 do return
     radial := clamp(config.radial_segments, 3, 16)
     samples_per_segment := clamp(config.samples_per_segment, 1, 6)
-    points := make([dynamic]lsystem.Vec3, 0, len(chain) + 1)
+    points := make([dynamic]plant_structure.Vec3, 0, len(chain) + 1)
     radii := make([dynamic]f32, 0, len(chain) + 1)
     defer delete(points)
     defer delete(radii)
@@ -151,11 +151,11 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
         append(&radii, max(segment.radius_end, config.minimum_radius))
     }
 
-    previous_right: lsystem.Vec3
+    previous_right: plant_structure.Vec3
     previous_ring := u32(0)
     ring_count := 0
     along: f32
-    previous_center: lsystem.Vec3
+    previous_center: plant_structure.Vec3
     has_previous_center := false
     for segment_index in 0 ..< len(points) - 1 {
         a := segment_index > 0 ? points[segment_index - 1] : points[segment_index]
@@ -249,12 +249,12 @@ append_chain :: proc(mesh: ^Mesh, chain: []lsystem.Segment, config: Config) {
     }
 }
 
-generate :: proc(segments: []lsystem.Segment, config: Config) -> Mesh {
+generate :: proc(segments: []plant_structure.Segment, config: Config) -> Mesh {
     mesh: Mesh
     if len(segments) == 0 do return mesh
     used := make([]bool, len(segments))
     defer delete(used)
-    chain := make([dynamic]lsystem.Segment)
+    chain := make([dynamic]plant_structure.Segment)
     defer delete(chain)
     for start_index in 0 ..< len(segments) {
         if used[start_index] do continue

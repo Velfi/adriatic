@@ -19,6 +19,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic map validate <map.adriatic-map>")
     fmt.println("  adriatic map import <legacy.terrain> <output.adriatic-map>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
+    fmt.println("  adriatic plant-sheet <species> [--output output.png] [--seed n] [--keep-frames]")
     fmt.println(
         "  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]",
     )
@@ -40,6 +41,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --wind-phase-frames <n> capture plant wind phases into the output directory (1–16)")
     fmt.println("    --seed-frames <n> capture consecutive plant seeds into the output directory (1–256)")
     fmt.println("    --seed-start <n> first unsigned seed for --seed-frames (default 0)")
+    fmt.println("    --plant-sheet-views capture front, side, and top plant views into the output directory")
     fmt.println(
         "    --select <kind[:id]>  dynamically select character, vehicle, structure, prop, plant, or selection",
     )
@@ -288,6 +290,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     if args[1] == "fixture-upgrade" do return true, adriatic_cli_fixture_upgrade(args)
     if args[1] == "map" do return true, adriatic_cli_map(args)
     if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
+    if args[1] == "plant-sheet" do return true, adriatic_cli_plant_sheet(args)
     if args[1] == "cinematic-export" do return true, cinematic_export_cli(args)
     if args[1] != "capture" do return false, true
     if len(args) < 3 {
@@ -319,6 +322,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     camera_distance: f32
     seed_frames := 0
     seed_start := u64(0)
+    plant_sheet_views := false
     list_targets := false
     selector, selector_pick, presentation := "", "", "fit"
     selector_filters: [CAPTURE_SELECTOR_FILTER_CAPACITY]string
@@ -346,6 +350,15 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 return true, false
             }
             list_targets = true
+            index += 1
+            continue
+        }
+        if argument == "--plant-sheet-views" {
+            if plant_sheet_views {
+                fmt.eprintln("adriatic: --plant-sheet-views was specified more than once")
+                return true, false
+            }
+            plant_sheet_views = true
             index += 1
             continue
         }
@@ -687,8 +700,16 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         fmt.eprintln("adriatic: --seed-frames requires capture mode plant-generator")
         return true, false
     }
-    if seed_frames == 0 && seed_start != 0 {
-        fmt.eprintln("adriatic: --seed-start requires --seed-frames")
+    if plant_sheet_views && kind != .Plant_Generator_Lab {
+        fmt.eprintln("adriatic: --plant-sheet-views requires capture mode plant-generator")
+        return true, false
+    }
+    if seed_frames == 0 && !plant_sheet_views && seed_start != 0 {
+        fmt.eprintln("adriatic: --seed-start requires --seed-frames or --plant-sheet-views")
+        return true, false
+    }
+    if plant_sheet_views && (seed_frames > 0 || wind_phase_frames > 0 || turntable_frames > 0) {
+        fmt.eprintln("adriatic: --plant-sheet-views cannot be combined with another capture sequence")
         return true, false
     }
     if seed_frames > 0 && (wind_phase_frames > 0 || turntable_frames > 0) {
@@ -721,22 +742,25 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     output, resolved := adriatic_cli_absolute_path(requested_output)
     if !resolved do return true, false
-    output_directory := turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 ? output : os.dir(output)
+    output_directory :=
+        plant_sheet_views || turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 ? output : os.dir(output)
     if err := os.make_directory_all(output_directory); err != nil && err != .Exist {
         fmt.eprintf("adriatic: cannot create output directory: %v\n", err)
         return true, false
     }
     if target == "" && len(mode) >= 6 && mode[:6] == "player" do target = mode
-    if turntable_frames == 0 && wind_phase_frames == 0 && seed_frames == 0 {
+    if !plant_sheet_views && turntable_frames == 0 && wind_phase_frames == 0 && seed_frames == 0 {
         if err := os.remove(output); err != nil && err != .Not_Exist {
             fmt.eprintf("adriatic: cannot replace %s: %v\n", output, err)
             return true, false
         }
     } else {
-        frame_count := max(turntable_frames, wind_phase_frames)
+        frame_count := plant_sheet_views ? 3 : max(turntable_frames, wind_phase_frames)
         if seed_frames > 0 do frame_count = seed_frames
         for frame_index in 0 ..< frame_count {
-            frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            sheet_names := [3]string{"front", "side", "top"}
+            frame_path :=
+                plant_sheet_views ? fmt.tprintf("%s/%s.png", output, sheet_names[frame_index]) : fmt.tprintf("%s/frame-%03d.png", output, frame_index)
             if wind_phase_frames > 0 do frame_path = fmt.tprintf("%s/frame-%06d.png", output, frame_index)
             if seed_frames > 0 do frame_path = fmt.tprintf("%s/seed-%d.png", output, seed_start + u64(frame_index))
             if err := os.remove(frame_path); err != nil && err != .Not_Exist {
@@ -767,6 +791,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         camera_offset           = camera_offset,
         camera_offset_set       = camera_offset_set,
         turntable_frames        = turntable_frames,
+        plant_sheet_views       = plant_sheet_views,
         seed_frames             = seed_frames,
         seed_start              = seed_start,
         sequence_frames         = wind_phase_frames,
@@ -794,11 +819,13 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     }
     _ = adriatic_run(nil, request = &request)
     if request.selector_failed do return true, false
-    if turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 {
-        frame_count := max(turntable_frames, wind_phase_frames)
+    if plant_sheet_views || turntable_frames > 0 || wind_phase_frames > 0 || seed_frames > 0 {
+        frame_count := plant_sheet_views ? 3 : max(turntable_frames, wind_phase_frames)
         if seed_frames > 0 do frame_count = seed_frames
         for frame_index in 0 ..< frame_count {
-            frame_path := fmt.tprintf("%s/frame-%03d.png", output, frame_index)
+            sheet_names := [3]string{"front", "side", "top"}
+            frame_path :=
+                plant_sheet_views ? fmt.tprintf("%s/%s.png", output, sheet_names[frame_index]) : fmt.tprintf("%s/frame-%03d.png", output, frame_index)
             if wind_phase_frames > 0 do frame_path = fmt.tprintf("%s/frame-%06d.png", output, frame_index)
             if seed_frames > 0 do frame_path = fmt.tprintf("%s/seed-%d.png", output, seed_start + u64(frame_index))
             info, screenshot_error := os.stat(frame_path, context.temp_allocator)

@@ -1,7 +1,7 @@
 package plants
 
 import leaf_mesh "../leaf_mesh"
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 
 Species :: enum u8 {
@@ -91,6 +91,12 @@ Rect :: struct {
     maximum_x, maximum_y: f32,
 }
 
+Support_Axis :: struct {
+    start:  plant_structure.Vec3,
+    end:    plant_structure.Vec3,
+    radius: f32,
+}
+
 Support_Surface :: struct {
     width:             f32,
     height:            f32,
@@ -100,6 +106,8 @@ Support_Surface :: struct {
     left_return_depth: f32,
     planter:           bool,
     exclusions:        []Rect,
+    axes:              []Support_Axis,
+    contact_radius:    f32,
     signature:         u64,
 }
 
@@ -115,9 +123,9 @@ Generate_Config :: struct {
 Attachment :: struct {
     kind:     Attachment_Kind,
     stage:    Attachment_Stage,
-    position: lsystem.Vec3,
-    forward:  lsystem.Vec3,
-    up:       lsystem.Vec3,
+    position: plant_structure.Vec3,
+    forward:  plant_structure.Vec3,
+    up:       plant_structure.Vec3,
     depth:    int,
     variant:  u8,
     leaf:     Leaf_Traits,
@@ -156,14 +164,16 @@ Leaf_Traits :: struct {
 }
 
 Bounds :: struct {
-    minimum: lsystem.Vec3,
-    maximum: lsystem.Vec3,
+    minimum: plant_structure.Vec3,
+    maximum: plant_structure.Vec3,
 }
 
 Generated_Plant :: struct {
     species:           Species,
     habit:             Growth_Habit,
-    segments:          [dynamic]lsystem.Segment,
+    segments:          [dynamic]plant_structure.Segment,
+    segment_parents:   [dynamic]int,
+    segment_axes:      [dynamic]int,
     attachments:       [dynamic]Attachment,
     bounds:            Bounds,
     wood:              Wood_Traits,
@@ -195,11 +205,13 @@ Generate_Result :: struct {
 destroy :: proc(result: ^Generate_Result) {
     if result == nil do return
     delete(result.plant.segments)
+    delete(result.plant.segment_parents)
+    delete(result.plant.segment_axes)
     delete(result.plant.attachments)
     result^ = {}
 }
 
-main_leader_sample :: proc(plant: ^Generated_Plant, fraction: f32) -> lsystem.Vec3 {
+main_leader_sample :: proc(plant: ^Generated_Plant, fraction: f32) -> plant_structure.Vec3 {
     if plant == nil || len(plant.segments) == 0 do return {}
     leader_count := 0
     for segment in plant.segments {
@@ -507,7 +519,7 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
     case .Carob:
         // Each card stands in for part of a compound evergreen leaf. A
         // four-way near cluster closes the mature crown without increasing
-        // skeleton complexity or affecting the distance budgets.
+        // architecture complexity or affecting the distance budgets.
         return detail == .Near ? 4 : 2
     case .Holm_Oak:
         // Small evergreen oak leaves overlap densely into a heavy crown.
@@ -522,9 +534,11 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
         // Five cards at every station made the plant an opaque bottlebrush.
         return 2
     case .Thyme:
-        // Thyme's tiny leaves occur in close opposite pairs along creeping
-        // runners; five-card stars overwhelm both its scale and mat habit.
-        return 2
+        // The dedicated thyme architecture emits both members of every opposite
+        // pair explicitly. Expanding each authored blade again displaces
+        // synthetic copies from the node and forces budget thinning that
+        // removes otherwise valid pairs and terminal flower shoots.
+        return 1
     case .Pelargonium:
         // Each authored node represents one alternate round leaf.
         return 1
@@ -532,7 +546,7 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
         // Its dedicated rosette emits every strap leaf explicitly.
         return 1
     case .Almond:
-        // Almond leaves alternate along current shoots. Each skeleton marker
+        // Almond leaves alternate along current shoots. Each architecture marker
         // is already a distinct longitudinal station, so a three-card whorl
         // turns the airy flowering crown into repeated palmate stars.
         return 1
@@ -575,7 +589,7 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
          .Stonecrop,
          .Blue_Chalk_Sticks,
          .Golden_Torch_Cactus:
-        // Dedicated skeletons emit one complete fleshy rib or rosette blade
+        // Dedicated architectures emit one complete fleshy rib or rosette blade
         // per marker; generic clusters would stack duplicate geometry.
         return 1
     case .Stone_Pine:

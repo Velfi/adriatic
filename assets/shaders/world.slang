@@ -26,8 +26,6 @@ struct Push {
 [[vk::binding(13, 0)]] SamplerState material_lab_roughness_sampler;
 [[vk::binding(14, 0)]] Texture2D<float4> material_lab_normal;
 [[vk::binding(15, 0)]] SamplerState material_lab_normal_sampler;
-[[vk::binding(16, 0)]] Texture2D<float4> marine_ecology_atlas;
-[[vk::binding(17, 0)]] SamplerState marine_ecology_sampler;
 
 struct DynamicShadowCascade {
     // Light-space basis vectors. The fourth components contain the snapped
@@ -68,6 +66,9 @@ struct VertexInput {
     float3 normal : NORMAL0;
     float2 material : TEXCOORD1;
     float2 uv : TEXCOORD5;
+    float3 wind_origin : TEXCOORD11;
+    float3 wind_anchor : TEXCOORD12;
+    float wind_enabled : TEXCOORD13;
 };
 
 struct InstanceVertexInput {
@@ -122,7 +123,6 @@ static const uint MATERIAL_SETTLEMENT = 23;
 static const uint MATERIAL_FOG_SHELL = 24;
 static const uint MATERIAL_ROCK = 25;
 static const uint MATERIAL_BARK = 26;
-static const uint MATERIAL_MARINE_WATER = 27;
 
 float fog_bank_density(float3 p, float4 a, float4 b, float4 c) {
     float2 offset = p.xz - a.xy;
@@ -226,7 +226,49 @@ float3 srgb_to_linear(float3 color) {
 VertexOutput vertex_main(VertexInput input) {
     VertexOutput output;
     float3 world_position = input.position;
-    if (input.kind == MATERIAL_FOLIAGE ||
+    if (input.wind_enabled > .5) {
+        float2 wind = push.water.zw;
+        float wind_speed = length(wind);
+        float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+        float2 wind_across = float2(-wind_direction.y, wind_direction.x);
+
+        // Evaluate the broad bend at the woody attachment, not independently
+        // at every leaf vertex. Branch centerlines and their leaves therefore
+        // receive exactly the same translation at the joint.
+        float3 rooted = input.wind_anchor - input.wind_origin;
+        float reach = length(rooted);
+        float bend_weight = 1.0 - exp(-reach * .72);
+        float downwind_coordinate = dot(input.wind_anchor.xz, wind_direction);
+        float crosswind_coordinate = dot(input.wind_anchor.xz, wind_across);
+        float wind_time = push.water.x * (.34 + wind_speed * .012);
+        float phase =
+            downwind_coordinate * .018 +
+            crosswind_coordinate * .006 -
+            wind_time;
+        float crossing_phase =
+            downwind_coordinate * .008 -
+            crosswind_coordinate * .011 -
+            wind_time * .47 +
+            1.9;
+        float broad_sway = sin(phase) + sin(crossing_phase) * .34;
+        float amplitude = lerp(.20, 1.18, saturate(wind_speed / 14.0 + push.water.y * .24));
+        world_position.xz += wind_direction * broad_sway * amplitude * bend_weight;
+        world_position.y += sin(phase * .73 - .8) * amplitude * .075 * bend_weight;
+
+        // Leaves may rustle around the joint, but the dead zone around their
+        // stem keeps the attachment itself locked to the moving branch.
+        if (input.kind == MATERIAL_LEAF) {
+            float from_attachment = length(input.position - input.wind_anchor);
+            float flutter_weight = smoothstep(.055, .32, from_attachment);
+            float flutter = sin(
+                push.water.x * (1.18 + wind_speed * .028) +
+                dot(input.wind_anchor.xz, float2(.071, .043)) +
+                from_attachment * 7.3
+            );
+            world_position.xz += wind_across * flutter * amplitude * .10 * flutter_weight;
+            world_position.y += flutter * amplitude * .045 * flutter_weight;
+        }
+    } else if (input.kind == MATERIAL_FOLIAGE ||
         input.kind == MATERIAL_LEAF ||
         input.kind == MATERIAL_PETAL) {
         float2 wind = push.water.zw;
@@ -269,7 +311,7 @@ VertexOutput vertex_main(VertexInput input) {
     float clip_z = far_plane / (far_plane - near_plane) * depth -
                    far_plane * near_plane / (far_plane - near_plane);
     output.position = float4(x, -y, clip_z, depth);
-    output.color = float4(srgb_to_linear(input.color.rgb), input.color.a);
+    output.color = input.color.a < 0.0 ? input.color : float4(srgb_to_linear(input.color.rgb), input.color.a);
     output.depth = depth;
     output.world_position = world_position;
     output.kind = input.kind;
@@ -3132,15 +3174,14 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = shade_terrain_limestone(input, base);
             break;
         case MATERIAL_WATER:
-            base = shade_water(input);
+            if (input.color.a < 0.0 && push.camera_position.y > input.world_position.y + .08) {
+                float4 habitat = float4(input.color.rgb, -input.color.a - 1.0);
+                base = shade_marine_water(input, habitat);
+                output_alpha = 1.0;
+            } else {
+                base = shade_water(input);
+            }
             break;
-        case MATERIAL_MARINE_WATER: {
-            float4 habitat = marine_ecology_atlas.Sample(marine_ecology_sampler, input.uv);
-            float coverage = max(habitat.r, max(habitat.g, habitat.b)) * (1.0 - habitat.a);
-            if (coverage < .018) discard;
-            base = shade_marine_water(input, habitat);
-            break;
-        }
         case MATERIAL_FOUNTAIN_WATER:
             base = shade_fountain_water(input);
             break;
@@ -3353,7 +3394,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         base *= lerp(.72, 1.0, visibility);
     }
     if (input.kind == MATERIAL_WATER ||
-        input.kind == MATERIAL_MARINE_WATER ||
         input.kind == MATERIAL_FOUNTAIN_WATER) {
         // Nearby boats and aircraft use the mapped caster pass. Let the water
         // receive their softened silhouettes without crushing its animated

@@ -370,7 +370,7 @@ adriatic_run_impl :: proc(
     defer structure_storage_destroy(editor)
     defer lab_scene_destroy_active(editor)
     defer dio.flame_graph_destroy(&editor.flame_graph)
-    defer garden_lab_destroy_lsystem()
+    defer garden_lab_destroy_plant_structure()
     defer plant_generator_destroy()
     defer mailbag_pouch_asset_destroy(editor)
     story.init_catalog(&editor.story_catalog)
@@ -655,7 +655,7 @@ adriatic_run_impl :: proc(
     run_config.showcase_target = showcase_target
     run_config.island_center = island_center
     if !run_prepare_showcase(editor, &run_config) do return .Quit
-    if request != nil && request.seed_frames > 0 {
+    if request != nil && (request.seed_frames > 0 || request.plant_sheet_views) {
         plant_generator_seed = request.seed_start
         plant_generator_rebuild()
         plant_generator_configure_camera(editor)
@@ -670,7 +670,8 @@ adriatic_run_impl :: proc(
         case .Missing:
         }
     }
-    if state_loaded && editor.lab.kind != .Dunes &&
+    if state_loaded &&
+       editor.lab.kind != .Dunes &&
        !capture_mode &&
        !interactive_lab_mode &&
        (!benchmark_mode ||

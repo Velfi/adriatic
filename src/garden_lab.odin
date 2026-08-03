@@ -5,7 +5,7 @@ import branch_mesh "../packages/branch_mesh"
 import flower_mesh "../packages/flower_mesh"
 import fountains "../packages/fountains"
 import leaf_mesh "../packages/leaf_mesh"
-import lsystem "../packages/lsystem"
+import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
 import third_person "../packages/third_person"
 import "core:fmt"
@@ -51,8 +51,8 @@ Garden_Plan :: struct {
 garden_lab_seed := u32(73)
 garden_lab_style := Garden_Style.Courtyard
 garden_lab_plan: Garden_Plan
-garden_lab_lsystem_plants: [13][4]plants.Generate_Result
-garden_lab_lsystem_ready: [13][4]bool
+garden_lab_plant_structure_plants: [13][4]plants.Generate_Result
+garden_lab_plant_structure_ready: [13][4]bool
 garden_lab_branch_meshes: [13][4]branch_mesh.Mesh
 garden_lab_branch_mesh_ready: [13][4]bool
 garden_lab_leaf_meshes: [13][4]leaf_mesh.Mesh
@@ -208,7 +208,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
             bed := index / 15
             slot := index % 15
             // Aromatic beds are close-planted cultivated masses. Fifteen
-            // independent L-systems per row let neighboring SDF crowns meet
+            // independent plant snapshots per row let neighboring SDF crowns meet
             // without replacing them with a continuous hedge primitive.
             stagger := bed % 2 == 0 ? f32(0) : f32(.18)
             x := -6.6 + f32(slot) * (13.2 / 14) + stagger
@@ -316,7 +316,7 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
 
 garden_lab_rebuild :: proc() {
     garden_lab_plan = garden_generate(garden_lab_seed, garden_lab_style)
-    garden_lab_rebuild_lsystem()
+    garden_lab_rebuild_plant_structure()
     garden_lab_mesh_valid = false
     garden_lab_mesh_source_vertices = 0
     garden_lab_mesh_optimized_vertices = 0
@@ -334,12 +334,12 @@ garden_lab_rebuild :: proc() {
     }
 }
 
-garden_lab_destroy_lsystem :: proc() {
-    for kind in 0 ..< len(garden_lab_lsystem_plants) {
-        for variant in 0 ..< len(garden_lab_lsystem_plants[kind]) {
-            if garden_lab_lsystem_ready[kind][variant] {
-                plants.destroy(&garden_lab_lsystem_plants[kind][variant])
-                garden_lab_lsystem_ready[kind][variant] = false
+garden_lab_destroy_plant_structure :: proc() {
+    for kind in 0 ..< len(garden_lab_plant_structure_plants) {
+        for variant in 0 ..< len(garden_lab_plant_structure_plants[kind]) {
+            if garden_lab_plant_structure_ready[kind][variant] {
+                plants.destroy(&garden_lab_plant_structure_plants[kind][variant])
+                garden_lab_plant_structure_ready[kind][variant] = false
             }
             if garden_lab_branch_mesh_ready[kind][variant] {
                 branch_mesh.destroy(&garden_lab_branch_meshes[kind][variant])
@@ -403,7 +403,7 @@ garden_species_display_scale :: proc(kind: int) -> f32 {
     return 1
 }
 
-garden_local_crown :: proc(kind: int) -> (center, radii: lsystem.Vec3) {
+garden_local_crown :: proc(kind: int) -> (center, radii: plant_structure.Vec3) {
     display_scale := garden_species_display_scale(kind)
     switch kind {
     case 0:
@@ -436,7 +436,7 @@ garden_local_crown :: proc(kind: int) -> (center, radii: lsystem.Vec3) {
     return {}, {1, 1, 1}
 }
 
-garden_clip_segment_to_crown :: proc(source: lsystem.Segment, kind: int) -> (result: lsystem.Segment, visible: bool) {
+garden_clip_segment_to_crown :: proc(source: plant_structure.Segment, kind: int) -> (result: plant_structure.Segment, visible: bool) {
     center, radii := garden_local_crown(kind)
     // Preserve only the structural leader beneath an elevated tree crown.
     // Once it enters the canopy, it is clipped with the lateral growth; keeping
@@ -480,8 +480,8 @@ garden_clip_segment_to_crown :: proc(source: lsystem.Segment, kind: int) -> (res
     return result, true
 }
 
-garden_lab_rebuild_lsystem :: proc() {
-    garden_lab_destroy_lsystem()
+garden_lab_rebuild_plant_structure :: proc() {
+    garden_lab_destroy_plant_structure()
     flower_config := flower_mesh.defaults()
     flower_config.petal_shape = .Rounded
     flower_config.petal_count = 5
@@ -513,8 +513,8 @@ garden_lab_rebuild_lsystem :: proc() {
         .Prickly_Pear,
         .Pelargonium,
     }
-    for kind in 0 ..< len(garden_lab_lsystem_plants) {
-        for variant in 0 ..< len(garden_lab_lsystem_plants[kind]) {
+    for kind in 0 ..< len(garden_lab_plant_structure_plants) {
+        for variant in 0 ..< len(garden_lab_plant_structure_plants[kind]) {
             generated := plants.generate(
                 {
                     species = species[kind],
@@ -525,9 +525,9 @@ garden_lab_rebuild_lsystem :: proc() {
                 },
             )
             if generated.error != .None do continue
-            garden_lab_lsystem_plants[kind][variant] = generated
-            garden_lab_lsystem_ready[kind][variant] = true
-            clipped_segments := make([dynamic]lsystem.Segment, 0, len(generated.plant.segments))
+            garden_lab_plant_structure_plants[kind][variant] = generated
+            garden_lab_plant_structure_ready[kind][variant] = true
+            clipped_segments := make([dynamic]plant_structure.Segment, 0, len(generated.plant.segments))
             for segment in generated.plant.segments {
                 clipped, visible := garden_clip_segment_to_crown(segment, kind)
                 if visible do append(&clipped_segments, clipped)
@@ -782,20 +782,20 @@ garden_lab_process_input :: proc(_: ^Editor) {
 }
 
 garden_lab_exit :: proc(_: ^Editor) {
-    garden_lab_destroy_lsystem()
+    garden_lab_destroy_plant_structure()
 }
 
 garden_draw_path_tile :: proc(x, z, width, depth: f32) {
     world_box({x, .035, z}, {width, .07, depth}, GARDEN_STONE)
 }
 
-garden_lsystem_point :: proc(base: third_person.Vec3, source: lsystem.Vec3, scale, yaw: f32) -> third_person.Vec3 {
+garden_plant_structure_point :: proc(base: third_person.Vec3, source: plant_structure.Vec3, scale, yaw: f32) -> third_person.Vec3 {
     c, s := math.cos(yaw), math.sin(yaw)
     x, z := source[0] * scale, source[2] * scale
     return {base.x + x * c - z * s, base.y + source[1] * scale, base.z + x * s + z * c}
 }
 
-// The species crown is an implicit ellipsoidal hull. L-system leaves grow
+// The species crown is an implicit ellipsoidal hull. Architecture leaves grow
 // inside it, then move toward its zero surface and inherit the SDF gradient as
 // their presentation normal. This preserves an authored species silhouette
 // without replacing the generated internal branching topology.
@@ -942,7 +942,7 @@ garden_draw_hull_leaf :: proc(center, normal: third_person.Vec3, width, height: 
     }
     bitangent := linalg.normalize0(linalg.cross(tangent, normal))
     garden_draw_leaf_plane(center, normal, tangent, bitangent, width, height, color)
-    // An L-system bud represents a leaf cluster, not a single infinitely thin
+    // An architecture bud represents a leaf cluster, not a single infinitely thin
     // billboard. Two smaller radial planes preserve the harvested hull normal
     // for lighting while keeping the cluster legible from side and oblique
     // views.
@@ -1040,7 +1040,7 @@ garden_instance_branch_mesh_ensure :: proc(cache_kind, variant: int, mesh: ^bran
 
 garden_draw_generated_leaf :: proc(
     position, normal: third_person.Vec3,
-    leaf_forward, leaf_up: lsystem.Vec3,
+    leaf_forward, leaf_up: plant_structure.Vec3,
     yaw: f32,
     mesh: ^leaf_mesh.Mesh,
     scale: f32,
@@ -1130,11 +1130,11 @@ garden_draw_attachment_flower :: proc(
     )
 }
 
-garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
+garden_draw_plant_structure_plant :: proc(plant: Garden_Plant, cache_kind: int) {
     location_hash := u32(abs(plant.position.x * 17 + plant.position.z * 29))
     variant := int(garden_hash(garden_lab_seed + location_hash) % 4)
-    if !garden_lab_lsystem_ready[cache_kind][variant] do return
-    generated := &garden_lab_lsystem_plants[cache_kind][variant].plant
+    if !garden_lab_plant_structure_ready[cache_kind][variant] do return
+    generated := &garden_lab_plant_structure_plants[cache_kind][variant].plant
     yaw := garden_random01(garden_lab_seed, variant, location_hash) * math.PI * 2
     wood := canvas2d.Color{103, 70, 43, 255}
     scale := plant.scale * garden_species_display_scale(cache_kind)
@@ -1155,7 +1155,7 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
         )
     }
     for leaf, leaf_index in generated.attachments {
-        candidate := garden_lsystem_point(plant.position, leaf.position, scale, yaw)
+        candidate := garden_plant_structure_point(plant.position, leaf.position, scale, yaw)
         surface, hull_normal := garden_crown_surface(plant, cache_kind, candidate)
         position := garden_crown_contains(plant, cache_kind, candidate) ? candidate : surface
         if leaf.kind == .Fruit {
@@ -1230,7 +1230,7 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
             if cache_kind == 12 {
                 // A generated pelargonium flower marker represents an umbel,
                 // not a lone bloom. Expand it into five compact florets while
-                // keeping their center anchored to the L-system attachment.
+                // keeping their center anchored to the architecture attachment.
                 phase := f32(leaf_index) * .73 + yaw
                 for floret in 0 ..< 5 {
                     angle := phase + f32(floret) * math.PI * 2 / 5
@@ -1319,9 +1319,9 @@ garden_draw_lsystem_plant :: proc(plant: Garden_Plant, cache_kind: int) {
 garden_draw_plant :: proc(plant: Garden_Plant) {
     switch plant.kind {
     case .Cypress:
-        garden_draw_lsystem_plant(plant, 0)
+        garden_draw_plant_structure_plant(plant, 0)
     case .Citrus:
-        garden_draw_lsystem_plant(plant, 1)
+        garden_draw_plant_structure_plant(plant, 1)
     case .Shrub:
         cache_kind := 2
         if garden_lab_style == .Wild {
@@ -1329,7 +1329,7 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
             shrub_kinds := [3]int{2, 7, 8}
             cache_kind = shrub_kinds[int(garden_hash(garden_lab_seed + location_hash) % len(shrub_kinds))]
         }
-        garden_draw_lsystem_plant(plant, cache_kind)
+        garden_draw_plant_structure_plant(plant, cache_kind)
     case .Flower:
         if garden_lab_style == .Wild {
             // Meadow color comes from real flowering catalog plants. The
@@ -1342,9 +1342,9 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
             meadow_scales := [3]f32{.74, .66, .68}
             meadow.color = meadow_colors[cache_kind - 4]
             meadow.scale *= meadow_scales[cache_kind - 4]
-            garden_draw_lsystem_plant(meadow, cache_kind)
+            garden_draw_plant_structure_plant(meadow, cache_kind)
         } else {
-            garden_draw_lsystem_plant(plant, 12)
+            garden_draw_plant_structure_plant(plant, 12)
         }
     case .Herb:
         herb := plant
@@ -1354,15 +1354,15 @@ garden_draw_plant :: proc(plant: Garden_Plant) {
         colors := [4]canvas2d.Color{{64, 105, 72, 255}, {76, 105, 82, 255}, {68, 108, 62, 255}, {101, 124, 91, 255}}
         herb.scale *= scales[bed]
         herb.color = colors[bed]
-        garden_draw_lsystem_plant(herb, cache_kind)
+        garden_draw_plant_structure_plant(herb, cache_kind)
     case .Stone_Pine:
-        garden_draw_lsystem_plant(plant, 9)
+        garden_draw_plant_structure_plant(plant, 9)
     case .Olive_Tree:
-        garden_draw_lsystem_plant(plant, 10)
+        garden_draw_plant_structure_plant(plant, 10)
     case .Succulent:
-        garden_draw_lsystem_plant(plant, 11)
+        garden_draw_plant_structure_plant(plant, 11)
     case .Groundcover:
-        garden_draw_lsystem_plant(plant, 5)
+        garden_draw_plant_structure_plant(plant, 5)
     }
 }
 
@@ -1432,7 +1432,7 @@ garden_draw_arch_climber :: proc(center: third_person.Vec3) {
         if attachment.kind == .Flower {
             // Bougainvillea's large-scale color comes from three papery
             // modified leaves surrounding a very small true flower. Reuse the
-            // generated ovate leaf mesh at this L-system attachment site so
+            // generated ovate leaf mesh at this architecture attachment site so
             // the bracts share its support frame instead of substituting a
             // synthetic foliage block.
             normal := linalg.normalize0(third_person.Vec3{attachment.up[0], attachment.up[1], attachment.up[2]})

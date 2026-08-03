@@ -1,8 +1,8 @@
 package main
 
 import leaf_mesh "../packages/leaf_mesh"
-import lsystem "../packages/lsystem"
 import plant_bark "../packages/plant_bark"
+import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
 import third_person "../packages/third_person"
 import "core:math"
@@ -30,8 +30,8 @@ Generated_Bark_Segment_Topology :: struct {
 }
 
 Generated_Plant_Transform :: struct {
-    base:              third_person.Vec3,
-    cosine, sine:      f32,
+    base:               third_person.Vec3,
+    cosine, sine:       f32,
     scale, along_grade: f32,
 }
 
@@ -127,18 +127,14 @@ generated_plant_cached :: proc(
     }
     entry.bark_topology = make([]Generated_Bark_Segment_Topology, len(result.plant.segments))
     for segment, segment_index in result.plant.segments {
-        for parent_index in 0 ..< segment_index {
+        parent_index := result.plant.segment_parents[segment_index]
+        if parent_index >= 0 {
             parent := result.plant.segments[parent_index]
-            delta := parent.end - segment.start
-            if linalg.dot(delta, delta) < 1e-8 {
-                parent_delta := parent.end - parent.start
-                parent_length := f32(math.sqrt(f64(linalg.dot(parent_delta, parent_delta))))
-                entry.bark_topology[segment_index].distance =
-                    entry.bark_topology[parent_index].distance + parent_length
-                entry.bark_topology[segment_index].has_parent = true
-                entry.bark_topology[parent_index].has_child = true
-                break
-            }
+            parent_delta := parent.end - parent.start
+            parent_length := f32(math.sqrt(f64(linalg.dot(parent_delta, parent_delta))))
+            entry.bark_topology[segment_index].distance = entry.bark_topology[parent_index].distance + parent_length
+            entry.bark_topology[segment_index].has_parent = true
+            entry.bark_topology[parent_index].has_child = true
         }
     }
     generated_plant_cache_count += 1
@@ -242,8 +238,7 @@ generated_plant_world_cache_destroy :: proc() {
 generated_plant_world_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
     write := 0
     for entry in generated_plant_world_cache {
-        if entry.base.x >= min_x && entry.base.x <= max_x &&
-           entry.base.z >= min_z && entry.base.z <= max_z {
+        if entry.base.x >= min_x && entry.base.x <= max_x && entry.base.z >= min_z && entry.base.z <= max_z {
             delete(entry.vertices)
             continue
         }
@@ -258,19 +253,13 @@ generated_plant_transform_make :: #force_inline proc(
     base: third_person.Vec3,
     yaw, scale, along_grade: f32,
 ) -> Generated_Plant_Transform {
-    return {
-        base        = base,
-        cosine      = math.cos(yaw),
-        sine        = math.sin(yaw),
-        scale       = scale,
-        along_grade = along_grade,
-    }
+    return {base = base, cosine = math.cos(yaw), sine = math.sin(yaw), scale = scale, along_grade = along_grade}
 }
 
 @(no_instrumentation)
 generated_plant_point :: #force_inline proc(
     transform: Generated_Plant_Transform,
-    point: lsystem.Vec3,
+    point: plant_structure.Vec3,
 ) -> third_person.Vec3 {
     return {
         transform.base.x + (point[0] * transform.cosine - point[2] * transform.sine) * transform.scale,
@@ -282,12 +271,42 @@ generated_plant_point :: #force_inline proc(
 @(no_instrumentation)
 generated_plant_vector :: #force_inline proc(
     transform: Generated_Plant_Transform,
-    vector: lsystem.Vec3,
+    vector: plant_structure.Vec3,
 ) -> third_person.Vec3 {
     return {
         vector[0] * transform.cosine - vector[2] * transform.sine,
         vector[1] + vector[0] * transform.along_grade,
         vector[0] * transform.sine + vector[2] * transform.cosine,
+    }
+}
+
+generated_plant_mark_wind_attachment :: #force_inline proc(
+    first_vertex: int,
+    origin, anchor: third_person.Vec3,
+) {
+    for &vertex in world_renderer.vertices[first_vertex:] {
+        vertex.wind_origin = {origin.x, origin.y, origin.z}
+        vertex.wind_anchor = {anchor.x, anchor.y, anchor.z}
+        vertex.wind_enabled = 1
+    }
+}
+
+generated_plant_mark_wind_branch :: #force_inline proc(
+    first_vertex: int,
+    origin, start, end: third_person.Vec3,
+) {
+    axis := end - start
+    axis_length_squared := linalg.dot(axis, axis)
+    for &vertex in world_renderer.vertices[first_vertex:] {
+        point := third_person.Vec3{vertex.position[0], vertex.position[1], vertex.position[2]}
+        fraction := f32(0)
+        if axis_length_squared > 1e-8 {
+            fraction = clamp(linalg.dot(point - start, axis) / axis_length_squared, f32(0), f32(1))
+        }
+        anchor := start + axis * fraction
+        vertex.wind_origin = {origin.x, origin.y, origin.z}
+        vertex.wind_anchor = {anchor.x, anchor.y, anchor.z}
+        vertex.wind_enabled = 1
     }
 }
 
@@ -360,7 +379,7 @@ generated_plant_apply_detail_floor :: #force_inline proc(detail, floor: plants.D
 // coordinates. Local sampling keeps the result stable when an instance moves
 // or rotates and makes adjacent LOD rebuilds retain the same visual identity.
 world_generated_bark_segment :: proc(
-    segment: lsystem.Segment,
+    segment: plant_structure.Segment,
     bark: plant_bark.Profile,
     seed: u64,
     transform: Generated_Plant_Transform,
@@ -381,7 +400,7 @@ world_generated_bark_segment :: proc(
     pattern_hash := (seed + 1) * 0x9e3779b97f4a7c15
     u_phase := f32((pattern_hash >> 40) & 0xffff) / 65535 * bark.scale
     v_phase := f32((pattern_hash >> 16) & 0xffff) / 65535 * bark.scale * 3
-    reference := math.abs(local_axis[1]) > .90 ? lsystem.Vec3{1, 0, 0} : lsystem.Vec3{0, 1, 0}
+    reference := math.abs(local_axis[1]) > .90 ? plant_structure.Vec3{1, 0, 0} : plant_structure.Vec3{0, 1, 0}
     local_right := linalg.normalize0(linalg.cross(reference, local_axis))
     local_up := linalg.normalize0(linalg.cross(local_axis, local_right))
     points_a, points_b: [SEGMENTS]third_person.Vec3
@@ -530,10 +549,10 @@ world_generated_grape_leaf_3d :: proc(
     )
 
     if hero {
-        // The catalog's Near skeleton is shared by Hero and Near, so the
+        // The catalog's Near architecture is shared by Hero and Near, so the
         // closest tier adds the raised vein that is large enough to read at
         // arm's length. This makes Hero visually distinct without adding a
-        // serialized plant-detail tier or duplicating cached skeletons.
+        // serialized plant-detail tier or duplicating cached architectures.
         world_tube_between(center, tip, forward, max(width * .032, f32(.003)), max(width * .014, f32(.0015)), shade)
     }
 }
@@ -849,7 +868,7 @@ world_generated_ornamental_flower :: proc(
 
 // world_generated_plant is the lightweight world-facing consumer of the plant
 // catalog. Labs can retain their high-detail meshes, while generated places
-// use the same botanical skeleton and attachment data at camera-appropriate
+// use the same botanical architecture and attachment data at camera-appropriate
 // detail levels.
 world_generated_plant :: proc(
     species: plants.Species,
@@ -877,8 +896,17 @@ world_generated_plant :: proc(
     shadow_first := len(world_renderer.vertices)
     if cache_geometry {
         cached := generated_plant_world_cache_find(
-            species, seed, detail, render_lod, habit, support_signature, maturity_step,
-            base, scale, yaw, along_grade,
+            species,
+            seed,
+            detail,
+            render_lod,
+            habit,
+            support_signature,
+            maturity_step,
+            base,
+            scale,
+            yaw,
+            along_grade,
         )
         if cached != nil {
             append(&world_renderer.vertices, ..cached.vertices[:])
@@ -929,6 +957,7 @@ world_generated_plant :: proc(
         segment_delta := segment.end - segment.start
         segment_length := f32(math.sqrt(f64(linalg.dot(segment_delta, segment_delta))))
         bark_segment := generated_entry.bark_topology[segment_index]
+        branch_first := len(world_renderer.vertices)
         world_generated_bark_segment(
             segment,
             bark,
@@ -939,6 +968,12 @@ world_generated_plant :: proc(
             bark_segment.distance + segment_length,
             !bark_segment.has_parent,
             !bark_segment.has_child,
+        )
+        generated_plant_mark_wind_branch(
+            branch_first,
+            transform.base,
+            generated_plant_point(transform, segment.start),
+            generated_plant_point(transform, segment.end),
         )
     }
 
@@ -1003,6 +1038,7 @@ world_generated_plant :: proc(
         }
         if attachment.kind != .Leaf do continue
 
+        leaf_first := len(world_renderer.vertices)
         forward := linalg.normalize0(generated_plant_vector(transform, attachment.forward))
         up := linalg.normalize0(generated_plant_vector(transform, attachment.up))
         right := linalg.normalize0(linalg.cross(forward, up))
@@ -1022,14 +1058,17 @@ world_generated_plant :: proc(
                 color,
                 species == .Agave,
             )
+            generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
             continue
         }
         if species == .Grapevine {
             world_generated_grape_leaf_3d(center, forward, up, right, width, length, color, hero_geometry)
+            generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
             continue
         }
         if hero_geometry {
             world_generated_leaf_hero(center, forward, up, right, width, length, u32(attachment.leaf.shape), color)
+            generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
             continue
         }
         tip := center + forward * length
@@ -1039,11 +1078,22 @@ world_generated_plant :: proc(
         shape := u32(attachment.leaf.shape)
         world_generated_leaf_textured_facet(a, b, c, {.32, 0}, {0, .42}, {.5, 1}, up, color, shape)
         world_generated_leaf_textured_facet(a, c, d, {.32, 0}, {.5, 1}, {1, .42}, up, color, shape)
+        generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
     }
     if cache_geometry {
         generated_plant_world_cache_store(
-            species, seed, detail, render_lod, habit, support_signature, maturity_step,
-            base, scale, yaw, along_grade, world_renderer.vertices[shadow_first:],
+            species,
+            seed,
+            detail,
+            render_lod,
+            habit,
+            support_signature,
+            maturity_step,
+            base,
+            scale,
+            yaw,
+            along_grade,
+            world_renderer.vertices[shadow_first:],
         )
     }
     world_register_shadow_caster(shadow_first)

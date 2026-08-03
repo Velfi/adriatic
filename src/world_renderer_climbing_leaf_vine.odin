@@ -36,35 +36,35 @@ world_climbing_leaf_vine :: proc(
         plane_z = surface_z,
         root_x  = 0,
     }
-    skeleton_detail :=
+    architecture_detail :=
         detail_tier >= 2 ? plants.Detail_Level.Near : detail_tier == 1 ? plants.Detail_Level.Medium : plants.Detail_Level.Far
-    skeleton_entry := generated_plant_cached(
+    architecture_entry := generated_plant_cached(
         .Bougainvillea,
         u64(plant_seed),
-        skeleton_detail,
+        architecture_detail,
         .Wall_Trained,
         &support,
         vine_maturity,
     )
-    uncached_skeleton: plants.Generate_Result
-    skeleton: ^plants.Generate_Result
-    if skeleton_entry != nil {
-        skeleton = &skeleton_entry.result
+    uncached_architecture: plants.Generate_Result
+    plant_snapshot: ^plants.Generate_Result
+    if architecture_entry != nil {
+        plant_snapshot = &architecture_entry.result
     } else {
         // Preserve rendering if the fixed-capacity world cache is exhausted.
-        uncached_skeleton = plants.generate(
+        uncached_architecture = plants.generate(
             {
                 species = .Bougainvillea,
                 seed = u64(plant_seed),
                 maturity = vine_maturity,
-                detail = skeleton_detail,
+                detail = architecture_detail,
                 habit = .Wall_Trained,
                 support = &support,
             },
         )
-        skeleton = &uncached_skeleton
+        plant_snapshot = &uncached_architecture
     }
-    defer if skeleton_entry == nil do plants.destroy(&uncached_skeleton)
+    defer if architecture_entry == nil do plants.destroy(&uncached_architecture)
     root_scale := .78 + vine_maturity * .42
     stem_start := structure.base_y + .12 + f32(seed % 5) * .28
     planter_rooted := false
@@ -92,8 +92,8 @@ world_climbing_leaf_vine :: proc(
         if structure.kind == .Architecture {
             divergence := t * t * (3 - 2 * t)
             trained_x := root_local_x + (local_x - root_local_x) * divergence
-            if skeleton.error == .None {
-                proposed := plants.main_leader_sample(&skeleton.plant, t)
+            if plant_snapshot.error == .None {
+                proposed := plants.main_leader_sample(&plant_snapshot.plant, t)
                 proposed_offset := (proposed[0] - support.root_x) / max(support.width, f32(1))
                 trained_x += proposed_offset * structure.width * divergence * .35
             }

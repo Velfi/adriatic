@@ -1,6 +1,6 @@
 package plants
 
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
@@ -77,6 +77,24 @@ generated_attachment_kind :: proc(
     if species == .Agapanthus {
         return depth == -5 && maturity > .42 && detail != .Far ? .Flower : .Leaf
     }
+    if species == .Oleander {
+        return depth == -9 && maturity > .48 && detail != .Far ? .Flower : .Leaf
+    }
+    if species == .Wisteria {
+        return depth == -10 && maturity > .36 && detail != .Far ? .Flower : .Leaf
+    }
+    if species == .Climbing_Rose {
+        return depth == -11 && maturity > .32 && detail != .Far ? .Flower : .Leaf
+    }
+    if species == .Carob {
+        return depth == -13 && maturity > .68 && detail != .Far ? .Fruit : .Leaf
+    }
+    if species == .Strawberry_Tree {
+        if depth != -12 || detail == .Far do return .Leaf
+        hash := (seed + 1) * 0x9e3779b97f4a7c15 ~ u64(index + 61) * 0xbf58476d1ce4e5b9
+        if maturity > .62 && hash % 3 != 0 do return .Fruit
+        return maturity > .30 ? .Flower : .Leaf
+    }
     if species == .Lemon {
         if detail == .Far {
             // At far detail every anchor is silhouette-critical. Fruit and
@@ -109,7 +127,7 @@ generated_attachment_kind :: proc(
         return .Leaf
     }
     if species == .Hydrangea_Bush || species == .Hydrangea_Tree {
-        // Dedicated hydrangea skeletons reserve this depth exclusively for
+        // Dedicated hydrangea architectures reserve this depth exclusively for
         // terminal mopheads. Interior nodes always retain their paired leaves.
         return depth == -9 && maturity > .22 ? .Flower : .Leaf
     }
@@ -198,7 +216,9 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
         traits = {.Lanceolate, .025, .006, 0, .004, .0012, 0}
     case .Thyme:
         // Common thyme leaves are roughly 6-13 mm long.
-        traits = {.Ovate, .012, .005, 0, .002, .0007, 0}
+        // One rendered blade represents a close opposite pair so the mat
+        // remains legible at gameplay distance without enlarging its crown.
+        traits = {.Ovate, .024, .012, 0, .0035, .0012, 0}
     case .Sage:
         traits = {.Ovate, .105, .055, .12, .018, .012, 0}
     case .Prickly_Pear:
@@ -233,7 +253,7 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
         traits = {.Deltoid, .115, .105, .08, .014, .007, 0}
     case .Golden_Barrel:
         // One narrow, deeply cupped blade reads as a single vertical rib;
-        // the radial skeleton closes those ribs into a squat barrel.
+        // the radial architecture closes those ribs into a squat barrel.
         traits = {.Lanceolate, .42, .075, 0, .010, .055, .060}
     case .Agave:
         traits = {.Lanceolate, .58, .115, .06, .040, .045, .038}
@@ -248,7 +268,7 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     case .Stonecrop:
         traits = {.Ovate, .038, .024, 0, .007, .012, .018}
     case .Blue_Chalk_Sticks:
-        traits = {.Lanceolate, .24, .045, 0, .016, .020, .036}
+        traits = {.Lanceolate, .24, .024, 0, .010, .012, .020}
     case .Golden_Torch_Cactus:
         traits = {.Lanceolate, .78, .080, 0, .006, .040, .052}
     }
@@ -300,11 +320,11 @@ generated_leaf_traits :: proc(species: Species, variant: u8, maturity: f32, deta
 }
 
 attachment_frame :: proc(
-    forward, up: lsystem.Vec3,
+    forward, up: plant_structure.Vec3,
     profile: Profile,
     climbing: bool,
 ) -> (
-    result_forward, result_up: lsystem.Vec3,
+    result_forward, result_up: plant_structure.Vec3,
 ) {
     result_forward = {
         forward[0] * profile.width_scale,
@@ -325,49 +345,56 @@ attachment_frame :: proc(
     result_up -= result_forward * linalg.dot(result_up, result_forward)
     result_up = linalg.normalize0(result_up)
     if linalg.dot(result_up, result_up) < .001 {
-        reference := math.abs(result_forward[1]) < .9 ? lsystem.Vec3{0, 1, 0} : lsystem.Vec3{1, 0, 0}
+        reference := math.abs(result_forward[1]) < .9 ? plant_structure.Vec3{0, 1, 0} : plant_structure.Vec3{1, 0, 0}
         right := linalg.normalize0(linalg.cross(result_forward, reference))
         result_up = linalg.normalize0(linalg.cross(right, result_forward))
     }
     return
 }
 
-on_left_return_wall :: proc(position: lsystem.Vec3, support: ^Support_Surface) -> bool {
+on_left_return_wall :: proc(position: plant_structure.Vec3, support: ^Support_Surface) -> bool {
     return_plane_x := support != nil ? support.left_corner_x + support.plane_z : f32(0)
-    return support != nil &&
+    return(
+        support != nil &&
         support.left_return_depth > 0 &&
         position[2] > support.plane_z + .001 &&
-        math.abs(position[0] - return_plane_x) < .02
+        math.abs(position[0] - return_plane_x) < .02 \
+    )
 }
 
-fold_source_attachment_frame :: proc(forward, up: ^lsystem.Vec3, position: lsystem.Vec3, support: ^Support_Surface) {
+fold_source_attachment_frame :: proc(forward, up: ^plant_structure.Vec3, position: plant_structure.Vec3, support: ^Support_Surface) {
     if !on_left_return_wall(position, support) do return
     // Unwrapped negative x becomes positive z after folding around the left
     // corner. Rotate the already-scaled front-wall frame by ninety degrees.
-    forward^ = linalg.normalize0(lsystem.Vec3{0, forward^[1], -forward^[0]})
+    forward^ = linalg.normalize0(plant_structure.Vec3{0, forward^[1], -forward^[0]})
     if linalg.dot(forward^, forward^) < .001 do forward^ = {0, 1, 0}
     up^ = {1, 0, 0}
 }
 
-routed_attachment_frame :: proc(direction, position: lsystem.Vec3, support: ^Support_Surface) -> (forward, up: lsystem.Vec3) {
+routed_attachment_frame :: proc(
+    direction, position: plant_structure.Vec3,
+    support: ^Support_Surface,
+) -> (
+    forward, up: plant_structure.Vec3,
+) {
     if on_left_return_wall(position, support) {
-        forward = linalg.normalize0(lsystem.Vec3{0, direction[1], direction[2]})
+        forward = linalg.normalize0(plant_structure.Vec3{0, direction[1], direction[2]})
         if linalg.dot(forward, forward) < .001 do forward = {0, 1, 0}
         up = {1, 0, 0}
         return
     }
-    forward = linalg.normalize0(lsystem.Vec3{direction[0], direction[1], 0})
+    forward = linalg.normalize0(plant_structure.Vec3{direction[0], direction[1], 0})
     if linalg.dot(forward, forward) < .001 do forward = {0, 1, 0}
     up = {0, 0, 1}
     return
 }
 
-update_leaf_bounds :: proc(bounds: ^Bounds, position, forward, up: lsystem.Vec3, traits: Leaf_Traits, first: ^bool) {
+update_leaf_bounds :: proc(bounds: ^Bounds, position, forward, up: plant_structure.Vec3, traits: Leaf_Traits, first: ^bool) {
     right := linalg.normalize0(linalg.cross(forward, up))
     if linalg.dot(right, right) < .001 do right = {1, 0, 0}
     half_width := traits.width * .5
     lift := math.abs(traits.curl) + math.abs(traits.cup)
-    stations := [2]lsystem.Vec3{position, position + forward * traits.length}
+    stations := [2]plant_structure.Vec3{position, position + forward * traits.length}
     sides := [2]f32{-1, 1}
     for station in stations {
         for side in sides {
@@ -378,20 +405,17 @@ update_leaf_bounds :: proc(bounds: ^Bounds, position, forward, up: lsystem.Vec3,
 }
 
 route_point :: proc(
-    point: lsystem.Vec3,
+    point: plant_structure.Vec3,
     support: ^Support_Surface,
     source_height, source_half_width: f32,
     habit: Growth_Habit,
     depth: int,
-) -> lsystem.Vec3 {
+) -> plant_structure.Vec3 {
     result := point
     height_fraction := clamp(point[1] / max(source_height, f32(.001)), f32(0), f32(1))
     root_x := clamp(support.root_x, -support.width * .46, support.width * .46)
     opposite_x := root_x <= 0 ? support.width * .42 : -support.width * .42
-    folded_left_wall :=
-        habit == .Wall_Trained &&
-        support.left_return_depth > 0 &&
-        support.left_corner_x < root_x
+    folded_left_wall := habit == .Wall_Trained && support.left_return_depth > 0 && support.left_corner_x < root_x
     route_min_x := -support.width * .48
     if folded_left_wall do route_min_x = support.left_corner_x - support.left_return_depth
     if habit == .Trellised && depth <= -20 {
@@ -467,7 +491,7 @@ route_point :: proc(
     if habit == .Trellised {
         // A trellised vine climbs freely to its first wire, then trains its
         // generated leader and branches along four horizontal tiers. Snapping
-        // only the support projection—not the L-system—retains botanical
+        // only the support projection retains botanical
         // branching while removing the unsupported diagonal curtain.
         raw_y := height_fraction * support.height * .96
         first_wire := min(f32(.55), support.height * .22)
@@ -519,9 +543,7 @@ route_point :: proc(
         ground_opening := exclusion.minimum_y <= support.height * .18
         margin := f32(.12)
         root_beneath_opening :=
-            !ground_opening &&
-            root_x >= exclusion.minimum_x - margin &&
-            root_x <= exclusion.maximum_x + margin
+            !ground_opening && root_x >= exclusion.minimum_x - margin && root_x <= exclusion.maximum_x + margin
         if habit == .Wall_Trained && root_beneath_opening && result[1] <= exclusion.maximum_y + clearance {
             // Establish the fork below the sill instead of waiting until a
             // cane is already level with the glass. By the first window each
@@ -532,7 +554,8 @@ route_point :: proc(
             // than the broad front wall to read as a balanced corner plant.
             route_left := lateral_fraction < .18
             edge_spread := math.abs(lateral_fraction) * support.width * .10
-            target_x := route_left ? exclusion.minimum_x - margin - edge_spread : exclusion.maximum_x + margin + edge_spread
+            target_x :=
+                route_left ? exclusion.minimum_x - margin - edge_spread : exclusion.maximum_x + margin + edge_spread
             if route_left && folded_left_wall {
                 return_fraction := .28 + math.abs(lateral_fraction) * .48
                 target_x = support.left_corner_x - support.left_return_depth * return_fraction
@@ -603,8 +626,7 @@ route_point :: proc(
         margin := f32(.12)
         exclusion_center := (exclusion.minimum_x + exclusion.maximum_x) * .5
         root_beneath_opening :=
-            support.root_x >= exclusion.minimum_x - margin &&
-            support.root_x <= exclusion.maximum_x + margin
+            support.root_x >= exclusion.minimum_x - margin && support.root_x <= exclusion.maximum_x + margin
         route_left := root_beneath_opening ? lateral_fraction < .18 : support.root_x <= exclusion_center
         result[0] = route_left ? exclusion.minimum_x - margin : exclusion.maximum_x + margin
         result[0] = clamp(result[0], route_min_x, support.width * .48)
@@ -620,7 +642,55 @@ route_point :: proc(
     return result
 }
 
-update_bounds :: proc(bounds: ^Bounds, point: lsystem.Vec3, first: ^bool) {
+route_species_point :: proc(
+    point: plant_structure.Vec3,
+    support: ^Support_Surface,
+    source_height, source_half_width: f32,
+    habit: Growth_Habit,
+    depth: int,
+    species: Species,
+) -> plant_structure.Vec3 {
+    routed := route_point(point, support, source_height, source_half_width, habit, depth)
+    if species != .Wisteria && species != .Star_Jasmine do return routed
+
+    axis_start, axis_end: plant_structure.Vec3
+    if len(support.axes) > 0 {
+        normalized_x := clamp(point[0] / max(source_half_width, f32(.001)), f32(-1), f32(1))
+        axis_index := clamp(
+            int(math.round(f64((normalized_x + 1) * .5 * f32(len(support.axes) - 1)))),
+            0,
+            len(support.axes) - 1,
+        )
+        axis_start = support.axes[axis_index].start
+        axis_end = support.axes[axis_index].end
+    } else {
+        // A wall without authored axes receives a deterministic five-rail
+        // training lattice. The rails are botanical supports, not visible
+        // geometry; masonry-trained twiners still wind instead of becoming a
+        // flat fan.
+        normalized_x := clamp(point[0] / max(source_half_width, f32(.001)), f32(-1), f32(1))
+        rail := clamp(int(math.round(f64((normalized_x + 1) * 2))), 0, 4)
+        rail_x := -support.width * .40 + f32(rail) * support.width * .20
+        axis_start = {rail_x, 0, support.plane_z}
+        axis_end = {rail_x, support.height * .96, support.plane_z}
+    }
+    axis := axis_end - axis_start
+    axis_length_squared := linalg.dot(axis, axis)
+    if axis_length_squared < 1e-8 do return routed
+    t := clamp(linalg.dot(routed - axis_start, axis) / axis_length_squared, f32(0), f32(1))
+    center := axis_start + axis * t
+    tangent := linalg.normalize0(axis)
+    reference := math.abs(tangent[1]) > .88 ? plant_structure.Vec3{1, 0, 0} : plant_structure.Vec3{0, 1, 0}
+    right := linalg.normalize0(linalg.cross(tangent, reference))
+    outward := linalg.normalize0(linalg.cross(right, tangent))
+    handedness := species == .Wisteria ? f32(-1) : f32(1)
+    turns := species == .Wisteria ? f32(4.5) : f32(6.0)
+    phase := handedness * (t * turns * math.PI * 2 + point[0] * .7)
+    radius := max(support.contact_radius, f32(.035))
+    return center + right * math.cos(phase) * radius + outward * math.sin(phase) * radius
+}
+
+update_bounds :: proc(bounds: ^Bounds, point: plant_structure.Vec3, first: ^bool) {
     if first^ {
         bounds.minimum = point
         bounds.maximum = point
@@ -631,6 +701,35 @@ update_bounds :: proc(bounds: ^Bounds, point: lsystem.Vec3, first: ^bool) {
     bounds.maximum = linalg.max(bounds.maximum, point)
 }
 
+finalize_segment_topology :: proc(plant: ^Generated_Plant) {
+    if plant == nil do return
+    delete(plant.segment_parents)
+    delete(plant.segment_axes)
+    count := len(plant.segments)
+    plant.segment_parents = make([dynamic]int, count)
+    plant.segment_axes = make([dynamic]int, count)
+    resize(&plant.segment_parents, count)
+    resize(&plant.segment_axes, count)
+    axis_count := 0
+    for segment, segment_index in plant.segments {
+        parent := -1
+        for candidate_index := segment_index - 1; candidate_index >= 0; candidate_index -= 1 {
+            delta := plant.segments[candidate_index].end - segment.start
+            if linalg.dot(delta, delta) <= 1e-8 {
+                parent = candidate_index
+                break
+            }
+        }
+        plant.segment_parents[segment_index] = parent
+        if parent >= 0 && plant.segments[parent].depth == segment.depth {
+            plant.segment_axes[segment_index] = plant.segment_axes[parent]
+        } else {
+            plant.segment_axes[segment_index] = axis_count
+            axis_count += 1
+        }
+    }
+}
+
 olive_random_signed :: proc(random: ^u64) -> f32 {
-    return f32(lsystem.random_next(random) >> 40) / f32(1 << 24) * 2 - 1
+    return f32(plant_structure.random_next(random) >> 40) / f32(1 << 24) * 2 - 1
 }

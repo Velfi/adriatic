@@ -1,6 +1,6 @@
 package plants
 
-import lsystem "../lsystem"
+import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
@@ -41,7 +41,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         catalog_segment_limit, _ := limits(config.detail)
         expansion_segment_limit = max(expansion_segment_limit, catalog_segment_limit)
     }
-    interpreted, skeleton_error := generate_skeleton_stage(
+    interpreted, architecture_error := generate_architecture_stage(
         config,
         profile,
         maturity,
@@ -49,12 +49,12 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         detail_reduction,
         expansion_segment_limit,
     )
-    if skeleton_error != .None {
-        result.error = skeleton_error
+    if architecture_error != .None {
+        result.error = architecture_error
         return result
     }
     if interpreted.error != .None {
-        lsystem.destroy_plant(&interpreted.plant)
+        plant_structure.destroy_plant(&interpreted.plant)
         result.error = .Interpretation_Failed
         return result
     }
@@ -91,7 +91,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     source_segment_limit := climbing ? max(segment_limit / 6, 1) : segment_limit
     if climbing && len(interpreted.plant.segments) > source_segment_limit {
         source_segments := interpreted.plant.segments
-        thinned_segments := make([dynamic]lsystem.Segment, 0, source_segment_limit)
+        thinned_segments := make([dynamic]plant_structure.Segment, 0, source_segment_limit)
         for retained_index in 0 ..< source_segment_limit {
             source_index := retained_index * len(source_segments) / source_segment_limit
             append(&thinned_segments, source_segments[source_index])
@@ -99,7 +99,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         delete(source_segments)
         interpreted.plant.segments = thinned_segments
     } else if len(interpreted.plant.segments) > source_segment_limit {
-        lsystem.destroy_plant(&interpreted.plant)
+        plant_structure.destroy_plant(&interpreted.plant)
         result.error = .Segment_Limit
         return result
     }
@@ -108,7 +108,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             direction := linalg.normalize0(segment.end - segment.start)
             append(
                 &interpreted.plant.leaves,
-                lsystem.Leaf {
+                plant_structure.Leaf {
                     position = (segment.start + segment.end) * .5,
                     forward = direction,
                     up = {1, 0, 0},
@@ -118,7 +118,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             if segment.depth == 1 && config.detail == .Near {
                 append(
                     &interpreted.plant.leaves,
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = segment.start + (segment.end - segment.start) * .78,
                         forward = direction,
                         up = {1, 0, 0},
@@ -133,7 +133,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                 if f32(density_hash % 10_000) < lower_density * 10_000 {
                     append(
                         &interpreted.plant.leaves,
-                        lsystem.Leaf {
+                        plant_structure.Leaf {
                             position = segment.start + (segment.end - segment.start) * .28,
                             forward = direction,
                             up = {1, 0, 0},
@@ -145,7 +145,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             if segment.depth == 0 && config.detail != .Far {
                 append(
                     &interpreted.plant.leaves,
-                    lsystem.Leaf {
+                    plant_structure.Leaf {
                         position = segment.start + (segment.end - segment.start) * .20,
                         forward = direction,
                         up = {1, 0, 0},
@@ -157,12 +157,15 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     }
     attachment_count := 0
     cluster_size := leaf_cluster_size(config.species, config.detail, maturity)
-    if climbing && len(interpreted.plant.leaves) * max(cluster_size, 1) > attachment_limit {
+    if len(interpreted.plant.leaves) * max(cluster_size, 1) > attachment_limit {
         source_leaves := interpreted.plant.leaves
         leaf_limit := max(attachment_limit / max(cluster_size, 1), 1)
-        thinned_leaves := make([dynamic]lsystem.Leaf, 0, leaf_limit)
+        thinned_leaves := make([dynamic]plant_structure.Leaf, 0, leaf_limit)
+        // Stratified pruning retains the full plant envelope and axis-depth
+        // distribution instead of truncating the newest or highest shoots.
+        offset := int(config.seed % u64(max(len(source_leaves) / max(leaf_limit, 1), 1)))
         for retained_index in 0 ..< leaf_limit {
-            source_index := retained_index * len(source_leaves) / leaf_limit
+            source_index := min((retained_index * len(source_leaves) + offset) / leaf_limit, len(source_leaves) - 1)
             append(&thinned_leaves, source_leaves[source_index])
         }
         delete(source_leaves)
@@ -187,7 +190,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         }
     }
     if attachment_count > attachment_limit {
-        lsystem.destroy_plant(&interpreted.plant)
+        plant_structure.destroy_plant(&interpreted.plant)
         result.error = .Attachment_Limit
         return result
     }
@@ -215,18 +218,18 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     climbing_route_samples := climbing ? 6 : 1
     if config.species == .Grapevine do climbing_route_samples = 1
     routed_segment_capacity := len(interpreted.plant.segments) * climbing_route_samples
-    result.plant.segments = make([dynamic]lsystem.Segment, 0, routed_segment_capacity)
+    result.plant.segments = make([dynamic]plant_structure.Segment, 0, routed_segment_capacity)
     result.plant.attachments = make([dynamic]Attachment, 0, attachment_count)
     climbing_height, climbing_half_width := f32(1), f32(.001)
     if climbing {
         climbing_height = .001
         for segment in interpreted.plant.segments {
-            start := lsystem.Vec3 {
+            start := plant_structure.Vec3 {
                 segment.start[0] * profile.width_scale,
                 segment.start[1] * profile.height_scale,
                 segment.start[2] * profile.width_scale,
             }
-            end := lsystem.Vec3 {
+            end := plant_structure.Vec3 {
                 segment.end[0] * profile.width_scale,
                 segment.end[1] * profile.height_scale,
                 segment.end[2] * profile.width_scale,
@@ -243,25 +246,34 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     if config.species == .Grapevine do maximum_route_samples = 1
     if climbing && maximum_route_samples > climbing_route_samples {
         for source in interpreted.plant.segments {
-            start := lsystem.Vec3 {
+            start := plant_structure.Vec3 {
                 source.start[0] * profile.width_scale,
                 source.start[1] * profile.height_scale,
                 source.start[2] * profile.width_scale,
             }
-            end := lsystem.Vec3 {
+            end := plant_structure.Vec3 {
                 source.end[0] * profile.width_scale,
                 source.end[1] * profile.height_scale,
                 source.end[2] * profile.width_scale,
             }
-            routed_start := route_point(
+            routed_start := route_species_point(
                 start,
                 config.support,
                 climbing_height,
                 climbing_half_width,
                 habit,
                 source.depth,
+                config.species,
             )
-            routed_end := route_point(end, config.support, climbing_height, climbing_half_width, habit, source.depth)
+            routed_end := route_species_point(
+                end,
+                config.support,
+                climbing_height,
+                climbing_half_width,
+                habit,
+                source.depth,
+                config.species,
+            )
             delta := routed_end - routed_start
             projected_length := math.sqrt(linalg.dot(delta, delta))
             desired_samples := clamp(
@@ -287,21 +299,23 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         if climbing {
             route_samples := climbing_route_samples
             if extra_route_demand > 0 && extra_route_budget > 0 {
-                routed_start := route_point(
+                routed_start := route_species_point(
                     segment.start,
                     config.support,
                     climbing_height,
                     climbing_half_width,
                     habit,
                     segment.depth,
+                    config.species,
                 )
-                routed_end := route_point(
+                routed_end := route_species_point(
                     segment.end,
                     config.support,
                     climbing_height,
                     climbing_half_width,
                     habit,
                     segment.depth,
+                    config.species,
                 )
                 delta := routed_end - routed_start
                 projected_length := math.sqrt(linalg.dot(delta, delta))
@@ -315,24 +329,26 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                 route_samples += target_awarded - extra_samples_awarded
                 extra_samples_awarded = target_awarded
             }
-            previous := route_point(
+            previous := route_species_point(
                 segment.start,
                 config.support,
                 climbing_height,
                 climbing_half_width,
                 habit,
                 segment.depth,
+                config.species,
             )
             for sample in 1 ..= route_samples {
                 t := f32(sample) / f32(route_samples)
                 source_point := segment.start + (segment.end - segment.start) * t
-                current := route_point(
+                current := route_species_point(
                     source_point,
                     config.support,
                     climbing_height,
                     climbing_half_width,
                     habit,
                     segment.depth,
+                    config.species,
                 )
                 routed := segment
                 routed.start = previous
@@ -356,7 +372,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         position[0] *= profile.width_scale
         position[1] *= profile.height_scale
         position[2] *= profile.width_scale
-        if climbing do position = route_point(position, config.support, climbing_height, climbing_half_width, habit, leaf.depth)
+        if climbing do position = route_species_point(position, config.support, climbing_height, climbing_half_width, habit, leaf.depth, config.species)
         if config.species == .Grapevine && habit == .Trellised {
             hash := (config.seed + 1) * 0x9e3779b97f4a7c15 ~ u64(index + 61) * 0xbf58476d1ce4e5b9
             hash = (hash ~ (hash >> 30)) * 0x94d049bb133111eb
@@ -391,7 +407,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         traits :=
             kind == .Leaf ? generated_leaf_traits(config.species, variant, maturity, config.detail) : Leaf_Traits{}
         // Rosette species reuse one leaf profile, but successive inner whorls
-        // are botanically shorter. Preserve the skeleton depth as a size
+        // are botanically shorter. Preserve the architecture depth as a size
         // gradient so centers tighten instead of stacking full-sized leaves.
         if kind == .Leaf {
             depth_scale := f32(1)
@@ -404,12 +420,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             case .Echeveria:
                 if leaf.depth == 1 do depth_scale = .66
                 if leaf.depth >= 2 do depth_scale = .72
-            case .Golden_Barrel,
-                 .Aeonium,
-                 .Jade_Plant,
-                 .Stonecrop,
-                 .Blue_Chalk_Sticks,
-                 .Golden_Torch_Cactus:
+            case .Golden_Barrel, .Aeonium, .Jade_Plant, .Stonecrop, .Blue_Chalk_Sticks, .Golden_Torch_Cactus:
             }
             traits.length *= depth_scale
             traits.width *= .84 + depth_scale * .16
@@ -454,9 +465,9 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                     f32((config.seed + u64(index * 17)) % 29) / 29 * .38
                 clustered_variant := u8((int(variant) + cluster_index) % 4)
                 clustered_traits := generated_leaf_traits(config.species, clustered_variant, maturity, config.detail)
-                clustered_forward: lsystem.Vec3
-                clustered_up: lsystem.Vec3
-                clustered_position: lsystem.Vec3
+                clustered_forward: plant_structure.Vec3
+                clustered_up: plant_structure.Vec3
+                clustered_position: plant_structure.Vec3
                 if config.species == .Italian_Cypress {
                     plane_up := linalg.normalize0(up * math.cos(angle) + right * math.sin(angle))
                     plane_right := linalg.normalize0(linalg.cross(forward, plane_up))
@@ -612,6 +623,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             }
         }
     }
-    lsystem.destroy_plant(&interpreted.plant)
+    finalize_segment_topology(&result.plant)
+    plant_structure.destroy_plant(&interpreted.plant)
     return result
 }
