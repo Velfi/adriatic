@@ -5,6 +5,7 @@ import "core:time"
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
 import circulation "../packages/circulation"
+import dio "../packages/dio"
 import fountains "../packages/fountains"
 import plants "../packages/plants"
 import plazas "../packages/plazas"
@@ -20,6 +21,8 @@ world_town_mouse_wheel_position :: proc(area: circulation.Area) -> (x, z: f32) {
 }
 
 world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud_cover: f32) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_architecture_streets")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || lab_scene_suppresses_procedural_circulation(editor) do return
     min_x, max_x := f32(1e9), f32(-1e9)
     min_z, max_z := f32(1e9), f32(-1e9)
@@ -550,6 +553,8 @@ settlement_landscape_species :: proc(
 // cells, then reject roads, buildings, groves, and steep or submerged ground.
 // This intentionally works when garden_count is zero.
 world_settlement_landscape :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_settlement_landscape")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || !editor.settlement_plan.valid do return
     plan := &editor.settlement_plan
     target := settlement_landscape_target(plan.request.scale)

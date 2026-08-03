@@ -9,6 +9,8 @@ import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 
 world_settlement_town_building_skirts :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_settlement_town_building_skirts")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || !editor.settlement_plan.valid do return
     if editor.settlement_plan.request.scale != .Town do return
     stone := canvas2d.Color{150, 146, 132, 255}
@@ -64,6 +66,8 @@ world_settlement_town_building_skirts :: proc(editor: ^Editor) {
 }
 
 world_settlement_town_civic_forecourts :: proc(editor: ^Editor, plan: ^architecture.City_Plan) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_settlement_town_civic_forecourts")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || plan == nil || !editor.settlement_plan.valid do return
     if editor.settlement_plan.request.scale != .Town do return
     stone := canvas2d.Color{150, 146, 132, 255}

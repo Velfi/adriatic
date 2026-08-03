@@ -10,6 +10,8 @@ import third_person "../packages/third_person"
 import canvas2d "zelda_engine:canvas2d"
 
 world_settlement_gardens :: proc(editor: ^Editor) {
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_settlement_gardens")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || !editor.settlement_plan.valid do return
     garden_count := editor.settlement_plan.garden_count
     if len(world_renderer.settlement_fountain_geometry_cache) < garden_count {

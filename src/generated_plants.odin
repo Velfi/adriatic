@@ -29,6 +29,12 @@ Generated_Bark_Segment_Topology :: struct {
     has_child:  bool,
 }
 
+Generated_Plant_Transform :: struct {
+    base:              third_person.Vec3,
+    cosine, sine:      f32,
+    scale, along_grade: f32,
+}
+
 generated_plant_cache: [GENERATED_PLANT_CACHE_CAPACITY]Generated_Plant_Cache_Entry
 generated_plant_cache_count: int
 
@@ -130,25 +136,41 @@ generated_plant_cache_destroy :: proc() {
     generated_plant_cache_count = 0
 }
 
-generated_plant_point :: #force_inline proc(
+@(no_instrumentation)
+generated_plant_transform_make :: #force_inline proc(
     base: third_person.Vec3,
-    point: lsystem.Vec3,
     yaw, scale, along_grade: f32,
-) -> third_person.Vec3 {
-    cosine, sine := math.cos(yaw), math.sin(yaw)
+) -> Generated_Plant_Transform {
     return {
-        base.x + (point[0] * cosine - point[2] * sine) * scale,
-        base.y + (point[1] + point[0] * along_grade) * scale,
-        base.z + (point[0] * sine + point[2] * cosine) * scale,
+        base        = base,
+        cosine      = math.cos(yaw),
+        sine        = math.sin(yaw),
+        scale       = scale,
+        along_grade = along_grade,
     }
 }
 
-generated_plant_vector :: #force_inline proc(vector: lsystem.Vec3, yaw, along_grade: f32) -> third_person.Vec3 {
-    cosine, sine := math.cos(yaw), math.sin(yaw)
+@(no_instrumentation)
+generated_plant_point :: #force_inline proc(
+    transform: Generated_Plant_Transform,
+    point: lsystem.Vec3,
+) -> third_person.Vec3 {
     return {
-        vector[0] * cosine - vector[2] * sine,
-        vector[1] + vector[0] * along_grade,
-        vector[0] * sine + vector[2] * cosine,
+        transform.base.x + (point[0] * transform.cosine - point[2] * transform.sine) * transform.scale,
+        transform.base.y + (point[1] + point[0] * transform.along_grade) * transform.scale,
+        transform.base.z + (point[0] * transform.sine + point[2] * transform.cosine) * transform.scale,
+    }
+}
+
+@(no_instrumentation)
+generated_plant_vector :: #force_inline proc(
+    transform: Generated_Plant_Transform,
+    vector: lsystem.Vec3,
+) -> third_person.Vec3 {
+    return {
+        vector[0] * transform.cosine - vector[2] * transform.sine,
+        vector[1] + vector[0] * transform.along_grade,
+        vector[0] * transform.sine + vector[2] * transform.cosine,
     }
 }
 
@@ -224,8 +246,7 @@ world_generated_bark_segment :: proc(
     segment: lsystem.Segment,
     bark: plant_bark.Profile,
     seed: u64,
-    base: third_person.Vec3,
-    scale, yaw, along_grade: f32,
+    transform: Generated_Plant_Transform,
     detail_strength: f32 = 1,
     distance_start: f32 = 0,
     distance_end: f32 = -1,
@@ -249,16 +270,16 @@ world_generated_bark_segment :: proc(
     points_a, points_b: [SEGMENTS]third_person.Vec3
     normals: [SEGMENTS]third_person.Vec3
     uvs_a, uvs_b: [SEGMENTS][2]f32
-    radius_a := max(segment.radius_start, f32(.006) / max(scale, f32(.001)))
-    radius_b := max(segment.radius_end, f32(.004) / max(scale, f32(.001)))
+    radius_a := max(segment.radius_start, f32(.006) / max(transform.scale, f32(.001)))
+    radius_b := max(segment.radius_end, f32(.004) / max(transform.scale, f32(.001)))
     for side in 0 ..< SEGMENTS {
         angle := (f32(side) + .5) * math.PI * 2 / SEGMENTS
         local_normal := linalg.normalize0(local_right * math.cos(angle) + local_up * math.sin(angle))
         local_a := segment.start + local_normal * radius_a
         local_b := segment.end + local_normal * radius_b
-        points_a[side] = generated_plant_point(base, local_a, yaw, scale, along_grade)
-        points_b[side] = generated_plant_point(base, local_b, yaw, scale, along_grade)
-        normals[side] = linalg.normalize0(generated_plant_vector(local_normal, yaw, along_grade))
+        points_a[side] = generated_plant_point(transform, local_a)
+        points_b[side] = generated_plant_point(transform, local_b)
+        normals[side] = linalg.normalize0(generated_plant_vector(transform, local_normal))
         u := f32(side) / SEGMENTS * bark.scale + u_phase
         uvs_a[side] = {u, distance_start * bark.scale + v_phase}
         uvs_b[side] = {u, end_distance * bark.scale + v_phase}
@@ -306,10 +327,10 @@ world_generated_bark_segment :: proc(
         )
     }
     if cap_start || cap_end {
-        center_a := generated_plant_point(base, segment.start, yaw, scale, along_grade)
-        center_b := generated_plant_point(base, segment.end, yaw, scale, along_grade)
-        normal_a := linalg.normalize0(generated_plant_vector(-local_axis, yaw, along_grade))
-        normal_b := linalg.normalize0(generated_plant_vector(local_axis, yaw, along_grade))
+        center_a := generated_plant_point(transform, segment.start)
+        center_b := generated_plant_point(transform, segment.end)
+        normal_a := linalg.normalize0(generated_plant_vector(transform, -local_axis))
+        normal_b := linalg.normalize0(generated_plant_vector(transform, local_axis))
         for side in 0 ..< SEGMENTS {
             next := (side + 1) % SEGMENTS
             next_u := next == 0 ? bark.scale + u_phase : uvs_a[next].x
@@ -735,6 +756,7 @@ world_generated_plant :: proc(
     generated_entry := generated_plant_cached(species, seed, detail, habit, support, maturity)
     if generated_entry == nil do return false
     generated := &generated_entry.result
+    transform := generated_plant_transform_make(base, yaw, scale, along_grade)
 
     shadow_first := len(world_renderer.vertices)
     _, leaf_color, accent := plant_generator_colors(species)
@@ -770,10 +792,7 @@ world_generated_plant :: proc(
             segment,
             bark,
             seed,
-            base,
-            scale,
-            yaw,
-            along_grade,
+            transform,
             bark_detail_strength,
             bark_segment.distance,
             bark_segment.distance + segment_length,
@@ -783,7 +802,7 @@ world_generated_plant :: proc(
     }
 
     for attachment, attachment_index in generated.plant.attachments {
-        center := generated_plant_point(base, attachment.position, yaw, scale, along_grade)
+        center := generated_plant_point(transform, attachment.position)
         if attachment.kind == .Fruit || attachment.kind == .Flower {
             radius := attachment.kind == .Fruit ? f32(.07) : f32(.045)
             stage_scale: f32 = 1
@@ -843,8 +862,8 @@ world_generated_plant :: proc(
         }
         if attachment.kind != .Leaf do continue
 
-        forward := linalg.normalize0(generated_plant_vector(attachment.forward, yaw, along_grade))
-        up := linalg.normalize0(generated_plant_vector(attachment.up, yaw, along_grade))
+        forward := linalg.normalize0(generated_plant_vector(transform, attachment.forward))
+        up := linalg.normalize0(generated_plant_vector(transform, attachment.up))
         right := linalg.normalize0(linalg.cross(forward, up))
         if linalg.dot(right, right) < .001 do right = {1, 0, 0}
         width := max(attachment.leaf.width * scale * 1.8, f32(.018))

@@ -2278,6 +2278,7 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
         // segment frame, so retain a quieter peeling signal here.
         bark_detail_strength :=
             plant_generator_detail == .Near ? f32(.48) : plant_generator_detail == .Medium ? f32(.25) : f32(.12)
+        transform := generated_plant_transform_make(base, yaw, display_scale, 0)
         for segment in result.segments {
             display_segment := segment
             // Presentation-scale minimums keep young trained shoots legible
@@ -2289,10 +2290,7 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
                 display_segment,
                 bark,
                 plant_generator_seed,
-                base,
-                display_scale,
-                yaw,
-                0,
+                transform,
                 bark_detail_strength,
                 0,
                 -1,
