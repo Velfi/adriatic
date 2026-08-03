@@ -633,6 +633,8 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     world_renderer.wing_trail_optimized_indices = make([dynamic]u16, 0, WING_TRAIL_INDEX_CAPACITY)
     world_renderer.land_surface_samples = make([dynamic]World_Land_Surface_Sample, 0, 256)
     world_renderer.shadow_vertices = make([dynamic]World_Vertex, 0, SHADOW_VERTEX_INITIAL_CAPACITY)
+    world_renderer.dynamic_shadow_terrain_cache.vertices =
+        make([dynamic]World_Vertex, 0, DYNAMIC_SHADOW_TERRAIN_VERTEX_COUNT)
     world_renderer.explicit_shadow_caster_ranges = make([dynamic]World_Shadow_Caster_Range, 0, 256)
     world_spatial_index_init(&world_renderer.spatial_index)
     world_renderer.ctx = ctx

@@ -310,6 +310,13 @@ World_Shadow_Caster_Range :: struct {
     count: int,
 }
 
+Dynamic_Shadow_Terrain_Cache :: struct {
+    vertices:                           [dynamic]World_Vertex,
+    start_x, start_z:                   f32,
+    project_revision, terrain_revision: u64,
+    valid:                              bool,
+}
+
 World_Renderer :: struct {
     editor:                                       ^Editor,
     ctx:                                          ^engine.Vk_Context,
@@ -319,6 +326,9 @@ World_Renderer :: struct {
     dynamic_shadow:                               Dynamic_Shadow_State,
     shadow_vertex:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     shadow_vertices:                              [dynamic]World_Vertex,
+    dynamic_shadow_terrain_cache:                 Dynamic_Shadow_Terrain_Cache,
+    dynamic_shadow_terrain_cache_builds:          u64,
+    dynamic_shadow_terrain_cache_reuses:          u64,
     dynamic_caster_first:                         int,
     dynamic_caster_count:                         int,
     explicit_shadow_caster_ranges:                [dynamic]World_Shadow_Caster_Range,

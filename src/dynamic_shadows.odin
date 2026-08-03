@@ -1,11 +1,13 @@
 package main
 
 import atmosphere "../packages/atmosphere"
+import dio "../packages/dio"
 import fog_field "../packages/fog_field"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:mem"
+import "core:testing"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
@@ -15,6 +17,8 @@ DYNAMIC_SHADOW_CASCADE_COUNT :: 3
 DYNAMIC_SHADOW_RESOLUTIONS := [DYNAMIC_SHADOW_CASCADE_COUNT]u32{2048, 1024, 1024}
 DYNAMIC_SHADOW_COVERAGES := [DYNAMIC_SHADOW_CASCADE_COUNT]f32{48, 128, 320}
 DYNAMIC_SHADOW_PROXY_RADIUS :: f32(160)
+DYNAMIC_SHADOW_TERRAIN_GRID_CELLS :: 64
+DYNAMIC_SHADOW_TERRAIN_VERTEX_COUNT :: DYNAMIC_SHADOW_TERRAIN_GRID_CELLS * DYNAMIC_SHADOW_TERRAIN_GRID_CELLS * 6
 
 Dynamic_Shadow_Cascade_Uniform :: struct {
     right:   [4]f32,
@@ -507,25 +511,75 @@ shadow_append_raised_roads :: proc(editor: ^Editor) {
     }
 }
 
+dynamic_shadow_terrain_cache_matches :: #force_inline proc(
+    cache: ^Dynamic_Shadow_Terrain_Cache,
+    project_revision, terrain_revision: u64,
+    start_x, start_z: f32,
+) -> bool {
+    return(
+        cache != nil &&
+        cache.valid &&
+        cache.project_revision == project_revision &&
+        cache.terrain_revision == terrain_revision &&
+        cache.start_x == start_x &&
+        cache.start_z == start_z \
+    )
+}
+
+when ODIN_TEST {
+    @(test)
+    dynamic_shadow_terrain_cache_keys_world_revision_and_grid_origin :: proc(t: ^testing.T) {
+        cache := Dynamic_Shadow_Terrain_Cache {
+            valid            = true,
+            project_revision = 7,
+            terrain_revision = 11,
+            start_x          = -160,
+            start_z          = 75,
+        }
+        testing.expect(t, dynamic_shadow_terrain_cache_matches(&cache, 7, 11, -160, 75))
+        testing.expect(t, !dynamic_shadow_terrain_cache_matches(&cache, 8, 11, -160, 75))
+        testing.expect(t, !dynamic_shadow_terrain_cache_matches(&cache, 7, 12, -160, 75))
+        testing.expect(t, !dynamic_shadow_terrain_cache_matches(&cache, 7, 11, -155, 75))
+        testing.expect(t, !dynamic_shadow_terrain_cache_matches(&cache, 7, 11, -160, 80))
+    }
+}
+
 shadow_append_terrain :: proc(editor: ^Editor) {
     // One sun-space terrain mesh is shared by all cascades. A five-metre grid
     // resolves the large landforms that produce meaningful cast shadows while
     // avoiding a second full clipmap build in the CPU submission path.
-    GRID_CELLS :: 64
     coverage := DYNAMIC_SHADOW_COVERAGES[DYNAMIC_SHADOW_CASCADE_COUNT - 1]
-    step := coverage / GRID_CELLS
+    step := coverage / DYNAMIC_SHADOW_TERRAIN_GRID_CELLS
     start_x := math.floor((world_renderer.dynamic_shadow.anchor.x - coverage * .5) / step) * step
     start_z := math.floor((world_renderer.dynamic_shadow.anchor.z - coverage * .5) / step) * step
-    heights: [GRID_CELLS + 1][GRID_CELLS + 1]f32
-    for z in 0 ..= GRID_CELLS {
-        for x in 0 ..= GRID_CELLS {
+    cache := &world_renderer.dynamic_shadow_terrain_cache
+    if dynamic_shadow_terrain_cache_matches(
+        cache,
+        editor.project.revision,
+        editor.terrain_revision,
+        start_x,
+        start_z,
+    ) {
+        world_renderer.dynamic_shadow_terrain_cache_reuses += 1
+        profile := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_terrain_cache_reuse")
+        append(&world_renderer.shadow_vertices, ..cache.vertices[:])
+        _ = dio.flame_graph_end(dio.flame_graph_current(), profile)
+        return
+    }
+    world_renderer.dynamic_shadow_terrain_cache_builds += 1
+    profile := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_terrain_cache_build")
+    defer dio.flame_graph_end(dio.flame_graph_current(), profile)
+    first := len(world_renderer.shadow_vertices)
+    heights: [DYNAMIC_SHADOW_TERRAIN_GRID_CELLS + 1][DYNAMIC_SHADOW_TERRAIN_GRID_CELLS + 1]f32
+    for z in 0 ..= DYNAMIC_SHADOW_TERRAIN_GRID_CELLS {
+        for x in 0 ..= DYNAMIC_SHADOW_TERRAIN_GRID_CELLS {
             world_x := start_x + f32(x) * step
             world_z := start_z + f32(z) * step
             heights[z][x] = terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
         }
     }
-    for z in 0 ..< GRID_CELLS {
-        for x in 0 ..< GRID_CELLS {
+    for z in 0 ..< DYNAMIC_SHADOW_TERRAIN_GRID_CELLS {
+        for x in 0 ..< DYNAMIC_SHADOW_TERRAIN_GRID_CELLS {
             x0, x1 := start_x + f32(x) * step, start_x + f32(x + 1) * step
             z0, z1 := start_z + f32(z) * step, start_z + f32(z + 1) * step
             a := third_person.Vec3{x0, heights[z][x], z0}
@@ -536,6 +590,13 @@ shadow_append_terrain :: proc(editor: ^Editor) {
             shadow_append_triangle(a, d, c)
         }
     }
+    clear(&cache.vertices)
+    append(&cache.vertices, ..world_renderer.shadow_vertices[first:])
+    cache.start_x = start_x
+    cache.start_z = start_z
+    cache.project_revision = editor.project.revision
+    cache.terrain_revision = editor.terrain_revision
+    cache.valid = true
 }
 
 shadow_append_grass_cards :: proc(editor: ^Editor, instances: []Grass_Instance, radius, density: f32) {

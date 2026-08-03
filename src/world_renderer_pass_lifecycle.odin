@@ -474,6 +474,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.wing_trail_optimized_indices)
     delete(world_renderer.land_surface_samples)
     delete(world_renderer.shadow_vertices)
+    delete(world_renderer.dynamic_shadow_terrain_cache.vertices)
     delete(world_renderer.explicit_shadow_caster_ranges)
     for &vertices in world_renderer.clipmap_cache_vertex do delete(vertices)
     for &vertices in world_renderer.clipmap_scratch_vertex do delete(vertices)
