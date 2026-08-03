@@ -157,7 +157,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep spike spike-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep spike spike-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-static run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
 
 all: build
 
@@ -778,7 +778,9 @@ instrument-deep: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
 	cp -R build/generated/shaders/. "$(INSTRUMENT_DEEP_DIR)/shaders/"
 	$(PROFILE_RUNTIME_ENV_instrument) "$(INSTRUMENT_DEEP_APP)" --instrument-seconds "$(INSTRUMENT_SECONDS)"
 
-run: build
+run: hot
+
+run-static: build
 	$(NON_VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"
 
 run-release: release
