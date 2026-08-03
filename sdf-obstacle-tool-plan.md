@@ -13,7 +13,15 @@ the playground in code.
 
 ## Current phase
 
-Phase 3 — Milestone 1 ready for sis validation.
+Phase 3 — the durable torus foundation landed in frozen schema v19 and awaits
+sis validation. Milestone 2 is the next implementation slice.
+
+The live source declares schema v20, but its graph currently differs from the
+frozen v20 manifest at `Tweak_State.postale_tuning` / `postale_ace_tuning`.
+That is unrelated ACE work and must become an adjacent v20→v21 migration owned
+by that feature. Do not regenerate or rewrite frozen v20 artifacts as part of
+this obstacle plan. Until that owner resolves the drift, a new obstacle
+milestone cannot claim a green `make fixture-schema-check` or `make check`.
 
 The feature is split into seven ordered milestones. A subagent implements one
 milestone at a time in the current workspace. The primary agent reviews the
@@ -187,55 +195,52 @@ On contact:
 
 The torus hole remains passable when the aircraft proxy fits.
 
-## Fixture-v7 rebase baseline
+## Corrected fixture baseline
 
-New main independently froze schema v6 before the SDF work landed:
-
-```text
-manifest SHA-256: 6285a9a9004efb848f46863801bb934f6251f3b0aeef9c87a0dab82ab25d57f0
-history SHA-256:  7979165b6e44f5f7ac2c610a1d46f6bf6cd937799b395512252b947c5baa59e7
-lines:           1,941
-records:         202
-root fields:     155
-```
-
-The old feature branch also called its combined schema v6. Comparing that
-candidate against main's frozen v6 isolates the SDF delta exactly:
+The initial v6→v7 proposal predates repeated rebases and is no longer a valid
+account of repository history. Obstacles actually entered the frozen graph as
+part of the broader v18→v19 fixture transition; Dunes and map-source work
+shared that boundary. The obstacle data is therefore an identifiable subset,
+not the whole semantic report.
 
 ```text
-candidate SHA-256:    adb3ca76b334cba6fbd631ec59b28428dd4b1a629ac38ae5a5ee3400a6b05c3c
-lines:                1,952
-records:              203
-root fields:          158
-changes:              5
-state changes:        4
-supporting changes:   1
+v18 manifest: 9a62a0356849d0731ceb6714cac7e618bd89276b94c3aa629b98b6f0f9a3e00a (2,032 lines)
+v18 history:  3af32bc608b8dc6780ea2ee2b1388bf54f08cdf6ef6d51665950d455b7067615 (2,666 lines)
+v19 manifest: 3d05aba642569c56a01b3476cc9745f701076dcf92cf97c8c459aad2d23121ca (1,273 lines)
+v19 history:  2c15a7846875ef1b135b1630a4e3ffc2f90604d412822829e85a3f461a0e10a2 (1,659 lines)
+v20 manifest: 06cb941a8912fcc7337689760d503e0b90864644d5a16282824dfeb4c7a0e6bb (1,293 lines)
+v20 history:  ffb5714d4f7f7fdbd94f020502bfbd08191845c2daa849b9154f42c489df6683 (1,688 lines)
 ```
 
-The four state obligations are the appended `.Obstacles` enum value and the
-three durable Fixture fields. `SDF_Torus_Obstacle` is the sole supporting type.
-Main's frozen v6 manifest, history package, and 5→6 migration remain
-byte-identical; the torus contract moves to the adjacent 6→7 boundary.
+`FIXTURE_SCHEMA_VERSION` is 20. The frozen v18→v19 semantic report contains
+122 changes (115 state and seven supporting). The obstacle subset is exactly:
 
-## Milestone 1 — Fixture v7 and torus data foundation
+- appended `Authoring_Tool.Obstacles = 14`;
+- `Fixture.sdf_obstacles`, `sdf_obstacle_count`, and `sdf_obstacle_selected`;
+- supporting `SDF_Torus_Obstacle`.
 
-### Build
+The production v18→v19 migration and wrapper are frozen at
+`6d428086328d14a8d490bbe702fe706d29e14d0fafe852aa391457aa132ca5e1` and
+`6bc89145cf7d514bfdf280845898147d53e1a636102d3419a38e38b50d002c8c`.
+The following v19→v20 transition is a six-change car-racer migration; it does
+not alter obstacle state.
 
-- Add `SDF_Torus_Obstacle`, capacity, durable Fixture fields, and excluded
-  interaction fields.
-- Append `.Obstacles` to `Authoring_Tool` without changing earlier enum values.
-- Bump `FIXTURE_SCHEMA_VERSION` from 6 to 7 exactly once.
-- Generate and freeze the v7 manifest and v7 history package.
-- Generate the exact 6→7 semantic report and migration scaffold.
-- Resolve the three field additions with explicit obstacle defaults; the
-  appended enum value is automatic because all earlier values are unchanged.
-- Add the 6→7 migration core and runtime wrapper.
-- Register only the adjacent 6→7 step after main's 5→6 step.
-- Extend Fixture load validation and runtime interaction reset.
+## Milestone 1 — Fixture v19 and torus data foundation
+
+### Completed build
+
+- `SDF_Torus_Obstacle`, its capacity, the durable Fixture fields, and excluded
+  interaction fields are present.
+- `.Obstacles` is appended to `Authoring_Tool`; earlier numeric values remain
+  unchanged.
+- The v18→v19 history, semantic report, resolved migration, runtime wrapper,
+  and contiguous production registry are frozen.
+- Fixture load validation rejects malformed counts, selections, transforms,
+  radii, and interaction state is reset after load.
 
 ### Migration decisions
 
-- v1–v6 fixtures receive an empty obstacle array;
+- v1–v18 fixtures receive an empty obstacle array;
 - count defaults to `0`;
 - selection defaults to `-1`;
 - existing `Authoring_Tool` values retain their old numeric meaning;
@@ -243,11 +248,11 @@ byte-identical; the torus contract moves to the adjacent 6→7 boundary.
 
 ### Acceptance
 
-- frozen v1–v6 hashes are unchanged;
-- v7 manifest, history, scaffold, and migration are deterministic;
-- direct v6→7 migration passes;
-- every supported chain from v1 through v7 passes;
-- current Fixture codec, load, store, and upgrade paths accept v7;
+- frozen v1–v20 artifacts remain unchanged;
+- v18→v19 migration preserves old `Authoring_Tool` values and gives all older
+  fixtures the intentional empty obstacle defaults;
+- direct v18→v19 and chained historical paths preserve the same defaults;
+- current Fixture codec, load, store, and upgrade paths retain obstacle state;
 - malformed obstacle counts, selected indices, transforms, and radii are
   rejected before Editor mutation;
 - schema, history, migration, codec, load/store, `make check`, and full tests
@@ -256,43 +261,30 @@ byte-identical; the torus contract moves to the adjacent 6→7 boundary.
 Testing stays practical. Cover the real migration decisions and boundary
 validation, but do not add a combinatorial hostile/OOM campaign.
 
-### Progress / Evidence
+### Reconciliation evidence
 
-Rebase resolution is complete.
-
-- Main's frozen v6 manifest and history hashes above are restored exactly.
-- Main's 5→6 migration source and runtime remain byte-identical at
-  `c213621d52a0aaacf6b315337ecd91be52f96aa75b6080e971d41db04fc19bea`
-  and `89a6b9f7c8041a5927034aacbc64622a091ca197e0f678eefc9fedcd848724b4`.
-- The generated v7 manifest has SHA-256
-  `adb3ca76b334cba6fbd631ec59b28428dd4b1a629ac38ae5a5ee3400a6b05c3c`,
-  1,952 lines, 203 records, and 158 root fields.
-- The generated v7 history package has SHA-256
-  `d59d3d0d103ba139c4a38ddb3fc55ac45a993cc42300704d5e4f6748e2ede8ef`
-  and 2,559 lines.
-- The exact 6→7 semantic report is 5 changes: 4 state changes and 1
-  supporting change.
-- The 6→7 migration defaults the obstacle array and count to empty/zero and
-  selection to `-1`; it preserves every old `Authoring_Tool` value. Its
-  SHA-256 is
-  `7cf71e12617b28e8ee8b3d76f5595356af9333e55d480edbf5d8d18cecc95029`.
-- The production registry is contiguous across six steps from v1 through v7.
-- Schema check, v6 and v7 history checks, 6→7 scaffold check, and `make check`
-  pass.
-- The direct v6→7 plus chained v5→7 test passes 1/1 with no leak report.
-- The aggregate migration target ran all 17 tests in 7 minutes 41 seconds.
-  Sixteen passed; the only failure was two stale future-version expectations
-  in the old registry test. Those expectations now use
-  `FIXTURE_SCHEMA_VERSION + 1`, and that focused test passes 1/1.
-- Codec round-trip and practical allocation/preflight tests pass 2/2 in
-  1 minute 19 seconds with no leak report.
+- The frozen v18→v19 report confirms the exact obstacle subset above; the
+  remaining report obligations belong to map/lab and removed authored-state
+  work, not this feature.
+- Frozen v19 and v20 manifests both preserve the obstacle enum value, all
+  three Fixture fields, and the exact six-field torus structure.
+- The v20 live schema check currently fails before normal gates at the
+  unrelated ACE tuning change described in Current phase. No frozen manifest,
+  history package, or migration was generated or modified during this plan
+  reconciliation.
 
 ### Sis validation
 
-Run the focused fixture gates and normal build. Confirm that existing fixture
-playgrounds still load before this milestone is committed.
+After the owning v20→v21 change resolves current schema drift, run the focused
+fixture gates and normal build. Confirm that existing fixture playgrounds
+still load and that an older fixture gets an empty obstacle collection. This
+data-only milestone has no visual editor workflow to approve yet.
 
 ## Milestone 2 — Visible CRUD tool
+
+Milestone 2 adds no persisted fields and must not bump the schema. Start only
+after Milestone 1 validation and after the unrelated v20 schema drift has been
+resolved by its owner.
 
 ### Build
 
@@ -474,7 +466,7 @@ After all milestones:
   directories;
 - confirm no generated binaries, probes, or debug logging remain;
 - inspect `rtk jj status` and `rtk jj diff --git`;
-- confirm unrelated user files and frozen v1–v5 artifacts are untouched.
+- confirm unrelated user files and frozen v1–v20 artifacts are untouched.
 
 The feature is complete only when sis confirms the full editor workflow feels
 usable in context.
