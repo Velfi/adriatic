@@ -14,11 +14,20 @@ import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:os"
+import "core:strings"
 import canvas2d "zelda_engine:canvas2d"
 import spy "zelda_engine:spy"
 
-TWEAK_FILE_PATH :: "adriatic.tweak.toml"
+TWEAK_FILE_NAME :: "adriatic.tweak.toml"
 TWEAK_FILE_VERSION :: i64(1)
+
+tweak_file_path :: proc(allocator := context.allocator) -> (string, bool) {
+    directory, ok := player_settings_directory(allocator)
+    if !ok do return "", false
+    path, err := strings.concatenate({directory, "/", TWEAK_FILE_NAME}, allocator)
+    return path, err == nil
+}
 
 Tweak_Status :: enum {
     Defaults,
@@ -216,6 +225,7 @@ Presentation_Tweak :: struct {
 Tweak_State :: struct {
     terrain:                        Terrain_Tweak,
     atmosphere:                     atmosphere.Atmosphere,
+    time_scale:                     f32 `tweak:"range=0..20;.1" fixture:"-"`,
     player:                         third_person.Config,
     player_animation:               Player_Animation_Tweak,
     player_tail:                    mouse_tail.Config,
@@ -354,6 +364,7 @@ tweak_default_state :: proc() -> Tweak_State {
     return {
         terrain = {tool = .Raise, radius = 48, strength = .10, hardness = .5, sea_level = 0},
         atmosphere = atmosphere.new(0x41c10),
+        time_scale = 1,
         player = tweak_default_player(),
         player_tail = mouse_tail.default_config(),
         player_animation = {
@@ -447,6 +458,7 @@ tweak_sync_from_editor :: proc(editor: ^Editor) {
 tweak_apply_to_editor :: proc(editor: ^Editor) {
     if editor == nil do return
     state := &editor.tweak
+    state.time_scale = clamp(state.time_scale, 0, 20)
     editor.tool = state.terrain.tool
     if editor.tool != .Structure {
         editor.architecture_node_mode = false
@@ -484,7 +496,17 @@ tweak_apply_to_editor :: proc(editor: ^Editor) {
 tweak_save_editor :: proc(editor: ^Editor) {
     if editor == nil do return
     tweak_sync_from_editor(editor)
-    if err := tweak_package.save(TWEAK_FILE_PATH, TWEAK_FILE_VERSION, &editor.tweak); err != nil {
+    directory, directory_ok := player_settings_directory(context.temp_allocator)
+    path, path_ok := tweak_file_path(context.temp_allocator)
+    if !directory_ok || !path_ok {
+        editor.tweak_status = .Save_Failed
+        return
+    }
+    if directory_err := os.make_directory_all(directory); directory_err != nil && directory_err != .Exist {
+        editor.tweak_status = .Save_Failed
+        return
+    }
+    if err := tweak_package.save(path, TWEAK_FILE_VERSION, &editor.tweak); err != nil {
         editor.tweak_status = .Save_Failed
     } else {
         editor.tweak_status = .Saved
@@ -494,7 +516,12 @@ tweak_save_editor :: proc(editor: ^Editor) {
 tweak_load_editor :: proc(editor: ^Editor) {
     if editor == nil do return
     state := tweak_default_state()
-    result := tweak_package.load(TWEAK_FILE_PATH, TWEAK_FILE_VERSION, &state, "Adriatic tweaks")
+    path, path_ok := tweak_file_path(context.temp_allocator)
+    if !path_ok {
+        editor.tweak_status = .Defaults
+        return
+    }
+    result := tweak_package.load(path, TWEAK_FILE_VERSION, &state, "Adriatic tweaks")
     editor.tweak = state
     tweak_apply_to_editor(editor)
     editor.tweak_status = result.loaded_sections > 0 ? .Loaded : .Defaults
@@ -772,6 +799,14 @@ tweak_draw_time_of_day :: proc(editor: ^Editor) {
     total_minutes := int(a.world_minutes) % int(atmosphere.DAY_MINUTES)
     im.SameLine()
     im.Text("%02d:%02d", total_minutes / 60, total_minutes % 60)
+    im.SliderFloat(
+        "Time scale",
+        &editor.tweak.time_scale,
+        0,
+        20,
+        "%.2fx",
+        im.SliderFlags_AlwaysClamp,
+    )
     im.Checkbox("Pause time", &a.paused)
 }
 
@@ -1700,7 +1735,8 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
             im.TextUnformatted("Save failed")
         }
         im.SameLine()
-        im.TextDisabled("%s", TWEAK_FILE_PATH)
+        tweak_path, tweak_path_ok := tweak_file_path(context.temp_allocator)
+        im.TextDisabled("%s", tweak_path_ok ? tweak_path : "unavailable")
         if im.BeginChild("##tweak_navigation", {175, 0}, {.Borders, .ResizeX}) {
             tweak_draw_navigation()
         }

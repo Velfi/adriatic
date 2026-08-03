@@ -550,9 +550,9 @@ lerp_weather :: proc(a, b: Weather_State, amount: f32) -> Weather_State {
     }
 }
 
-step :: proc(state: ^Atmosphere, delta_seconds: f32) {
-    if state == nil || delta_seconds <= 0 do return
-    delta := min(delta_seconds, f32(.1))
+step :: proc(state: ^Atmosphere, delta_seconds: f32, time_scale: f32 = 1) {
+    if state == nil || delta_seconds <= 0 || time_scale <= 0 do return
+    delta := min(delta_seconds, f32(.1)) * time_scale
     if !state.paused {
         elapsed_minutes := delta * WORLD_MINUTES_PER_SECOND
         state.world_minutes += elapsed_minutes

@@ -482,6 +482,29 @@ If not, fix the interaction model before rotation, scale, or collision work.
 Rotate a non-uniformly scaled torus around every axis, combine rotations,
 cancel several interactions, and verify inspector values remain usable.
 
+### Implementation evidence
+
+- Rotation modals reuse M4 snapshot ownership, cancellation, UI capture, and
+  projection scale. `R` starts view-axis rotation; X/Y/Z re-anchor the screen
+  angle and apply local-axis deltas without a first-frame jump.
+- RGB local rings render from the committed torus quaternion and are sampled
+  in screen space for direct idle-state ring selection. Local rotation
+  composes `snapshot * local_delta`; free view rotation composes
+  `view_delta * snapshot`. Every write validates, normalizes, and refreshes the
+  inspector Euler cache.
+- Rotation rings now use their own shared 72px projection radius, distinct from
+  48px translation arrows. Cancellation refreshes Euler cache only when the
+  current selected slot is the restored snapshot slot.
+- Direct proof exercises both hit routines at arrow and sampled ring targets,
+  including outer-band filtering for perspective-compressed ring samples, and
+  covers matching/mismatched rotate-cancel Euler cache ownership.
+- Rendering and hit selection now share the exact projected outer-band
+  predicate, so only direct-draggable coloured ring arcs render. Oblique proof
+  confirms an outer ring target and the X translation arrow remain distinct.
+- `make sdf-obstacle-test` passes 4/4 in 3.41 ms. `make
+  fixture-schema-check`, `make check`, and `make build` pass without fixture
+  schema/history churn.
+
 ## Milestone 6 — Non-uniform scale gizmo
 
 ### Build

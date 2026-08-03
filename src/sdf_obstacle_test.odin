@@ -123,19 +123,42 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     far := flight.Vec3{0, 0, 100}
     near_size := sdf_obstacle_gizmo_size(projection_camera, near, 1280, 720)
     far_size := sdf_obstacle_gizmo_size(projection_camera, far, 1280, 720)
+    near_ring_radius := sdf_obstacle_rotation_ring_radius(projection_camera, near, 1280, 720)
     near_center := project_3d(projection_camera, near, 1280, 720)
     near_endpoint := project_3d(projection_camera, near + flight.Vec3{near_size, 0, 0}, 1280, 720)
     far_center := project_3d(projection_camera, far, 1280, 720)
     far_endpoint := project_3d(projection_camera, far + flight.Vec3{far_size, 0, 0}, 1280, 720)
     testing.expect(t, math.abs((near_endpoint.position.x - near_center.position.x) - SDF_OBSTACLE_GIZMO_AXIS_PIXELS) < .001)
     testing.expect(t, math.abs((far_endpoint.position.x - far_center.position.x) - SDF_OBSTACLE_GIZMO_AXIS_PIXELS) < .001)
+    testing.expect(t, near_ring_radius > near_size && math.abs(near_ring_radius / near_size - SDF_OBSTACLE_ROTATION_RING_PIXELS / SDF_OBSTACLE_GIZMO_AXIS_PIXELS) < .001)
     showcase_camera := projection_camera
     showcase_camera.focal_length = VEHICLE_SHOWCASE_FOCAL_LENGTH
     showcase_size := sdf_obstacle_gizmo_size(showcase_camera, far, 1280, 720)
     showcase_endpoint := project_3d(showcase_camera, far + flight.Vec3{showcase_size, 0, 0}, 1280, 720)
     testing.expect(t, math.abs((showcase_endpoint.position.x - far_center.position.x) - SDF_OBSTACLE_GIZMO_AXIS_PIXELS) < .001)
+    ring_obstacle := sdf_obstacle_default(near, 0)
+    arrow_endpoint := project_3d(projection_camera, near + flight.Vec3{near_size, 0, 0}, 1280, 720)
+    arrow_axis, arrow_hit := sdf_obstacle_gizmo_hit_test(projection_camera, arrow_endpoint.position, near, near_size, 1280, 720)
+    ring_axis_at_arrow, ring_hit_at_arrow := sdf_obstacle_rotation_ring_hit(projection_camera, arrow_endpoint.position, ring_obstacle, near_ring_radius, 1280, 720)
+    testing.expect(t, arrow_hit && arrow_axis == .X)
+    testing.expect(t, !ring_hit_at_arrow && ring_axis_at_arrow == .None)
+    ring_point := project_3d(projection_camera, near + flight.Vec3{0, -near_ring_radius, 0}, 1280, 720)
+    arrow_axis_at_ring, arrow_hit_at_ring := sdf_obstacle_gizmo_hit_test(projection_camera, ring_point.position, near, near_size, 1280, 720)
+    ring_axis, ring_hit := sdf_obstacle_rotation_ring_hit(projection_camera, ring_point.position, ring_obstacle, near_ring_radius, 1280, 720)
+    testing.expect(t, ring_hit && ring_axis == .X)
+    testing.expect(t, !arrow_hit_at_ring && arrow_axis_at_ring == .None)
+    oblique_camera := Perspective_Camera{position = {0, 5, 0}, right = {1, 0, 0}, up = {0, .9701425, .2425356}, forward = {0, -.2425356, .9701425}, focal_length = 1.35}
+    oblique_size := sdf_obstacle_gizmo_size(oblique_camera, near, 1280, 720)
+    oblique_ring_radius := sdf_obstacle_rotation_ring_radius(oblique_camera, near, 1280, 720)
+    oblique_ring_point := project_3d(oblique_camera, near + flight.Vec3{0, -oblique_ring_radius, 0}, 1280, 720)
+    oblique_ring_axis, oblique_ring_hit := sdf_obstacle_rotation_ring_hit(oblique_camera, oblique_ring_point.position, ring_obstacle, oblique_ring_radius, 1280, 720)
+    oblique_center := project_3d(oblique_camera, near, 1280, 720)
+    testing.expect(t, oblique_ring_hit && oblique_ring_axis == .X && sdf_obstacle_rotation_ring_outer_band(oblique_center, oblique_ring_point))
+    oblique_arrow := project_3d(oblique_camera, near + flight.Vec3{oblique_size, 0, 0}, 1280, 720)
+    oblique_arrow_axis, oblique_arrow_hit := sdf_obstacle_gizmo_hit_test(oblique_camera, oblique_arrow.position, near, oblique_size, 1280, 720)
+    testing.expect(t, oblique_arrow_hit && oblique_arrow_axis == .X)
 
-    testing.expect(t, sdf_obstacle_modal_begin(editor, .X))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Translate, .X))
     testing.expect(t, sdf_obstacle_modal_active(editor))
     testing.expect_value(t, editor.sdf_obstacle_interaction.transform_snapshot_slot, 0)
     testing.expect(t, sdf_obstacle_set_position(editor, {40, 40, 40}))
@@ -143,7 +166,7 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     testing.expect(t, !sdf_obstacle_modal_active(editor))
     testing.expect_value(t, editor.sdf_obstacles[0], before)
 
-    testing.expect(t, sdf_obstacle_modal_begin(editor, .X))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Translate, .X))
     parallel_camera := Perspective_Camera{position = {3, 4, -10}}
     testing.expect(t, !sdf_obstacle_modal_update(editor, parallel_camera, {1, 0, 0}))
     sdf_obstacle_modal_finish(editor, true)
@@ -152,17 +175,19 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     testing.expect_value(t, sdf_obstacle_add_at(editor, {12, 13, 14}), 1)
     second_before := editor.sdf_obstacles[1]
     testing.expect(t, sdf_obstacle_select(editor, 0))
-    testing.expect(t, sdf_obstacle_modal_begin(editor, .X))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Translate, .X))
     testing.expect(t, sdf_obstacle_set_position(editor, {40, 40, 40}))
     testing.expect(t, sdf_obstacle_select(editor, 1))
+    second_euler := editor.sdf_obstacle_interaction.inspector_euler
     testing.expect(t, !sdf_obstacle_modal_selection_matches(editor))
     sdf_obstacle_modal_finish(editor, true)
     testing.expect_value(t, editor.sdf_obstacles[0], before)
     testing.expect_value(t, editor.sdf_obstacles[1], second_before)
+    testing.expect_value(t, editor.sdf_obstacle_interaction.inspector_euler, second_euler)
     testing.expect_value(t, editor.sdf_obstacle_interaction.transform_snapshot_slot, -1)
 
     testing.expect(t, sdf_obstacle_select(editor, 0))
-    testing.expect(t, sdf_obstacle_modal_begin(editor, .None))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Translate, .None))
     camera := Perspective_Camera{position = {0, 8, -10}, forward = {0, 0, 1}}
     testing.expect(t, sdf_obstacle_modal_update(editor, camera, {0, 0, 1}))
     testing.expect_value(t, editor.sdf_obstacles[0].position, before.position)
@@ -171,7 +196,7 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     testing.expect(t, sdf_obstacle_modal_update(editor, camera, {0, 0, 1}))
     testing.expect_value(t, editor.sdf_obstacles[0].position, before.position)
     sdf_obstacle_modal_finish(editor, false)
-    testing.expect(t, sdf_obstacle_modal_begin(editor, .X))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Translate, .X))
     testing.expect(t, sdf_obstacle_modal_update(editor, camera, {0, 0, 1}))
     testing.expect_value(t, editor.sdf_obstacles[0].position, before.position)
     moved_camera := Perspective_Camera{position = {6, 8, -10}}
@@ -179,4 +204,38 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     testing.expect_value(t, editor.sdf_obstacles[0].position, flight.Vec3{9, 4, 5})
     sdf_obstacle_modal_finish(editor, false)
     testing.expect_value(t, editor.sdf_obstacles[0].position, flight.Vec3{9, 4, 5})
+
+    testing.expect(t, sdf_obstacle_set_position(editor, before.position))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Rotate, .None))
+    rotate_camera := Perspective_Camera{position = {3, 4, -10}, right = {1, 0, 0}, up = {0, 1, 0}, forward = {0, 0, 1}, focal_length = 1}
+    rotation_before := editor.sdf_obstacles[0].rotation
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {550, 500}, 1000, 1000))
+    testing.expect_value(t, editor.sdf_obstacles[0].rotation, rotation_before)
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {500, 550}, 1000, 1000))
+    testing.expect(t, fixture_editor_orientation_valid(editor.sdf_obstacles[0].rotation))
+    testing.expect(t, math.abs(linalg.dot(editor.sdf_obstacles[0].rotation, rotation_before)) < .9999)
+    sdf_obstacle_modal_finish(editor, true)
+    testing.expect_value(t, editor.sdf_obstacles[0].rotation, rotation_before)
+    testing.expect(t, editor.sdf_obstacle_interaction.inspector_euler_valid)
+
+    testing.expect(t, sdf_obstacle_select(editor, 0))
+    testing.expect(t, sdf_obstacle_set_rotation_euler_degrees(editor, {11, 22, 33}))
+    original_rotation := editor.sdf_obstacles[0].rotation
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Rotate, .None))
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {550, 500}, 1000, 1000))
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {500, 550}, 1000, 1000))
+    testing.expect(t, sdf_obstacle_select(editor, 1))
+    selected_euler := editor.sdf_obstacle_interaction.inspector_euler
+    sdf_obstacle_modal_finish(editor, true)
+    testing.expect_value(t, editor.sdf_obstacles[0].rotation, original_rotation)
+    testing.expect_value(t, editor.sdf_obstacle_interaction.inspector_euler, selected_euler)
+
+    testing.expect(t, sdf_obstacle_select(editor, 0))
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Rotate, .None))
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {550, 500}, 1000, 1000))
+    testing.expect(t, sdf_obstacle_rotation_update(editor, rotate_camera, {500, 550}, 1000, 1000))
+    sdf_obstacle_modal_finish(editor, true)
+    cached_euler := editor.sdf_obstacle_interaction.inspector_euler
+    cached_rotation := linalg.quaternion_from_euler_angles(cached_euler.x * f32(math.PI) / 180, cached_euler.y * f32(math.PI) / 180, cached_euler.z * f32(math.PI) / 180, .XYZ)
+    testing.expect(t, math.abs(linalg.dot(editor.sdf_obstacles[0].rotation, flight.normalize_orientation(cached_rotation))) > .9999)
 }

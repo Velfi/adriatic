@@ -64,7 +64,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     attendant_dialogue_process_input(editor, width, height, frame_delta)
     simulation_delta = was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
     friendship_notice_step(editor, simulation_delta)
-    atmosphere.step(&editor.atmosphere, simulation_delta)
+    atmosphere.step(&editor.atmosphere, simulation_delta, editor.tweak.time_scale)
     surface_weather_step(editor, simulation_delta)
     if lab_scene_is_active(editor, "rainbow") {
         // The rainbow lab intentionally authors a sun-shower between the
@@ -308,7 +308,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         starting_obstacle_translate :=
             editor.authoring_tool == .Obstacles &&
             sdf_obstacle_selected_ptr(editor) != nil &&
-            canvas2d.IsKeyPressed(.G)
+            (canvas2d.IsKeyPressed(.G) || canvas2d.IsKeyPressed(.R))
         if !sdf_obstacle_modal_active(editor) && !starting_obstacle_translate {
             update_editor_camera(editor, min(frame_delta, f32(.05)))
         }

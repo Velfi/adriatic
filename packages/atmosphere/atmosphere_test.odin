@@ -81,6 +81,19 @@ when ODIN_TEST {
     }
 
     @(test)
+    time_scale_changes_clock_rate :: proc(t: ^testing.T) {
+        normal := new(17)
+        fast := new(17)
+        paused := new(17)
+        before := normal.world_minutes
+        step(&normal, .1)
+        step(&fast, .1, 4)
+        step(&paused, .1, 0)
+        testing.expect(t, math.abs((fast.world_minutes - before) - (normal.world_minutes - before) * 4) < .001)
+        testing.expect(t, paused.world_minutes == before)
+    }
+
+    @(test)
     climate_sequence_is_seeded_and_transition_bounded :: proc(t: ^testing.T) {
         a := new(0x434c494d)
         b := new(0x434c494d)
