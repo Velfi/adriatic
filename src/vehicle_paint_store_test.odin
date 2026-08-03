@@ -31,8 +31,14 @@ when ODIN_TEST {
 
         source := new(Editor)
         restored := new(Editor)
-        defer free(source)
-        defer free(restored)
+        defer {
+            vehicle_paint_storage_destroy(source)
+            vehicle_paint_storage_destroy(restored)
+            free(source)
+            free(restored)
+        }
+        testing.expect(t, vehicle_paint_storage_ensure(source))
+        testing.expect(t, vehicle_paint_storage_ensure(restored))
         source.vehicle_paint_layers[0][17] = 42
         source.vehicle_paint_layers[1][1024] = 197
         source.vehicle_paint_layers[2][VEHICLE_PAINT_TEXTURE_BYTE_COUNT - 1] = 255
@@ -60,6 +66,7 @@ when ODIN_TEST {
     vehicle_paint_tools_respect_ownership_and_history :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         vehicle_paint_history_init(editor)
         defer vehicle_paint_history_destroy(editor)
         editor.vehicle_paint_component_mask = {true, true, true, true, true}
@@ -142,6 +149,7 @@ when ODIN_TEST {
     vehicle_paint_uv_mask_includes_triangle_edge_texels :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         mesh := new(vehicles.Aircraft_Mesh)
         defer free(mesh)
         part := vehicles.Aircraft_Mesh_Part.Body
@@ -172,6 +180,7 @@ when ODIN_TEST {
     vehicle_paint_uv_mask_excludes_protected_materials :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         mesh := new(vehicles.Aircraft_Mesh)
         defer free(mesh)
         mesh.vertex_count = 6
@@ -248,6 +257,7 @@ when ODIN_TEST {
     vehicle_paint_clear_requires_a_timely_second_request :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         testing.expect(t, !vehicle_paint_clear_confirm(editor, 10))
         testing.expect(t, editor.vehicle_paint_clear_confirm_until == 12.5)
         testing.expect(t, vehicle_paint_clear_confirm(editor, 12))
@@ -262,6 +272,7 @@ when ODIN_TEST {
     vehicle_paint_sampler_requires_owned_paint_and_finds_nearest_palette_color :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         part := vehicles.Aircraft_Mesh_Part.Body
         texel_x, texel_y := 32, 24
         texel := texel_y * VEHICLE_PAINT_TEXTURE_WIDTH + texel_x
@@ -348,6 +359,7 @@ when ODIN_TEST {
     vehicle_paint_working_settings_initialize_once :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         vehicle_paint_settings_initialize(editor)
         testing.expect(t, editor.vehicle_paint_settings_initialized)
         testing.expect(t, editor.vehicle_paint_tool == .Brush)
@@ -451,6 +463,7 @@ when ODIN_TEST {
         if os.get_env("ADRIATIC_PAINT_BENCH", context.temp_allocator) != "1" do return
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         editor.vehicle_paint_brush_radius = 14
         part := vehicles.Aircraft_Mesh_Part.Body
         owner := u8(part) + 1
@@ -486,6 +499,7 @@ when ODIN_TEST {
     vehicle_paint_component_masks_toggle_solo_and_restore :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         editor.vehicle_paint_component_mask = {true, true, true, true, true}
 
         vehicle_paint_component_mask_activate(editor, 2, false)
@@ -581,6 +595,7 @@ when ODIN_TEST {
     vehicle_paint_direct_mask_gates_paint_and_supports_clear_invert :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
+        defer vehicle_paint_storage_destroy(editor)
         editor.vehicle_paint_component_mask = {true, true, true, true, true}
         editor.vehicle_paint_selection_texels = make([]u8, VEHICLE_PAINT_TEXTURE_WIDTH * VEHICLE_PAINT_TEXTURE_HEIGHT)
         defer delete(editor.vehicle_paint_selection_texels)

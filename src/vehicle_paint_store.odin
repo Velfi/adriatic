@@ -38,8 +38,11 @@ vehicle_paint_save_path :: proc(allocator := context.allocator) -> (string, bool
 }
 
 vehicle_paint_layer_bytes :: proc(editor: ^Editor) -> []u8 {
-    if editor == nil do return nil
-    return mem.slice_ptr(cast([^]u8)&editor.vehicle_paint_layers, size_of(editor.vehicle_paint_layers))
+    if !vehicle_paint_storage_ensure(editor) do return nil
+    return mem.slice_ptr(
+        cast([^]u8)editor.vehicle_paint_layers,
+        VEHICLE_PAINT_TEXTURE_BYTE_COUNT * VEHICLE_PAINT_AIRCRAFT_COUNT,
+    )
 }
 
 vehicle_paint_save_to_path :: proc(editor: ^Editor, path: string) -> bool {
@@ -82,7 +85,7 @@ vehicle_paint_load_from_path :: proc(editor: ^Editor, path: string) -> bool {
     bytes, err := os.read_entire_file(path, context.temp_allocator)
     if err != nil || len(bytes) < size_of(Vehicle_Paint_Save_Header) do return false
     header := cast(^Vehicle_Paint_Save_Header)raw_data(bytes)
-    expected_payload_size := size_of(editor.vehicle_paint_layers)
+    expected_payload_size := VEHICLE_PAINT_TEXTURE_BYTE_COUNT * VEHICLE_PAINT_AIRCRAFT_COUNT
     if header.magic != VEHICLE_PAINT_SAVE_MAGIC ||
        header.width != VEHICLE_PAINT_TEXTURE_WIDTH ||
        header.height != VEHICLE_PAINT_TEXTURE_HEIGHT ||

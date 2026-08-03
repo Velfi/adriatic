@@ -308,7 +308,7 @@ vehicle_paint_atlas_flush :: proc(editor: ^Editor, cmd: vk.CommandBuffer, frame_
     }
     mem.copy_non_overlapping(
         staging.mapped,
-        raw_data(editor.vehicle_paint_layers[layer_index][:]),
+        raw_data(vehicle_paint_layer(editor, layer_index)),
         VEHICLE_PAINT_TEXTURE_BYTE_COUNT,
     )
     staging_pixels := mem.slice_ptr(cast([^]u8)staging.mapped, VEHICLE_PAINT_TEXTURE_BYTE_COUNT)

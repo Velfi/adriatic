@@ -12,32 +12,36 @@ import vehicles "../packages/vehicles"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
+terrain_history_push :: proc(
+    history: ^[TERRAIN_HISTORY_CAPACITY]^Terrain_History_State,
+    count: ^int,
+    editor: ^Editor,
+) {
+    if history == nil || count == nil || editor == nil do return
+    if count^ < TERRAIN_HISTORY_CAPACITY {
+        if history[count^] == nil do history[count^] = new(Terrain_History_State)
+        terrain_history_capture(editor, history[count^])
+        count^ += 1
+        return
+    }
+    oldest := history[0]
+    for index in 1 ..< TERRAIN_HISTORY_CAPACITY {
+        history[index - 1] = history[index]
+    }
+    history[TERRAIN_HISTORY_CAPACITY - 1] = oldest
+    terrain_history_capture(editor, oldest)
+}
+
 terrain_history_push_undo :: proc(editor: ^Editor) {
     if editor == nil do return
-    if editor.terrain_undo_count < TERRAIN_HISTORY_CAPACITY {
-        terrain_history_capture(editor, &editor.terrain_undo[editor.terrain_undo_count])
-        editor.terrain_undo_count += 1
-    } else {
-        for index in 1 ..< TERRAIN_HISTORY_CAPACITY {
-            editor.terrain_undo[index - 1] = editor.terrain_undo[index]
-        }
-        terrain_history_capture(editor, &editor.terrain_undo[TERRAIN_HISTORY_CAPACITY - 1])
-    }
+    terrain_history_push(&editor.terrain_undo, &editor.terrain_undo_count, editor)
     editor.terrain_redo_count = 0
     road_design_history_clear(&editor.road_design_redo, &editor.road_design_redo_count)
 }
 
 terrain_history_push_redo :: proc(editor: ^Editor) {
     if editor == nil do return
-    if editor.terrain_redo_count < TERRAIN_HISTORY_CAPACITY {
-        terrain_history_capture(editor, &editor.terrain_redo[editor.terrain_redo_count])
-        editor.terrain_redo_count += 1
-    } else {
-        for index in 1 ..< TERRAIN_HISTORY_CAPACITY {
-            editor.terrain_redo[index - 1] = editor.terrain_redo[index]
-        }
-        terrain_history_capture(editor, &editor.terrain_redo[TERRAIN_HISTORY_CAPACITY - 1])
-    }
+    terrain_history_push(&editor.terrain_redo, &editor.terrain_redo_count, editor)
 }
 
 terrain_undo :: proc(editor: ^Editor) {
@@ -49,7 +53,7 @@ terrain_undo :: proc(editor: ^Editor) {
     if editor.terrain_undo_count <= 0 do return
     terrain_history_push_redo(editor)
     editor.terrain_undo_count -= 1
-    terrain_history_restore(editor, &editor.terrain_undo[editor.terrain_undo_count])
+    terrain_history_restore(editor, editor.terrain_undo[editor.terrain_undo_count])
 }
 
 terrain_redo :: proc(editor: ^Editor) {
@@ -59,17 +63,9 @@ terrain_redo :: proc(editor: ^Editor) {
         return
     }
     if editor.terrain_redo_count <= 0 do return
-    if editor.terrain_undo_count < TERRAIN_HISTORY_CAPACITY {
-        terrain_history_capture(editor, &editor.terrain_undo[editor.terrain_undo_count])
-        editor.terrain_undo_count += 1
-    } else {
-        for index in 1 ..< TERRAIN_HISTORY_CAPACITY {
-            editor.terrain_undo[index - 1] = editor.terrain_undo[index]
-        }
-        terrain_history_capture(editor, &editor.terrain_undo[TERRAIN_HISTORY_CAPACITY - 1])
-    }
+    terrain_history_push(&editor.terrain_undo, &editor.terrain_undo_count, editor)
     editor.terrain_redo_count -= 1
-    terrain_history_restore(editor, &editor.terrain_redo[editor.terrain_redo_count])
+    terrain_history_restore(editor, editor.terrain_redo[editor.terrain_redo_count])
 }
 
 terrain_file_feedback :: proc(editor: ^Editor, message: cstring) {

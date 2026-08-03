@@ -84,9 +84,28 @@ vehicle_paint_layer_index :: #force_inline proc(kind: vehicles.Aircraft_Kind) ->
     return clamp(int(kind), 0, VEHICLE_PAINT_AIRCRAFT_COUNT - 1)
 }
 
+vehicle_paint_storage_ensure :: proc(editor: ^Editor) -> bool {
+    if editor == nil do return false
+    if editor.vehicle_paint_layers == nil {
+        editor.vehicle_paint_layers = new([VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8)
+    }
+    return editor.vehicle_paint_layers != nil
+}
+
+vehicle_paint_storage_destroy :: proc(editor: ^Editor) {
+    if editor == nil || editor.vehicle_paint_layers == nil do return
+    free(editor.vehicle_paint_layers)
+    editor.vehicle_paint_layers = nil
+}
+
+vehicle_paint_layer :: proc(editor: ^Editor, index: int) -> []u8 {
+    if !vehicle_paint_storage_ensure(editor) || index < 0 || index >= VEHICLE_PAINT_AIRCRAFT_COUNT do return nil
+    return editor.vehicle_paint_layers[index][:]
+}
+
 vehicle_paint_pixels :: proc(editor: ^Editor) -> []u8 {
     if editor == nil do return nil
-    return editor.vehicle_paint_layers[vehicle_paint_layer_index(editor.aircraft.active)][:]
+    return vehicle_paint_layer(editor, vehicle_paint_layer_index(editor.aircraft.active))
 }
 
 vehicle_paint_mark_texture_dirty :: proc(editor: ^Editor) {

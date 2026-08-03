@@ -250,6 +250,7 @@ when ODIN_TEST {
         editor.engine_audio.mute_gain = .25
         editor.aircraft_fixed_accumulator = 4
         editor.controller_disconnect_notice = true
+        testing.expect(t, vehicle_paint_storage_ensure(editor))
         testing.expect(t, vehicle_paint_history_try_init(editor))
         testing.expect(t, gameplay_physics_create(editor))
         car_physics_create(editor)
@@ -264,6 +265,7 @@ when ODIN_TEST {
         gameplay_physics_destroy(editor)
         attendant_dialogue_definition_release(editor)
         fixture_editor_paint_history_destroy(editor)
+        vehicle_paint_storage_destroy(editor)
         fixture_storage_destroy(&editor.fixture)
         structure_history_storage_destroy(editor)
         fixture_migration_result_dispose(&editor.fixture_owner)
@@ -359,8 +361,10 @@ when ODIN_TEST {
         editor := fixture_editor_test_editor(t)
         defer fixture_editor_test_destroy(editor)
         editor.vehicle_paint_layers[0][0] = 0x5c
+        editor.structure_undo[0] = new(Structure_History_State)
         editor.structure_undo[0].structures = make([dynamic]terrain.Structure, 1)
         editor.structure_undo_count = 1
+        editor.structure_redo[0] = new(Structure_History_State)
         editor.structure_redo[0].structures = make([dynamic]terrain.Structure, 1)
         editor.structure_redo_count = 1
         root_snapshot := fixture_editor_test_root_snapshot(editor)
@@ -411,8 +415,8 @@ when ODIN_TEST {
         testing.expect(t, !world_renderer.road_graph_valid)
         testing.expect(t, !world_renderer.road_geometry_valid)
         testing.expect(t, editor.structure_undo_count == 0 && editor.structure_redo_count == 0)
-        testing.expect(t, raw_data(editor.structure_undo[0].structures) == nil)
-        testing.expect(t, raw_data(editor.structure_redo[0].structures) == nil)
+        testing.expect(t, editor.structure_undo[0] == nil)
+        testing.expect(t, editor.structure_redo[0] == nil)
         structure_history_push_undo(editor)
         structure_history_push_redo(editor)
         testing.expect(t, editor.structure_undo_count == 1 && editor.structure_redo_count == 1)
@@ -439,8 +443,8 @@ when ODIN_TEST {
         fixture_editor_load_error_dispose(&second_error)
         testing.expect(t, fixture_lifecycle_test_bound(&editor.fixture, .Car))
         testing.expect(t, fixture_editor_test_root_equal(editor, root_snapshot))
-        testing.expect(t, raw_data(editor.structure_undo[0].structures) == nil)
-        testing.expect(t, raw_data(editor.structure_redo[0].structures) == nil)
+        testing.expect(t, editor.structure_undo[0] == nil)
+        testing.expect(t, editor.structure_redo[0] == nil)
         structure_history_push_undo(editor)
         structure_history_push_redo(editor)
         for _ in 0 ..< 3 {

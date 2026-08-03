@@ -78,7 +78,7 @@ Editor :: struct {
     road_snap_angles:                   bool,
     road_snap_tangents:                 bool,
     road_snap_perpendiculars:           bool,
-    vehicle_paint_layers:               [VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
+    vehicle_paint_layers:               ^[VEHICLE_PAINT_AIRCRAFT_COUNT][VEHICLE_PAINT_TEXTURE_BYTE_COUNT]u8,
     surface_weather:                    surface_weather.Field,
     fixture_owner:                      Fixture_Migration_Result `hs:"-"`,
     mouse_emote:                        Mouse_Emote_State,
@@ -121,12 +121,12 @@ Editor :: struct {
     plant_stamp_target_locked:          bool,
     plant_stamp_last_stamped_id:        u64,
     benchmark_ground_grass_disabled:    bool,
-    structure_undo:                     [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
-    structure_redo:                     [STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
+    structure_undo:                     [STRUCTURE_HISTORY_CAPACITY]^Structure_History_State,
+    structure_redo:                     [STRUCTURE_HISTORY_CAPACITY]^Structure_History_State,
     structure_undo_count:               int,
     structure_redo_count:               int,
-    terrain_undo:                       [TERRAIN_HISTORY_CAPACITY]Terrain_History_State,
-    terrain_redo:                       [TERRAIN_HISTORY_CAPACITY]Terrain_History_State,
+    terrain_undo:                       [TERRAIN_HISTORY_CAPACITY]^Terrain_History_State,
+    terrain_redo:                       [TERRAIN_HISTORY_CAPACITY]^Terrain_History_State,
     terrain_undo_count:                 int,
     terrain_redo_count:                 int,
     terrain_sculpt:                     Terrain_Sculpt_State `fixture:"-"`,
@@ -573,24 +573,23 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
 }
 
 structure_history_push :: proc(
-    history: ^[STRUCTURE_HISTORY_CAPACITY]Structure_History_State,
+    history: ^[STRUCTURE_HISTORY_CAPACITY]^Structure_History_State,
     count: ^int,
     editor: ^Editor,
 ) {
     if history == nil || count == nil || editor == nil do return
     if count^ < STRUCTURE_HISTORY_CAPACITY {
-        structure_history_capture(editor, &history[count^])
+        if history[count^] == nil do history[count^] = new(Structure_History_State)
+        structure_history_capture(editor, history[count^])
         count^ += 1
         return
     }
-    oldest := new(Structure_History_State)
-    defer free(oldest)
-    oldest^ = history[0]
+    oldest := history[0]
     for index in 1 ..< STRUCTURE_HISTORY_CAPACITY {
         history[index - 1] = history[index]
     }
-    history[STRUCTURE_HISTORY_CAPACITY - 1] = oldest^
-    structure_history_capture(editor, &history[STRUCTURE_HISTORY_CAPACITY - 1])
+    history[STRUCTURE_HISTORY_CAPACITY - 1] = oldest
+    structure_history_capture(editor, history[STRUCTURE_HISTORY_CAPACITY - 1])
 }
 
 structure_history_push_undo :: proc(editor: ^Editor) {
@@ -613,7 +612,7 @@ structure_undo :: proc(editor: ^Editor) {
     structure_history_push_redo(editor)
     editor.structure_redo[editor.structure_redo_count - 1].sequence = sequence
     editor.structure_undo_count -= 1
-    structure_history_restore(editor, &editor.structure_undo[editor.structure_undo_count])
+    structure_history_restore(editor, editor.structure_undo[editor.structure_undo_count])
     if editor.structure_selected >= 0 && editor.structure_selected >= editor.project.structure_count {
         editor.structure_selected = -1
     }
@@ -625,7 +624,7 @@ structure_redo :: proc(editor: ^Editor) {
     structure_history_push(&editor.structure_undo, &editor.structure_undo_count, editor)
     editor.structure_undo[editor.structure_undo_count - 1].sequence = sequence
     editor.structure_redo_count -= 1
-    structure_history_restore(editor, &editor.structure_redo[editor.structure_redo_count])
+    structure_history_restore(editor, editor.structure_redo[editor.structure_redo_count])
 }
 
 fixture_storage_destroy :: proc(fixture: ^Fixture) {
@@ -640,23 +639,36 @@ fixture_storage_destroy :: proc(fixture: ^Fixture) {
 structure_history_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
     for &state in editor.structure_undo {
+        if state == nil do continue
         delete(state.structures)
-        state = {}
+        free(state)
+        state = nil
     }
     for &state in editor.structure_redo {
+        if state == nil do continue
         delete(state.structures)
-        state = {}
+        free(state)
+        state = nil
     }
     editor.structure_undo_count = 0
     editor.structure_redo_count = 0
     editor.terrain_undo_count = 0
     editor.terrain_redo_count = 0
+    for &state in editor.terrain_undo {
+        if state != nil do free(state)
+        state = nil
+    }
+    for &state in editor.terrain_redo {
+        if state != nil do free(state)
+        state = nil
+    }
 }
 
 structure_storage_destroy :: proc(editor: ^Editor) {
     if editor == nil do return
     terrain_sculpt_destroy(editor)
     road_design_runtime_destroy(editor)
+    vehicle_paint_storage_destroy(editor)
     fixture_storage_destroy(&editor.fixture)
     structure_history_storage_destroy(editor)
 }

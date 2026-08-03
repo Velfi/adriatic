@@ -7,6 +7,7 @@ import "core:testing"
 vehicle_paint_postale_flaps_have_paintable_texels :: proc(t: ^testing.T) {
     editor := new(Editor)
     defer free(editor)
+    defer vehicle_paint_storage_destroy(editor)
     mesh := vehicles.postale_mesh()
     defer free(mesh)
 

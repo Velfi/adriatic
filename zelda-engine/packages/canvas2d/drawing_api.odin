@@ -100,7 +100,10 @@ GetWorldRenderSize :: proc() -> (width, height: i32) {
     }
     return GetScreenWidth(), GetScreenHeight()
 }
-GetTime :: proc() -> f64 { return time.duration_seconds(time.tick_since(state.start)) }
+GetTime :: proc() -> f64 {
+    if state == nil do return 0
+    return time.duration_seconds(time.tick_since(state.start))
+}
 GetGpuFrameTimeMs :: proc() -> (ms: f64, available: bool) {
     sample := engine.gpu_profiler_last_sample(&state.ctx)
     return sample.frame_ms, sample.supported && sample.enabled && sample.valid
