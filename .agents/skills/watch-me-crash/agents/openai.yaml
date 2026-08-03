@@ -1,0 +1,4 @@
+interface:
+  display_name: "Watch Me Crash"
+  short_description: "Reproduce and debug Adriatic crashes live"
+  default_prompt: "Use $watch-me-crash to launch Adriatic under LLDB while I reproduce a crash, then diagnose it."
