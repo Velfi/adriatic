@@ -8,7 +8,7 @@ PROFILE ?= hot
 PROFILE_ODIN_FLAGS_hot := -dynamic-map-calls -o:minimal
 PROFILE_DEFINE_FLAGS_hot := -define:HOT_RELOAD=true
 
-PROFILE_ODIN_FLAGS_release := -o:speed
+PROFILE_ODIN_FLAGS_release := -o:speed -debug
 PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true -define:MAP_DEVELOPMENT_FALLBACK=false
 
 PROFILE_ODIN_FLAGS_validation := -dynamic-map-calls -debug -o:none -sanitize:address
@@ -144,7 +144,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check check test test-src test-rondine clean
 
 all: build
 
@@ -749,6 +749,9 @@ instrument-deep: instrument-build $(INSTRUMENT_RUNTIME_STAMP)
 
 run: build
 	$(NON_VALIDATION_PROFILE_RUNTIME_ENV) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(DEV_APP)"
+
+run-release: release
+	$(PROFILE_RUNTIME_ENV_release) ADRIATIC_LIVE_CAPTURE_REQUEST="$(LIVE_CAPTURE_REQUEST_PATH)" "$(RELEASE_APP)"
 
 benchmark: release
 	$(PROFILE_RUNTIME_ENV_release) $(PYTHON) tools/perf.py run --scenario all --output "$(abspath $(BUILD_DIR)/perf/latest.json)"

@@ -34,7 +34,7 @@ crash_surface_from_dust :: proc(surface: particle_systems.Dust_Surface) -> engin
 ocean_shore_proximity :: proc(editor: ^Editor, x, z: f32) -> f32 {
     if editor == nil do return 1
     sea_level := editor.project.sea_level
-    if terrain.sample_height(&editor.project, 0, x, z) < sea_level do return 1
+    if terrain.sample_surface_height(&editor.project, 0, x, z) < sea_level do return 1
     directions := [8][2]f32 {
         {1, 0},
         {-1, 0},
@@ -49,7 +49,7 @@ ocean_shore_proximity :: proc(editor: ^Editor, x, z: f32) -> f32 {
     proximity := [3]f32{1, .68, .34}
     for ring in 0 ..< len(radii) {
         for direction in directions {
-            if terrain.sample_height(
+            if terrain.sample_surface_height(
                    &editor.project,
                    0,
                    x + direction[0] * radii[ring],
@@ -190,7 +190,7 @@ seed_city_capture :: proc(editor: ^Editor, target: string = "") {
         for seed, fixture_index in fixture_seeds {
             x := center + fixture_offsets[fixture_index][0]
             z := center + fixture_offsets[fixture_index][1]
-            base_y := terrain.sample_height(&editor.project, 0, x, z)
+            base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
             structure := terrain.structure_make(x, z, 30, 24, base_y, 19.2)
             structure.kind = .Architecture
             structure.seed = seed
@@ -226,7 +226,7 @@ seed_city_capture :: proc(editor: ^Editor, target: string = "") {
         // untouched terrain so all three deterministic stair plans remain
         // visible regardless of changes to generated city placement.
         x, z := center, center + 176
-        ground_y := terrain.sample_height(&editor.project, 0, x, z)
+        ground_y := terrain.sample_surface_height(&editor.project, 0, x, z)
         structure := terrain.structure_make(x, z, 18, 14, ground_y + 2.2, 12)
         structure.kind = .Architecture
         structure.seed = u32(stoop_seed)
@@ -361,7 +361,7 @@ seed_default_runway_access :: proc(editor: ^Editor, sign: f32) -> bool {
     settlement_route_commit(&editor.project, route, 7, 1.25, .Gravel, .85)
     terminal := roads.add_node(
         &editor.project.road_graph,
-        {airport_x, terrain.sample_height(&editor.project, 0, airport_x, airport_z), airport_z},
+        {airport_x, terrain.sample_surface_height(&editor.project, 0, airport_x, airport_z), airport_z},
         5,
     )
     threshold := -1
@@ -417,12 +417,12 @@ seed_default_hero_building_access :: proc(editor: ^Editor, sign: f32, first_stru
         if !found do continue
         from := roads.add_node(
             &editor.project.road_graph,
-            {entrance[0], terrain.sample_height(&editor.project, 0, entrance[0], entrance[1]), entrance[1]},
+            {entrance[0], terrain.sample_surface_height(&editor.project, 0, entrance[0], entrance[1]), entrance[1]},
             2,
         )
         to := roads.add_node(
             &editor.project.road_graph,
-            {nearest[0], terrain.sample_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
+            {nearest[0], terrain.sample_surface_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
             2,
         )
         if from >= 0 && to >= 0 do _ = roads.add_straight_edge(&editor.project.road_graph, from, to, 4, .8, .Cobblestone, .75)
@@ -471,7 +471,7 @@ seed_default_lighthouse_access :: proc(editor: ^Editor, sign: f32, structure: te
             from := roads.add_node(&editor.project.road_graph, {keeper.x, keeper.y, keeper.z}, 2)
             to := roads.add_node(
                 &editor.project.road_graph,
-                {nearest[0], terrain.sample_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
+                {nearest[0], terrain.sample_surface_height(&editor.project, 0, nearest[0], nearest[1]), nearest[1]},
                 2,
             )
             if from >= 0 && to >= 0 do _ = roads.add_straight_edge(&editor.project.road_graph, from, to, 4, 1, .Cobblestone, .55)
@@ -518,8 +518,8 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
                 continue
             }
             keeper_x, keeper_z := world_rotate_xz(candidate_x, candidate_z, 10 * .23, 10 * .5 + 1.8, rotation)
-            base := terrain.sample_height(&editor.project, 0, candidate_x, candidate_z)
-            keeper_ground := terrain.sample_height(&editor.project, 0, keeper_x, keeper_z)
+            base := terrain.sample_surface_height(&editor.project, 0, candidate_x, candidate_z)
+            keeper_ground := terrain.sample_surface_height(&editor.project, 0, keeper_x, keeper_z)
             if min(base, keeper_ground) <= editor.project.sea_level + .35 do continue
             distance_penalty := f32(dx * dx + dz * dz) * .04
             score := min(base, keeper_ground) - distance_penalty
@@ -536,7 +536,7 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
         x = town_x + sign * diagonal * DEFAULT_LIGHTHOUSE_TOWN_SEPARATION
         z = town_z + sign * diagonal * DEFAULT_LIGHTHOUSE_TOWN_SEPARATION
     }
-    base_y := terrain.sample_height(&editor.project, 0, x, z)
+    base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
     region := island_index == 0 ? buildings.Region.Adriatic : buildings.Region.Aegean
     structure := terrain.Structure {
         center_x      = x,
@@ -563,7 +563,7 @@ seed_default_island_lighthouse :: proc(editor: ^Editor, sign: f32, island_index:
                 placed := &editor.project.structures[structure_index]
                 placed.center_x += nearest[0] - keeper.x
                 placed.center_z += nearest[1] - keeper.z
-                placed.base_y = terrain.sample_height(&editor.project, 0, placed.center_x, placed.center_z)
+                placed.base_y = terrain.sample_surface_height(&editor.project, 0, placed.center_x, placed.center_z)
             }
         }
     }

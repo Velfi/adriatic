@@ -126,7 +126,7 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                     touchdown_speed := f32(
                         math.sqrt(f64(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z)),
                     )
-                    terrain_height := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
+                    terrain_height := terrain.sample_surface_height(&editor.project, 0, body.position.x, body.position.z)
                     ground := postale_game.drivable_surface_height(terrain_height, editor.project.sea_level)
                     ground = terrain.structure_collision_surface_height(
                         &editor.project,
@@ -311,22 +311,22 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         crash_obliqueness = car_impact_obliqueness
                         crash_pan = car_impact_pan
                         crash_surface = crash_surface_from_dust(dust_surface)
-                        terrain_height := terrain.sample_height(
+                        crash_water_mix = terrain.sample_surface(
                             &editor.project,
                             0,
                             editor.car.position.x,
                             editor.car.position.z,
-                        )
-                        crash_water_mix = terrain_height < editor.project.sea_level ? 1 : 0
+                        ) == .Land ? 0 : 1
                     }
                     contacts := [4]particle_systems.Vehicle_Contact{}
                     for wheel, index in editor.car_wheels {
                         wheel_position := roads.Vec3{wheel.position[0], wheel.position[1], wheel.position[2]}
                         wheel_dust, _ := road_car_surface(editor, wheel_position)
+                        wheel_ground := terrain.sample_surface_height(&editor.project, 0, wheel.position[0], wheel.position[2])
                         contacts[index] = {
                             position = {
                                 wheel.position[0],
-                                terrain.sample_height(&editor.project, 0, wheel.position[0], wheel.position[2]),
+                                wheel_ground,
                                 wheel.position[2],
                             },
                             grounded = wheel.contact,
@@ -486,7 +486,7 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                             editor,
                             {editor.player.position.x, editor.player.position.y, editor.player.position.z},
                         )
-                        ground_y := terrain.sample_height(
+                        ground_y := terrain.sample_surface_height(
                             &editor.project,
                             0,
                             editor.player.position.x,
@@ -529,7 +529,7 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                             editor,
                             {editor.player.position.x, editor.player.position.y, editor.player.position.z},
                         )
-                        ground_y := terrain.sample_height(
+                        ground_y := terrain.sample_surface_height(
                             &editor.project,
                             0,
                             editor.player.position.x,

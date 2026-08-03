@@ -55,7 +55,7 @@ settlement_plan_prepare_block_terrain :: proc(
         lowest_corner := block.center
         for corner_index in 0 ..< block.corner_count {
             corner := block.corners[corner_index]
-            height := terrain.sample_height(project, 0, corner[0], corner[1])
+            height := terrain.sample_surface_height(project, 0, corner[0], corner[1])
             if height < minimum_height {
                 minimum_height = height
                 lowest_corner = corner

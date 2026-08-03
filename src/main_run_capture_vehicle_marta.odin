@@ -27,7 +27,7 @@ run_prepare_vehicle_and_marta_capture :: proc(editor: ^Editor, using config: ^Ru
         editor.car.position.z += 100
         editor.player.position = {
             editor.libellula.vehicle.position.x + 12,
-            terrain.sample_height(
+            terrain.sample_surface_height(
                 &editor.project,
                 0,
                 editor.libellula.vehicle.position.x + 12,
@@ -85,7 +85,7 @@ run_prepare_vehicle_and_marta_capture :: proc(editor: ^Editor, using config: ^Ru
         }
         editor.player.position = {
             postale_position.x + 12,
-            terrain.sample_height(&editor.project, 0, postale_position.x + 12, postale_position.z + 12),
+            terrain.sample_surface_height(&editor.project, 0, postale_position.x + 12, postale_position.z + 12),
             postale_position.z + 12,
         }
         editor.pilot.position = editor.player.position
@@ -116,7 +116,7 @@ run_prepare_vehicle_and_marta_capture :: proc(editor: ^Editor, using config: ^Ru
         attendant := airport_service_position(attendant_anchor)
         editor.player.position = {
             attendant.x + 20,
-            terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z),
+            terrain.sample_surface_height(&editor.project, 0, attendant.x + 20, attendant.z),
             attendant.z,
         }
         editor.pilot.position = editor.player.position

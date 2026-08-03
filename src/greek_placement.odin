@@ -37,12 +37,14 @@ ruin_stamp_candidate :: proc(editor: ^Editor, world_x, world_z: f32) -> (terrain
        !settlement_structure_clear(&editor.project, &empty_city, x, z, width, depth, 0, 3) {
         return {}, false
     }
+    base_height, _, base_found := terrain.sample_land(&editor.project, 0, x, z)
+    if !base_found do return {}, false
     structure := terrain.structure_make(
         x,
         z,
         width,
         depth,
-        terrain.sample_height(&editor.project, 0, x, z),
+        base_height,
         max(generated.elevation_range + f32(8), f32(12)),
     )
     structure.kind = .Ruins

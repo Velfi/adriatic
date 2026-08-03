@@ -29,11 +29,13 @@ world_wind_streaks :: proc(editor: ^Editor) {
         speed_variation := .72 + wind_streak_hash(index, 1) * .56
         gust_phase := time * .72 + wind_streak_hash(index, 6) * math.PI * 2
         gust := .75 + (.5 + .5 * f32(math.sin(f64(gust_phase)))) * .25
-        // Offset each stream with a slow gust wave while keeping the base
-        // phase monotonic; directly multiplying absolute time by a changing
-        // gust can briefly make streaks appear to reverse.
-        gust_offset := f32(math.sin(f64(gust_phase * .61))) * .07
-        cycle := time * wind_speed * .035 * speed_variation + wind_streak_hash(index, 2) + gust_offset
+        cycle := wind_streak_cycle(
+            time,
+            wind_speed,
+            speed_variation,
+            wind_streak_hash(index, 2),
+            wind_streak_hash(index, 6),
+        )
         phase := cycle - f32(math.floor(f64(cycle)))
         along := (phase - .5) * 82
         lateral := (wind_streak_hash(index, 3) - .5) * 62

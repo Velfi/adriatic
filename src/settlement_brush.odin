@@ -114,15 +114,15 @@ settlement_brush_piece_bounds :: proc(piece: Settlement_Brush_Piece) -> architec
 
 settlement_brush_point_developable :: proc(project: ^terrain.Project, point: [2]f32, maximum_slope: f32) -> bool {
     if project == nil do return false
-    height := terrain.sample_height(project, 0, point[0], point[1])
-    if height <= project.sea_level + .6 do return false
+    height, _, found := terrain.sample_land(project, 0, point[0], point[1])
+    if !found || height <= project.sea_level + .6 do return false
     cell := terrain.BASE_CELL_SIZE
-    dx :=
-        terrain.sample_height(project, 0, point[0] + cell, point[1]) -
-        terrain.sample_height(project, 0, point[0] - cell, point[1])
-    dz :=
-        terrain.sample_height(project, 0, point[0], point[1] + cell) -
-        terrain.sample_height(project, 0, point[0], point[1] - cell)
+    east, _, east_found := terrain.sample_land(project, 0, point[0] + cell, point[1])
+    west, _, west_found := terrain.sample_land(project, 0, point[0] - cell, point[1])
+    north, _, north_found := terrain.sample_land(project, 0, point[0], point[1] + cell)
+    south, _, south_found := terrain.sample_land(project, 0, point[0], point[1] - cell)
+    if !east_found || !west_found || !north_found || !south_found do return false
+    dx, dz := east - west, north - south
     slope := f32(math.sqrt(f64(dx * dx + dz * dz))) / (cell * 2)
     if slope > maximum_slope do return false
     for structure in project.structures[:project.structure_count] {
@@ -144,7 +144,16 @@ settlement_brush_apply_piece :: proc(
     maximum_slope: f32,
 ) -> architecture.City_Bounds {
     if field == nil do return {}
-    bounds := settlement_brush_piece_bounds(piece)
+    world_bounds := settlement_brush_piece_bounds(piece)
+    source_piece := piece
+    if project != nil {
+        source_piece.center[0], source_piece.center[1] = terrain.island_source_position(
+            project,
+            piece.center[0],
+            piece.center[1],
+        )
+    }
+    bounds := settlement_brush_piece_bounds(source_piece)
     half_grid := f32(terrain.RING_RESOLUTION - 1) * .5
     minimum_x := clamp(
         int(math.floor(f64(bounds.min_x / terrain.BASE_CELL_SIZE + half_grid))),
@@ -170,7 +179,7 @@ settlement_brush_apply_piece :: proc(
         for x in minimum_x ..= maximum_x {
             world_x, world_z := architecture.city_density_world_position(x, z)
             point := [2]f32{world_x, world_z}
-            weight := settlement_brush_weight(piece, point)
+            weight := settlement_brush_weight(source_piece, point)
             if weight <= 0 do continue
             index := architecture.city_density_index(x, z)
             if piece.erased {
@@ -178,14 +187,15 @@ settlement_brush_apply_piece :: proc(
                 field[index] = u8(math.round(f64(clamp(value - piece.density * weight, 0, 1) * 255)))
                 continue
             }
-            if !settlement_brush_point_developable(project, point, maximum_slope) do continue
+            develop_x, develop_z := terrain.island_world_position(project, point[0], point[1])
+            if !settlement_brush_point_developable(project, {develop_x, develop_z}, maximum_slope) do continue
             existing := f32(field[index]) / 255
             contribution := clamp(piece.density, 0, 1) * weight
             blended := settlement_density_smooth_max(existing, contribution)
             field[index] = u8(math.round(f64(blended * 255)))
         }
     }
-    return bounds
+    return world_bounds
 }
 
 settlement_brush_pieces_touch :: proc(first, second: Settlement_Brush_Piece, extra: f32 = 0) -> bool {
@@ -455,10 +465,10 @@ settlement_brush_ensure_primary_route :: proc(
     }
     from := nearest_node
     if from < 0 {
-        start_height := terrain.sample_height(project, 0, start[0], start[1])
+        start_height := terrain.sample_surface_height(project, 0, start[0], start[1])
         from = roads.add_node(graph, {start[0], start_height, start[1]}, 3)
     }
-    finish_height := terrain.sample_height(project, 0, finish[0], finish[1])
+    finish_height := terrain.sample_surface_height(project, 0, finish[0], finish[1])
     to := roads.add_node(graph, {finish[0], finish_height, finish[1]}, 3)
     if from < 0 || to < 0 do return false
     width := piece.preset == .Large ? f32(6) : (piece.preset == .Medium ? f32(5) : f32(4))
@@ -666,7 +676,7 @@ settlement_brush_generate_vegetation :: proc(
             foliage.kind = .Foliage
             foliage.seed = seed
             foliage.rotation = f32(seed & 255) / 255 * math.PI
-            foliage.base_y = terrain.sample_height(project, 0, point[0], point[1])
+            foliage.base_y = terrain.sample_surface_height(project, 0, point[0], point[1])
             if terrain.add_structure(project, foliage) >= 0 do placed += 1
         }
         if placed >= target do break
@@ -769,7 +779,7 @@ settlement_brush_ensure_anchors :: proc(
             park := terrain.structure_make(point[0], point[1], width, width * .8, 0, width * .9)
             park.kind = .Foliage
             park.seed = piece.seed ~ 0x74a5b3c1
-            park.base_y = terrain.sample_height(project, 0, point[0], point[1])
+            park.base_y = terrain.sample_surface_height(project, 0, point[0], point[1])
             if terrain.add_structure(project, park) >= 0 {
                 settlement_plan_record_reserved_site(plan, park, .Park)
                 plan.program.parks.placed += 1

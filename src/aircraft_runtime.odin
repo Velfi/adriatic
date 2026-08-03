@@ -195,7 +195,7 @@ bomber_drop_integrate :: proc(
     }
     drop.position += drop.velocity * delta_seconds
     surface := max(
-        terrain.sample_height(&editor.project, 0, drop.position.x, drop.position.z),
+        terrain.sample_surface_height(&editor.project, 0, drop.position.x, drop.position.z),
         editor.project.sea_level,
     )
     surface = terrain.structure_collision_surface_height(&editor.project, drop.position.x, drop.position.z, surface)
@@ -301,7 +301,7 @@ bomber_pip_camera_pose :: proc(editor: ^Editor, drop: ^Bomber_Drop) -> third_per
         drop.position.z - travel.z * 6.8 + side.z * 2.5,
     }
     surface := max(
-        terrain.sample_height(&editor.project, 0, camera_position.x, camera_position.z),
+        terrain.sample_surface_height(&editor.project, 0, camera_position.x, camera_position.z),
         editor.project.sea_level,
     )
     camera_position.y = max(camera_position.y, surface + 1.4)
@@ -450,11 +450,11 @@ atmosphere_local_weather :: proc(editor: ^Editor, position: third_person.Vec3) -
 atmosphere_terrain_context :: proc(editor: ^Editor, position: third_person.Vec3) -> atmosphere.Terrain_Context {
     if editor == nil do return {}
     sample_distance := f32(45)
-    ground := terrain.sample_height(&editor.project, 0, position.x, position.z)
-    east := terrain.sample_height(&editor.project, 0, position.x + sample_distance, position.z)
-    west := terrain.sample_height(&editor.project, 0, position.x - sample_distance, position.z)
-    north := terrain.sample_height(&editor.project, 0, position.x, position.z + sample_distance)
-    south := terrain.sample_height(&editor.project, 0, position.x, position.z - sample_distance)
+    ground := terrain.sample_surface_height(&editor.project, 0, position.x, position.z)
+    east := terrain.sample_surface_height(&editor.project, 0, position.x + sample_distance, position.z)
+    west := terrain.sample_surface_height(&editor.project, 0, position.x - sample_distance, position.z)
+    north := terrain.sample_surface_height(&editor.project, 0, position.x, position.z + sample_distance)
+    south := terrain.sample_surface_height(&editor.project, 0, position.x, position.z - sample_distance)
     gradient := [2]f32{(east - west) / (sample_distance * 2), (north - south) / (sample_distance * 2)}
     land := ground > editor.project.sea_level + .1
     directions := [8][2]f32 {
@@ -472,7 +472,7 @@ atmosphere_terrain_context :: proc(editor: ^Editor, position: third_person.Vec3)
     for distance := f32(160); distance <= 1440; distance += 160 {
         found := false
         for direction in directions {
-            height := terrain.sample_height(
+            height := terrain.sample_surface_height(
                 &editor.project,
                 0,
                 position.x + direction[0] * distance,
@@ -534,7 +534,7 @@ surface_weather_step :: proc(editor: ^Editor, delta_seconds: f32) {
     for _ in 0 ..< UPDATES_PER_FRAME {
         index := editor.surface_weather.cursor % surface_weather.CELL_COUNT
         point := surface_weather.cell_position(&editor.surface_weather, index)
-        ground := terrain.sample_height(&editor.project, 0, point.x, point.y)
+        ground := terrain.sample_surface_height(&editor.project, 0, point.x, point.y)
         position := third_person.Vec3{point.x, ground + .5, point.y}
         local := atmosphere_local_weather(editor, position)
         speed := f32(math.sqrt(f64(local.wind[0] * local.wind[0] + local.wind[2] * local.wind[2])))
@@ -619,7 +619,7 @@ libellula_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     runway_x, runway_z := terrain.default_runway_center_for_project(&editor.project, 1)
     x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET + 12
     z := runway_z + 8
-    return {x, terrain.sample_height(&editor.project, 0, x, z) + 2.1, z}
+    return {x, terrain.sample_surface_height(&editor.project, 0, x, z) + 2.1, z}
 }
 
 rondine_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {

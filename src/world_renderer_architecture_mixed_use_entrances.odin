@@ -154,7 +154,7 @@ world_architecture_mixed_use_entrances :: proc(
                 )
                 paver_ground := structure.base_y
                 if project != nil {
-                    paver_ground = terrain.sample_height(project, 0, paver_x, paver_z)
+                    paver_ground = terrain.sample_surface_height(project, 0, paver_x, paver_z)
                 }
                 paver_color :=
                     path_paver % 2 == 0 ? canvas2d.Color{184, 171, 143, 255} : canvas2d.Color{166, 153, 128, 255}

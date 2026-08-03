@@ -44,7 +44,7 @@ world_architecture_door_mat :: proc(
         probe_local_z,
         structure.rotation,
     )
-    elevated := project != nil && threshold_y - terrain.sample_height(project, 0, probe_x, probe_z) > .30
+    elevated := project != nil && threshold_y - terrain.sample_surface_height(project, 0, probe_x, probe_z) > .30
     // A straight flight has no level surface on which a loose mat can sit.
     // Turned stoops retain theirs on the landing; level entrances retain the
     // ordinary ground-level mat.
@@ -80,7 +80,7 @@ world_architecture_residence_planter :: proc(
     pot_height: f32 = .46,
 ) {
     if project == nil do return
-    ground_y := terrain.sample_height(project, 0, x, z)
+    ground_y := terrain.sample_surface_height(project, 0, x, z)
     pot_width: f32 = .44
     terracotta := side < 0 ? canvas2d.Color{169, 96, 61, 255} : canvas2d.Color{181, 105, 65, 255}
     world_box_rotated(

@@ -384,7 +384,7 @@ world_architecture_door_stoop :: proc(
         wall_z + outward_z * sample_outward + tangent_z * sample_tangent,
         structure.rotation,
     )
-    ground_y := terrain.sample_height(project, 0, sample_x, sample_z)
+    ground_y := terrain.sample_surface_height(project, 0, sample_x, sample_z)
     rise := threshold_y - ground_y
     if rise <= .30 do return
 
@@ -404,7 +404,7 @@ world_architecture_door_stoop :: proc(
             wall_z + outward_z * .90,
             structure.rotation,
         )
-        landing_ground_y := terrain.sample_height(project, 0, landing_x, landing_z)
+        landing_ground_y := terrain.sample_surface_height(project, 0, landing_x, landing_z)
         landing_height := threshold_y - landing_ground_y
         if landing_height > .025 {
             world_box_rotated(
@@ -425,7 +425,7 @@ world_architecture_door_stoop :: proc(
         local_x := wall_x + outward_x * outward_distance + tangent_x * tangent_distance
         local_z := wall_z + outward_z * outward_distance + tangent_z * tangent_distance
         step_x, step_z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
-        local_ground_y := terrain.sample_height(project, 0, step_x, step_z)
+        local_ground_y := terrain.sample_surface_height(project, 0, step_x, step_z)
         top_y := threshold_y - f32(step) * step_rise
         height := top_y - local_ground_y
         if height <= .025 do continue
@@ -459,7 +459,7 @@ world_architecture_door_stoop :: proc(
         foot_local_z,
         structure.rotation,
     )
-    foot_y := terrain.sample_height(project, 0, foot_x, foot_z)
+    foot_y := terrain.sample_surface_height(project, 0, foot_x, foot_z)
     world_box_rotated({foot_x, foot_y + .06, foot_z}, {step_width + .30, .12, .76}, foot_yaw, color)
     // Give the approach a complete, climbable-looking guard rather than
     // leaving the generated masonry flight bare.  The same local basis works

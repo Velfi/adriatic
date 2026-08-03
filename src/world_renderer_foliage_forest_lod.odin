@@ -133,7 +133,7 @@ world_foliage_far_forest_bridges :: proc(structure: terrain.Structure) {
         bridge_structure := structure
         bridge_structure.center_x = midpoint_x
         bridge_structure.center_z = midpoint_z
-        bridge_structure.base_y = terrain.sample_height(&world_renderer.editor.project, 0, midpoint_x, midpoint_z)
+        bridge_structure.base_y = terrain.sample_surface_height(&world_renderer.editor.project, 0, midpoint_x, midpoint_z)
         bridge_structure.rotation = angle
         bridge_structure.seed = world_foliage_tree_hash(structure.seed ~ neighbor.seed ~ u32(0x6d2b79f5))
         bridge_structure.width = distance + smaller_radius * .72

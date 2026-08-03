@@ -126,7 +126,7 @@ town_mouse_wheel_center :: proc(editor: ^Editor) -> (position: third_person.Vec3
     if best_index < 0 do return
     area := plan.areas[best_index]
     x, z := world_town_mouse_wheel_position(area)
-    y := terrain.sample_height(&editor.project, 0, x, z)
+    y := terrain.sample_surface_height(&editor.project, 0, x, z)
     return {x, y, z}, area.rotation, true
 }
 
@@ -167,7 +167,7 @@ town_mouse_wheel_dismount :: proc(editor: ^Editor, center: third_person.Vec3) {
     exit_radius := f32(2.05)
     exit_x := center.x + math.cos(mouse_wheel_mouse_angle) * exit_radius
     exit_z := center.z + math.sin(mouse_wheel_mouse_angle) * exit_radius
-    exit_y := terrain.sample_height(&editor.project, 0, exit_x, exit_z)
+    exit_y := terrain.sample_surface_height(&editor.project, 0, exit_x, exit_z)
     player_place(editor, {exit_x, exit_y, exit_z}, .Teleport, mouse_wheel_mouse_angle + math.PI * .5)
 }
 

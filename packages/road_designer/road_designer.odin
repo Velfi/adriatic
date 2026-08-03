@@ -227,7 +227,7 @@ random_unit :: #force_inline proc(optimizer: ^Optimizer) -> f32 {
     return f32(optimizer.rng & 0x00ffffff) / f32(0x01000000)
 }
 
-sample_height :: #force_inline proc(request: Design_Request, x, z: f32) -> f32 {
+sample_surface_height :: #force_inline proc(request: Design_Request, x, z: f32) -> f32 {
     grid := request.grid
     if grid.width <= 0 || grid.height <= 0 || len(grid.heights) < grid.width * grid.height do return request.sea_level
     cell := max(request.cell_size, f32(.001))
@@ -422,7 +422,7 @@ build_centerline :: proc(candidate: ^Design_Candidate, request: Design_Request, 
                 dx, dz := x - previous.x, z - previous.z
                 station += f32(math.sqrt(f64(dx * dx + dz * dz)))
             }
-            candidate.centerline[candidate.point_count] = {x, sample_height(request, x, z), z}
+            candidate.centerline[candidate.point_count] = {x, sample_surface_height(request, x, z), z}
             candidate.stations[candidate.point_count] = station
             candidate.point_count += 1
         }
@@ -433,7 +433,7 @@ build_centerline :: proc(candidate: ^Design_Candidate, request: Design_Request, 
         dx, dz := finish.x - previous.x, finish.z - previous.z
         station += f32(math.sqrt(f64(dx * dx + dz * dz)))
     }
-    candidate.centerline[candidate.point_count] = {finish.x, sample_height(request, finish.x, finish.z), finish.z}
+    candidate.centerline[candidate.point_count] = {finish.x, sample_surface_height(request, finish.x, finish.z), finish.z}
     candidate.stations[candidate.point_count] = station
     candidate.point_count += 1
     // Persist an engineering element vocabulary even though the render graph
@@ -549,7 +549,7 @@ evaluate :: proc(candidate: ^Design_Candidate, request: Design_Request, policy: 
     for index in 0 ..< candidate.point_count {
         point := candidate.centerline[index]
         station := candidate.stations[index]
-        ground := sample_height(request, point.x, point.z)
+        ground := sample_surface_height(request, point.x, point.z)
         ds := index == 0 ? f32(0) : station - candidate.stations[index - 1]
         difference := point.y - ground
         cross_width := request.width + request.shoulder * 2 + math.abs(difference) * 4

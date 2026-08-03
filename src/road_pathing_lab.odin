@@ -321,17 +321,17 @@ world_road_pathing_lab :: proc(editor: ^Editor) {
         previous_point := route.result.points[0]
         previous := roads.Vec3 {
             previous_point.x,
-            terrain.sample_height(&editor.project, 0, previous_point.x, previous_point.z),
+            terrain.sample_surface_height(&editor.project, 0, previous_point.x, previous_point.z),
             previous_point.z,
         }
         for point in route.result.points[1:route.result.point_count] {
-            current := roads.Vec3{point.x, terrain.sample_height(&editor.project, 0, point.x, point.z), point.z}
+            current := roads.Vec3{point.x, terrain.sample_surface_height(&editor.project, 0, point.x, point.z), point.z}
             world_road_editor_link(previous, current, widths[route.scale], colors[route.scale])
             previous = current
         }
     }
     for center, index in centers {
-        y := terrain.sample_height(&editor.project, 0, center.x, center.z)
+        y := terrain.sample_surface_height(&editor.project, 0, center.x, center.z)
         world_box({center.x, y + 6, center.z}, {12, 12, 12}, colors[index])
     }
 }

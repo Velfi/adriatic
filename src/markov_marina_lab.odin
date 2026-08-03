@@ -107,7 +107,7 @@ shoreline_harbor_lab_configure :: proc(editor: ^Editor, index: int) -> bool {
     }
     // High, steep backland can otherwise bury a sea-relative inspection
     // camera inside the island and produce an empty horizon-only capture.
-    eye.y = max(eye.y, terrain.sample_height(&editor.project, 0, eye.x, eye.z) + span * .14)
+    eye.y = max(eye.y, terrain.sample_surface_height(&editor.project, 0, eye.x, eye.z) + span * .14)
     editor.camera_pose = third_person.camera_look_at(eye, target)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
     third_person.camera_set_active(&editor.cameras, .Inspection)
@@ -115,7 +115,7 @@ shoreline_harbor_lab_configure :: proc(editor: ^Editor, index: int) -> bool {
     // is rejected, so the lab shows an untouched shoreline rather than empty
     // ocean around the previous player position.
     player_y := max(
-        terrain.sample_height(&editor.project, 0, plan.office.x, plan.office.z) + .7,
+        terrain.sample_surface_height(&editor.project, 0, plan.office.x, plan.office.z) + .7,
         editor.project.sea_level + .7,
     )
     player_place(editor, {plan.office.x, player_y, plan.office.z}, .Scene_Setup)
@@ -184,7 +184,7 @@ markov_marina_sample_world_site :: proc(project: ^terrain.Project, origin: marin
         for x in 0 ..< marina.GRID_WIDTH {
             local := marina.grid_position(x, z)
             world := marina.site_world_position(&site, local)
-            height := terrain.sample_height(project, 0, world.x, world.z)
+            height := terrain.sample_surface_height(project, 0, world.x, world.z)
             value := height > land_threshold ? marina.Site_Cell.Land : marina.Site_Cell.Water
             if terrain.structure_index_at(project, world.x, world.z) >= 0 {
                 value = .Blocked
@@ -223,25 +223,25 @@ markov_marina_coarse_world_site_suitability :: proc(project: ^terrain.Project, o
         for x := 1; x < marina.GRID_WIDTH; x += 4 {
             world := marina.site_world_position(&probe, marina.grid_position(x, z))
             backland_total += 1
-            if terrain.sample_height(project, 0, world.x, world.z) > threshold do backland_good += 1
+            if terrain.sample_surface_height(project, 0, world.x, world.z) > threshold do backland_good += 1
         }
     }
     for x := 1; x < marina.GRID_WIDTH; x += 3 {
         world := marina.site_world_position(&probe, marina.grid_position(x, 4))
         shore_total += 1
-        if terrain.sample_height(project, 0, world.x, world.z) <= threshold do shore_good += 1
+        if terrain.sample_surface_height(project, 0, world.x, world.z) <= threshold do shore_good += 1
     }
     for z := 7; z < marina.GRID_HEIGHT; z += 5 {
         for x := 1; x < marina.GRID_WIDTH; x += 4 {
             world := marina.site_world_position(&probe, marina.grid_position(x, z))
             basin_total += 1
-            if terrain.sample_height(project, 0, world.x, world.z) <= threshold do basin_good += 1
+            if terrain.sample_surface_height(project, 0, world.x, world.z) <= threshold do basin_good += 1
         }
     }
     for z := 6; z < marina.GRID_HEIGHT; z += 4 {
         world := marina.site_world_position(&probe, marina.grid_position(13, z))
         entrance_total += 1
-        if terrain.sample_height(project, 0, world.x, world.z) <= threshold do entrance_good += 1
+        if terrain.sample_surface_height(project, 0, world.x, world.z) <= threshold do entrance_good += 1
     }
 
     backland := f32(backland_good) / f32(max(backland_total, 1))
@@ -258,10 +258,10 @@ markov_marina_snap_shoreline :: proc(project: ^terrain.Project, anchor, outward:
     best_distance := f32(1 << 30)
     previous_offset := f32(-80)
     previous := marina.Vec2{anchor.x + outward.x * previous_offset, anchor.z + outward.z * previous_offset}
-    previous_land := terrain.sample_height(project, 0, previous.x, previous.z) > threshold
+    previous_land := terrain.sample_surface_height(project, 0, previous.x, previous.z) > threshold
     for offset := f32(-76); offset <= 80; offset += 4 {
         point := marina.Vec2{anchor.x + outward.x * offset, anchor.z + outward.z * offset}
-        land := terrain.sample_height(project, 0, point.x, point.z) > threshold
+        land := terrain.sample_surface_height(project, 0, point.x, point.z) > threshold
         if land != previous_land {
             transition_offset := (previous_offset + offset) * .5
             distance := abs(transition_offset)
@@ -308,7 +308,7 @@ markov_marina_find_shoreline_along_ray :: proc(
     threshold := project.sea_level + .15
     for distance := f32(0); distance <= maximum_distance; distance += f32(4) {
         point := marina.Vec2{center.x + direction.x * distance, center.z + direction.z * distance}
-        if terrain.sample_height(project, 0, point.x, point.z) <= threshold do return previous
+        if terrain.sample_surface_height(project, 0, point.x, point.z) <= threshold do return previous
         previous = point
     }
     return previous
@@ -824,7 +824,7 @@ marin_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     plan := east_harbor_plan(editor)
     if plan == nil do return {}
     world := harbor.add(plan.office, harbor.add(harbor.scale(plan.tangent, 4.6), harbor.scale(plan.outward, 3.5)))
-    ground := terrain.sample_height(&editor.project, 0, world.x, world.z)
+    ground := terrain.sample_surface_height(&editor.project, 0, world.x, world.z)
     return {world.x, max(ground, editor.project.sea_level + .62), world.z}
 }
 
@@ -1129,7 +1129,7 @@ markov_marina_office_structure :: proc(plan: ^marina.Plan, project: ^terrain.Pro
     if plan == nil do return {}
     office := marina.plan_world_position(plan, plan.office)
     seed := plan.layout_seed ~ 0x48415242
-    base_y := project == nil ? f32(0) : terrain.sample_height(project, 0, office.x, office.z)
+    base_y := project == nil ? f32(0) : terrain.sample_surface_height(project, 0, office.x, office.z)
     structure := terrain.structure_make(office.x, office.z, 8.2, 6.4, base_y, 4.8)
     // Marina footprints are intentionally more compact than settlement lots.
     // Preserve that footprint after structure_make applies the terrain grid's
@@ -1163,7 +1163,7 @@ shoreline_harbor_office_structure :: proc(
 ) -> terrain.Structure {
     if plan == nil do return {}
     seed := plan.seed ~ 0x48415242
-    base_y := project == nil ? f32(0) : terrain.sample_height(project, 0, plan.office.x, plan.office.z)
+    base_y := project == nil ? f32(0) : terrain.sample_surface_height(project, 0, plan.office.x, plan.office.z)
     structure := terrain.structure_make(plan.office.x, plan.office.z, 10, 8, base_y, 5.2)
     structure.width = 10
     structure.depth = 8

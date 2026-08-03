@@ -292,7 +292,7 @@ world_foliage_lobe :: proc(
             if base_lift <= 0 {
                 if ring == 0 {
                     terrain_offsets[segment] =
-                        terrain.sample_height(&world_renderer.editor.project, 0, world_x, world_z) - structure.base_y
+                        terrain.sample_surface_height(&world_renderer.editor.project, 0, world_x, world_z) - structure.base_y
                 }
                 contour_lift += terrain_offsets[segment]
             }
@@ -343,7 +343,7 @@ world_foliage_lobe :: proc(
     base_terrain_offset := f32(0)
     if base_lift <= 0 {
         base_terrain_offset =
-            terrain.sample_height(&world_renderer.editor.project, 0, base_x, base_z) - structure.base_y
+            terrain.sample_surface_height(&world_renderer.editor.project, 0, base_x, base_z) - structure.base_y
     }
     base := third_person.Vec3 {
         base_x,
@@ -431,7 +431,7 @@ world_foliage_lobe :: proc(
     crown_terrain_offset := f32(0)
     if base_lift <= 0 {
         crown_terrain_offset =
-            terrain.sample_height(&world_renderer.editor.project, 0, crown_x, crown_z) - structure.base_y
+            terrain.sample_surface_height(&world_renderer.editor.project, 0, crown_x, crown_z) - structure.base_y
     }
     crown := third_person.Vec3 {
         crown_x,

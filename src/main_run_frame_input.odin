@@ -339,7 +339,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     // correct it only later in the frame, the brush is applied at the ray
     // from the old pose but drawn at the ray from the corrected pose.
     if !editor.in_map {
-        camera_ground := terrain.sample_height(
+        camera_ground := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.camera_pose.position.x,
@@ -367,8 +367,13 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     editor.cursor_world_z = world_z
     editor.cursor_hit = cursor_hit && !ui_hit && !editor.in_map
     if editor.cursor_hit {
-        editor.cursor_height = terrain.sample_height(&editor.project, 0, world_x, world_z)
-        editor.cursor_material = terrain.sample_material(&editor.project, 0, world_x, world_z)
+        cursor_height, cursor_material, land_found := terrain.sample_land(&editor.project, 0, world_x, world_z)
+        if !land_found {
+            editor.cursor_hit = false
+        } else {
+            editor.cursor_height = cursor_height
+            editor.cursor_material = cursor_material
+        }
     }
     note_placement_consumes_input := fixture_note_placement_process_input(editor, cursor_hit && !ui_hit)
     if !note_placement_consumes_input {

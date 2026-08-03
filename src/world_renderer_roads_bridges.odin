@@ -125,7 +125,7 @@ world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
             center := roads.edge_point(graph, edge, .5)
             tangent := roads.edge_tangent(graph, edge, .5)
             yaw := f32(math.atan2(f64(-tangent.x), f64(tangent.z))) + math.PI * .5
-            bed_y := terrain.sample_height(&editor.project, 0, center.x, center.z)
+            bed_y := terrain.sample_surface_height(&editor.project, 0, center.x, center.z)
             length := (edge.half_width + edge.shoulder_width) * 2 + 1.2
             // A dark barrel and pale headwalls make the persisted culvert
             // legible without introducing a second infrastructure system.
@@ -155,7 +155,7 @@ world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
         if !has_bridge do continue
         crossing_length := max(approximate_length * (bridge_to - bridge_from), f32(1))
         crossing_center := roads.edge_point(graph, edge, (bridge_from + bridge_to) * .5)
-        crossing_bed := terrain.sample_height(&editor.project, 0, crossing_center.x, crossing_center.z)
+        crossing_bed := terrain.sample_surface_height(&editor.project, 0, crossing_center.x, crossing_center.z)
         crossing_deck, _ := road_bridge_deck_height(editor, edge_index, (bridge_from + bridge_to) * .5)
         regional, regional_bridge := world_settlement_bridge_plan(
             editor,
@@ -224,7 +224,7 @@ world_road_bridges_build :: proc(editor: ^Editor, graph: ^roads.Graph) {
                     bridge_rail,
                 )
             }
-            bed_y := terrain.sample_height(&editor.project, 0, pm.x, pm.z)
+            bed_y := terrain.sample_surface_height(&editor.project, 0, pm.x, pm.z)
             support_height := deck_y - .38 - bed_y
             pier_here := segment_index % 4 == 2
             pier_width := f32(.42)
@@ -418,9 +418,9 @@ world_road_triangle_colored :: #force_inline proc(
     }
     if requires_land {
         land_threshold := editor.project.sea_level + .04
-        if terrain.sample_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
-           terrain.sample_height(&editor.project, 0, b.position.x, b.position.z) <= land_threshold ||
-           terrain.sample_height(&editor.project, 0, c.position.x, c.position.z) <= land_threshold {
+        if terrain.sample_surface_height(&editor.project, 0, a.position.x, a.position.z) <= land_threshold ||
+           terrain.sample_surface_height(&editor.project, 0, b.position.x, b.position.z) <= land_threshold ||
+           terrain.sample_surface_height(&editor.project, 0, c.position.x, c.position.z) <= land_threshold {
             return
         }
     }
@@ -449,9 +449,9 @@ world_spline_steps :: proc(editor: ^Editor, graph: ^roads.Graph) {
             p0 := roads.edge_point(graph, edge, t0)
             p1 := roads.edge_point(graph, edge, t1)
             pm := roads.edge_point(graph, edge, tm)
-            ground_0 := terrain.sample_height(&editor.project, 0, p0.x, p0.z)
-            ground_1 := terrain.sample_height(&editor.project, 0, p1.x, p1.z)
-            ground_mid := terrain.sample_height(&editor.project, 0, pm.x, pm.z)
+            ground_0 := terrain.sample_surface_height(&editor.project, 0, p0.x, p0.z)
+            ground_1 := terrain.sample_surface_height(&editor.project, 0, p1.x, p1.z)
+            ground_mid := terrain.sample_surface_height(&editor.project, 0, pm.x, pm.z)
             top := ground_mid + .12
             bottom := min(min(ground_0, ground_1), ground_mid) - .04
             height := max(top - bottom, f32(.12))

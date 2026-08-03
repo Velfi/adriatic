@@ -252,8 +252,8 @@ settlement_structure_footprint_on_land :: proc(
         for width_step in 0 ..= width_steps {
             width_offset := (f32(width_step) / f32(width_steps) - .5) * width
             point := [2]f32{x, z} + tangent * width_offset + normal * depth_offset
-            if terrain.sample_height(project, 0, point[0], point[1]) <= project.sea_level + clearance ||
-               terrain.active_waterway_at(project, 0, point[0], point[1]) {
+            land_height, _, land_found := terrain.sample_land(project, 0, point[0], point[1])
+            if !land_found || land_height <= project.sea_level + clearance || terrain.active_waterway_at(project, 0, point[0], point[1]) {
                 return false
             }
         }

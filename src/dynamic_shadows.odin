@@ -497,9 +497,9 @@ shadow_append_raised_roads :: proc(editor: ^Editor) {
         dx := center_x - world_renderer.dynamic_shadow.anchor.x
         dz := center_z - world_renderer.dynamic_shadow.anchor.z
         if dx * dx + dz * dz > DYNAMIC_SHADOW_PROXY_RADIUS * DYNAMIC_SHADOW_PROXY_RADIUS do continue
-        terrain_a := terrain.sample_height(&editor.project, 0, a.position[0], a.position[2])
-        terrain_b := terrain.sample_height(&editor.project, 0, b.position[0], b.position[2])
-        terrain_c := terrain.sample_height(&editor.project, 0, c.position[0], c.position[2])
+        terrain_a := terrain.sample_surface_height(&editor.project, 0, a.position[0], a.position[2])
+        terrain_b := terrain.sample_surface_height(&editor.project, 0, b.position[0], b.position[2])
+        terrain_c := terrain.sample_surface_height(&editor.project, 0, c.position[0], c.position[2])
         clearance := max(
             a.position[1] - terrain_a,
             max(b.position[1] - terrain_b, c.position[1] - terrain_c),
@@ -528,7 +528,7 @@ shadow_append_terrain :: proc(editor: ^Editor) {
         for x in 0 ..= GRID_CELLS {
             world_x := start_x + f32(x) * step
             world_z := start_z + f32(z) * step
-            heights[z][x] = terrain.sample_height(&editor.project, 0, world_x, world_z)
+            heights[z][x] = terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
         }
     }
     for z in 0 ..< GRID_CELLS {
@@ -580,7 +580,7 @@ dynamic_shadow_resolve_anchor :: proc(editor: ^Editor) -> third_person.Vec3 {
         return {0, editor.project.sea_level, 0}
     }
     anchor := editor.camera_pose.position
-    anchor.y = terrain.sample_height(&editor.project, 0, anchor.x, anchor.z)
+    anchor.y = terrain.sample_surface_height(&editor.project, 0, anchor.x, anchor.z)
     return anchor
 }
 

@@ -450,7 +450,7 @@ world_infrastructure :: proc(editor: ^Editor) {
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         x, z := terrain.default_runway_center_for_project(&editor.project, sign)
         run_l, run_w := half * terrain.DEFAULT_RUNWAY_HALF_LENGTH, half * terrain.DEFAULT_RUNWAY_HALF_WIDTH
-        y := terrain.sample_height(&editor.project, 0, x, z) + .05
+        y := terrain.sample_surface_height(&editor.project, 0, x, z) + .05
         world_runway_papi(editor, x, z, y, run_l, run_w, -1)
         world_runway_papi(editor, x, z, y, run_l, run_w, 1)
     }
@@ -492,7 +492,7 @@ world_land_surface_sample :: #force_inline proc(
 ) -> World_Land_Surface_Sample {
     x := center_x + local_x * cosine - local_z * sine
     z := center_z + local_x * sine + local_z * cosine
-    return {x, z, terrain.sample_height(&editor.project, 0, x, z)}
+    return {x, z, terrain.sample_surface_height(&editor.project, 0, x, z)}
 }
 
 world_box_rotated :: proc(center: third_person.Vec3, size: third_person.Vec3, rotation: f32, color: canvas2d.Color) {

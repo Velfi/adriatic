@@ -85,10 +85,10 @@ farm_compound_derive :: proc(
     compound.envelope_center = farm_compound_local_point(compound, 0, -(rear - front) * .5)
     if aegean && project != nil {
         sample := f32(4)
-        east := terrain.sample_height(project, 0, compound.field_anchor[0] + sample, compound.field_anchor[1])
-        west := terrain.sample_height(project, 0, compound.field_anchor[0] - sample, compound.field_anchor[1])
-        north := terrain.sample_height(project, 0, compound.field_anchor[0], compound.field_anchor[1] + sample)
-        south := terrain.sample_height(project, 0, compound.field_anchor[0], compound.field_anchor[1] - sample)
+        east := terrain.sample_surface_height(project, 0, compound.field_anchor[0] + sample, compound.field_anchor[1])
+        west := terrain.sample_surface_height(project, 0, compound.field_anchor[0] - sample, compound.field_anchor[1])
+        north := terrain.sample_surface_height(project, 0, compound.field_anchor[0], compound.field_anchor[1] + sample)
+        south := terrain.sample_surface_height(project, 0, compound.field_anchor[0], compound.field_anchor[1] - sample)
         gradient := [2]f32{east - west, north - south}
         if gradient[0] * gradient[0] + gradient[1] * gradient[1] > .0001 {
             // Farmland local X is the long terrace axis. Align it to the
@@ -193,12 +193,12 @@ farm_compound_structure_clear :: proc(
 
 farm_compound_feature_on_land :: proc(project: ^terrain.Project, point: [2]f32, radius: f32) -> bool {
     if project == nil do return false
-    center := terrain.sample_height(project, 0, point[0], point[1])
+    center := terrain.sample_surface_height(project, 0, point[0], point[1])
     if center <= project.sea_level + .35 || terrain.active_waterway_at(project, 0, point[0], point[1]) do return false
     directions := [4][2]f32{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
     for direction in directions {
         sample := point + direction * radius
-        height := terrain.sample_height(project, 0, sample[0], sample[1])
+        height := terrain.sample_surface_height(project, 0, sample[0], sample[1])
         if height <= project.sea_level + .35 || math.abs(height - center) > .75 do return false
     }
     return true
@@ -223,7 +223,7 @@ world_farm_compound_wall :: proc(editor: ^Editor, compound: Farm_Compound, ax, a
     }
     delta := b - a
     length := f32(math.sqrt(f64(delta[0] * delta[0] + delta[1] * delta[1])))
-    y := terrain.sample_height(&editor.project, 0, midpoint[0], midpoint[1])
+    y := terrain.sample_surface_height(&editor.project, 0, midpoint[0], midpoint[1])
     color := compound.region == .Aegean ? canvas2d.Color{151, 151, 139, 255} : canvas2d.Color{157, 151, 132, 255}
     world_box_rotated(
         {midpoint[0], y + .36, midpoint[1]},
@@ -239,7 +239,7 @@ world_farm_compound_shelter :: proc(editor: ^Editor, compound: Farm_Compound) {
        !farm_compound_feature_clear(editor, compound, point, 2.4) {
         return
     }
-    y := terrain.sample_height(&editor.project, 0, point[0], point[1])
+    y := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
     stone := compound.region == .Aegean ? canvas2d.Color{149, 146, 132, 255} : canvas2d.Color{143, 140, 124, 255}
     if compound.region == .Aegean {
         world_box_rotated({point[0], y + 1.15, point[1]}, {3.6, 2.3, 3.0}, compound.rotation, stone)
@@ -266,7 +266,7 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
     if editor == nil do return
     yard := compound.yard_center
     if farm_compound_feature_on_land(&editor.project, yard, min(compound.yard_width, compound.yard_depth) * .35) {
-        y := terrain.sample_height(&editor.project, 0, yard[0], yard[1])
+        y := terrain.sample_surface_height(&editor.project, 0, yard[0], yard[1])
         paving := compound.region == .Aegean ? canvas2d.Color{194, 190, 169, 255} : canvas2d.Color{174, 157, 125, 255}
         world_box_rotated(
             {yard[0], y + .025, yard[1]},
@@ -284,7 +284,7 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
     }
     if compound.has_thresher && farm_compound_feature_on_land(&editor.project, compound.threshing_center, compound.threshing_radius) {
         point := compound.threshing_center
-        y := terrain.sample_height(&editor.project, 0, point[0], point[1])
+        y := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
         world_ellipse_material_uv(
             {point[0], y + .08, point[1]},
             compound.threshing_radius,
@@ -299,7 +299,7 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
     if gate_length > .2 {
         gate_midpoint := (compound.field_anchor + compound.field_gate) * .5
         if farm_compound_feature_on_land(&editor.project, gate_midpoint, .8) {
-            y := terrain.sample_height(&editor.project, 0, gate_midpoint[0], gate_midpoint[1])
+            y := terrain.sample_surface_height(&editor.project, 0, gate_midpoint[0], gate_midpoint[1])
             world_box_rotated(
                 {gate_midpoint[0], y + .018, gate_midpoint[1]},
                 {gate_length, .036, compound.region == .Aegean ? f32(1.35) : f32(2.0)},
@@ -311,14 +311,14 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
     utility := compound.utility_center
     if farm_compound_feature_on_land(&editor.project, utility, 1.2) &&
        farm_compound_feature_clear(editor, compound, utility, 1.4) {
-        y := terrain.sample_height(&editor.project, 0, utility[0], utility[1])
+        y := terrain.sample_surface_height(&editor.project, 0, utility[0], utility[1])
         if compound.region == .Aegean {
             world_ellipse_material_uv({utility[0], y + .18, utility[1]}, 1.25, 1.25, 0, {139, 145, 139, 255}, .BRDF)
             world_ellipse_material_uv({utility[0], y + .38, utility[1]}, .72, .72, 0, {60, 74, 76, 255}, .BRDF)
             oven := farm_compound_local_point(compound, compound.yard_width * .35, -(compound.yard_depth + 2.0))
             if farm_compound_feature_on_land(&editor.project, oven, 1.0) &&
                farm_compound_feature_clear(editor, compound, oven, 1.2) {
-                oven_y := terrain.sample_height(&editor.project, 0, oven[0], oven[1])
+                oven_y := terrain.sample_surface_height(&editor.project, 0, oven[0], oven[1])
                 world_box_rotated({oven[0], oven_y + .62, oven[1]}, {1.7, 1.24, 1.55}, compound.rotation, {190, 186, 169, 255})
                 world_ellipse_material_uv({oven[0], oven_y + 1.24, oven[1]}, .86, .78, compound.rotation, {205, 201, 184, 255}, .BRDF)
             }
@@ -330,7 +330,7 @@ world_farm_compound :: proc(editor: ^Editor, compound: Farm_Compound) {
         lean := farm_compound_local_point(compound, 0, -(compound.yard_depth + 1.5))
         if farm_compound_feature_on_land(&editor.project, lean, 2.0) &&
            farm_compound_feature_clear(editor, compound, lean, 2.4) {
-            y := terrain.sample_height(&editor.project, 0, lean[0], lean[1])
+            y := terrain.sample_surface_height(&editor.project, 0, lean[0], lean[1])
             timber := canvas2d.Color{91, 69, 48, 255}
             for side in -1 ..= 1 {
                 if side == 0 do continue

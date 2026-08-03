@@ -10,8 +10,8 @@ import "core:c"
 import "core:fmt"
 import "core:math"
 import "core:sync"
-import canvas2d "zelda_engine:canvas2d"
 import sdl "vendor:sdl3"
+import canvas2d "zelda_engine:canvas2d"
 
 Authoring_Tool :: enum {
     Sculpt,
@@ -74,16 +74,14 @@ Fixture_File_Dialog_Mode :: enum {
 }
 
 Fixture_File_Dialog_State :: struct {
-    finished:     u32,
-    pending:      bool,
-    mode:         Fixture_File_Dialog_Mode,
-    path:         [FIXTURE_FILE_PATH_CAPACITY]u8,
-    path_length:  int,
+    finished:    u32,
+    pending:     bool,
+    mode:        Fixture_File_Dialog_Mode,
+    path:        [FIXTURE_FILE_PATH_CAPACITY]u8,
+    path_length: int,
 }
 
-FIXTURE_FILE_FILTERS: [1]sdl.DialogFileFilter = {
-    {"Fixture", "fixture"},
-}
+FIXTURE_FILE_FILTERS: [1]sdl.DialogFileFilter = {{"Fixture", "fixture"}}
 
 Editor_UI_State :: struct {
     left_collapsed:      bool,
@@ -339,7 +337,7 @@ fixture_editor_file_dialog_open :: proc(editor: ^Editor, mode: Fixture_File_Dial
     state := &editor.fixture_file_dialog
     state^ = {
         pending = true,
-        mode = mode,
+        mode    = mode,
     }
     sync.atomic_store_explicit(&state.finished, u32(0), .Release)
 
@@ -805,9 +803,28 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             row += 1
             ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, {139, 149, 160, 255})
             ui_draw_text(.Data, "R  ROTATE", {panel.x + 14, panel.y + 106 + f32(row) * 48}, .4, {139, 149, 160, 255})
-            ui_draw_text(.Data, "BACKSPACE  DELETE", {panel.x + 14, panel.y + 130 + f32(row) * 48}, .4, {139, 149, 160, 255})
+            ui_draw_text(
+                .Data,
+                "BACKSPACE  DELETE",
+                {panel.x + 14, panel.y + 130 + f32(row) * 48},
+                .4,
+                {139, 149, 160, 255},
+            )
+        } else if editor.island_selected != .World {
+            center_x, center_z, center_ok := terrain.island_center(&editor.project, editor.island_selected)
+            if center_ok {
+                other := editor.island_selected == .West ? terrain.Island_ID.East : terrain.Island_ID.West
+                other_x, other_z, _ := terrain.island_center(&editor.project, other)
+                dx, dz := center_x - other_x, center_z - other_z
+                distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                ui_draw_text(.Label, "ISLAND", {panel.x + 14, panel.y + 88}, .5, {209, 215, 222, 255})
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, 1), "CENTER X (m)", center_x, -4000, 4000, 0)
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, 2), "CENTER Z (m)", center_z, -4000, 4000, 0)
+                editor_ui_slider_draw(editor_ui_slider_bounds(layout, 3), "DISTANCE (m)", distance, 0, 8000, 0)
+                ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 282}, .4, {139, 149, 160, 255})
+            }
         } else {
-            ui_draw_text(.Data, "CLICK AN ITEM", {panel.x + 14, panel.y + 88}, .5, {139, 149, 160, 255})
+            ui_draw_text(.Data, "CLICK AN ITEM OR ISLAND", {panel.x + 14, panel.y + 88}, .5, {139, 149, 160, 255})
         }
         return
     }
@@ -1552,6 +1569,29 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             changed = editor_ui_slider_input(editor, layout, 102, 2, &structure.depth, cell, 400, 1, 2) || changed
             changed = editor_ui_slider_input(editor, layout, 103, 3, &structure.height, cell, 400, 1, 2) || changed
             if changed do editor.project.revision += 1
+        } else if editor.island_selected != .World {
+            center_x, center_z, center_ok := terrain.island_center(&editor.project, editor.island_selected)
+            if center_ok {
+                next_x, next_z := center_x, center_z
+                changed_x := editor_ui_slider_input(editor, layout, 201, 1, &next_x, -4000, 4000, 1, 2)
+                changed_z := editor_ui_slider_input(editor, layout, 202, 2, &next_z, -4000, 4000, 1, 2)
+                if changed_x || changed_z {
+                    _ = editor_island_set_center(editor, editor.island_selected, next_x, next_z)
+                }
+                other := editor.island_selected == .West ? terrain.Island_ID.East : terrain.Island_ID.West
+                other_x, other_z, _ := terrain.island_center(&editor.project, other)
+                dx, dz := center_x - other_x, center_z - other_z
+                distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+                next_distance := distance
+                if editor_ui_slider_input(editor, layout, 203, 3, &next_distance, 0, 8000, 1, 2) {
+                    distance_x, distance_z, distance_ok := terrain.island_center_at_distance(
+                        &editor.project,
+                        editor.island_selected,
+                        next_distance,
+                    )
+                    if distance_ok do _ = editor_island_set_center(editor, editor.island_selected, distance_x, distance_z)
+                }
+            }
         }
         return
     }

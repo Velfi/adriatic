@@ -40,7 +40,7 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
     if editor == nil do return {node = -1, edge = -1}
     result := Road_Snap {
         kind     = .Raw,
-        position = {x, terrain.sample_height(&editor.project, 0, x, z), z},
+        position = {x, terrain.sample_surface_height(&editor.project, 0, x, z), z},
         node     = -1,
         edge     = -1,
         valid    = true,
@@ -115,7 +115,7 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
                     }
                 }
                 if found {
-                    best_position.y = terrain.sample_height(&editor.project, 0, best_position.x, best_position.z)
+                    best_position.y = terrain.sample_surface_height(&editor.project, 0, best_position.x, best_position.z)
                     result.kind, result.position, result.guide_from = .Tangent, best_position, start
                     return result
                 }
@@ -133,7 +133,7 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
                         candidate := start + normal * along
                         dx, dz := candidate.x - x, candidate.z - z
                         if dx * dx + dz * dz <= radius_squared {
-                            candidate.y = terrain.sample_height(&editor.project, 0, candidate.x, candidate.z)
+                            candidate.y = terrain.sample_surface_height(&editor.project, 0, candidate.x, candidate.z)
                             result.kind, result.position, result.guide_from = .Perpendicular, candidate, start
                             return result
                         }
@@ -151,7 +151,7 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
                 }
                 dx, dz := candidate.x - x, candidate.z - z
                 if dx * dx + dz * dz <= radius_squared {
-                    candidate.y = terrain.sample_height(&editor.project, 0, candidate.x, candidate.z)
+                    candidate.y = terrain.sample_surface_height(&editor.project, 0, candidate.x, candidate.z)
                     result.kind, result.position, result.guide_from = .Angle, candidate, start
                     return result
                 }
@@ -162,7 +162,7 @@ road_snap_candidate :: proc(editor: ^Editor, x, z: f32) -> Road_Snap {
         grid_x := terrain.snap_to_grid(x, editor.project.levels[0].cell_size)
         grid_z := terrain.snap_to_grid(z, editor.project.levels[0].cell_size)
         result.kind = .Grid
-        result.position = {grid_x, terrain.sample_height(&editor.project, 0, grid_x, grid_z), grid_z}
+        result.position = {grid_x, terrain.sample_surface_height(&editor.project, 0, grid_x, grid_z), grid_z}
     }
     return result
 }
@@ -331,7 +331,7 @@ road_add_node :: proc(editor: ^Editor, x, z: f32) -> int {
     if editor == nil do return -1
     snapped_x := structure_editor_snap(x, editor)
     snapped_z := structure_editor_snap(z, editor)
-    y := terrain.sample_height(&editor.project, 0, snapped_x, snapped_z)
+    y := terrain.sample_surface_height(&editor.project, 0, snapped_x, snapped_z)
     return roads.add_node(
         &editor.project.road_graph,
         {snapped_x, y, snapped_z},
@@ -363,7 +363,7 @@ road_connect_graph :: proc(editor: ^Editor, graph: ^roads.Graph, from, to: int) 
     defer delete(heights)
     for z in 0 ..< height {
         for x in 0 ..< width {
-            heights[z * width + x] = terrain.sample_height(
+            heights[z * width + x] = terrain.sample_surface_height(
                 &editor.project,
                 0,
                 origin_x + f32(x) * config.cell_size,
@@ -404,7 +404,7 @@ road_connect_graph :: proc(editor: ^Editor, graph: ^roads.Graph, from, to: int) 
     chain_nodes[0], chain_points[0] = from, a
     chain_count := 1
     for point in bends[:bend_count] {
-        y := terrain.sample_height(&editor.project, 0, point.x, point.z)
+        y := terrain.sample_surface_height(&editor.project, 0, point.x, point.z)
         position := roads.Vec3{point.x, y, point.z}
         local_radius := min(editor.road_width * .55, config.cell_size * .18)
         node := roads.add_node(graph, position, max(local_radius, f32(.75)))

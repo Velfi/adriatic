@@ -11,7 +11,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     if target_arg == "west-town-review" || target_arg == "east-town-review" {
         island_sign := target_arg == "west-town-review" ? f32(-1) : f32(1)
         town_x, town_z := terrain.default_town_center_for_project(&editor.project, island_sign)
-        focus_y := terrain.sample_height(&editor.project, 0, town_x, town_z) + 4
+        focus_y := terrain.sample_surface_height(&editor.project, 0, town_x, town_z) + 4
         editor.capture_world_only = true
         editor.architecture_node_mode = true
         editor.editor_camera.distance = 190
@@ -124,7 +124,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
             // the complete three-fixture pedestrian cadence across the route.
             lamp_index := min(10, editor.architecture_city_plan.lamp_count - 1)
             lamp := editor.architecture_city_plan.lamps[lamp_index]
-            ground := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
+            ground := terrain.sample_surface_height(&editor.project, 0, lamp.x, lamp.z)
             focus := third_person.Vec3{lamp.x, ground + 1.8, lamp.z}
             eye := third_person.Vec3{lamp.x + 2.0, ground + 2.1, lamp.z + 23}
             editor.capture_world_only = true
@@ -150,8 +150,8 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
                 area := plan.areas[best_area_index]
                 wheel_x, wheel_z := world_town_mouse_wheel_position(area)
                 eye_x, eye_z := world_rotate_xz(wheel_x, wheel_z, 4.2, 4.2, area.rotation)
-                wheel_y := terrain.sample_height(&editor.project, 0, wheel_x, wheel_z)
-                eye_y := max(terrain.sample_height(&editor.project, 0, eye_x, eye_z), wheel_y) + 7
+                wheel_y := terrain.sample_surface_height(&editor.project, 0, wheel_x, wheel_z)
+                eye_y := max(terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z), wheel_y) + 7
                 editor.capture_world_only = true
                 editor.architecture_node_mode = true
                 editor.editor_focus = {wheel_x, wheel_y + .35, wheel_z}
@@ -219,8 +219,8 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
                         }
                     }
                 }
-                eye_y := terrain.sample_height(&editor.project, 0, best_eye_x, best_eye_z) + 1.78
-                focus_y := terrain.sample_height(&editor.project, 0, best_focus_x, best_focus_z) + 2.15
+                eye_y := terrain.sample_surface_height(&editor.project, 0, best_eye_x, best_eye_z) + 1.78
+                focus_y := terrain.sample_surface_height(&editor.project, 0, best_focus_x, best_focus_z) + 2.15
                 editor.capture_world_only = true
                 editor.architecture_node_mode = true
                 editor.editor_camera.distance = 8
@@ -250,12 +250,12 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
             road_span := max(max_x - min_x + 36, 160)
             tree_x := center_x + road_span * .42
             tree_z := center_z + (max_z - min_z) * .5 + 7
-            tree_y := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
+            tree_y := terrain.sample_surface_height(&editor.project, 0, tree_x, tree_z)
             // The cypress is taller than a façade, so pull the verification
             // camera back and aim through its middle instead of clipping the
             // crown from an eye-level close-up.
             eye_x, eye_z := tree_x - 30, tree_z - 30
-            eye_y := terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 4.0
+            eye_y := terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z) + 4.0
             editor.capture_world_only = true
             editor.architecture_node_mode = true
             editor.editor_camera.distance = 36
@@ -518,7 +518,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
             sample_distance := facade_distance + (camera_distance - facade_distance) * f32(sample) / 12
             sample_x := building.center_x + facade_x * sample_distance
             sample_z := building.center_z + facade_z * sample_distance
-            sample_ground := terrain.sample_height(&editor.project, 0, sample_x, sample_z)
+            sample_ground := terrain.sample_surface_height(&editor.project, 0, sample_x, sample_z)
             if sample_ground <= editor.project.sea_level + .35 {
                 dry_approach = false
                 break
@@ -536,7 +536,7 @@ configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = 
     eye_x += facade_z * side_offset
     eye_z -= facade_x * side_offset
     eye_y :=
-        terrain.sample_height(&editor.project, 0, eye_x, eye_z) +
+        terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z) +
         (roof_capture ? building.height + max(f32(10), building.width * .55) : storefront_plan_seed_override >= 0 ? f32(6.2) : f32(3.2))
     target_y :=
         roof_capture ? building.base_y + building.height + building.width * .14 : storefront_plan_seed_override >= 0 ? building.base_y + building.height * .34 : ground_level_capture ? building.base_y + 2.4 : building.base_y + clamp(building.height * .50, f32(7), f32(18))

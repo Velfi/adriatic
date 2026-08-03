@@ -330,11 +330,11 @@ settlement_plan_generate_buildings :: proc(
                 row := layout_index / columns
                 sample := f32(7)
                 gradient_x :=
-                    terrain.sample_height(project, 0, district.center[0] + sample, district.center[1]) -
-                    terrain.sample_height(project, 0, district.center[0] - sample, district.center[1])
+                    terrain.sample_surface_height(project, 0, district.center[0] + sample, district.center[1]) -
+                    terrain.sample_surface_height(project, 0, district.center[0] - sample, district.center[1])
                 gradient_z :=
-                    terrain.sample_height(project, 0, district.center[0], district.center[1] + sample) -
-                    terrain.sample_height(project, 0, district.center[0], district.center[1] - sample)
+                    terrain.sample_surface_height(project, 0, district.center[0], district.center[1] + sample) -
+                    terrain.sample_surface_height(project, 0, district.center[0], district.center[1] - sample)
                 gradient_length := linalg.length([2]f32{gradient_x, gradient_z})
                 tangent := [2]f32{1, 0}
                 if route_found && (settlement.request.region == .Adriatic || settlement.request.scale == .Village) {
@@ -371,8 +371,8 @@ settlement_plan_generate_buildings :: proc(
                         route_origin[0] - route_normal[0] * court_offset * side_sign,
                         route_origin[1] - route_normal[1] * court_offset * side_sign,
                     }
-                    first_height := terrain.sample_height(project, 0, first_center[0], first_center[1])
-                    opposite_height := terrain.sample_height(project, 0, opposite_center[0], opposite_center[1])
+                    first_height := terrain.sample_surface_height(project, 0, first_center[0], first_center[1])
+                    opposite_height := terrain.sample_surface_height(project, 0, opposite_center[0], opposite_center[1])
                     if first_height <= project.sea_level + .6 || opposite_height > first_height + 1 {
                         side_sign = -side_sign
                     }

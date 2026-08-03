@@ -552,6 +552,16 @@ wind_streak_hash :: proc(index, salt: int) -> f32 {
 }
 
 @(no_instrumentation)
+wind_streak_cycle :: proc(time, wind_speed, speed_variation, phase_seed, gust_seed: f32) -> f32 {
+    gust_phase := time * .72 + gust_seed * math.PI * 2
+    // The gust derivative must stay below the slowest base phase derivative
+    // (wind_speed 1, speed_variation .72). Otherwise a visible streak can
+    // travel backward briefly and produce a wagon-wheel effect.
+    gust_offset := f32(math.sin(f64(gust_phase * .61))) * .04
+    return time * wind_speed * .035 * speed_variation + phase_seed + gust_offset
+}
+
+@(no_instrumentation)
 wind_streak_camera_distance :: proc(camera, start, finish: third_person.Vec3) -> f32 {
     segment := finish - start
     length_squared := linalg.dot(segment, segment)
@@ -577,4 +587,14 @@ wind_streak_camera_distance_uses_whole_segment :: proc(t: ^testing.T) {
     testing.expect(t, wind_streak_camera_distance(camera, {0, 4, 0}, {0, 4, 0}) == 4)
     testing.expect(t, math.abs(wind_streak_perspective_length(8, 10) - 1.4) < .0001)
     testing.expect(t, wind_streak_perspective_length(4, 100) == 4)
+}
+
+@(test)
+wind_streak_cycle_remains_forward_at_minimum_speed :: proc(t: ^testing.T) {
+    previous := wind_streak_cycle(0, 1, .72, .37, .83)
+    for sample in 1 ..= 2000 {
+        current := wind_streak_cycle(f32(sample) * .01, 1, .72, .37, .83)
+        testing.expect(t, current >= previous)
+        previous = current
+    }
 }

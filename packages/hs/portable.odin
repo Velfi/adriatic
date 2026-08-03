@@ -171,18 +171,19 @@ portable_error_dispose :: proc(error: ^Portable_Error) {
     error.path_allocator = {}
 }
 
-portable_path_field :: proc(path, name: string, alloc: mem.Allocator) -> (result: string, ok: bool) {
-    if len(name) >= max(int) || len(path) > max(int) - len(name) - 1 do return "", false
-    bytes, allocation_error := make([]byte, len(path) + len(name) + 1, alloc)
-    if allocation_error != nil do return "", false
-    copy(bytes, transmute([]byte)path)
-    bytes[len(path)] = '.'
-    copy(bytes[len(path) + 1:], transmute([]byte)name)
-    return string(bytes), true
+portable_path_field_push :: proc(path: ^[dynamic]byte, name: string) -> (checkpoint: int, result: string, ok: bool) {
+    checkpoint = len(path^)
+    if len(name) >= max(int) || checkpoint > max(int) - len(name) - 1 do return checkpoint, "", false
+    if _, allocation_error := append(path, '.'); allocation_error != nil do return checkpoint, "", false
+    if _, allocation_error := append(path, ..transmute([]byte)name); allocation_error != nil {
+        resize(path, checkpoint)
+        return checkpoint, "", false
+    }
+    return checkpoint, string(path^[:]), true
 }
 
-portable_path_dispose :: proc(path: string, alloc: mem.Allocator) {
-    if strings.contains(path, "$.") do delete(path, alloc)
+portable_path_field_pop :: proc(path: ^[dynamic]byte, checkpoint: int) {
+    resize(path, checkpoint)
 }
 
 portable_writer_can_append :: proc(w: ^Portable_Writer, count: int) -> bool {
@@ -394,6 +395,7 @@ Portable_Discovery :: struct {
     config:      Portable_Config,
     alloc:       mem.Allocator,
     flat_paths:  bool,
+    path:        [dynamic]byte,
     error:       Portable_Error,
 }
 
@@ -406,7 +408,9 @@ portable_discovery_error :: proc(ctx: ^Portable_Discovery, kind: Portable_Error_
     }
 }
 
-portable_discover_type :: proc(ctx: ^Portable_Discovery, id: typeid, path: string, depth: int) -> u32 {
+portable_discover_type :: proc(ctx: ^Portable_Discovery, id: typeid, input_path: string, depth: int) -> u32 {
+    path := input_path
+    if !ctx.flat_paths do path = string(ctx.path[:])
     if ctx.error.kind != .None do return 0
     if depth > ctx.config.limits.max_recursion_depth {
         portable_discovery_error(ctx, .Limit_Exceeded, path, "maximum recursion depth exceeded")
@@ -495,37 +499,40 @@ portable_discover_type :: proc(ctx: ^Portable_Discovery, id: typeid, path: strin
         ctx.types[index].kind = .Struct
         fields := reflect.struct_fields_zipped(id)
         for field, _ in fields {
+            current_path := path
+            if !ctx.flat_paths do current_path = string(ctx.path[:])
             if portable_field_excluded(field, ctx.config) do continue
             if len(field.name) > ctx.config.limits.max_string_bytes {
-                portable_discovery_error(ctx, .Limit_Exceeded, path, "field name exceeds string limit")
+                portable_discovery_error(ctx, .Limit_Exceeded, current_path, "field name exceeds string limit")
                 return 0
             }
             ctx.fields_seen += 1
             if ctx.fields_seen > ctx.config.limits.max_fields {
-                portable_discovery_error(ctx, .Limit_Exceeded, path, "maximum field count exceeded")
+                portable_discovery_error(ctx, .Limit_Exceeded, current_path, "maximum field count exceeded")
                 return 0
             }
-            field_path := path
+            field_path := current_path
+            checkpoint: int
             if !ctx.flat_paths {
                 path_ok: bool
-                field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                checkpoint, field_path, path_ok = portable_path_field_push(&ctx.path, field.name)
                 if !path_ok {
-                    portable_discovery_error(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                    portable_discovery_error(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
                     return 0
                 }
             }
             field_handle := portable_discover_type(ctx, field.type.id, field_path, depth + 1)
             if field_handle == 0 {
-                if !ctx.flat_paths do portable_path_dispose(field_path, ctx.alloc)
+                if !ctx.flat_paths do portable_path_field_pop(&ctx.path, checkpoint)
                 return 0
             }
             _, field_error := append(&ctx.types[index].fields, Portable_Field{name = field.name, type = field_handle})
             if field_error != nil {
-                portable_discovery_error(ctx, .Limit_Exceeded, field_path, "field metadata allocation failed")
-                if !ctx.flat_paths do portable_path_dispose(field_path, ctx.alloc)
+                portable_discovery_error(ctx, .Limit_Exceeded, string(ctx.path[:]), "field metadata allocation failed")
+                if !ctx.flat_paths do portable_path_field_pop(&ctx.path, checkpoint)
                 return 0
             }
-            if !ctx.flat_paths do portable_path_dispose(field_path, ctx.alloc)
+            if !ctx.flat_paths do portable_path_field_pop(&ctx.path, checkpoint)
         }
     case rt.Type_Info_Enum:
         base := portable_discover_type(ctx, value.base.id, path, depth + 1)
@@ -562,9 +569,11 @@ portable_encode_value :: proc(
     w: ^Portable_Writer,
     value: any,
     handle: u32,
-    path: string,
+    input_path: string,
     depth: int,
 ) -> bool {
+    path := string(ctx.path[:])
+    if len(ctx.path) == 0 do path = input_path
     if ctx.error.kind != .None do return false
     if depth > ctx.config.limits.max_recursion_depth {
         portable_discovery_error(ctx, .Limit_Exceeded, path, "maximum recursion depth exceeded")
@@ -750,13 +759,13 @@ portable_encode_value :: proc(
                 data = rawptr(uintptr(value.data) + field.offset),
                 id   = field.type.id,
             }
-            field_path, path_ok := portable_path_field(path, field.name, ctx.alloc)
+            checkpoint, field_path, path_ok := portable_path_field_push(&ctx.path, field.name)
             if !path_ok {
-                portable_discovery_error(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                portable_discovery_error(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
                 return false
             }
             field_ok := portable_encode_value(ctx, w, field_value, saved_field.type, field_path, depth + 1)
-            portable_path_dispose(field_path, ctx.alloc)
+            portable_path_field_pop(&ctx.path, checkpoint)
             if !field_ok do return false
             field_index += 1
         }
@@ -837,6 +846,15 @@ portable_encode :: proc(
     discovery := Portable_Discovery {
         config = config,
         alloc  = alloc,
+    }
+    path_storage, path_error := make([dynamic]byte, 0, 64, alloc)
+    if path_error != nil {
+        return nil, portable_error(.Limit_Exceeded, 0, "$", "field path allocation failed"), false
+    }
+    discovery.path = path_storage
+    defer delete(discovery.path)
+    if _, path_error = append(&discovery.path, '$'); path_error != nil {
+        return nil, portable_error(.Limit_Exceeded, 0, "$", "field path allocation failed"), false
     }
     types, types_error := make([dynamic]Portable_Type, alloc)
     if types_error != nil {
@@ -1498,6 +1516,7 @@ Portable_Decoder :: struct {
     reader: Portable_Reader,
     config: Portable_Config,
     alloc:  mem.Allocator,
+    path:   [dynamic]byte,
 }
 
 portable_decoder_fail :: proc(ctx: ^Portable_Decoder, kind: Portable_Error_Kind, path, message: string) {
@@ -1541,7 +1560,9 @@ portable_dynamic_destination_init :: proc(
     return true
 }
 
-portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, path: string, depth: int) {
+portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, input_path: string, depth: int) {
+    path := string(ctx.path[:])
+    if len(ctx.path) == 0 do path = input_path
     if ctx.reader.error.kind != .None do return
     if depth > ctx.config.limits.max_recursion_depth {
         portable_decoder_fail(ctx, .Limit_Exceeded, path, "maximum recursion depth exceeded")
@@ -1577,13 +1598,13 @@ portable_skip_value :: proc(ctx: ^Portable_Decoder, handle: u32, path: string, d
         }
     case .Struct:
         for field in type.fields {
-            field_path, path_ok := portable_path_field(path, field.name, ctx.alloc)
+            checkpoint, field_path, path_ok := portable_path_field_push(&ctx.path, field.name)
             if !path_ok {
-                portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                portable_decoder_fail(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
                 return
             }
             portable_skip_value(ctx, field.type, field_path, depth + 1)
-            portable_path_dispose(field_path, ctx.alloc)
+            portable_path_field_pop(&ctx.path, checkpoint)
             if ctx.reader.error.kind != .None do return
         }
     case .Enum:
@@ -1651,9 +1672,11 @@ portable_decode_value :: proc(
     handle: u32,
     destination: any,
     current_id: typeid,
-    path: string,
+    input_path: string,
     depth: int,
 ) {
+    path := string(ctx.path[:])
+    if len(ctx.path) == 0 do path = input_path
     if ctx.reader.error.kind != .None do return
     if depth > ctx.config.limits.max_recursion_depth {
         portable_decoder_fail(ctx, .Limit_Exceeded, path, "maximum recursion depth exceeded")
@@ -1900,19 +1923,22 @@ portable_decode_value :: proc(
             return
         }
         for field in saved.fields {
+            current_path := path
+            if !ctx.config.exact_schema do current_path = string(ctx.path[:])
             current_field, found := portable_find_current_field(current_id, field.name, ctx.config)
             if !found {
-                field_path := path
+                field_path := current_path
+                checkpoint: int
                 if !ctx.config.exact_schema {
                     path_ok: bool
-                    field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                    checkpoint, field_path, path_ok = portable_path_field_push(&ctx.path, field.name)
                     if !path_ok {
-                        portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                        portable_decoder_fail(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
                         return
                     }
                 }
                 portable_skip_value(ctx, field.type, field_path, depth + 1)
-                if !ctx.config.exact_schema do portable_path_dispose(field_path, ctx.alloc)
+                if !ctx.config.exact_schema do portable_path_field_pop(&ctx.path, checkpoint)
                 if ctx.reader.error.kind != .None do return
                 continue
             }
@@ -1920,17 +1946,18 @@ portable_decode_value :: proc(
                 data = rawptr(uintptr(destination.data) + current_field.offset),
                 id   = current_field.type.id,
             }
-            field_path := path
+            field_path := current_path
+            checkpoint: int
             if !ctx.config.exact_schema {
                 path_ok: bool
-                field_path, path_ok = portable_path_field(path, field.name, ctx.alloc)
+                checkpoint, field_path, path_ok = portable_path_field_push(&ctx.path, field.name)
                 if !path_ok {
-                    portable_decoder_fail(ctx, .Limit_Exceeded, path, "field path allocation failed")
+                    portable_decoder_fail(ctx, .Limit_Exceeded, string(ctx.path[:]), "field path allocation failed")
                     return
                 }
             }
             portable_decode_value(ctx, field.type, destination_field, current_field.type.id, field_path, depth + 1)
-            if !ctx.config.exact_schema do portable_path_dispose(field_path, ctx.alloc)
+            if !ctx.config.exact_schema do portable_path_field_pop(&ctx.path, checkpoint)
             if ctx.reader.error.kind != .None do return
         }
     case .Enum:
@@ -2135,6 +2162,15 @@ portable_decode :: proc(
         reader = Portable_Reader{data = data[body_start:body_start + body_bytes], alloc = alloc},
         config = config,
         alloc = alloc,
+    }
+    decoder_path, decoder_path_error := make([dynamic]byte, 0, 64, alloc)
+    if decoder_path_error != nil {
+        return portable_error(.Limit_Exceeded, body_start, "$", "field path allocation failed"), false
+    }
+    decoder.path = decoder_path
+    defer delete(decoder.path)
+    if _, decoder_path_error = append(&decoder.path, '$'); decoder_path_error != nil {
+        return portable_error(.Limit_Exceeded, body_start, "$", "field path allocation failed"), false
     }
     portable_decode_value(&decoder, u32(root), destination, destination.id, "$", 0)
     if decoder.reader.error.kind != .None do return decoder.reader.error, false

@@ -61,7 +61,7 @@ settlement_growth_route_grade :: proc(project: ^terrain.Project, route: Settleme
         distance := linalg.length(b - a)
         if distance <= .01 do continue
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
             distance
         maximum = max(maximum, grade)
     }
@@ -217,7 +217,7 @@ settlement_village_external_anchor :: proc(
 ) {
     if plan == nil || project == nil || root < 0 || root >= plan.neighborhood_count do return
     root_point := plan.neighborhoods[root].center
-    root_height := terrain.sample_height(project, 0, root_point[0], root_point[1])
+    root_height := terrain.sample_surface_height(project, 0, root_point[0], root_point[1])
     fabric_center: [2]f32
     for neighborhood in plan.neighborhoods[:plan.neighborhood_count] {
         fabric_center += neighborhood.center
@@ -236,7 +236,7 @@ settlement_village_external_anchor :: proc(
             angle := f32(sample) * f32(math.TAU / 32)
             direction := [2]f32{f32(math.cos(f64(angle))), f32(math.sin(f64(angle)))}
             candidate := root_point + direction * distance
-            height := terrain.sample_height(project, 0, candidate[0], candidate[1])
+            height := terrain.sample_surface_height(project, 0, candidate[0], candidate[1])
             if height <= project.sea_level + .6 do continue
             alignment := linalg.dot(direction, outward)
             score: f32

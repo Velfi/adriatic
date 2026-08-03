@@ -287,7 +287,8 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
         }
     }
     for airport, airport_index in airport_positions {
-        ground := terrain.sample_height(&editor.project, 0, airport.x, airport.z)
+        ground, _, land_found := terrain.sample_land(&editor.project, 0, airport.x, airport.z)
+        if !land_found do continue
         rotation := airport_rotations[airport_index]
         collider_index := 0
 
@@ -632,6 +633,21 @@ gameplay_physics_resolve_player :: proc(editor: ^Editor, delta_seconds: f32) -> 
     editor.player.velocity = state.velocity
     editor.player.ground_normal = state.ground_normal
     editor.player.grounded = state.ground_state == .On_Ground || state.ground_state == .On_Steep_Ground
+    if terrain.sample_surface(&editor.project, 0, editor.player.position.x, editor.player.position.z) != .Land {
+        water := terrain.sample_water_interface(&editor.project, editor.player.position.x, editor.player.position.z)
+        if editor.player.position.y < water.water_level {
+            editor.player.position.y = water.water_level
+            editor.player.velocity.y = max(editor.player.velocity.y, f32(0))
+            physics.set_character_position(
+                editor.gameplay_physics.player,
+                {
+                    editor.player.position.x,
+                    editor.player.position.y + GAMEPLAY_PLAYER_HALF_HEIGHT + GAMEPLAY_PLAYER_RADIUS,
+                    editor.player.position.z,
+                },
+            )
+        }
+    }
     editor.gameplay_physics.player_position = editor.player.position
     editor.gameplay_physics.player_position_valid = true
     return true

@@ -36,7 +36,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             editor.road_preview_control_from = {
                 world_x,
-                terrain.sample_height(&editor.project, 0, world_x, world_z) + .08,
+                terrain.sample_surface_height(&editor.project, 0, world_x, world_z) + .08,
                 world_z,
             }
         }
@@ -50,7 +50,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             editor.road_preview_control_to = {
                 world_x,
-                terrain.sample_height(&editor.project, 0, world_x, world_z) + .08,
+                terrain.sample_surface_height(&editor.project, 0, world_x, world_z) + .08,
                 world_z,
             }
             road_preview_rebuild(editor, editor.road_preview_snap)
@@ -72,19 +72,19 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
                 }
                 node.position.x = snapped_x
                 node.position.z = snapped_z
-                node.position.y = terrain.sample_height(&editor.project, 0, snapped_x, snapped_z)
+                node.position.y = terrain.sample_surface_height(&editor.project, 0, snapped_x, snapped_z)
                 for &edge in graph.edges[:graph.edge_count] {
                     if edge.from == editor.road_drag_node {
                         edge.control_from.x += dx
                         edge.control_from.z += dz
                         edge.control_from.y =
-                            terrain.sample_height(&editor.project, 0, edge.control_from.x, edge.control_from.z) + .08
+                            terrain.sample_surface_height(&editor.project, 0, edge.control_from.x, edge.control_from.z) + .08
                     }
                     if edge.to == editor.road_drag_node {
                         edge.control_to.x += dx
                         edge.control_to.z += dz
                         edge.control_to.y =
-                            terrain.sample_height(&editor.project, 0, edge.control_to.x, edge.control_to.z) + .08
+                            terrain.sample_surface_height(&editor.project, 0, edge.control_to.x, edge.control_to.z) + .08
                     }
                 }
                 editor.project.revision += 1
@@ -116,7 +116,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             snapped_z := structure_editor_snap(world_z, editor)
             point := roads.Vec3 {
                 snapped_x,
-                terrain.sample_height(&editor.project, 0, snapped_x, snapped_z) + .08,
+                terrain.sample_surface_height(&editor.project, 0, snapped_x, snapped_z) + .08,
                 snapped_z,
             }
             changed := false
@@ -473,7 +473,7 @@ seed_terrain_grip_benchmark :: proc(editor: ^Editor) {
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     center := half_extent * terrain.DEFAULT_ISLAND_OFFSET
     editor.car.position = {center + half_extent * terrain.DEFAULT_ISLAND_RADIUS, 0, center}
-    editor.car.position.y = terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+    editor.car.position.y = terrain.sample_surface_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
     editor.car.yaw_radians = math.PI * .5
     car_physics_teleport(editor)
     editor.pilot.position = editor.car.position
@@ -490,7 +490,7 @@ seed_player_benchmark :: proc(editor: ^Editor) {
     position := runway_spawn_position(editor)
     position.x += 24
     position.z += 20
-    position.y = terrain.sample_height(&editor.project, 0, position.x, position.z)
+    position.y = terrain.sample_surface_height(&editor.project, 0, position.x, position.z)
     player_place(editor, position, .Scene_Setup)
     editor.postale_visible = false
     editor.libellula_visible = false
@@ -541,7 +541,7 @@ seed_zora_benchmark :: proc(editor: ^Editor) {
     editor.libellula_visible = false
     player_position := third_person.Vec3 {
         position.x + 1.6,
-        terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+        terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
         position.z,
     }
     player_facing := math.atan2(player_position.x - position.x, player_position.z - position.z)
@@ -565,7 +565,7 @@ seed_marta_benchmark :: proc(editor: ^Editor) {
     attendant := airport_service_position(editor.attendant_position)
     player_place(
         editor,
-        {attendant.x + 20, terrain.sample_height(&editor.project, 0, attendant.x + 20, attendant.z), attendant.z},
+        {attendant.x + 20, terrain.sample_surface_height(&editor.project, 0, attendant.x + 20, attendant.z), attendant.z},
         .Scene_Setup,
     )
     editor.in_map = true

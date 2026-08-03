@@ -576,7 +576,7 @@ world_structure_preview_cluster :: proc(editor: ^Editor) {
         copy.width = max(cell, copy.width * (.58 + f32(cluster_index % 2) * .12))
         copy.depth = max(cell, copy.depth * (.58 + f32((cluster_index + 1) % 2) * .12))
         copy.height = max(cell, copy.height * (.72 + f32(cluster_index) * .06))
-        copy.base_y = terrain.sample_height(&editor.project, 0, copy.center_x, copy.center_z)
+        copy.base_y = terrain.sample_surface_height(&editor.project, 0, copy.center_x, copy.center_z)
         copy.seed = u32(editor.project.next_structure_id + u64(cluster_index + 1)) * 747796405
         if editor.authoring_tool == .Foliage {
             copy.kind = .Foliage
@@ -601,12 +601,12 @@ world_curve_preview :: proc(editor: ^Editor) {
             // high side legible without previewing obsolete cliff geometry.
             left_x, left_z := -dz / length, dx / length
             marker_width := min(editor.curve_width * .35, editor.project.levels[0].cell_size * 2)
-            a_y := terrain.sample_height(&editor.project, 0, start.x, start.z) + .10
-            b_y := terrain.sample_height(&editor.project, 0, end.x, end.z) + .10
+            a_y := terrain.sample_surface_height(&editor.project, 0, start.x, start.z) + .10
+            b_y := terrain.sample_surface_height(&editor.project, 0, end.x, end.z) + .10
             c_x, c_z := end.x + left_x * marker_width, end.z + left_z * marker_width
             d_x, d_z := start.x + left_x * marker_width, start.z + left_z * marker_width
-            c_y := terrain.sample_height(&editor.project, 0, c_x, c_z) + .10
-            d_y := terrain.sample_height(&editor.project, 0, d_x, d_z) + .10
+            c_y := terrain.sample_surface_height(&editor.project, 0, c_x, c_z) + .10
+            d_y := terrain.sample_surface_height(&editor.project, 0, d_x, d_z) + .10
             world_quad(
                 {start.x, a_y, start.z},
                 {end.x, b_y, end.z},

@@ -109,12 +109,13 @@ map_artifact_capture_fixture :: proc(
     artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
     artifact.seeds = seeds
     artifact.project = fixture.project
+    artifact.river_water_splines = fixture.project.river_water_splines
     artifact.project.structures = nil
-    artifact.project.terrain_pages = fixture.project.terrain_pages
-    artifact.project.terrain_level_layout = fixture.project.terrain_level_layout
-    artifact.project.bathymetry_chunks = fixture.project.bathymetry_chunks
-    fixture.project.terrain_pages = nil
-    fixture.project.bathymetry_chunks = nil
+    artifact.project.terrain_pages = nil
+    artifact.project.bathymetry_chunks = nil
+    artifact.project.terrain_page_lookup = nil
+    artifact.project.bathymetry_chunk_lookup = nil
+    terrain.island_transforms_initialize(&artifact.project)
     if fixture.project.structure_count > 0 {
         structures, allocation_error := make([dynamic]terrain.Structure, fixture.project.structure_count, alloc)
         if allocation_error != nil {
@@ -123,6 +124,47 @@ map_artifact_capture_fixture :: proc(
         }
         copy(structures[:], fixture.project.structures[:fixture.project.structure_count])
         artifact.project.structures = structures
+    }
+    if len(fixture.project.terrain_pages) > 0 {
+        pages, allocation_error := make([dynamic]terrain.Terrain_Page, len(fixture.project.terrain_pages), alloc)
+        if allocation_error != nil {
+            map_artifact_destroy(artifact, alloc)
+            return nil, map_artifact_allocation_error(), false
+        }
+        copy(pages[:], fixture.project.terrain_pages[:])
+        artifact.project.terrain_pages = pages
+    }
+    if len(fixture.project.bathymetry_chunks) > 0 {
+        chunks, allocation_error := make([dynamic]terrain.Bathymetry_Chunk, len(fixture.project.bathymetry_chunks), alloc)
+        if allocation_error != nil {
+            map_artifact_destroy(artifact, alloc)
+            return nil, map_artifact_allocation_error(), false
+        }
+        artifact.project.bathymetry_chunks = chunks
+        for &source, index in fixture.project.bathymetry_chunks {
+            target := &artifact.project.bathymetry_chunks[index]
+            target^ = source
+            target.heights = nil
+            target.material = nil
+            if len(source.heights) > 0 {
+                heights, heights_error := make([dynamic]f16, len(source.heights), alloc)
+                if heights_error != nil {
+                    map_artifact_destroy(artifact, alloc)
+                    return nil, map_artifact_allocation_error(), false
+                }
+                copy(heights[:], source.heights[:])
+                target.heights = heights
+            }
+            if len(source.material) > 0 {
+                material, material_error := make([dynamic]i8, len(source.material), alloc)
+                if material_error != nil {
+                    map_artifact_destroy(artifact, alloc)
+                    return nil, map_artifact_allocation_error(), false
+                }
+                copy(material[:], source.material[:])
+                target.material = material
+            }
+        }
     }
     artifact.settlement_plan = fixture.settlement_plan
     artifact.marina_authored = fixture.marina_authored
@@ -158,6 +200,7 @@ map_artifact_capture :: proc(
 
 map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -> (Map_Artifact_Error, bool) {
     if fixture == nil || artifact == nil do return {kind = .Invalid_Argument}, false
+    terrain.island_transforms_initialize(&artifact.project)
     if message, valid := map_artifact_valid(artifact); !valid {
         return {kind = .Invalid_State, message = message}, false
     }
@@ -166,7 +209,16 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
     artifact.project.structures = nil
     artifact.project.terrain_pages = nil
     artifact.project.bathymetry_chunks = nil
-    terrain.rebuild_default_river_water_splines(&fixture.project, artifact.seeds)
+    artifact.project.terrain_page_lookup = nil
+    artifact.project.bathymetry_chunk_lookup = nil
+    terrain.terrain_sampling_lookup_rebuild(&fixture.project)
+    fixture.project.river_water_splines = artifact.river_water_splines
+    if fixture.project.river_water_splines[0].point_count == 0 ||
+       fixture.project.river_water_splines[1].point_count == 0 {
+        // Older artifacts excluded this derived state. Regenerate only while
+        // loading those legacy maps; current baked maps restore it directly.
+        terrain.rebuild_default_river_water_splines(&fixture.project, artifact.seeds)
+    }
     fixture.settlement_plan = artifact.settlement_plan
     fixture.marina_authored = artifact.marina_authored
     fixture.marina_authored_plan = artifact.marina_authored_plan
@@ -188,9 +240,10 @@ map_artifact_apply_fixture :: proc(fixture: ^Fixture, artifact: ^Map_Artifact) -
 }
 
 fixture_map_sidecar_valid :: proc(sidecar: Fixture_Map_Sidecar) -> bool {
+    legacy := map_artifact_version_is_legacy(sidecar.format_version, sidecar.generator_version)
     if sidecar.container_version != MAP_ARTIFACT_CONTAINER_VERSION ||
-       sidecar.format_version != MAP_ARTIFACT_FORMAT_VERSION ||
-       sidecar.generator_version != MAP_ARTIFACT_GENERATOR_VERSION {
+       (sidecar.format_version != MAP_ARTIFACT_FORMAT_VERSION && !legacy) ||
+       (sidecar.generator_version != MAP_ARTIFACT_GENERATOR_VERSION && !legacy) {
         return false
     }
     if !fixture_map_sidecar_canonical_basename(sidecar) do return false
@@ -260,7 +313,10 @@ fixture_map_source_apply_bytes :: proc(
     fixture: ^Fixture,
     encoded_adrmap: []byte,
     alloc := context.allocator,
-) -> (Map_Artifact_Error, bool) {
+) -> (
+    Map_Artifact_Error,
+    bool,
+) {
     if fixture == nil || alloc.procedure == nil do return {kind = .Invalid_Argument}, false
     artifact, decode_error, decoded := map_artifact_decode(encoded_adrmap, alloc)
     if !decoded do return decode_error, false
@@ -284,7 +340,10 @@ fixture_map_source_apply_sidecar :: proc(
     fixture: ^Fixture,
     encoded_adrmap: []byte,
     alloc := context.allocator,
-) -> (Map_Artifact_Error, bool) {
+) -> (
+    Map_Artifact_Error,
+    bool,
+) {
     if fixture == nil || alloc.procedure == nil do return {kind = .Invalid_Argument}, false
     source := fixture.map_source
     if !fixture_map_source_valid(source) || source.kind != .Sidecar {

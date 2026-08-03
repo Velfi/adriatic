@@ -95,7 +95,7 @@ world_settlement_town_civic_forecourts :: proc(editor: ^Editor, plan: ^architect
             }
             low, high := f32(1e30), f32(-1e30)
             for corner in corners {
-                height := terrain.sample_height(&editor.project, 0, corner[0], corner[1])
+                height := terrain.sample_surface_height(&editor.project, 0, corner[0], corner[1])
                 low, high = min(low, height), max(high, height)
             }
             if high - low <= .38 {
@@ -119,7 +119,7 @@ world_architecture_lamps :: proc(editor: ^Editor, plan: ^architecture.City_Plan)
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     if editor == nil || plan == nil do return
     for lamp in plan.lamps[:plan.lamp_count] {
-        base_y := terrain.sample_height(&editor.project, 0, lamp.x, lamp.z)
+        base_y := terrain.sample_surface_height(&editor.project, 0, lamp.x, lamp.z)
         // Include the complete 6.1 m ground pool in the bound, not only the
         // post and lantern. Otherwise the soft edge can disappear while still
         // visibly inside the screen.

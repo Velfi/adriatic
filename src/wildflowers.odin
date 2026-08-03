@@ -44,7 +44,7 @@ wildflower_density_at :: proc(x, z: f32) -> f32 {
 wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
     if editor == nil do return false
     if settlement_access_point_on_alley_surface(&editor.architecture_city_plan, {x, z}) do return false
-    ground_height := terrain.sample_height(&editor.project, 0, x, z)
+    ground_height := terrain.sample_surface_height(&editor.project, 0, x, z)
     if terrain.ground_surface_at(&editor.project, 0, x, z) != .Grass do return false
     local_plan: circulation.Plan
     plan := prepared_plan
@@ -60,7 +60,7 @@ wildflowers_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^ci
 coastal_grass_renderable_at :: proc(editor: ^Editor, x, z: f32, prepared_plan: ^circulation.Plan = nil) -> bool {
     if editor == nil do return false
     if settlement_access_point_on_alley_surface(&editor.architecture_city_plan, {x, z}) do return false
-    ground_height := terrain.sample_height(&editor.project, 0, x, z)
+    ground_height := terrain.sample_surface_height(&editor.project, 0, x, z)
     material := terrain.sample_material(&editor.project, 0, x, z)
     // Marram colonizes partly stabilized sand before the substrate reads as
     // ordinary inland grass. The later deterministic density gate remains
@@ -133,7 +133,7 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
     disturbance := f32(0)
     if driving_aircraft(editor) {
         body := active_aircraft_body(editor)
-        ground := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
+        ground := terrain.sample_surface_height(&editor.project, 0, body.position.x, body.position.z)
         height := body.position.y - ground
         origin = {body.position.x, ground, body.position.z}
         motion = {body.velocity.x, body.velocity.y, body.velocity.z}
@@ -144,7 +144,7 @@ wildflower_effects_step :: proc(editor: ^Editor, dt: f32) {
         disturbance = clamp((speed - 4.5) / 5, 0, 1)
     }
     flower_density := wildflower_density_at(origin.x, origin.z)
-    ground_height := terrain.sample_height(&editor.project, 0, origin.x, origin.z)
+    ground_height := terrain.sample_surface_height(&editor.project, 0, origin.x, origin.z)
     circulation_plan := editor_circulation_plan(editor)
     if !wildflowers_renderable_at(editor, origin.x, origin.z, circulation_plan) {
         flower_density = 0

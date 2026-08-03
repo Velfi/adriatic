@@ -225,8 +225,8 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
                     step_cost = f32(1e30)
                     break
                 }
-                sample_height := grid.heights[sample_cell]
-                if sample_height <= grid.sea_level {
+                sample_surface_height := grid.heights[sample_cell]
+                if sample_surface_height <= grid.sea_level {
                     water_step_cost := config.water_cost * distance / f32(sample_count)
                     // Crossing along the bank costs up to twice as much as
                     // crossing its local normal. This keeps water expensive
@@ -236,7 +236,7 @@ plan :: proc(work: ^Workspace, grid: Grid, config: Config, start, finish: Point)
                 }
                 if sample < sample_count {
                     expected_height := current_height + rise * amount
-                    deviation_grade := math.abs(sample_height - expected_height) / config.cell_size
+                    deviation_grade := math.abs(sample_surface_height - expected_height) / config.cell_size
                     step_cost += deviation_grade * deviation_grade * config.steep_grade_cost * config.cell_size
                 }
             }

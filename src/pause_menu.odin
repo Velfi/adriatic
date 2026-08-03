@@ -2175,7 +2175,7 @@ world_map_unproject :: #force_inline proc(map_bounds: canvas2d.Rectangle, screen
 }
 
 world_map_ink :: #force_inline proc(editor: ^Editor, world_x, world_z: f32) -> canvas2d.Color {
-    height := terrain.sample_height(&editor.project, 0, world_x, world_z)
+    height := terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
     sea := editor.project.sea_level
     if height <= sea + .04 do return {31, 82, 101, 255}
     if height <= sea + .32 do return {197, 180, 119, 255}

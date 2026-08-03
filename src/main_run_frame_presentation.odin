@@ -242,7 +242,7 @@ run_frame_present :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_S
     tire_surface := particle_systems.Dust_Surface.Grass
     postale_wheels_on_land := false
     if driving_aircraft(editor) && editor.aircraft.active == .Postale && editor.postale.grounded {
-        terrain_height := terrain.sample_height(
+        terrain_height := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.postale.body.position.x,

@@ -490,7 +490,7 @@ settlement_plan_add_route :: proc(
         distance := linalg.length(b - a)
         if distance <= .01 do continue
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
             distance
         average_grade += grade
         maximum_grade = max(maximum_grade, grade)

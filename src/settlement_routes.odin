@@ -46,8 +46,8 @@ settlement_route_construction_cost :: proc(
     if project == nil || length <= .01 do return result
     tangent := delta / length
     normal := [2]f32{-tangent[1], tangent[0]}
-    a_height := terrain.sample_height(project, 0, a[0], a[1])
-    b_height := terrain.sample_height(project, 0, b[0], b[1])
+    a_height := terrain.sample_surface_height(project, 0, a[0], a[1])
+    b_height := terrain.sample_surface_height(project, 0, b[0], b[1])
     sample_spacing := half_width * .5
     // One representative section keeps the A* inner loop cheap. Its area is
     // extruded over the primitive length; the endpoint samples above define
@@ -58,7 +58,7 @@ settlement_route_construction_cost :: proc(
     for across_index in -2 ..= 2 {
         offset := f32(across_index) * sample_spacing
         point := center + normal * offset
-        ground := terrain.sample_height(project, 0, point[0], point[1])
+        ground := terrain.sample_surface_height(project, 0, point[0], point[1])
         difference := road_height - ground
         area := sample_spacing * length
         if difference > 0 {
@@ -521,7 +521,8 @@ settlement_route_crosses_sea :: proc(
         for sample_index in 0 ..= samples {
             amount := f32(sample_index) / f32(samples)
             point := a + delta * amount
-            if terrain.sample_height(project, 0, point.x, point.y) <= project.sea_level + clearance {
+            land_height, _, land_found := terrain.sample_land(project, 0, point.x, point.y)
+            if !land_found || land_height <= project.sea_level + clearance {
                 return true
             }
         }
@@ -707,8 +708,8 @@ settlement_route_find :: proc(
         config.steep_grade_cost = 150
     }
 
-    start_height := terrain.sample_height(project, 0, start_x, start_z)
-    finish_height := terrain.sample_height(project, 0, finish_x, finish_z)
+    start_height := terrain.sample_surface_height(project, 0, start_x, start_z)
+    finish_height := terrain.sample_surface_height(project, 0, finish_x, finish_z)
     required_length := math.abs(finish_height - start_height) / max(grade_limit, f32(.01))
     lateral_run := f32(0)
     if required_length > direct_length {
@@ -742,7 +743,7 @@ settlement_route_find :: proc(
         for x in 0 ..< width {
             world_x := origin_x + f32(x) * config.cell_size
             world_z := origin_z + f32(z) * config.cell_size
-            heights[z * width + x] = terrain.sample_height(project, 0, world_x, world_z)
+            heights[z * width + x] = terrain.sample_surface_height(project, 0, world_x, world_z)
             half_cell := config.cell_size * .5
             blocked[z * width + x] = settlement_route_segment_crosses_runway(
                 project,
@@ -789,7 +790,7 @@ settlement_route_find :: proc(
             distance := linalg.length(b - a)
             if distance <= .01 do continue
             rise := math.abs(
-                terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1]),
+                terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1]),
             )
             chord: Settlement_Route
             chord.points[0], chord.points[1], chord.count = a, b, 2
@@ -821,7 +822,7 @@ settlement_route_length_and_grade :: proc(
         a, b := route.points[index], route.points[index + 1]
         segment_length := linalg.length(b - a)
         if segment_length <= .01 do continue
-        rise := math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1]))
+        rise := math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1]))
         grade := rise / segment_length
         length += segment_length
         weighted_grade += grade * segment_length
@@ -1021,7 +1022,7 @@ settlement_route_commit :: proc(
     nodes: [SETTLEMENT_ROUTE_CAPACITY]int
     for index in 0 ..< route.count {
         point := route.points[index]
-        y := terrain.sample_height(project, 0, point[0], point[1])
+        y := terrain.sample_surface_height(project, 0, point[0], point[1])
         nodes[index] = -1
         closest_distance_squared := f32(.25 * .25)
         for existing_index in 0 ..< graph.node_count {
@@ -1061,8 +1062,8 @@ settlement_route_commit :: proc(
         handle_length := min(segment_length / 3, f32(4))
         c0 := roads.Vec3{a.x + incoming_tangent[0] * handle_length, 0, a.z + incoming_tangent[1] * handle_length}
         c1 := roads.Vec3{b.x - outgoing_tangent[0] * handle_length, 0, b.z - outgoing_tangent[1] * handle_length}
-        c0.y = terrain.sample_height(project, 0, c0.x, c0.z)
-        c1.y = terrain.sample_height(project, 0, c1.x, c1.z)
+        c0.y = terrain.sample_surface_height(project, 0, c0.x, c0.z)
+        c1.y = terrain.sample_surface_height(project, 0, c1.x, c1.z)
         // Settlement presets express paved width, while the road graph stores
         // half-width from centerline to edge.
         _ = roads.add_edge(

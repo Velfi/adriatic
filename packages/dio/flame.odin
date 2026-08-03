@@ -1753,7 +1753,10 @@ flame_graph_widget :: proc(
             }
         }
         if graph.export_message != "" {
-            im.TextDisabled("export %s: %s", "ok" if graph.export_ok else "failed", graph.export_message)
+            im.TextDisabled(
+                "%s",
+                fmt.ctprintf("export %s: %s", "ok" if graph.export_ok else "failed", graph.export_message),
+            )
         }
 
         width := max(im.GetContentRegionAvail()[0], f32(1))

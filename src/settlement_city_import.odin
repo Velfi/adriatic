@@ -37,8 +37,8 @@ settlement_landmark_anchor_index :: proc(plan: ^Settlement_Plan, project: ^terra
     }
     if ordinal == 1 {
         for neighborhood, index in plan.neighborhoods[:plan.neighborhood_count] {
-            if terrain.sample_height(project, 0, neighborhood.center[0], neighborhood.center[1]) <
-               terrain.sample_height(
+            if terrain.sample_surface_height(project, 0, neighborhood.center[0], neighborhood.center[1]) <
+               terrain.sample_surface_height(
                    project,
                    0,
                    plan.neighborhoods[best].center[0],
@@ -51,8 +51,8 @@ settlement_landmark_anchor_index :: proc(plan: ^Settlement_Plan, project: ^terra
     }
     if ordinal == 2 {
         for neighborhood, index in plan.neighborhoods[:plan.neighborhood_count] {
-            if terrain.sample_height(project, 0, neighborhood.center[0], neighborhood.center[1]) >
-               terrain.sample_height(
+            if terrain.sample_surface_height(project, 0, neighborhood.center[0], neighborhood.center[1]) >
+               terrain.sample_surface_height(
                    project,
                    0,
                    plan.neighborhoods[best].center[0],
@@ -97,10 +97,10 @@ settlement_access_curve_grade_metrics :: proc(
         curve := settlement_access_alley_curve(city_plan, alley_index)
         sample_count := settlement_access_curve_sample_count(curve)
         previous := curve.points[0]
-        previous_height := terrain.sample_height(project, 0, previous[0], previous[1])
+        previous_height := terrain.sample_surface_height(project, 0, previous[0], previous[1])
         for sample in 1 ..= sample_count {
             current := settlement_access_curve_point(curve, f32(sample) / f32(sample_count))
-            current_height := terrain.sample_height(project, 0, current[0], current[1])
+            current_height := terrain.sample_surface_height(project, 0, current[0], current[1])
             length := linalg.length(current - previous)
             if length > .01 {
                 grade := math.abs(current_height - previous_height) / length
@@ -183,7 +183,7 @@ settlement_plan_import_access_route :: proc(
         length := linalg.length(b - a)
         if length <= .01 do continue
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
             length
         total_length += length
         weighted_grade += grade * length
@@ -443,7 +443,7 @@ settlement_town_retaining_wall :: proc(
     for offset, edge_index in edge_offsets {
         if edge_index == int(structure.entrance_side) do continue
         point := center + offset
-        height := terrain.sample_height(project, 0, point[0], point[1])
+        height := terrain.sample_surface_height(project, 0, point[0], point[1])
         if height < lowest_height {
             lowest_edge, lowest_height = edge_index, height
         }
@@ -554,10 +554,10 @@ settlement_cut_fill_estimate :: proc(
 ) -> (
     target_height, cut_volume, fill_volume: f32,
 ) {
-    for sample_height in sample_heights do target_height += sample_height
+    for sample_surface_height in sample_heights do target_height += sample_surface_height
     target_height /= f32(len(sample_heights))
-    for sample_height in sample_heights {
-        delta := target_height - sample_height
+    for sample_surface_height in sample_heights {
+        delta := target_height - sample_surface_height
         if delta > 0 {
             fill_volume += delta * area / f32(len(sample_heights))
         } else {
@@ -585,7 +585,7 @@ settlement_plan_record_terrain_edit :: proc(
     }
     sample_heights: [5]f32
     for point, index in samples {
-        sample_heights[index] = terrain.sample_height(project, 0, point[0], point[1])
+        sample_heights[index] = terrain.sample_surface_height(project, 0, point[0], point[1])
     }
     area := max(half_x * 2, f32(1)) * max(half_z * 2, f32(1))
     height, cut_volume, fill_volume := settlement_cut_fill_estimate(sample_heights, area)

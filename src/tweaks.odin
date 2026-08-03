@@ -211,22 +211,22 @@ Presentation_Tweak :: struct {
 }
 
 Tweak_State :: struct {
-    terrain:          Terrain_Tweak,
-    atmosphere:       atmosphere.Atmosphere,
-    player:           third_person.Config,
-    player_animation: Player_Animation_Tweak,
-    player_tail:      mouse_tail.Config,
-    camera:           Camera_Tweak,
-    world:            World_Tweak,
-    particles:        Particle_Tweak,
-    car:              vehicles.Car_Drive_Tune,
-    car_vehicle:      Vehicle_Tweak,
-    postale_airframe: flight.Airframe,
-    postale_runtime:  flight.Runtime,
-    postale_tuning:   postale_game.Tuning,
-    postale_vehicle:  Vehicle_Tweak,
+    terrain:                        Terrain_Tweak,
+    atmosphere:                     atmosphere.Atmosphere,
+    player:                         third_person.Config,
+    player_animation:               Player_Animation_Tweak,
+    player_tail:                    mouse_tail.Config,
+    camera:                         Camera_Tweak,
+    world:                          World_Tweak,
+    particles:                      Particle_Tweak,
+    car:                            vehicles.Car_Drive_Tune,
+    car_vehicle:                    Vehicle_Tweak,
+    postale_airframe:               flight.Airframe,
+    postale_runtime:                flight.Runtime,
+    postale_tuning:                 postale_game.Tuning,
+    postale_vehicle:                Vehicle_Tweak,
     postale_transform_tester_gizmo: bool `fixture:"-"`,
-    presentation:     Presentation_Tweak,
+    presentation:                   Presentation_Tweak,
 }
 
 tweak_default_player :: proc() -> third_person.Config {
@@ -605,6 +605,38 @@ tweak_draw_terrain :: proc(editor: ^Editor) {
     im.EndDisabled()
     im.TextDisabled("History: %d undo / %d redo %s steps", undo_count, redo_count, history_kind)
     tweak_drag_f32("Sea level", &state.sea_level, -50, 50, .1)
+    if editor.island_selected != .World && tweak_section("Selected island") {
+        center_x, center_z, center_ok := terrain.island_center(&editor.project, editor.island_selected)
+        if center_ok {
+            center := [2]f32{center_x, center_z}
+            center_changed := im.InputFloat2("Center X / Z (m)", &center, "%.2f", {.EnterReturnsTrue})
+            if im.IsItemActivated() do structure_history_push_undo(editor)
+            if center_changed do _ = editor_island_set_center(editor, editor.island_selected, center[0], center[1])
+
+            other := editor.island_selected == .West ? terrain.Island_ID.East : terrain.Island_ID.West
+            other_x, other_z, _ := terrain.island_center(&editor.project, other)
+            dx, dz := center_x - other_x, center_z - other_z
+            distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+            next_distance := distance
+            distance_changed := im.InputFloat(
+                "Center distance (m)",
+                &next_distance,
+                1,
+                100,
+                "%.2f",
+                {.EnterReturnsTrue},
+            )
+            if im.IsItemActivated() do structure_history_push_undo(editor)
+            if distance_changed && next_distance >= 0 {
+                next_x, next_z, next_ok := terrain.island_center_at_distance(
+                    &editor.project,
+                    editor.island_selected,
+                    next_distance,
+                )
+                if next_ok do _ = editor_island_set_center(editor, editor.island_selected, next_x, next_z)
+            }
+        }
+    }
     if tweak_section("Navigation") {
         if im.Button("Focus terrain") {
             editor_focus_terrain(editor)
@@ -969,7 +1001,7 @@ tweak_draw_car :: proc(editor: ^Editor) {
             editor.car_drive.racer = {}
         }
         im.SameLine()
-        if im.RadioButton("Racer Arcade", editor.car_handling_model == .Racer_Arcade) {
+        if im.RadioButton("Racer Arcade##handling_model", editor.car_handling_model == .Racer_Arcade) {
             editor.car_handling_model = .Racer_Arcade
             editor.car_drive.racer = {}
         }
@@ -1302,7 +1334,10 @@ tweak_draw_developer :: proc(editor: ^Editor) {
             im.TextDisabled("Saved")
         }
         fixture_path := fixture_editor_current_path(editor)
-        im.TextDisabled("Autosaved to %s · visibility is session-only", fixture_path != "" ? fixture_path : "not saved")
+        im.TextDisabled(
+            "Autosaved to %s · visibility is session-only",
+            fixture_path != "" ? fixture_path : "not saved",
+        )
         selected_structure :=
             editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count
         at_capacity := editor.note_count >= FIXTURE_NOTE_CAPACITY
@@ -1458,6 +1493,8 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
         im.EndChild()
         im.SameLine()
         if im.BeginChild("##tweak_content", {0, 0}) {
+            im.PushIDInt(i32(tweak_selected_page))
+            defer im.PopID()
             switch tweak_selected_page {
             case .Terrain:
                 im.SeparatorText("Terrain")

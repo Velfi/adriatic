@@ -645,6 +645,7 @@ fixture_editor_load_decoded :: proc(
 
     fixture_migration_result_dispose(&old_owner)
     fixture_editor_reset_runtime(editor)
+    dunes_lab_rehydrate(editor)
     return {}, true
 }
 

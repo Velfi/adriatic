@@ -119,7 +119,7 @@ world_ground_grass_has_land :: proc(editor: ^Editor, center_x, center_z, radius:
             if sample_x * sample_x + sample_z * sample_z > SAMPLE_RADIUS * SAMPLE_RADIUS do continue
             x := center_x + f32(sample_x) * spacing
             z := center_z + f32(sample_z) * spacing
-            if terrain.sample_height(&editor.project, 0, x, z) > editor.project.sea_level + .35 {
+            if terrain.sample_surface_height(&editor.project, 0, x, z) > editor.project.sea_level + .35 {
                 return true
             }
         }
@@ -233,7 +233,7 @@ ground_grass_chunk_build :: proc(
         jitter_z := (wind_streak_hash(seed_index, 2) - .5) * GROUND_GRASS_SPACING * .76
         x := f32(world_grid_x) * GROUND_GRASS_SPACING + jitter_x
         z := f32(world_grid_z) * GROUND_GRASS_SPACING + jitter_z
-        height_at := terrain.sample_height(&editor.project, 0, x, z)
+        height_at := terrain.sample_surface_height(&editor.project, 0, x, z)
         if farmland_excludes_ground_grass(editor, x, z) ||
            settlement_patios_contain_point(editor, x, z, .12) ||
            !coastal_grass_renderable_at(editor, x, z, circulation_plan) {
@@ -431,7 +431,7 @@ world_ground_grass :: proc(editor: ^Editor) {
     field_radius := f32(42)
     if driving_aircraft(editor) {
         body := active_aircraft_body(editor)
-        ground := terrain.sample_height(&editor.project, 0, body.position.x, body.position.z)
+        ground := terrain.sample_surface_height(&editor.project, 0, body.position.x, body.position.z)
         if body.position.y - ground > 28 do return
         field_radius = 60
     } else if editor.pilot.mode != .On_Foot && !driving_car(editor) {

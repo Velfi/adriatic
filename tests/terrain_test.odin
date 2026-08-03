@@ -26,7 +26,7 @@ default_town_sites_keep_the_full_settlement_envelope_on_land :: proc(t: ^testing
                 angle := f32(sample_index) * math.TAU / f32(sample_total)
                 x := town_x + math.cos(angle) * radius
                 z := town_z + math.sin(angle) * radius
-                testing.expect(t, terrain.sample_height(project, 0, x, z) > project.sea_level + .8)
+                testing.expect(t, terrain.sample_surface_height(project, 0, x, z) > project.sea_level + .8)
             }
         }
     }
@@ -39,14 +39,14 @@ terrain_strokes_propagate_through_every_clipmap_level :: proc(t: ^testing.T) {
     revision := project.revision
     terrain.apply_stroke(project, .Raise, 0, 0, 8, 1, 1)
     testing.expect(t, project.revision == revision + 1)
-    for level in 0 ..< terrain.CLIPMAP_LEVELS do testing.expect(t, terrain.sample_height(project, level, 0, 0) > 0)
+    for level in 0 ..< terrain.CLIPMAP_LEVELS do testing.expect(t, terrain.sample_surface_height(project, level, 0, 0) > 0)
 }
 
 @(test)
 terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
-    building := terrain.structure_make(0, 0, 8, 8, terrain.sample_height(project, 0, 0, 0), 12)
+    building := terrain.structure_make(0, 0, 8, 8, terrain.sample_surface_height(project, 0, 0, 0), 12)
     building.kind = .Architecture
     index := terrain.add_structure(project, building)
     original_level := project.structures[index].base_y
@@ -56,7 +56,7 @@ terrain_sculpting_changes_building_level :: proc(t: ^testing.T) {
     testing.expect(t, project.structures[index].base_y > original_level)
     testing.expect(
         t,
-        project.structures[index].base_y == terrain.sample_height(project, 0, building.center_x, building.center_z),
+        project.structures[index].base_y == terrain.sample_surface_height(project, 0, building.center_x, building.center_z),
     )
 }
 
@@ -106,12 +106,12 @@ terrain_brush_hardness_controls_edge_falloff :: proc(t: ^testing.T) {
     terrain.apply_stroke_with_hardness(hard, .Raise, center_x, center_z, 100, 1, 1, 1)
     testing.expect(
         t,
-        terrain.sample_height(hard, 0, center_x + 50, center_z) >
-        terrain.sample_height(soft, 0, center_x + 50, center_z),
+        terrain.sample_surface_height(hard, 0, center_x + 50, center_z) >
+        terrain.sample_surface_height(soft, 0, center_x + 50, center_z),
     )
     testing.expect(
         t,
-        terrain.sample_height(soft, 0, center_x, center_z) == terrain.sample_height(hard, 0, center_x, center_z),
+        terrain.sample_surface_height(soft, 0, center_x, center_z) == terrain.sample_surface_height(hard, 0, center_x, center_z),
     )
 }
 
@@ -189,7 +189,7 @@ terrain_project_file_round_trips_height_material_and_structures :: proc(t: ^test
     road_edge := roads.add_straight_edge(&source.road_graph, road_a, road_b, 7, 1, .Cobblestone)
     testing.expect(t, terrain.save_project(source, path))
     testing.expect(t, terrain.load_project(loaded, path))
-    testing.expect(t, terrain.sample_height(loaded, 0, 0, 0) == terrain.sample_height(source, 0, 0, 0))
+    testing.expect(t, terrain.sample_surface_height(loaded, 0, 0, 0) == terrain.sample_surface_height(source, 0, 0, 0))
     testing.expect(t, terrain.sample_material(loaded, 0, 0, 0) == terrain.sample_material(source, 0, 0, 0))
     testing.expect(t, loaded.structure_count == 2)
     testing.expect(t, loaded.structures[0].height == source.structures[0].height)
@@ -284,7 +284,7 @@ terrain_v6_project_migration_upsamples_legacy_clipmap_levels :: proc(t: ^testing
     }
     testing.expect(t, terrain.project_migrate_v6(migrated, legacy, nil))
     testing.expect_value(t, migrated.levels[0].cell_size, terrain.FINE_CELL_SIZE)
-    testing.expect(t, math.abs(terrain.sample_height(migrated, 0, 0, 0) - 7) < .001)
+    testing.expect(t, math.abs(terrain.sample_surface_height(migrated, 0, 0, 0) - 7) < .001)
     testing.expect(t, math.abs(terrain.sample_material(migrated, 0, 0, 0) - .6) < .001)
 }
 
@@ -294,10 +294,10 @@ default_terrain_has_two_opposite_corner_islands :: proc(t: ^testing.T) {
     defer terrain.free_project(project)
     half_extent := f32(terrain.WORLD_SIZE_METERS * .5)
     offset := half_extent * terrain.DEFAULT_ISLAND_OFFSET
-    testing.expect(t, terrain.sample_height(project, 0, -offset, -offset) > project.sea_level)
-    testing.expect(t, terrain.sample_height(project, 0, offset, offset) > project.sea_level)
-    testing.expect(t, terrain.sample_height(project, 0, -offset, offset) <= project.sea_level)
-    testing.expect(t, terrain.sample_height(project, 0, offset, -offset) <= project.sea_level)
+    testing.expect(t, terrain.sample_surface_height(project, 0, -offset, -offset) > project.sea_level)
+    testing.expect(t, terrain.sample_surface_height(project, 0, offset, offset) > project.sea_level)
+    testing.expect(t, terrain.sample_surface_height(project, 0, -offset, offset) <= project.sea_level)
+    testing.expect(t, terrain.sample_surface_height(project, 0, offset, -offset) <= project.sea_level)
 }
 
 @(test)
@@ -474,7 +474,7 @@ clipmap_levels_are_nested_without_scaled_world_features :: proc(t: ^testing.T) {
     }
     testing.expect(
         t,
-        terrain.sample_height(
+        terrain.sample_surface_height(
             project,
             0,
             authored_half_extent * terrain.DEFAULT_ISLAND_OFFSET,
@@ -497,7 +497,7 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
         runway_sides := [2]f32{center_z - runway_half_width, center_z + runway_half_width}
         for x in runway_ends {
             for z in runway_sides {
-                testing.expect(t, terrain.sample_height(project, 0, x, z) > project.sea_level)
+                testing.expect(t, terrain.sample_surface_height(project, 0, x, z) > project.sea_level)
             }
         }
     }
@@ -514,7 +514,7 @@ default_islands_support_the_full_runway :: proc(t: ^testing.T) {
             testing.expect(t, math.abs(to.x - from.x - half_extent * terrain.DEFAULT_RUNWAY_HALF_LENGTH * 2) < .001)
             for sample_index in 0 ..= 8 {
                 sample_x := from.x + (to.x - from.x) * f32(sample_index) / 8
-                testing.expect(t, math.abs(terrain.sample_height(project, 0, sample_x, from.z) - from.y) < .001)
+                testing.expect(t, math.abs(terrain.sample_surface_height(project, 0, sample_x, from.z) - from.y) < .001)
             }
         }
     }
@@ -545,7 +545,7 @@ regenerated_islands_place_runways_at_the_regenerated_terrain_selected_sites :: p
     testing.expect_value(t, project.road_graph.edge_count, 2)
     for sign in terrain.DEFAULT_ISLAND_SIGNS {
         airport_x, airport_z := terrain.default_airport_center_for_project(project, sign)
-        testing.expect(t, terrain.sample_height(project, 0, airport_x, airport_z) > project.sea_level)
+        testing.expect(t, terrain.sample_surface_height(project, 0, airport_x, airport_z) > project.sea_level)
     }
 }
 
@@ -558,8 +558,8 @@ default_islands_have_bluffs_away_from_arrival_districts :: proc(t: ^testing.T) {
         west := sign < 0
         bluff_x := center_x + (west ? f32(-118) : f32(112))
         bluff_z := center_z + (west ? f32(104) : f32(92))
-        bluff := terrain.sample_height(project, 0, bluff_x, bluff_z)
-        runway := terrain.sample_height(project, 0, center_x, center_z)
+        bluff := terrain.sample_surface_height(project, 0, bluff_x, bluff_z)
+        runway := terrain.sample_surface_height(project, 0, center_x, center_z)
         testing.expect(t, bluff > runway + 5)
     }
 }
@@ -576,9 +576,9 @@ default_islands_have_landforms_at_player_scale :: proc(t: ^testing.T) {
         // Sample an inland strip beyond the leveled runway shoulder. Twenty
         // meters is a few seconds of travel and should reveal changing ground.
         z := center + sign * 125
-        previous := terrain.sample_height(project, 0, center - 120, z)
+        previous := terrain.sample_surface_height(project, 0, center - 120, z)
         for offset := -100; offset <= 120; offset += 20 {
-            height := terrain.sample_height(project, 0, center + f32(offset), z)
+            height := terrain.sample_surface_height(project, 0, center + f32(offset), z)
             minimum = min(minimum, height)
             maximum = max(maximum, height)
             largest_step = max(largest_step, math.abs(height - previous))
@@ -661,8 +661,8 @@ clipmap_transition_converges_fine_edge_onto_coarse_surface :: proc(t: ^testing.T
     project := terrain.new_project()
     defer terrain.free_project(project)
     x, z := f32(1.5), f32(2.5)
-    fine := terrain.sample_height(project, 0, x, z)
-    coarse := terrain.sample_height(project, 1, x, z)
+    fine := terrain.sample_surface_height(project, 0, x, z)
+    coarse := terrain.sample_surface_height(project, 1, x, z)
     testing.expect(t, terrain.sample_clipmap_transition_height(project, 0, x, z, 0) == fine)
     testing.expect(t, terrain.sample_clipmap_transition_height(project, 0, x, z, 1) == coarse)
     halfway := terrain.sample_clipmap_transition_height(project, 0, x, z, .5)
@@ -670,7 +670,7 @@ clipmap_transition_converges_fine_edge_onto_coarse_surface :: proc(t: ^testing.T
     last := terrain.CLIPMAP_LEVELS - 1
     testing.expect(
         t,
-        terrain.sample_clipmap_transition_height(project, last, x, z, 1) == terrain.sample_height(project, last, x, z),
+        terrain.sample_clipmap_transition_height(project, last, x, z, 1) == terrain.sample_surface_height(project, last, x, z),
     )
 }
 
@@ -682,13 +682,13 @@ structure_placement_snaps_and_follows_terrain :: proc(t: ^testing.T) {
     structure := terrain.structure_make(13.2, -8.7, 1, 1, 999, 24)
     structure.center_x = terrain.snap_to_grid(structure.center_x, cell)
     structure.center_z = terrain.snap_to_grid(structure.center_z, cell)
-    structure.base_y = terrain.sample_height(project, 0, structure.center_x, structure.center_z)
+    structure.base_y = terrain.sample_surface_height(project, 0, structure.center_x, structure.center_z)
     index := terrain.add_structure(project, structure)
     testing.expect(t, index == 0)
     testing.expect(t, project.structures[index].center_x == terrain.snap_to_grid(13.2, cell))
     testing.expect(
         t,
-        project.structures[index].base_y == terrain.sample_height(project, 0, structure.center_x, structure.center_z),
+        project.structures[index].base_y == terrain.sample_surface_height(project, 0, structure.center_x, structure.center_z),
     )
 }
 
@@ -809,14 +809,14 @@ cliff_stroke_raises_the_left_side_and_reverse_flips_it :: proc(t: ^testing.T) {
     defer terrain.free_project(reverse)
     points := [2]terrain.Cliff_Point{{-40, 0}, {40, 0}}
     reversed := [2]terrain.Cliff_Point{{40, 0}, {-40, 0}}
-    forward_high_before := terrain.sample_height(forward, 0, 0, 4)
-    forward_low_before := terrain.sample_height(forward, 0, 0, -4)
-    reverse_north_before := terrain.sample_height(reverse, 0, 0, 4)
+    forward_high_before := terrain.sample_surface_height(forward, 0, 0, 4)
+    forward_low_before := terrain.sample_surface_height(forward, 0, 0, -4)
+    reverse_north_before := terrain.sample_surface_height(reverse, 0, 0, 4)
     testing.expect(t, terrain.apply_cliff_stroke(forward, points[:], 20, 8, .Raise))
     testing.expect(t, terrain.apply_cliff_stroke(reverse, reversed[:], 20, 8, .Raise))
-    testing.expect(t, terrain.sample_height(forward, 0, 0, 4) > forward_high_before + 4)
-    testing.expect(t, math.abs(terrain.sample_height(forward, 0, 0, -4) - forward_low_before) < .01)
-    testing.expect(t, math.abs(terrain.sample_height(reverse, 0, 0, 4) - reverse_north_before) < .01)
+    testing.expect(t, terrain.sample_surface_height(forward, 0, 0, 4) > forward_high_before + 4)
+    testing.expect(t, math.abs(terrain.sample_surface_height(forward, 0, 0, -4) - forward_low_before) < .01)
+    testing.expect(t, math.abs(terrain.sample_surface_height(reverse, 0, 0, 4) - reverse_north_before) < .01)
 }
 
 @(test)
@@ -826,18 +826,18 @@ cliff_elevation_modes_and_width_preserve_unaffected_terrain :: proc(t: ^testing.
     defer terrain.free_project(lower)
     defer terrain.free_project(split)
     points := [2]terrain.Cliff_Point{{-40, 0}, {40, 0}}
-    lower_high := terrain.sample_height(lower, 0, 0, 4)
-    lower_low := terrain.sample_height(lower, 0, 0, -4)
-    outside := terrain.sample_height(lower, 0, 0, 30)
-    split_high := terrain.sample_height(split, 0, 0, 4)
-    split_low := terrain.sample_height(split, 0, 0, -4)
+    lower_high := terrain.sample_surface_height(lower, 0, 0, 4)
+    lower_low := terrain.sample_surface_height(lower, 0, 0, -4)
+    outside := terrain.sample_surface_height(lower, 0, 0, 30)
+    split_high := terrain.sample_surface_height(split, 0, 0, 4)
+    split_low := terrain.sample_surface_height(split, 0, 0, -4)
     testing.expect(t, terrain.apply_cliff_stroke(lower, points[:], 20, 8, .Lower))
     testing.expect(t, terrain.apply_cliff_stroke(split, points[:], 20, 8, .Split))
-    testing.expect(t, math.abs(terrain.sample_height(lower, 0, 0, 4) - lower_high) < .01)
-    testing.expect(t, terrain.sample_height(lower, 0, 0, -4) < lower_low - 4)
-    testing.expect(t, math.abs(terrain.sample_height(lower, 0, 0, 30) - outside) < .01)
-    testing.expect(t, terrain.sample_height(split, 0, 0, 4) > split_high + 2)
-    testing.expect(t, terrain.sample_height(split, 0, 0, -4) < split_low - 2)
+    testing.expect(t, math.abs(terrain.sample_surface_height(lower, 0, 0, 4) - lower_high) < .01)
+    testing.expect(t, terrain.sample_surface_height(lower, 0, 0, -4) < lower_low - 4)
+    testing.expect(t, math.abs(terrain.sample_surface_height(lower, 0, 0, 30) - outside) < .01)
+    testing.expect(t, terrain.sample_surface_height(split, 0, 0, 4) > split_high + 2)
+    testing.expect(t, terrain.sample_surface_height(split, 0, 0, -4) < split_low - 2)
 }
 
 @(test)

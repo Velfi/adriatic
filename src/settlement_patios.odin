@@ -51,7 +51,7 @@ settlement_patio_terrain_seat :: proc(project: ^terrain.Project, patio: ^Settlem
     normal := [2]f32{-tangent[1], tangent[0]}
     half_width, half_depth := patio.width * .5, patio.depth * .5
     heights: [5]f32
-    heights[0] = terrain.sample_height(project, 0, patio.center[0], patio.center[1])
+    heights[0] = terrain.sample_surface_height(project, 0, patio.center[0], patio.center[1])
     corners := [4][2]f32 {
         patio.center + tangent * half_width + normal * half_depth,
         patio.center + tangent * half_width - normal * half_depth,
@@ -60,7 +60,7 @@ settlement_patio_terrain_seat :: proc(project: ^terrain.Project, patio: ^Settlem
     }
     minimum, maximum, total := heights[0], heights[0], heights[0]
     for corner, index in corners {
-        height := terrain.sample_height(project, 0, corner[0], corner[1])
+        height := terrain.sample_surface_height(project, 0, corner[0], corner[1])
         heights[index + 1] = height
         minimum, maximum = min(minimum, height), max(maximum, height)
         total += height

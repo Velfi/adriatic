@@ -590,9 +590,9 @@ world_road_planning_lab :: proc(editor: ^Editor) {
     graph := &editor.project.road_graph
     if !road_planning_lab.committed && road_planning_lab.result.found && road_planning_lab.result.point_count >= 2 {
         previous_point := road_planning_lab.result.points[0]
-        previous := roads.Vec3{previous_point.x, terrain.sample_height(&editor.project, 0, previous_point.x, previous_point.z), previous_point.z}
+        previous := roads.Vec3{previous_point.x, terrain.sample_surface_height(&editor.project, 0, previous_point.x, previous_point.z), previous_point.z}
         for point in road_planning_lab.result.points[1:road_planning_lab.result.point_count] {
-            current := roads.Vec3{point.x, terrain.sample_height(&editor.project, 0, point.x, point.z), point.z}
+            current := roads.Vec3{point.x, terrain.sample_surface_height(&editor.project, 0, point.x, point.z), point.z}
             world_road_editor_link(previous, current, 2.2, {211, 177, 101, 90})
             previous = current
         }
@@ -620,13 +620,13 @@ world_road_planning_lab :: proc(editor: ^Editor) {
         previous_point := road_planning_lab.result.points[0]
         previous := roads.Vec3 {
             previous_point.x,
-            terrain.sample_height(&editor.project, 0, previous_point.x, previous_point.z),
+            terrain.sample_surface_height(&editor.project, 0, previous_point.x, previous_point.z),
             previous_point.z,
         }
         for point in road_planning_lab.result.points[1:road_planning_lab.result.point_count] {
             current := roads.Vec3 {
                 point.x,
-                terrain.sample_height(&editor.project, 0, point.x, point.z),
+                terrain.sample_surface_height(&editor.project, 0, point.x, point.z),
                 point.z,
             }
             world_road_editor_link(previous, current, 6.6, {211, 177, 101, 92})
@@ -641,8 +641,8 @@ world_road_planning_lab :: proc(editor: ^Editor) {
         previous := roads.edge_point(graph, edge, 0)
         for segment in 1 ..= 32 {
             current := roads.edge_point(graph, edge, f32(segment) / 32)
-            previous.y = terrain.sample_height(&editor.project, 0, previous.x, previous.z)
-            current.y = terrain.sample_height(&editor.project, 0, current.x, current.z)
+            previous.y = terrain.sample_surface_height(&editor.project, 0, previous.x, previous.z)
+            current.y = terrain.sample_surface_height(&editor.project, 0, current.x, current.z)
             world_road_editor_link(
                 previous,
                 current,
@@ -655,7 +655,7 @@ world_road_planning_lab :: proc(editor: ^Editor) {
     }
     colors := [2]canvas2d.Color{{75, 211, 239, 255}, {245, 160, 70, 255}}
     for point, index in road_planning_lab.points[:road_planning_lab.point_count] {
-        y := terrain.sample_height(&editor.project, 0, point.x, point.z)
+        y := terrain.sample_surface_height(&editor.project, 0, point.x, point.z)
         world_box({point.x, y + 5, point.z}, {8, 10, 8}, colors[index])
     }
 }

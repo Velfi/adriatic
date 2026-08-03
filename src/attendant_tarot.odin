@@ -21,7 +21,7 @@ attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third
     // Marta works the reception counter in the east airport terminal, whose
     // forecourt is a node on the runway-to-town access road.
     x, z := terrain.default_airport_center_for_project(&editor.project, 1)
-    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
+    return {x, terrain.sample_surface_height(&editor.project, 0, x, z), z}
 }
 
 @(no_instrumentation)
@@ -35,7 +35,7 @@ libellula_vertex_world :: #force_inline proc(
 
 gerta_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     x, z := terrain.default_airport_center_for_project(&editor.project, -1)
-    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
+    return {x, terrain.sample_surface_height(&editor.project, 0, x, z), z}
 }
 
 attendant_speaker :: proc(_: ^dialogue.Context) -> string { return "MARTA" }

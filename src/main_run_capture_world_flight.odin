@@ -32,7 +32,7 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
         editor.player = {
             position = {
                 editor.editor_focus.x,
-                terrain.sample_height(&editor.project, 0, editor.editor_focus.x, editor.editor_focus.z),
+                terrain.sample_surface_height(&editor.project, 0, editor.editor_focus.x, editor.editor_focus.z),
                 editor.editor_focus.z,
             },
             grounded = true,
@@ -109,16 +109,16 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
         eye_z := focus.z + inward[1] * (blowout_view ? f32(38) : f32(-46))
         target_x := focus.x + inward[0] * (blowout_view ? f32(-22) : f32(24))
         target_z := focus.z + inward[1] * (blowout_view ? f32(-22) : f32(24))
-        eye_ground := terrain.sample_height(&editor.project, 0, eye_x, eye_z)
+        eye_ground := terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z)
         eye_clearance := blowout_view ? f32(18) : f32(2.35)
         target_clearance := blowout_view ? f32(.45) : f32(1.05)
         inspection_pose := third_person.camera_look_at(
             {eye_x, eye_ground + eye_clearance, eye_z},
-            {target_x, terrain.sample_height(&editor.project, 0, target_x, target_z) + target_clearance, target_z},
+            {target_x, terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + target_clearance, target_z},
         )
         // Keep the mouse behind the inspection camera while vegetation
         // streaming follows the visible field around its target.
-        editor.player.position = {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z + 18), eye_z + 18}
+        editor.player.position = {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z + 18), eye_z + 18}
         editor.player.grounded = true
         editor.pilot.position = editor.player.position
         editor.postale_visible = false
@@ -136,10 +136,10 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
         eye_x, eye_z := world_rotate_xz(airport.x, airport.z, -18, -23, airport_rotation)
         target_x, target_z := world_rotate_xz(airport.x, airport.z, 0, 4.5, airport_rotation)
         inspection_pose := third_person.camera_look_at(
-            {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z) + 8.5, eye_z},
-            {target_x, terrain.sample_height(&editor.project, 0, target_x, target_z) + 2.6, target_z},
+            {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z) + 8.5, eye_z},
+            {target_x, terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + 2.6, target_z},
         )
-        player_place(editor, {eye_x, terrain.sample_height(&editor.project, 0, eye_x, eye_z), eye_z}, .Scene_Setup)
+        player_place(editor, {eye_x, terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z), eye_z}, .Scene_Setup)
         editor.postale_visible = false
         editor.libellula_visible = true
         editor.rondine_visible = false

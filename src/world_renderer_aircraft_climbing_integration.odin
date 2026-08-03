@@ -20,7 +20,11 @@ world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.
         structure.kind == .Ridge ||
         structure.kind == .Cliff
     if !eligible do return
-    density := architecture.bougainvillea_density_at_structure(&editor.project.climbing_leaf_density, structure)
+    density := architecture.bougainvillea_density_at_structure(
+        &editor.project.climbing_leaf_density,
+        structure,
+        &editor.project,
+    )
     if density < .035 do return
     detail_tier := 2
     if structure.kind == .Architecture {
@@ -371,11 +375,19 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
     aspect := f32(width) / f32(height)
     near_plane := world_camera_near_clip(editor)
     world_overlay_chunk_bounds_sync(editor)
+    islands_moved := false
+    for island in editor.project.island_transforms {
+        if island.current_x != island.source_x || island.current_z != island.source_z {
+            islands_moved = true
+            break
+        }
+    }
     cell_count := terrain.RING_RESOLUTION - 1
     for chunk_z in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
         for chunk_x in 0 ..< OVERLAY_CHUNKS_PER_AXIS {
             bounds := world_renderer.overlay_chunk_bounds[chunk_z * OVERLAY_CHUNKS_PER_AXIS + chunk_x]
-            if !static_sphere_in_frustum(camera, bounds.center, bounds.radius, aspect, near_plane, WORLD_FAR_CLIP) {
+            if !islands_moved &&
+               !static_sphere_in_frustum(camera, bounds.center, bounds.radius, aspect, near_plane, WORLD_FAR_CLIP) {
                 continue
             }
             min_z, max_z := chunk_z * OVERLAY_CHUNK_CELLS, min((chunk_z + 1) * OVERLAY_CHUNK_CELLS, cell_count)
@@ -386,11 +398,13 @@ world_climbing_leaf_density_overlay :: proc(editor: ^Editor) {
                     if density <= .01 do continue
                     x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
                     x1, z1 := x0 + cell, z0 + cell
+                    x0, z0 = terrain.island_world_position(&editor.project, x0, z0)
+                    x1, z1 = terrain.island_world_position(&editor.project, x1, z1)
                     lift := f32(.13)
-                    a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
-                    b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
-                    c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
-                    d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
+                    a := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z0) + lift, z0}
+                    b := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z0) + lift, z0}
+                    c := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z1) + lift, z1}
+                    d := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z1) + lift, z1}
                     world_quad(a, b, c, d, {57, 141, 78, u8(24 + density * 92)})
                 }
             }

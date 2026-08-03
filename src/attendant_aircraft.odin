@@ -41,7 +41,7 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
     editor.libellula_visible = target == .Libellula || target == .Libellula_Mk2
     editor.postale.vehicle.locked = target != .Postale
     editor.libellula.vehicle.locked = target == .Postale
-    line_ground := terrain.sample_height(&editor.project, 0, line_position.x, line_position.z)
+    line_ground := terrain.sample_surface_height(&editor.project, 0, line_position.x, line_position.z)
     if target != .Postale {
         editor.libellula.spawn_position = {line_position.x, line_position.y, line_position.z}
         libellula_game.reset(&editor.libellula, line_ground)
@@ -56,7 +56,7 @@ marta_select_aircraft :: proc(editor: ^Editor, target: vehicles.Aircraft_Kind) {
         editor,
         {
             line_position.x,
-            terrain.sample_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
+            terrain.sample_surface_height(&editor.project, 0, line_position.x, line_position.z + 1.8),
             line_position.z + 1.8,
         },
         .Aircraft_Selection,
@@ -71,7 +71,7 @@ rondine_footprint_is_clear_water :: proc(editor: ^Editor, position: flight.Vec3,
         for lateral_offset in lateral_samples {
             x := position.x + basis.forward.x * forward_offset + basis.right.x * lateral_offset
             z := position.z + basis.forward.z * forward_offset + basis.right.z * lateral_offset
-            terrain_height := terrain.sample_height(&editor.project, 0, x, z)
+            terrain_height := terrain.sample_surface_height(&editor.project, 0, x, z)
             surface := terrain.structure_collision_surface_height(&editor.project, x, z, terrain_height)
             if surface > editor.project.sea_level + .15 do return false
         }

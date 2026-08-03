@@ -154,7 +154,7 @@ mouse_tail_collides_with_terrain :: proc(t: ^testing.T) {
     mouse_tail.step(&state, root, {0, 0, 1}, project, config, 1.0 / 60.0)
     for index in 1 ..< mouse_tail.POINT_COUNT {
         point := state.points[index].position
-        floor := terrain.sample_height(project, 0, point.x, point.z) + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN
+        floor := terrain.sample_surface_height(project, 0, point.x, point.z) + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN
         testing.expect(t, point.y >= floor - .0001)
     }
 }
@@ -173,7 +173,7 @@ mouse_tail_rests_on_rendered_road_crown :: proc(t: ^testing.T) {
         previous = {0, -1, 0},
     }
     mouse_tail.resolve_terrain(&point, project, config.radius, config.surface_friction)
-    terrain_height := terrain.sample_height(project, 0, 0, 0)
+    terrain_height := terrain.sample_surface_height(project, 0, 0, 0)
     testing.expect(
         t,
         point.position.y >= terrain_height + .12 + config.radius + mouse_tail.TERRAIN_CONTACT_SKIN - .0001,

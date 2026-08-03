@@ -428,7 +428,7 @@ world_land_surface_tapered :: proc(
     heights: [4]f32
     land_threshold := editor.project.sea_level + .04
     for point, index in points {
-        heights[index] = terrain.sample_height(&editor.project, 0, point[0], point[1])
+        heights[index] = terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
         if heights[index] <= land_threshold do return
     }
     world_quad(
@@ -443,7 +443,7 @@ world_land_surface_tapered :: proc(
 world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lift: f32, color: canvas2d.Color) {
     if editor == nil || radius <= 0 do return
     segment_count := max(12, int(math.ceil(f64(radius * 10))))
-    center_height := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    center_height := terrain.sample_surface_height(&editor.project, 0, center_x, center_z)
     land_threshold := editor.project.sea_level + .04
     if center_height <= land_threshold do return
     for segment in 0 ..< segment_count {
@@ -451,8 +451,8 @@ world_land_surface_disc :: proc(editor: ^Editor, center_x, center_z, radius, lif
         second_angle := math.TAU * f32(segment + 1) / f32(segment_count)
         first_x, first_z := center_x + math.cos(first_angle) * radius, center_z + math.sin(first_angle) * radius
         second_x, second_z := center_x + math.cos(second_angle) * radius, center_z + math.sin(second_angle) * radius
-        first_height := terrain.sample_height(&editor.project, 0, first_x, first_z)
-        second_height := terrain.sample_height(&editor.project, 0, second_x, second_z)
+        first_height := terrain.sample_surface_height(&editor.project, 0, first_x, first_z)
+        second_height := terrain.sample_surface_height(&editor.project, 0, second_x, second_z)
         if first_height <= land_threshold || second_height <= land_threshold do continue
         world_triangle(
             {center_x, center_height + lift, center_z},

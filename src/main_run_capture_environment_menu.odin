@@ -15,7 +15,7 @@ run_prepare_environment_and_menu_capture :: proc(editor: ^Editor, using config: 
         // Clear the runway and its shoulder so the full radial grass
         // population falloff is visible against uninterrupted terrain.
         editor.player.position.z += 60
-        editor.player.position.y = terrain.sample_height(
+        editor.player.position.y = terrain.sample_surface_height(
             &editor.project,
             0,
             editor.player.position.x,

@@ -280,6 +280,54 @@ Harbor_Plan :: struct {
     diagnostics:           Harbor_Diagnostics,
 }
 
+translate_point :: #force_inline proc(point: ^Vec2, dx, dz: f32) {
+    point.x += dx
+    point.z += dz
+}
+
+translate_contour :: proc(contour: ^Contour, dx, dz: f32) {
+    if contour == nil do return
+    for &point in contour.points[:contour.count] do translate_point(&point, dx, dz)
+}
+
+translate_site :: proc(site: ^Harbor_Site, dx, dz: f32) {
+    if site == nil do return
+    translate_point(&site.anchor, dx, dz)
+    translate_contour(&site.shoreline, dx, dz)
+}
+
+translate_plan :: proc(plan: ^Harbor_Plan, dx, dz: f32) {
+    if plan == nil do return
+    translate_point(&plan.bounds.minimum, dx, dz)
+    translate_point(&plan.bounds.maximum, dx, dz)
+    translate_point(&plan.origin, dx, dz)
+    translate_contour(&plan.shoreline, dx, dz)
+    translate_contour(&plan.navigable_water, dx, dz)
+    translate_contour(&plan.fairway, dx, dz)
+    translate_contour(&plan.turning_basin, dx, dz)
+    for &structure in plan.structures[:plan.structure_count] {
+        for &point in structure.points[:structure.count] do translate_point(&point, dx, dz)
+    }
+    for &berth in plan.berths[:plan.berth_count] do translate_point(&berth.position, dx, dz)
+    for &route in plan.routes[:plan.route_count] {
+        for &point in route.points[:route.count] do translate_point(&point, dx, dz)
+    }
+    for &edit in plan.terrain_edits[:plan.terrain_edit_count] do translate_point(&edit.center, dx, dz)
+    translate_point(&plan.office, dx, dz)
+    translate_point(&plan.settlement_connection, dx, dz)
+    translate_point(&plan.entrance, dx, dz)
+}
+
+translate_intervention :: proc(intervention: ^Harbor_Intervention, dx, dz: f32) {
+    if intervention == nil do return
+    translate_site(&intervention.site, dx, dz)
+    for &zone in intervention.waterfront_zones[:intervention.waterfront_count] {
+        translate_point(&zone.center, dx, dz)
+        translate_point(&zone.landward, dx, dz)
+    }
+    translate_plan(&intervention.runtime_plan, dx, dz)
+}
+
 length :: #force_inline proc(value: Vec2) -> f32 {
     return f32(math.sqrt(f64(value.x * value.x + value.z * value.z)))
 }
@@ -331,14 +379,9 @@ world_to_local :: proc(origin, tangent, outward, world: Vec2) -> Vec2 {
 }
 
 sample_land_gradient :: proc(project: ^terrain.Project, point: Vec2) -> Vec2 {
-    sample := f32(8)
-    dx :=
-        terrain.sample_height(project, 0, point.x + sample, point.z) -
-        terrain.sample_height(project, 0, point.x - sample, point.z)
-    dz :=
-        terrain.sample_height(project, 0, point.x, point.z + sample) -
-        terrain.sample_height(project, 0, point.x, point.z - sample)
-    return normalize({dx, dz})
+    if project == nil do return {}
+    water := terrain.sample_water_interface(project, point.x, point.z)
+    return normalize({water.shore_normal[0], water.shore_normal[1]})
 }
 
 snap_to_shore :: proc(project: ^terrain.Project, anchor: Vec2) -> (Vec2, bool) {
@@ -349,10 +392,10 @@ snap_to_shore :: proc(project: ^terrain.Project, anchor: Vec2) -> (Vec2, bool) {
         angle := f32(ray) / 48 * math.PI * 2
         direction := Vec2{math.cos(angle), math.sin(angle)}
         previous := anchor
-        previous_land := terrain.sample_height(project, 0, previous.x, previous.z) > project.sea_level
+        previous_land := terrain.sample_surface(project, 0, previous.x, previous.z) == .Land
         for step in 1 ..= 100 {
             point := add(anchor, scale(direction, f32(step) * 8))
-            land := terrain.sample_height(project, 0, point.x, point.z) > project.sea_level
+            land := terrain.sample_surface(project, 0, point.x, point.z) == .Land
             if land != previous_land {
                 candidate_distance := distance(anchor, point)
                 if candidate_distance < best_distance {
@@ -379,8 +422,8 @@ analyze_coast :: proc(project: ^terrain.Project, anchor: Vec2, preferred_scale: 
     site.outward = scale(landward, -1)
     forward := add(snapped_anchor, scale(site.outward, 24))
     backward := add(snapped_anchor, scale(site.outward, -24))
-    if terrain.sample_height(project, 0, forward.x, forward.z) >
-       terrain.sample_height(project, 0, backward.x, backward.z) {
+    if terrain.sample_surface(project, 0, forward.x, forward.z) == .Land &&
+       terrain.sample_surface(project, 0, backward.x, backward.z) != .Land {
         site.outward = scale(site.outward, -1)
     }
     site.tangent = {-site.outward.z, site.outward.x}
@@ -393,11 +436,11 @@ analyze_coast :: proc(project: ^terrain.Project, anchor: Vec2, preferred_scale: 
         boundary := base
         found := false
         previous := add(base, scale(site.outward, -96))
-        previous_land := terrain.sample_height(project, 0, previous.x, previous.z) > site.sea_level
+        previous_land := terrain.sample_surface(project, 0, previous.x, previous.z) == .Land
         for step in 1 ..= 72 {
             offset := -96 + f32(step) * 4
             point := add(base, scale(site.outward, offset))
-            land := terrain.sample_height(project, 0, point.x, point.z) > site.sea_level
+            land := terrain.sample_surface(project, 0, point.x, point.z) == .Land
             if previous_land && !land {
                 boundary = point
                 found = true
@@ -409,12 +452,13 @@ analyze_coast :: proc(project: ^terrain.Project, anchor: Vec2, preferred_scale: 
         site.shoreline.points[site.shoreline.count] = boundary
         site.shoreline.count += 1
         water_point := add(boundary, scale(site.outward, site.preferred_scale * .32))
-        depth := site.sea_level - terrain.sample_height(project, 0, water_point.x, water_point.z)
+        depth := terrain.sample_water_interface(project, water_point.x, water_point.z).depth
         site.water_depths[site.water_depth_count] = depth
         site.water_depth_count += 1
         if depth >= 0 do water_good += 1
         land_point := add(boundary, scale(site.outward, -24))
-        if terrain.sample_height(project, 0, land_point.x, land_point.z) > site.sea_level + .35 {
+        land_height, _, land_found := terrain.sample_land(project, 0, land_point.x, land_point.z)
+        if land_found && land_height > site.sea_level + .35 {
             backland_good += 1
         }
     }
@@ -442,7 +486,7 @@ analyze_coast :: proc(project: ^terrain.Project, anchor: Vec2, preferred_scale: 
         blocked := false
         for step in 1 ..= 12 {
             point := add(water_origin, scale(direction, f32(step) * site.preferred_scale / 12))
-            if terrain.sample_height(project, 0, point.x, point.z) > site.sea_level + .15 {
+            if terrain.sample_surface(project, 0, point.x, point.z) == .Land {
                 blocked = true
                 break
             }
@@ -698,7 +742,7 @@ water_ray_extent :: proc(
     for step_index in 2 ..= step_count {
         distance_meters := min(f32(step_index) * step, maximum_distance)
         point := add(shore, scale(outward, distance_meters))
-        height := terrain.sample_height(project, 0, point.x, point.z)
+        height := terrain.sample_surface_height(project, 0, point.x, point.z)
         if height > site.sea_level + .08 do break
         usable = distance_meters
     }
@@ -752,8 +796,8 @@ shore_landfall_is_sound :: proc(project: ^terrain.Project, shore, outward: Vec2,
     if project == nil do return false
     dry := add(shore, scale(outward, -7))
     wet := add(shore, scale(outward, 7))
-    dry_height := terrain.sample_height(project, 0, dry.x, dry.z)
-    wet_height := terrain.sample_height(project, 0, wet.x, wet.z)
+    dry_height := terrain.sample_surface_height(project, 0, dry.x, dry.z)
+    wet_height := terrain.sample_surface_height(project, 0, wet.x, wet.z)
     return dry_height > sea_level + .08 && wet_height < sea_level + .08
 }
 
@@ -781,7 +825,7 @@ breakwater_path_is_sound :: proc(
             along := traveled + segment_length * t
             // Only the root may occupy dry ground. The remaining mole must
             // cross water rather than clipping a beach or a second headland.
-            if along > 10 && terrain.sample_height(project, 0, point.x, point.z) > site.sea_level + .12 {
+            if along > 10 && terrain.sample_surface_height(project, 0, point.x, point.z) > site.sea_level + .12 {
                 return false
             }
         }
@@ -910,7 +954,7 @@ pier_path_is_sound :: proc(
     for sample_index in 6 ..= 12 {
         t := f32(sample_index) / 12
         point := add(root, scale(delta, t))
-        if terrain.sample_height(project, 0, point.x, point.z) > site.sea_level + .20 do return false
+        if terrain.sample_surface_height(project, 0, point.x, point.z) > site.sea_level + .20 do return false
         for structure in plan.structures[:plan.structure_count] {
             for point_index in 0 ..< structure.count - 1 {
                 a, b := structure.points[point_index], structure.points[point_index + 1]
@@ -944,7 +988,7 @@ build_piers_and_slips :: proc(
         local_tangent := Vec2{pier_outward.z, -pier_outward.x}
         yaw_bias := (random_unit(seed + u32(pier_index) * 71) - .5) * .12
         dry_root := add(shore, scale(local_outward, -5))
-        if terrain.sample_height(project, 0, dry_root.x, dry_root.z) <= site.sea_level do continue
+        if terrain.sample_surface_height(project, 0, dry_root.x, dry_root.z) <= site.sea_level do continue
         root := add(shore, scale(pier_outward, .75))
         requested_length := clamp(
             scale_meters * (.17 + random_unit(seed + u32(pier_index) * 97) * .06),
@@ -1046,7 +1090,7 @@ route_has_water_depth :: proc(project: ^terrain.Project, plan: ^Harbor_Plan, rou
         for sample_index in 0 ..= sample_count {
             t := f32(sample_index) / f32(sample_count)
             point := add(a, scale(sub(b, a), t))
-            if terrain.sample_height(project, 0, point.x, point.z) > plan.sea_level + .12 {
+            if terrain.sample_surface_height(project, 0, point.x, point.z) > plan.sea_level + .12 {
                 return false
             }
         }
@@ -1095,7 +1139,8 @@ reserve_bounded_terrain_edits :: proc(plan: ^Harbor_Plan, project: ^terrain.Proj
     for point_index in 1 ..< route.count - 1 {
         if plan.terrain_edit_count >= TERRAIN_EDIT_CAPACITY do break
         point := route.points[point_index]
-        current := terrain.sample_height(project, 0, point.x, point.z)
+        current, _, _, found := terrain.sample_bathymetry(project, point.x, point.z)
+        if !found do current = project.sea_level - terrain.DEEP_OCEAN_DEPTH
         target := project.sea_level - 1.2
         if current <= target do continue
         plan.terrain_edits[plan.terrain_edit_count] = {
@@ -1114,7 +1159,7 @@ reserve_bounded_terrain_edits :: proc(plan: ^Harbor_Plan, project: ^terrain.Proj
         if structure.kind != .Quay || structure.count < 2 do continue
         a, b := structure.points[0], structure.points[structure.count - 1]
         midpoint := scale(add(a, b), .5)
-        current := terrain.sample_height(project, 0, midpoint.x, midpoint.z)
+        current := terrain.sample_surface_height(project, 0, midpoint.x, midpoint.z)
         target := project.sea_level + .18
         if abs(current - target) <= .2 do continue
         plan.terrain_edits[plan.terrain_edit_count] = {
@@ -1131,7 +1176,19 @@ reserve_bounded_terrain_edits :: proc(plan: ^Harbor_Plan, project: ^terrain.Proj
 apply_terrain_edits :: proc(project: ^terrain.Project, plan: ^Harbor_Plan) {
     if project == nil || plan == nil || !plan.valid do return
     for edit in plan.terrain_edits[:plan.terrain_edit_count] {
-        current := terrain.sample_height(project, 0, edit.center.x, edit.center.z)
+        if edit.kind == .Dredge {
+            terrain.apply_bathymetry_level(
+                project,
+                edit.center.x,
+                edit.center.z,
+                edit.radius,
+                edit.target_y,
+                edit.feather,
+                .Harbor,
+            )
+            continue
+        }
+        current := terrain.sample_surface_height(project, 0, edit.center.x, edit.center.z)
         delta := edit.target_y - current
         if abs(delta) <= .01 do continue
         terrain.apply_stroke_with_hardness(
@@ -1187,7 +1244,7 @@ validate_harbor :: proc(project: ^terrain.Project, plan: ^Harbor_Plan) -> Harbor
     diagnostics.capacity_exceeded = plan.structure_count >= STRUCTURE_CAPACITY || plan.berth_count >= BERTH_CAPACITY
     for berth in plan.berths[:plan.berth_count] {
         if berth.occupied do occupied_count += 1
-        depth := project.sea_level - terrain.sample_height(project, 0, berth.position.x, berth.position.z)
+        depth := terrain.sample_water_interface(project, berth.position.x, berth.position.z).depth
         diagnostics.minimum_depth = min(diagnostics.minimum_depth, depth)
         if depth < -.05 || !point_in_contour(&plan.navigable_water, berth.position) {
             diagnostics.clearance_failures += 1
@@ -1531,7 +1588,14 @@ shape_terrain_edits_for_strategy :: proc(project: ^terrain.Project, intervention
     for edit in plan.terrain_edits[:plan.terrain_edit_count] {
         if !terrain_edit_allowed_for_strategy(intervention.strategy, edit.kind) do continue
         area := math.PI * edit.radius * edit.radius
-        current := terrain.sample_height(project, 0, edit.center.x, edit.center.z)
+        current: f32
+        if edit.kind == .Dredge {
+            found: bool
+            current, _, _, found = terrain.sample_bathymetry(project, edit.center.x, edit.center.z)
+            if !found do current = project.sea_level - terrain.DEEP_OCEAN_DEPTH
+        } else {
+            current = terrain.sample_surface_height(project, 0, edit.center.x, edit.center.z)
+        }
         volume := abs(current - edit.target_y) * area * .45
         next_area := intervention.terrain_edit_area + area
         next_cut := intervention.cut_volume

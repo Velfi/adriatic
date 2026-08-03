@@ -72,7 +72,7 @@ world_ellipse_material_uv :: proc(
         if surface_editor != nil {
             point_y = mouse_surface_height(surface_editor, point_x, point_z) + terrain_lift
         } else if project != nil {
-            point_y = terrain.sample_height(project, 0, point_x, point_z) + terrain_lift
+            point_y = terrain.sample_surface_height(project, 0, point_x, point_z) + terrain_lift
         }
         ring[segment] = {point_x, point_y, point_z}
         ring_uv[segment] = {.5 + math.cos(angle) * .5 * edge_scale, .5 + math.sin(angle) * .5 * edge_scale}
@@ -180,7 +180,7 @@ world_municipal_light_pool :: proc(
     if surface_editor != nil {
         pool_y = mouse_surface_height(surface_editor, x, z)
     } else if project != nil {
-        pool_y = terrain.sample_height(project, 0, x, z)
+        pool_y = terrain.sample_surface_height(project, 0, x, z)
     }
     effective_lift := surface_lift + .025
     first_vertex := len(world_renderer.vertices)
@@ -547,7 +547,7 @@ road_bridge_deck_height :: proc(editor: ^Editor, edge_index: int, t: f32) -> (f3
     graph := &editor.project.road_graph
     edge := graph.edges[edge_index]
     center := roads.edge_point(graph, edge, t)
-    bed_height := terrain.sample_height(&editor.project, 0, center.x, center.z)
+    bed_height := terrain.sample_surface_height(&editor.project, 0, center.x, center.z)
     if edge.engineering_designed {
         if edge.structure_kind == .Bridge do return center.y, true
         return bed_height, false
@@ -568,7 +568,7 @@ road_bridge_deck_height :: proc(editor: ^Editor, edge_index: int, t: f32) -> (f3
                 if sample_t == 0 || sample_t == 1 do break
                 continue
             }
-            bank_height = max(bank_height, terrain.sample_height(&editor.project, 0, point.x, point.z))
+            bank_height = max(bank_height, terrain.sample_surface_height(&editor.project, 0, point.x, point.z))
             bank_count += 1
             break
         }
@@ -585,7 +585,7 @@ road_world_point :: #force_inline proc(editor: ^Editor, vertex: roads.Vertex) ->
     } else if vertex.surface == .Verge {
         clearance = .018
     }
-    terrain_y := terrain.sample_height(&editor.project, 0, vertex.position.x, vertex.position.z)
+    terrain_y := terrain.sample_surface_height(&editor.project, 0, vertex.position.x, vertex.position.z)
     if vertex.source_edge > 0 && vertex.source_edge <= editor.project.road_graph.edge_count {
         edge := editor.project.road_graph.edges[vertex.source_edge - 1]
         if edge.engineering_designed && edge.authored_profile {

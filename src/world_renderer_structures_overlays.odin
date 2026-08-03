@@ -40,7 +40,7 @@ world_settlement_gardens :: proc(editor: ^Editor) {
                 jet_height = site.fountain_jet_height,
             }
             fountain := fountains.generate(fountain_seed, fountain_config)
-            fountain_y := terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+            fountain_y := terrain.sample_surface_height(&editor.project, 0, structure.center_x, structure.center_z)
             fountain_origin := third_person.Vec3{structure.center_x, fountain_y, structure.center_z}
             cache := &world_renderer.settlement_fountain_geometry_cache[plot_index]
             cache_matches :=
@@ -104,7 +104,7 @@ world_settlement_gardens :: proc(editor: ^Editor) {
             // structure, so only household gardens use the generic collision
             // query; park plants intentionally live inside that reservation.
             if !is_park && !architecture.city_accent_site_clear(&editor.project, x, z, clearance, .4) do continue
-            base_y := terrain.sample_height(&editor.project, 0, x, z)
+            base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
             if !world_sphere_in_view(editor, {x, base_y + 3, z}, 5, 2) do continue
             plant_seed := mixed ~ u32(0x504c414e)
             species, plant_scale, woody := settlement_garden_woody_species(
@@ -320,7 +320,7 @@ world_overlay_chunk_bounds_sync :: proc(editor: ^Editor) {
                 world_z := (f32(sample_z) - half) * cell
                 for sample_x in min_cell_x ..= max_cell_x {
                     world_x := (f32(sample_x) - half) * cell
-                    sample_y := terrain.sample_height(&editor.project, 0, world_x, world_z)
+                    sample_y := terrain.sample_surface_height(&editor.project, 0, world_x, world_z)
                     minimum_y, maximum_y = min(minimum_y, sample_y), max(maximum_y, sample_y)
                 }
             }
@@ -360,10 +360,10 @@ world_city_density_overlay :: proc(editor: ^Editor) {
                     x0, z0 := (f32(x) - half) * cell, (f32(z) - half) * cell
                     x1, z1 := x0 + cell, z0 + cell
                     lift := f32(.115)
-                    a := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z0) + lift, z0}
-                    b := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z0) + lift, z0}
-                    c := third_person.Vec3{x1, terrain.sample_height(&editor.project, 0, x1, z1) + lift, z1}
-                    d := third_person.Vec3{x0, terrain.sample_height(&editor.project, 0, x0, z1) + lift, z1}
+                    a := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z0) + lift, z0}
+                    b := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z0) + lift, z0}
+                    c := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z1) + lift, z1}
+                    d := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z1) + lift, z1}
                     alpha := u8(28 + density * 112)
                     world_quad(a, b, c, d, {22, 27, 31, alpha})
                 }

@@ -171,7 +171,7 @@ terrain_under_cursor_3d :: proc(
             previous_distance = distance
             continue
         }
-        delta := y - terrain.sample_height(&editor.project, 0, x, z)
+        delta := y - terrain.sample_surface_height(&editor.project, 0, x, z)
         if delta <= 0 && previous_delta > 0 {
             low, high := previous_distance, distance
             for _ in 0 ..< 10 {
@@ -179,7 +179,7 @@ terrain_under_cursor_3d :: proc(
                 mx := camera.position.x + direction.x * mid
                 my := camera.position.y + direction.y * mid
                 mz := camera.position.z + direction.z * mid
-                if my > terrain.sample_height(&editor.project, 0, mx, mz) {
+                if my > terrain.sample_surface_height(&editor.project, 0, mx, mz) {
                     low = mid
                 } else {
                     high = mid
@@ -329,10 +329,10 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             far_z := base_z + forward_flat.z * cell_size
             far_next_x := far_x + right_flat.x * cell_size
             far_next_z := far_z + right_flat.z * cell_size
-            h00 := terrain.sample_height(&editor.project, 0, base_x, base_z)
-            h10 := terrain.sample_height(&editor.project, 0, next_x, next_z)
-            h01 := terrain.sample_height(&editor.project, 0, far_x, far_z)
-            h11 := terrain.sample_height(&editor.project, 0, far_next_x, far_next_z)
+            h00 := terrain.sample_surface_height(&editor.project, 0, base_x, base_z)
+            h10 := terrain.sample_surface_height(&editor.project, 0, next_x, next_z)
+            h01 := terrain.sample_surface_height(&editor.project, 0, far_x, far_z)
+            h11 := terrain.sample_surface_height(&editor.project, 0, far_next_x, far_next_z)
             p00 := project_3d(camera, {base_x, h00, base_z}, width, height)
             p10 := project_3d(camera, {next_x, h10, next_z}, width, height)
             p11 := project_3d(camera, {far_next_x, h11, far_next_z}, width, height)
@@ -470,7 +470,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
         if flying {
             aircraft_body := active_aircraft_body(editor)
             ground := postale_game.drivable_surface_height(
-                terrain.sample_height(&editor.project, 0, aircraft_body.position.x, aircraft_body.position.z),
+                terrain.sample_surface_height(&editor.project, 0, aircraft_body.position.x, aircraft_body.position.z),
                 editor.project.sea_level,
             )
             altitude := max(f32(0), aircraft_body.position.y - ground - active_aircraft_ground_clearance(editor))
@@ -554,6 +554,22 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             }
         }
     } else {
+        if editor.selection_tool_active && editor.island_selected != .World {
+            island_x, island_z, island_ok := terrain.island_center(&editor.project, editor.island_selected)
+            if island_ok {
+                island_y := terrain.sample_surface_height(&editor.project, 0, island_x, island_z) + 8
+                center := project_3d(camera, {island_x, island_y, island_z}, width, height)
+                axis_x := project_3d(camera, {island_x + 140, island_y, island_z}, width, height)
+                axis_z := project_3d(camera, {island_x, island_y, island_z + 140}, width, height)
+                if center.visible && axis_x.visible {
+                    canvas2d.DrawLineEx(center.position, axis_x.position, 4, {208, 92, 82, 255})
+                }
+                if center.visible && axis_z.visible {
+                    canvas2d.DrawLineEx(center.position, axis_z.position, 4, {69, 173, 163, 255})
+                }
+                if center.visible do canvas2d.DrawCircleV(center.position, 8, {235, 239, 243, 255})
+            }
+        }
         world_x, world_z, hit := world_under_cursor_3d(
             camera,
             canvas2d.GetMousePosition(),
@@ -562,7 +578,7 @@ draw_terrain_3d :: proc(editor: ^Editor, width, height: i32) {
             terrain.DEFAULT_ISLAND_HEIGHT,
         )
         if hit {
-            brush_height := terrain.sample_height(&editor.project, 0, world_x, world_z) + .08
+            brush_height := terrain.sample_surface_height(&editor.project, 0, world_x, world_z) + .08
             brush_center := project_3d(camera, {world_x, brush_height, world_z}, width, height)
             brush_edge := project_3d(camera, {world_x + editor.radius, brush_height, world_z}, width, height)
             if brush_center.visible && brush_edge.visible {

@@ -52,7 +52,7 @@ run_prepare_player_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
         editor.libellula_visible = false
         editor.player.position.x += 24
         editor.player.position.z += 20
-        editor.player.position.y = terrain.sample_height(
+        editor.player.position.y = terrain.sample_surface_height(
             &editor.project,
             0,
             editor.player.position.x,

@@ -242,9 +242,10 @@ road_design_preview_begin :: proc(editor: ^Editor, base_graph: roads.Graph, from
     editor.road_design_heights = make([dynamic]f32, width * height)
     for z in 0 ..< height {
         for x in 0 ..< width {
-            editor.road_design_heights[z * width + x] = terrain.sample_height(
-                &editor.project, 0, origin_x + f32(x) * config.cell_size, origin_z + f32(z) * config.cell_size,
-            )
+            world_x := origin_x + f32(x) * config.cell_size
+            world_z := origin_z + f32(z) * config.cell_size
+            land_height, _, found := terrain.sample_land(&editor.project, 0, world_x, world_z)
+            editor.road_design_heights[z * width + x] = found ? land_height : terrain.sample_water_interface(&editor.project, world_x, world_z).water_level
         }
     }
     request := road_designer.Design_Request {

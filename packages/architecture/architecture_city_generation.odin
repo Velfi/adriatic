@@ -77,7 +77,7 @@ city_plan_density :: proc(
                         side := side_index == 0 ? f32(-1) : f32(1)
                         probe_x := current.x + normal_x * side * (edge.half_width + edge.shoulder_width + 15)
                         probe_z := current.z + normal_z * side * (edge.half_width + edge.shoulder_width + 15)
-                        density := city_density_sample(field, probe_x, probe_z)
+                        density := city_density_sample(field, probe_x, probe_z, project)
                         lot_seed := city_hash(edge_index * 131 + int(accumulated), side_index, seed)
                         depth := 15 + density * 15 + f32((lot_seed >> 12) & 255) / 255 * 5
                         center_offset := edge.half_width + edge.shoulder_width + 2 + depth * .5
@@ -107,6 +107,7 @@ city_plan_density :: proc(
                             field,
                             current.x + normal_x * side * (edge.half_width + edge.shoulder_width + 62),
                             current.z + normal_z * side * (edge.half_width + edge.shoulder_width + 62),
+                            project,
                         )
                         if deep_density > .55 && (lot_seed & 7) == 0 {
                             alley_start := edge.half_width + edge.shoulder_width + 3
@@ -164,7 +165,7 @@ city_plan_density :: proc(
                                     alley_center_offset := alley.half_width + 1.2 + alley_lot_depth * .5
                                     bx := alley_x + lot_normal_x * alley_side * alley_center_offset
                                     bz := alley_z + lot_normal_z * alley_side * alley_center_offset
-                                    bd := city_density_sample(field, bx, bz)
+                                    bd := city_density_sample(field, bx, bz, project)
                                     alley_seed := city_hash(
                                         edge_index * 257 + alley_step,
                                         side_index * 2 + alley_side_index,
@@ -284,7 +285,7 @@ clear_architecture :: proc(project: ^terrain.Project) {
 
 architecture_base_height :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
     if project == nil do return 0
-    return terrain.sample_height(project, 0, x, z)
+    return terrain.sample_surface_height(project, 0, x, z)
 }
 
 generate_poisson :: proc(

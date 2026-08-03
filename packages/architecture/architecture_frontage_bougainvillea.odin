@@ -140,6 +140,7 @@ bougainvillea_height_fraction :: #force_inline proc(maturity: f32) -> f32 {
 bougainvillea_density_at_structure :: proc(
     field: ^[terrain.CITY_DENSITY_SAMPLES]u8,
     structure: terrain.Structure,
+    project: ^terrain.Project = nil,
 ) -> f32 {
     if field == nil do return 0
     footprint := max(structure.width, structure.depth) * .42
@@ -150,7 +151,7 @@ bougainvillea_density_at_structure :: proc(
         local_z := f32((sample + int(structure.seed % 3)) % 3 - 1) * footprint * .16
         sample_x := structure.center_x + local_x * cosine - local_z * sine
         sample_z := structure.center_z + local_x * sine + local_z * cosine
-        density_sum += city_density_sample(field, sample_x, sample_z)
+        density_sum += city_density_sample(field, sample_x, sample_z, project)
     }
     return density_sum / 5
 }

@@ -376,6 +376,7 @@ world_architecture_laundry_webbing_uncached :: proc(editor: ^Editor) {
                 growth := architecture.bougainvillea_density_at_structure(
                     &editor.project.climbing_leaf_density,
                     planted,
+                    &editor.project,
                 )
                 if architecture.bougainvillea_laundry_span_conflict(
                     planted,
@@ -549,7 +550,7 @@ world_architecture_grass_height_scale :: proc(footprints: []Architecture_Grass_F
 }
 
 world_architecture_municipal_lamp_fixture :: proc(editor: ^Editor, center_x, center_z, rotation: f32) {
-    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    base_y := terrain.sample_surface_height(&editor.project, 0, center_x, center_z)
     metal := canvas2d.Color{82, 91, 87, 255}
     world_box_rotated({center_x, base_y + .14, center_z}, {.46, .28, .46}, rotation, {91, 91, 79, 255})
     world_metal_box_rotated({center_x, base_y + 2.25, center_z}, {.13, 4.35, .13}, rotation, metal)
@@ -572,7 +573,7 @@ world_architecture_municipal_lamp_effects :: proc(
     center_x, center_z, rotation: f32,
     roadway: bool = true,
 ) {
-    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    base_y := terrain.sample_surface_height(&editor.project, 0, center_x, center_z)
     if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     fixture_x, fixture_z := world_rotate_xz(center_x, center_z, 0, .72, rotation)
     world_billboard_material_uv(
@@ -614,7 +615,7 @@ world_architecture_municipal_lamp_effects :: proc(
 }
 
 world_architecture_municipal_lamp :: proc(editor: ^Editor, center_x, center_z, rotation: f32, roadway: bool = true) {
-    base_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+    base_y := terrain.sample_surface_height(&editor.project, 0, center_x, center_z)
     if !world_sphere_in_view(editor, {center_x, base_y + 2.2, center_z}, 8.75, .5) do return
     world_architecture_municipal_lamp_fixture(editor, center_x, center_z, rotation)
     world_architecture_municipal_lamp_effects(editor, center_x, center_z, rotation, roadway)

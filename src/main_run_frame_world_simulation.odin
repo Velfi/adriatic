@@ -29,7 +29,7 @@ import physics "zelda_engine:physics"
 
 run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) -> bool {
     if editor.in_map && !editor.vehicle_showcase_scene && !editor.vehicle_paint_scene {
-        trailer_ground := terrain.sample_height(
+        trailer_ground := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.car_trailer_position.x,
@@ -75,7 +75,7 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
         )
     }
     if editor.in_map && !editor.vehicle_showcase_scene && !driving_aircraft(editor) {
-        camera_ground := terrain.sample_height(
+        camera_ground := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.camera_pose.position.x,

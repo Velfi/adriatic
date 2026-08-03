@@ -400,16 +400,16 @@ world_architecture_mass :: proc(
             structure.depth * .5 + 2.15,
             structure.rotation,
         )
-        spill_ground := terrain.sample_height(project, 0, spill_x, spill_z)
+        spill_ground := terrain.sample_surface_height(project, 0, spill_x, spill_z)
         spill_sample_distance := f32(2)
         spill_slope_x := clamp(
-            (terrain.sample_height(project, 0, spill_x + spill_sample_distance, spill_z) - spill_ground) /
+            (terrain.sample_surface_height(project, 0, spill_x + spill_sample_distance, spill_z) - spill_ground) /
             spill_sample_distance,
             f32(-.35),
             f32(.35),
         )
         spill_slope_z := clamp(
-            (terrain.sample_height(project, 0, spill_x, spill_z + spill_sample_distance) - spill_ground) /
+            (terrain.sample_surface_height(project, 0, spill_x, spill_z + spill_sample_distance) - spill_ground) /
             spill_sample_distance,
             f32(-.35),
             f32(.35),

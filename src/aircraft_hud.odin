@@ -314,7 +314,7 @@ bomber_hud_draw :: proc(editor: ^Editor, width, height: i32) {
             max(
                 tracked.position.y -
                 max(
-                    terrain.sample_height(&editor.project, 0, tracked.position.x, tracked.position.z),
+                    terrain.sample_surface_height(&editor.project, 0, tracked.position.x, tracked.position.z),
                     editor.project.sea_level,
                 ),
                 f32(0),

@@ -177,7 +177,7 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
                 structure_index += 1 {
                 if structure_index >= 0 do editor.project.structures[structure_index].color = rock_tool_color(editor)
             }
-            editor.editor_focus.y = terrain.sample_height(&editor.project, 0, center_x, center_z) + 7
+            editor.editor_focus.y = terrain.sample_surface_height(&editor.project, 0, center_x, center_z) + 7
             editor.editor_camera.distance = 62
             editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
         }
@@ -197,7 +197,7 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
             }
             editor.editor_focus = {
                 center_x,
-                terrain.sample_height(&editor.project, 0, center_x, center_z) + 6,
+                terrain.sample_surface_height(&editor.project, 0, center_x, center_z) + 6,
                 center_z,
             }
             editor.editor_camera.pitch_radians = .34
@@ -221,7 +221,7 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
                 offsets := [4]roads.Vec3{{-27, 0, 18}, {30, 0, -18}, {-22, 0, -28}, {21, 0, 29}}
                 for &edge, edge_index in editor.project.road_graph.edges[:editor.project.road_graph.edge_count] {
                     control := start + offsets[edge_index]
-                    control.y = terrain.sample_height(&editor.project, 0, control.x, control.z) + .08
+                    control.y = terrain.sample_surface_height(&editor.project, 0, control.x, control.z) + .08
                     if edge.from == editor.road_selected_node {
                         edge.control_from = control
                     } else if edge.to == editor.road_selected_node {

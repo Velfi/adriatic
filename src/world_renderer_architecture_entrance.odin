@@ -349,7 +349,7 @@ world_architecture_entrance :: proc(
             // The structure is seated at the highest terrain point beneath
             // its footprint. Furniture stands outside that footprint, so
             // using structure.base_y leaves it floating on downhill frontage.
-            bench_ground_y := terrain.sample_height(project, 0, bench_x, bench_z)
+            bench_ground_y := terrain.sample_surface_height(project, 0, bench_x, bench_z)
             for ground_side in -1 ..= 1 {
                 if ground_side == 0 do continue
                 ground_x, ground_z := world_rotate_xz(
@@ -359,7 +359,7 @@ world_architecture_entrance :: proc(
                     structure.depth * .5 + .78,
                     structure.rotation,
                 )
-                bench_ground_y = max(bench_ground_y, terrain.sample_height(project, 0, ground_x, ground_z))
+                bench_ground_y = max(bench_ground_y, terrain.sample_surface_height(project, 0, ground_x, ground_z))
             }
             world_box_rotated(
                 {bench_x, bench_ground_y + .52, bench_z},
@@ -376,7 +376,7 @@ world_architecture_entrance :: proc(
                     structure.depth * .5 + .78,
                     structure.rotation,
                 )
-                leg_ground_y := terrain.sample_height(project, 0, leg_x, leg_z)
+                leg_ground_y := terrain.sample_surface_height(project, 0, leg_x, leg_z)
                 leg_top_y := bench_ground_y + .50
                 leg_height := leg_top_y - leg_ground_y
                 if leg_height > .01 {

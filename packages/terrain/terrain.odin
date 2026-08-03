@@ -37,6 +37,18 @@ DEFAULT_ISLAND_OFFSET :: 0.65
 DEFAULT_ISLAND_RADIUS :: 0.26
 DEFAULT_ISLAND_HEIGHT :: 4.5
 DEFAULT_ISLAND_SIGNS :: [2]f32{-1, 1}
+ISLAND_COUNT :: len(DEFAULT_ISLAND_SIGNS)
+
+Island_ID :: enum u8 {
+    World,
+    West,
+    East,
+}
+
+Island_Transform :: struct {
+    source_x, source_z:   f32,
+    current_x, current_z: f32,
+}
 // 400 m gives the Postale enough field for its validated utility-STOL takeoff
 // and landing envelope without cutting an oversized stripe across an island.
 // Fractions are halved with the doubled world extent so aviation
@@ -113,14 +125,15 @@ default_island_surface_for_flow :: #force_inline proc(
     sign: f32,
     center_x, center_z: f32,
     mountain_center: spring_river.Vec2,
-    mountain_radius, mountain_height,
-    world_x, world_z: f32,
+    mountain_radius, mountain_height, world_x, world_z: f32,
 ) -> f32 {
     local_x := (world_x - center_x) / DEFAULT_GENERATED_ISLAND_HALF_X
     if sign < 0 do local_x = -local_x
     local_z := (world_z - center_z) / DEFAULT_GENERATED_ISLAND_HALF_Z
-    return islands.sample_elevation(island, local_x, local_z) +
-        default_mountain_offset(mountain_center, mountain_radius, mountain_height, world_x, world_z)
+    return(
+        islands.sample_elevation(island, local_x, local_z) +
+        default_mountain_offset(mountain_center, mountain_radius, mountain_height, world_x, world_z) \
+    )
 }
 
 default_route_river_downhill :: proc(
@@ -136,8 +149,15 @@ default_route_river_downhill :: proc(
     previous_direction := spring_river.normalize_or(mouth - mountain_center, {0, -1})
     river.points[0].position = mountain_center
     previous_height := default_island_surface_for_flow(
-        island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
-        mountain_center[0], mountain_center[1],
+        island,
+        sign,
+        center_x,
+        center_z,
+        mountain_center,
+        mountain_radius,
+        mountain_height,
+        mountain_center[0],
+        mountain_center[1],
     )
     river.points[0].water_level = previous_height + .15
     for point_index in 1 ..< river.point_count - 1 {
@@ -160,13 +180,22 @@ default_route_river_downhill :: proc(
             direction := spring_river.normalize_or(direct + side * lateral, direct)
             candidate := previous + direction * step
             height := default_island_surface_for_flow(
-                island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
-                candidate[0], candidate[1],
+                island,
+                sign,
+                center_x,
+                center_z,
+                mountain_center,
+                mountain_radius,
+                mountain_height,
+                candidate[0],
+                candidate[1],
             )
             candidate_to_mouth := mouth - candidate
-            remaining := f32(math.sqrt(f64(
-                candidate_to_mouth[0] * candidate_to_mouth[0] + candidate_to_mouth[1] * candidate_to_mouth[1],
-            )))
+            remaining := f32(
+                math.sqrt(
+                    f64(candidate_to_mouth[0] * candidate_to_mouth[0] + candidate_to_mouth[1] * candidate_to_mouth[1]),
+                ),
+            )
             turn := 1 - (direction[0] * previous_direction[0] + direction[1] * previous_direction[1])
             score := height + remaining * .004 + turn * .35
             if score < best_score {
@@ -202,31 +231,28 @@ river_water_spline_from_plan :: proc(plan: ^spring_river.Plan) -> River_Water_Sp
     result.point_count = clamp(plan.point_count, 0, RIVER_WATER_POINT_CAPACITY)
     for point, point_index in plan.points[:result.point_count] {
         result.points[point_index] = {
-            position = point.position,
+            position    = point.position,
             water_level = point.water_level,
-            width = point.width,
+            width       = point.width,
         }
     }
     return result
 }
 
-rebuild_default_river_water_splines :: proc(
-    project: ^Project,
-    seeds: [len(DEFAULT_ISLAND_SEEDS)]u32,
-) {
+rebuild_default_river_water_splines :: proc(project: ^Project, seeds: [len(DEFAULT_ISLAND_SEEDS)]u32) {
     if project == nil do return
     project.river_water_splines = {}
     island_signs := DEFAULT_ISLAND_SIGNS
     for seed, island_index in seeds {
         island := islands.generate(seed)
-        hydrology := default_island_hydrology_generate(
-            &island,
-            seed,
-            island_index,
-            island_signs[island_index],
-            false,
-        )
+        hydrology := default_island_hydrology_generate(&island, seed, island_index, island_signs[island_index], false)
         project.river_water_splines[island_index] = river_water_spline_from_plan(&hydrology.river)
+        transform := island_transform_at(project, island_index)
+        dx, dz := transform.current_x - transform.source_x, transform.current_z - transform.source_z
+        for &point in project.river_water_splines[island_index].points[:project.river_water_splines[island_index].point_count] {
+            point.position[0] += dx
+            point.position[1] += dz
+        }
         default_island_hydrology_destroy(&hydrology)
         islands.destroy(&island)
     }
@@ -267,7 +293,7 @@ default_island_hydrology_generate :: proc(
     // This avoids detached coastal islets as well as the central runway and
     // inward-facing settlement district.
     preferred_x := .24 + unit(island_seed ~ 0x4d4f5558) * .06
-    candidates := [9]f32{
+    candidates := [9]f32 {
         preferred_x,
         preferred_x - .04,
         preferred_x + .04,
@@ -308,18 +334,29 @@ default_island_hydrology_generate :: proc(
     discharge := archetype == .Distributary_Delta ? f32(1.18) : f32(.72)
     mountain_radius := 170 + unit(island_seed ~ 0x4d545241) * 65
     mountain_height := 24 + unit(island_seed ~ 0x4d544854) * 12
-    mountain_center := spring_river.Vec2{
+    mountain_center := spring_river.Vec2 {
         world_mouth_x + (unit(island_seed ~ 0x4d545258) * 2 - 1) * 54,
         river_mouth_z + DEFAULT_RIVER_LENGTH,
     }
     source_height := default_island_surface_for_flow(
-        island, sign, center_x, center_z, mountain_center, mountain_radius, mountain_height,
-        mountain_center[0], mountain_center[1],
+        island,
+        sign,
+        center_x,
+        center_z,
+        mountain_center,
+        mountain_radius,
+        mountain_height,
+        mountain_center[0],
+        mountain_center[1],
     )
-    river_length := f32(math.sqrt(f64(
-        (mountain_center[0] - world_mouth_x) * (mountain_center[0] - world_mouth_x) +
-        (mountain_center[1] - river_mouth_z) * (mountain_center[1] - river_mouth_z),
-    )))
+    river_length := f32(
+        math.sqrt(
+            f64(
+                (mountain_center[0] - world_mouth_x) * (mountain_center[0] - world_mouth_x) +
+                (mountain_center[1] - river_mouth_z) * (mountain_center[1] - river_mouth_z),
+            ),
+        ),
+    )
     river := spring_river.generate(
         {
             seed = islands.hash(island_seed ~ 0x52495652),
@@ -335,8 +372,14 @@ default_island_hydrology_generate :: proc(
         },
     )
     default_route_river_downhill(
-        &river, island, sign, center_x, center_z,
-        mountain_center, mountain_radius, mountain_height,
+        &river,
+        island,
+        sign,
+        center_x,
+        center_z,
+        mountain_center,
+        mountain_radius,
+        mountain_height,
     )
     // Preserve seeded meanders, but contract individual bends toward the
     // proven center-connected drainage line whenever they leave the island.
@@ -449,6 +492,174 @@ default_island_center :: #force_inline proc(sign: f32) -> (x, z: f32) {
     return center, center
 }
 
+default_island_transforms :: proc() -> [ISLAND_COUNT]Island_Transform {
+    result: [ISLAND_COUNT]Island_Transform
+    for sign, index in DEFAULT_ISLAND_SIGNS {
+        x, z := default_island_center(sign)
+        result[index] = {
+            source_x  = x,
+            source_z  = z,
+            current_x = x,
+            current_z = z,
+        }
+    }
+    return result
+}
+
+island_transforms_initialize :: proc(project: ^Project) {
+    if project == nil do return
+    defaults := default_island_transforms()
+    for &island, index in project.island_transforms {
+        // Added map fields decode as zero from legacy artifacts. A source at
+        // the origin is not valid for either of the two authored islands.
+        if island.source_x == 0 && island.source_z == 0 {
+            island = defaults[index]
+        }
+    }
+}
+
+island_transform_at :: #force_inline proc(project: ^Project, index: int) -> Island_Transform {
+    island := project.island_transforms[index]
+    if island.source_x == 0 && island.source_z == 0 {
+        return default_island_transforms()[index]
+    }
+    return island
+}
+
+island_id_from_index :: #force_inline proc(index: int) -> Island_ID {
+    return index == 0 ? .West : .East
+}
+
+island_index :: #force_inline proc(id: Island_ID) -> (int, bool) {
+    switch id {
+    case .West:
+        return 0, true
+    case .East:
+        return 1, true
+    case .World:
+        return 0, false
+    }
+    return 0, false
+}
+
+island_contains_source :: #force_inline proc(island: Island_Transform, x, z: f32) -> bool {
+    // Include generated beaches, dunes, harbors, and near-shore authored
+    // content in the island's ownership domain.
+    nx := (x - island.source_x) / (DEFAULT_GENERATED_ISLAND_HALF_X + 180)
+    nz := (z - island.source_z) / (DEFAULT_GENERATED_ISLAND_HALF_Z + 180)
+    return nx * nx + nz * nz <= 1
+}
+
+island_contains_world :: #force_inline proc(island: Island_Transform, x, z: f32) -> bool {
+    source_x := x - (island.current_x - island.source_x)
+    source_z := z - (island.current_z - island.source_z)
+    return island_contains_source(island, source_x, source_z)
+}
+
+island_at :: proc(project: ^Project, x, z: f32) -> Island_ID {
+    if project == nil do return .World
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if island_contains_world(island, x, z) do return island_id_from_index(index)
+    }
+    return .World
+}
+
+island_source_position :: proc(project: ^Project, x, z: f32) -> (source_x, source_z: f32) {
+    id := island_at(project, x, z)
+    index, valid := island_index(id)
+    if !valid do return x, z
+    island := island_transform_at(project, index)
+    return x - (island.current_x - island.source_x), z - (island.current_z - island.source_z)
+}
+
+island_world_position :: #force_inline proc(project: ^Project, source_x, source_z: f32) -> (x, z: f32) {
+    if project == nil do return source_x, source_z
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if !island_contains_source(island, source_x, source_z) do continue
+        return source_x + island.current_x - island.source_x, source_z + island.current_z - island.source_z
+    }
+    return source_x, source_z
+}
+
+island_center :: proc(project: ^Project, id: Island_ID) -> (x, z: f32, ok: bool) {
+    index, valid := island_index(id)
+    if project == nil || !valid do return 0, 0, false
+    island := island_transform_at(project, index)
+    return island.current_x, island.current_z, true
+}
+
+island_center_valid :: proc(x, z: f32) -> bool {
+    margin_x := DEFAULT_GENERATED_ISLAND_HALF_X + 100
+    margin_z := DEFAULT_GENERATED_ISLAND_HALF_Z + 100
+    half := f32(WORLD_SIZE_METERS * .5)
+    return x >= -half + margin_x && x <= half - margin_x && z >= -half + margin_z && z <= half - margin_z
+}
+
+island_center_at_distance :: proc(project: ^Project, id: Island_ID, distance: f32) -> (x, z: f32, ok: bool) {
+    if project == nil || id == .World || distance < 0 do return
+    selected_x, selected_z, selected_ok := island_center(project, id)
+    other := id == .West ? Island_ID.East : Island_ID.West
+    other_x, other_z, other_ok := island_center(project, other)
+    if !selected_ok || !other_ok do return
+    dx, dz := selected_x - other_x, selected_z - other_z
+    current_distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    if current_distance <= .001 {
+        x = other_x + DEFAULT_CHANNEL_DIAGONAL * distance
+        z = other_z + DEFAULT_CHANNEL_DIAGONAL * distance
+    } else {
+        x = other_x + dx / current_distance * distance
+        z = other_z + dz / current_distance * distance
+    }
+    return x, z, island_center_valid(x, z)
+}
+
+island_set_center :: proc(project: ^Project, id: Island_ID, x, z: f32) -> bool {
+    index, valid := island_index(id)
+    if project == nil || !valid || !island_center_valid(x, z) do return false
+    island_transforms_initialize(project)
+    island := &project.island_transforms[index]
+    dx, dz := x - island.current_x, z - island.current_z
+    if math.abs(dx) <= .0001 && math.abs(dz) <= .0001 do return true
+
+    // Classify before moving the ownership domain. Map objects retain ordinary
+    // world coordinates for compatibility; translating them is lossless while
+    // terrain remains non-destructive through the parent transform above.
+    for &structure in project.structures[:project.structure_count] {
+        if island_at(project, structure.center_x, structure.center_z) != id do continue
+        structure.center_x += dx
+        structure.center_z += dz
+    }
+    node_owned: [roads.MAX_NODES]bool
+    for &node, node_index in project.road_graph.nodes[:project.road_graph.node_count] {
+        if island_at(project, node.position.x, node.position.z) != id do continue
+        node_owned[node_index] = true
+        node.position.x += dx
+        node.position.z += dz
+    }
+    for &edge in project.road_graph.edges[:project.road_graph.edge_count] {
+        if node_owned[edge.from] {
+            edge.control_from.x += dx
+            edge.control_from.z += dz
+        }
+        if node_owned[edge.to] {
+            edge.control_to.x += dx
+            edge.control_to.z += dz
+        }
+    }
+    for &spline in project.river_water_splines {
+        for &point in spline.points[:spline.point_count] {
+            if island_at(project, point.position[0], point.position[1]) != id do continue
+            point.position[0] += dx
+            point.position[1] += dz
+        }
+    }
+    island.current_x, island.current_z = x, z
+    project.revision += 1
+    return true
+}
+
 default_island_feature_seed :: #force_inline proc(island_index: int, salt: u32) -> u32 {
     if island_index < 0 || island_index >= len(DEFAULT_ISLAND_SEEDS) do return islands.hash(salt)
     seeds := DEFAULT_ISLAND_SEEDS
@@ -530,7 +741,7 @@ default_town_center_for_project :: proc(
             runway_dz := math.abs(candidate_z - runway_z)
             runway_distance := f32(math.sqrt(f64(runway_dx * runway_dx + runway_dz * runway_dz)))
             if runway_distance < town_radius + DEFAULT_TOWN_RUNWAY_CLEARANCE do continue
-            minimum_height := sample_height(project, 0, candidate_x, candidate_z)
+            minimum_height := sample_surface_height(project, 0, candidate_x, candidate_z)
             maximum_height := minimum_height
             average_height := minimum_height
             sample_count := 1
@@ -541,7 +752,7 @@ default_town_center_for_project :: proc(
                     angle := f32(sample_index) * math.TAU / 32
                     sample_x := candidate_x + math.cos(angle) * radius
                     sample_z := candidate_z + math.sin(angle) * radius
-                    height := sample_height(project, 0, sample_x, sample_z)
+                    height := sample_surface_height(project, 0, sample_x, sample_z)
                     minimum_height = min(minimum_height, height)
                     maximum_height = max(maximum_height, height)
                     average_height += height
@@ -720,10 +931,13 @@ Project :: struct {
     road_graph:            roads.Graph,
     city_density:          [CITY_DENSITY_SAMPLES]u8,
     climbing_leaf_density: [CITY_DENSITY_SAMPLES]u8,
-    river_water_splines:    [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
+    river_water_splines:   [RIVER_WATER_SPLINE_CAPACITY]River_Water_Spline `fixture:"-" map:"-"`,
     terrain_pages:         [dynamic]Terrain_Page `fixture:"-"`,
     terrain_level_layout:  [CLIPMAP_LEVELS]Terrain_Level_Layout `fixture:"-"`,
     bathymetry_chunks:     [dynamic]Bathymetry_Chunk `fixture:"-"`,
+    terrain_page_lookup:   map[[3]i32]int `fixture:"-" map:"-"`,
+    bathymetry_chunk_lookup: map[[3]i32]int `fixture:"-" map:"-"`,
+    island_transforms:     [ISLAND_COUNT]Island_Transform,
 }
 
 Project_File_Payload :: struct {
@@ -823,8 +1037,15 @@ project_replace :: proc(project, loaded: ^Project) {
     delete(project.structures)
     delete(project.terrain_pages)
     bathymetry_destroy(&project.bathymetry_chunks)
+    delete(project.terrain_page_lookup)
+    delete(project.bathymetry_chunk_lookup)
     project^ = loaded^
     loaded.structures = nil
+    loaded.terrain_pages = nil
+    loaded.bathymetry_chunks = nil
+    loaded.terrain_page_lookup = nil
+    loaded.bathymetry_chunk_lookup = nil
+    terrain_sampling_lookup_rebuild(project)
 }
 
 remove_legacy_cliffs :: proc(project: ^Project) -> int {
@@ -901,7 +1122,11 @@ apply_cliff_stroke :: proc(
                 segment_x, segment_z := end.x - start.x, end.z - start.z
                 length_squared := segment_x * segment_x + segment_z * segment_z
                 if length_squared <= .0001 do continue
-                t := clamp(((sample_x - start.x) * segment_x + (sample_z - start.z) * segment_z) / length_squared, 0, 1)
+                t := clamp(
+                    ((sample_x - start.x) * segment_x + (sample_z - start.z) * segment_z) / length_squared,
+                    0,
+                    1,
+                )
                 closest_x, closest_z := start.x + segment_x * t, start.z + segment_z * t
                 offset_x, offset_z := sample_x - closest_x, sample_z - closest_z
                 distance_squared := offset_x * offset_x + offset_z * offset_z
@@ -946,7 +1171,7 @@ apply_cliff_stroke :: proc(
            structure.center_z > max_world_z + effective_width {
             continue
         }
-        structure.base_y = sample_height(project, 0, structure.center_x, structure.center_z)
+        structure.base_y = sample_surface_height(project, 0, structure.center_x, structure.center_z)
     }
     project.revision += 1
     return true
@@ -1281,7 +1506,7 @@ default_runway_natural_site :: proc(project: ^Project, sign: f32, seed: u32) -> 
                 for sample_x in 0 ..< 9 {
                     px := candidate_x + (f32(sample_x) / 8 * 2 - 1) * half_length
                     pz := candidate_z + (f32(sample_z) / 4 * 2 - 1) * half_width
-                    height := sample_height(project, 0, px, pz)
+                    height := sample_surface_height(project, 0, px, pz)
                     if height <= project.sea_level + .8 {
                         valid = false
                         break
@@ -1341,7 +1566,7 @@ add_default_runways_seeded :: proc(project: ^Project, seeds: [len(DEFAULT_ISLAND
         seed := seeds[island_index]
         center_x, center_z, runway_target, _ := default_runway_natural_site(project, sign, seed)
         for &level in project.levels do default_level_runway_grade(&level, center_x, center_z, runway_target)
-        runway_height := sample_height(project, 0, center_x, center_z)
+        runway_height := sample_surface_height(project, 0, center_x, center_z)
         from := roads.add_node(&project.road_graph, {center_x - runway_half_length, runway_height, center_z}, 0)
         to := roads.add_node(&project.road_graph, {center_x + runway_half_length, runway_height, center_z}, 0)
         if from < 0 ||
@@ -1417,10 +1642,13 @@ init_project_seeded :: proc(
     delete(result.structures)
     delete(result.terrain_pages)
     bathymetry_destroy(&result.bathymetry_chunks)
+    delete(result.terrain_page_lookup)
+    delete(result.bathymetry_chunk_lookup)
     result^ = {}
     result.sea_level = 0
     result.revision = 1
     result.next_structure_id = 1
+    result.island_transforms = default_island_transforms()
     authored_half_extent := f32(WORLD_SIZE_METERS * .5)
     gameplay_center := authored_half_extent * DEFAULT_ISLAND_OFFSET
     generated_islands: [len(DEFAULT_ISLAND_SIGNS)]islands.Plan
@@ -1716,6 +1944,8 @@ destroy_project :: proc(project: ^Project) {
     project.structure_count = 0
     delete(project.terrain_pages)
     bathymetry_destroy(&project.bathymetry_chunks)
+    delete(project.terrain_page_lookup)
+    delete(project.bathymetry_chunk_lookup)
 }
 
 free_project :: proc(project: ^Project) {
@@ -2499,15 +2729,26 @@ sample_level_render_material :: #force_inline proc(data: ^Clipmap_Level, x, z: f
     return a * (1 - tz) + b * tz
 }
 
-// Sampling starts at the requested level and falls back outward through the
-// coarser nested grids when a coordinate is outside a fine level.
+// Resolve the physical top surface used by cameras, contacts, and presentation.
+// Land owns its authored height; water owns the interface when no dry land is
+// present. Code that requires buildable or traversable ground must use
+// sample_land and handle found explicitly.
 @(no_instrumentation)
-sample_height :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
+sample_surface_height :: proc(project: ^Project, level: int, x, z: f32) -> f32 {
     height, _, found := sample_land(project, level, x, z)
-    return found ? height : 0
+    if found do return height
+    if project == nil do return 0
+    return project.sea_level
 }
 
-sample_land :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+sample_authored_field_raw :: #force_inline proc(
+    project: ^Project,
+    level: int,
+    x, z: f32,
+) -> (
+    height, material: f32,
+    contained: bool,
+) {
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
     for candidate in level ..< CLIPMAP_LEVELS {
         data := &project.levels[candidate]
@@ -2517,7 +2758,72 @@ sample_land :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (
         // The dense levels remain the authoritative derived field for gameplay
         // queries. Sparse pages are residency data used by rendering and map
         // storage; open ocean is represented by the sea-level height.
-        return height, material, height > project.sea_level + .01
+        return height, material, true
+    }
+    return
+}
+
+sample_land_raw :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+    contained: bool
+    height, material, contained = sample_authored_field_raw(project, level, x, z)
+    return height, material, contained && height > project.sea_level + SHORELINE_EPSILON
+}
+
+@(private)
+sample_authored_field_height :: proc(project: ^Project, level: int, x, z: f32) -> (height: f32, found: bool) {
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
+    source_owned := false
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if island_contains_source(island, x, z) {
+            source_owned = true
+            break
+        }
+    }
+    if !source_owned {
+        height, _, found = sample_authored_field_raw(project, level, x, z)
+    }
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if !island_contains_world(island, x, z) do continue
+        source_x := x - (island.current_x - island.source_x)
+        source_z := z - (island.current_z - island.source_z)
+        candidate, _, candidate_found := sample_authored_field_raw(project, level, source_x, source_z)
+        if candidate_found && (!found || candidate > height) {
+            height, found = candidate, true
+        }
+    }
+    return
+}
+
+sample_land :: proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
+
+    // The stored heightfield remains in authored coordinates. Each island is
+    // sampled through its inverse parent translation, avoiding resampling on
+    // repeated moves. The unowned remainder stays fixed in world space.
+    source_owned := false
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if island_contains_source(island, x, z) {
+            source_owned = true
+            break
+        }
+    }
+    if !source_owned {
+        height, material, found = sample_land_raw(project, level, x, z)
+    }
+
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if !island_contains_world(island, x, z) do continue
+        source_x := x - (island.current_x - island.source_x)
+        source_z := z - (island.current_z - island.source_z)
+        candidate_height, candidate_material, candidate_found := sample_land_raw(project, level, source_x, source_z)
+        if !candidate_found do continue
+        if !found || candidate_height > height || (candidate_height == height && index == 0) {
+            height, material, found = candidate_height, candidate_material, true
+        }
     }
     return
 }
@@ -2528,9 +2834,9 @@ sample_land :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (
 // the fine edge's intermediate vertices and the coarse ring.
 @(no_instrumentation)
 sample_clipmap_transition_height :: #force_inline proc(project: ^Project, level: int, x, z, weight: f32) -> f32 {
-    fine := sample_height(project, level, x, z)
+    fine := sample_surface_height(project, level, x, z)
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS - 1 || weight <= 0 do return fine
-    coarse := sample_height(project, level + 1, x, z)
+    coarse := sample_surface_height(project, level + 1, x, z)
     blend := clamp(weight, 0, 1)
     return fine + (coarse - fine) * blend
 }
@@ -2602,7 +2908,7 @@ ground_surface_at :: #force_inline proc(project: ^Project, level: int, x, z: f32
     if project == nil do return .Grass
     return classify_ground(
         sample_material(project, level, x, z),
-        sample_height(project, level, x, z),
+        sample_surface_height(project, level, x, z),
         project.sea_level,
     )
 }
@@ -2663,15 +2969,22 @@ apply_stroke_with_hardness :: proc(
     world_x, world_z, radius, strength, direction, hardness: f32,
 ) {
     if project == nil || radius <= 0 || strength <= 0 do return
+    edit_x, edit_z := world_x, world_z
+    if id := island_at(project, world_x, world_z); id != .World {
+        index, _ := island_index(id)
+        island := island_transform_at(project, index)
+        edit_x -= island.current_x - island.source_x
+        edit_z -= island.current_z - island.source_z
+    }
     falloff_exponent := 1 + (1 - clamp(hardness, 0, 1)) * 2
     authored_level := CLIPMAP_LEVELS - 1
     for level in 0 ..< CLIPMAP_LEVELS {
         if level_contains_bounds(
             &project.levels[level],
-            world_x - radius,
-            world_z - radius,
-            world_x + radius,
-            world_z + radius,
+            edit_x - radius,
+            edit_z - radius,
+            edit_x + radius,
+            edit_z + radius,
         ) {
             authored_level = level
             break
@@ -2681,16 +2994,16 @@ apply_stroke_with_hardness :: proc(
     effective_radius := max(radius, data.cell_size * 1.5)
     min_x, min_z, max_x, max_z, _ := level_sample_bounds(
         data,
-        world_x - effective_radius,
-        world_z - effective_radius,
-        world_x + effective_radius,
-        world_z + effective_radius,
+        edit_x - effective_radius,
+        edit_z - effective_radius,
+        edit_x + effective_radius,
+        edit_z + effective_radius,
     )
     for z in min_z ..= max_z {
         for x in min_x ..= max_x {
             world_sample_x := data.origin_x + f32(x) * data.cell_size
             world_sample_z := data.origin_z + f32(z) * data.cell_size
-            dx, dz := world_sample_x - world_x, world_sample_z - world_z
+            dx, dz := world_sample_x - edit_x, world_sample_z - edit_z
             distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
             if distance > effective_radius do continue
             falloff := f32(math.pow(f64(1 - distance / effective_radius), f64(falloff_exponent)))
@@ -2720,17 +3033,17 @@ apply_stroke_with_hardness :: proc(
         propagation_radius := effective_radius + data.cell_size * 2
         fine_min_x, fine_min_z, fine_max_x, fine_max_z, overlaps := level_sample_bounds(
             finer,
-            world_x - propagation_radius,
-            world_z - propagation_radius,
-            world_x + propagation_radius,
-            world_z + propagation_radius,
+            edit_x - propagation_radius,
+            edit_z - propagation_radius,
+            edit_x + propagation_radius,
+            edit_z + propagation_radius,
         )
         if !overlaps do continue
         for z in fine_min_z ..= fine_max_z {
             sample_z := finer.origin_z + f32(z) * finer.cell_size
             for x in fine_min_x ..= fine_max_x {
                 sample_x := finer.origin_x + f32(x) * finer.cell_size
-                dx, dz := sample_x - world_x, sample_z - world_z
+                dx, dz := sample_x - edit_x, sample_z - edit_z
                 if dx * dx + dz * dz > effective_radius * effective_radius ||
                    !level_contains(data, sample_x, sample_z) {
                     continue
@@ -2749,10 +3062,10 @@ apply_stroke_with_hardness :: proc(
         propagation_radius := effective_radius + finer.cell_size * 2
         coarse_min_x, coarse_min_z, coarse_max_x, coarse_max_z, overlaps := level_sample_bounds(
             coarse,
-            world_x - propagation_radius,
-            world_z - propagation_radius,
-            world_x + propagation_radius,
-            world_z + propagation_radius,
+            edit_x - propagation_radius,
+            edit_z - propagation_radius,
+            edit_x + propagation_radius,
+            edit_z + propagation_radius,
         )
         if !overlaps do continue
         for z in coarse_min_z ..= coarse_max_z {
@@ -2771,7 +3084,7 @@ apply_stroke_with_hardness :: proc(
             structure := &project.structures[index]
             dx, dz := structure.center_x - world_x, structure.center_z - world_z
             if dx * dx + dz * dz > effective_radius * effective_radius do continue
-            structure.base_y = sample_height(project, 0, structure.center_x, structure.center_z)
+            structure.base_y = sample_surface_height(project, 0, structure.center_x, structure.center_z)
         }
     }
     project.revision += 1

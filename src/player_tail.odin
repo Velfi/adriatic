@@ -116,7 +116,7 @@ player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3)
         editor.player.position.y +
         local_y +
         mouse_surface_height(editor, editor.player.position.x, editor.player.position.z) -
-        terrain.sample_height(&editor.project, 0, editor.player.position.x, editor.player.position.z),
+        terrain.sample_surface_height(&editor.project, 0, editor.player.position.x, editor.player.position.z),
         editor.player.position.z + local_x * sine + local_z * cosine,
     }
     // Turning shifts the tail's preferred first segment to the outside of the

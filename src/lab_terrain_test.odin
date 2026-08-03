@@ -23,8 +23,8 @@ lab_terrain_load_centers_levels_and_limits_generation_to_patch :: proc(t: ^testi
     testing.expect(t, lab_terrain_load(editor, config, lab_terrain_test_sampler))
     testing.expect_value(t, editor.project.sea_level, f32(-1))
     testing.expect_value(t, editor.project.levels[0].cell_size, terrain.FINE_CELL_SIZE)
-    testing.expect_value(t, terrain.sample_height(&editor.project, 0, 12, -8), f32(4))
-    testing.expect_value(t, terrain.sample_height(&editor.project, 0, 30, -8), f32(-6))
+    testing.expect_value(t, terrain.sample_surface_height(&editor.project, 0, 12, -8), f32(4))
+    testing.expect_value(t, terrain.sample_surface_height(&editor.project, 0, 30, -8), f32(-6))
 }
 
 @(test)

@@ -68,7 +68,7 @@ arch_wall_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bo
 
 arch_wall_lab_height :: proc(position: arch_walls.Vec2, data: rawptr) -> f32 {
     editor := cast(^Editor)data
-    return terrain.sample_height(&editor.project,0,position.x,position.y)
+    return terrain.sample_surface_height(&editor.project,0,position.x,position.y)
 }
 
 arch_wall_generator_lab_process_input :: proc(_: ^Editor) {

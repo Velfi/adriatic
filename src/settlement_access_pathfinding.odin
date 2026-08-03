@@ -43,12 +43,14 @@ settlement_access_segment_max_grade :: proc(
     if length <= .001 do return 0
     steps := max(1, int(math.ceil(f64(length / max(sample_spacing, f32(.1))))))
     previous := start
-    previous_height := terrain.sample_height(project, 0, start[0], start[1])
+    previous_height, _, found := terrain.sample_land(project, 0, start[0], start[1])
+    if !found do return 1e30
     maximum_grade: f32
     for step in 1 ..= steps {
         along := f32(step) / f32(steps)
         point := start + (end - start) * along
-        height := terrain.sample_height(project, 0, point[0], point[1])
+        height, _, sample_found := terrain.sample_land(project, 0, point[0], point[1])
+        if !sample_found do return 1e30
         distance := linalg.length(point - previous)
         maximum_grade = max(maximum_grade, math.abs(height - previous_height) / max(distance, f32(.01)))
         previous, previous_height = point, height
@@ -142,7 +144,8 @@ settlement_access_path_find :: proc(
         cx, cz := current_node % width, current_node / width
         current_point := [2]f32{minimum[0] + f32(cx) * cell, minimum[1] + f32(cz) * cell}
         if current_node == start_node do current_point = start
-        current_height := terrain.sample_height(project, 0, current_point[0], current_point[1])
+        current_height, _, current_found := terrain.sample_land(project, 0, current_point[0], current_point[1])
+        if !current_found do continue
         for direction, next_heading in directions {
             nx, nz := cx + direction[0], cz + direction[1]
             if nx < 0 || nz < 0 || nx >= width || nz >= height do continue
@@ -173,7 +176,8 @@ settlement_access_path_find :: proc(
                        !settlement_access_segment_network_clear(city_plan, current_point, next_point, goal)) {
                 continue
             }
-            next_height := terrain.sample_height(project, 0, next_point[0], next_point[1])
+            next_height, _, next_found := terrain.sample_land(project, 0, next_point[0], next_point[1])
+            if !next_found do continue
             distance := linalg.length(next_point - current_point)
             grade := math.abs(next_height - current_height) / max(distance, f32(.01))
             // Door access is allowed to become a stepped path on severe
@@ -364,7 +368,7 @@ settlement_stoop_layout_choice :: proc(
     if project == nil || base_choice != 0 do return base_choice
 
     straight_probe := wall + outward * .72
-    straight_ground := terrain.sample_height(project, 0, straight_probe[0], straight_probe[1])
+    straight_ground := terrain.sample_surface_height(project, 0, straight_probe[0], straight_probe[1])
     straight_rise := threshold_y - straight_ground
     if straight_rise <= .30 do return base_choice
     step_count := clamp(int(math.ceil(f64(straight_rise / .20))), 2, 14)
@@ -437,7 +441,7 @@ settlement_structure_front_door_point :: proc(
     turn_sign := layout_choice == 1 ? f32(-1) : f32(1)
     probe := threshold + outward * (turned ? f32(.68) : f32(.50))
     if turned do probe += tangent * turn_sign * (door_width * .5 + 2.4)
-    ground_y := terrain.sample_height(project, 0, probe[0], probe[1])
+    ground_y := terrain.sample_surface_height(project, 0, probe[0], probe[1])
     rise := structure.base_y + .20 - ground_y
     if rise <= .30 do return threshold
 

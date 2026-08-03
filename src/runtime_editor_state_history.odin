@@ -289,7 +289,7 @@ boat_spawn_is_water :: proc(project: ^terrain.Project, agent: ^boats.Agent, posi
         position - forward * half_length - right * half_beam,
     }
     for sample in samples {
-        if terrain.sample_height(project, 0, sample.x, sample.y) > project.sea_level do return false
+        if terrain.sample_surface(project, 0, sample.x, sample.y) == .Land do return false
     }
     return true
 }
@@ -512,12 +512,20 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.settlement_brush_pieces = editor.settlement_plan.brush_pieces
     state.settlement_brush_piece_count = editor.settlement_plan.brush_piece_count
     state.settlement_next_component_id = editor.settlement_plan.next_brush_component_id
+    state.island_transforms = editor.project.island_transforms
+    state.settlement_plan = editor.settlement_plan
+    state.greek_placements = editor.greek_placements
+    state.greek_placement_count = editor.greek_placement_count
+    state.default_marinas = editor.default_marinas
+    state.default_harbors = editor.default_harbors
+    state.default_harbor_interventions = editor.default_harbor_interventions
     resize(&state.structures, state.count)
     copy(state.structures[:], editor.project.structures[:state.count])
 }
 
 structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_State) {
     if editor == nil || state == nil do return
+    island_transform_changed := editor.project.island_transforms != state.island_transforms
     resize(&editor.project.structures, state.count)
     copy(editor.project.structures[:], state.structures[:state.count])
     editor.project.structure_count = state.count
@@ -536,9 +544,20 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.settlement_plan.brush_pieces = state.settlement_brush_pieces
     editor.settlement_plan.brush_piece_count = state.settlement_brush_piece_count
     editor.settlement_plan.next_brush_component_id = state.settlement_next_component_id
+    editor.project.island_transforms = state.island_transforms
+    editor.settlement_plan = state.settlement_plan
+    editor.greek_placements = state.greek_placements
+    editor.greek_placement_count = state.greek_placement_count
+    editor.default_marinas = state.default_marinas
+    editor.default_harbors = state.default_harbors
+    editor.default_harbor_interventions = state.default_harbor_interventions
     editor.project.revision += 1
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
+    if island_transform_changed {
+        world_renderer_fixture_invalidate(editor)
+        gameplay_physics_rebuild_structures(editor)
+    }
 }
 
 structure_history_push :: proc(

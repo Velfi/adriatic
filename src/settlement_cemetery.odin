@@ -69,7 +69,7 @@ settlement_cemetery_site_relief :: proc(
     project: ^terrain.Project,
     x, z, width, depth, rotation: f32,
 ) -> (center_y, relief: f32) {
-    center_y = terrain.sample_height(project, 0, x, z)
+    center_y = terrain.sample_surface_height(project, 0, x, z)
     for side_x in -1 ..= 1 {
         for side_z in -1 ..= 1 {
             if side_x == 0 && side_z == 0 do continue
@@ -80,7 +80,7 @@ settlement_cemetery_site_relief :: proc(
                 f32(side_z) * depth * .46,
                 rotation,
             )
-            sample_y := terrain.sample_height(project, 0, sample_x, sample_z)
+            sample_y := terrain.sample_surface_height(project, 0, sample_x, sample_z)
             relief = max(relief, math.abs(sample_y - center_y))
         }
     }
@@ -232,7 +232,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     if !include_stable {
         for tree, tree_index in site.plan.trees[:site.plan.tree_count] {
             x, z := settlement_cemetery_world_point(site, tree.x, tree.z)
-            y := terrain.sample_height(&editor.project, 0, x, z)
+            y := terrain.sample_surface_height(&editor.project, 0, x, z)
             species := tree_index % 4 == 1 ? plants.Species.Olive : .Italian_Cypress
             _ = world_generated_plant(
                 species,
@@ -253,7 +253,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
     wall_color := site.plan.style == .Adriatic_Medieval ? canvas2d.Color{175, 166, 143, 255} : canvas2d.Color{151, 149, 139, 255}
     path_color := canvas2d.Color{135, 126, 108, 255}
     path_x, path_z := settlement_cemetery_world_point(site, 0, 0)
-    path_y := terrain.sample_height(&editor.project, 0, path_x, path_z)
+    path_y := terrain.sample_surface_height(&editor.project, 0, path_x, path_z)
     world_box_rotated(
         {path_x, path_y + .025, path_z},
         {site.plan.path_width, .05, site.plan.depth - 1.2},
@@ -263,7 +263,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
 
     half_width, half_depth := site.plan.width * .5, site.plan.depth * .5
     approach_x, approach_z := settlement_cemetery_world_point(site, 0, -half_depth - 5)
-    approach_y := terrain.sample_height(&editor.project, 0, approach_x, approach_z)
+    approach_y := terrain.sample_surface_height(&editor.project, 0, approach_x, approach_z)
     world_box_rotated(
         {approach_x, approach_y + .025, approach_z},
         {site.plan.path_width, .05, 10},
@@ -290,7 +290,7 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
             local_x := wall[0] + (along_x ? along : f32(0))
             local_z := wall[1] + (along_x ? f32(0) : along)
             x, z := settlement_cemetery_world_point(site, local_x, local_z)
-            y := terrain.sample_height(&editor.project, 0, x, z)
+            y := terrain.sample_surface_height(&editor.project, 0, x, z)
             size_x := along_x ? segment_length + .03 : wall[2]
             size_z := along_x ? wall[3] : segment_length + .03
             world_box_rotated({x, y + wall_height * .5, z}, {size_x, wall_height, size_z}, site.rotation, wall_color)
@@ -301,19 +301,19 @@ world_settlement_cemetery :: proc(editor: ^Editor, include_stable := true) {
         world_grave := grave
         world_grave.x, world_grave.z = settlement_cemetery_world_point(site, grave.x, grave.z)
         world_grave.rotation += site.rotation
-        world_grave.ground_y = terrain.sample_height(&editor.project, 0, world_grave.x, world_grave.z)
+        world_grave.ground_y = terrain.sample_surface_height(&editor.project, 0, world_grave.x, world_grave.z)
         cemetery_lab_draw_grave(world_grave)
     }
 
     memorial := site.plan.memorial
     memorial.x, memorial.z = settlement_cemetery_world_point(site, memorial.x, memorial.z)
     memorial.rotation += site.rotation
-    memorial_y := terrain.sample_height(&editor.project, 0, memorial.x, memorial.z)
+    memorial_y := terrain.sample_surface_height(&editor.project, 0, memorial.x, memorial.z)
     cemetery_lab_draw_memorial(memorial, path_color, memorial_y)
 
     for tree, tree_index in site.plan.trees[:site.plan.tree_count] {
         x, z := settlement_cemetery_world_point(site, tree.x, tree.z)
-        y := terrain.sample_height(&editor.project, 0, x, z)
+        y := terrain.sample_surface_height(&editor.project, 0, x, z)
         species := tree_index % 4 == 1 ? plants.Species.Olive : .Italian_Cypress
         _ = world_generated_plant(
             species,
@@ -355,7 +355,7 @@ gameplay_physics_add_settlement_cemetery :: proc(editor: ^Editor) {
             local_x := wall[0] + (along_x ? along : f32(0))
             local_z := wall[1] + (along_x ? f32(0) : along)
             x, z := settlement_cemetery_world_point(site, local_x, local_z)
-            y := terrain.sample_height(&editor.project, 0, x, z)
+            y := terrain.sample_surface_height(&editor.project, 0, x, z)
             half_x := along_x ? segment_length * .5 + .015 : wall[2] * .5
             half_z := along_x ? wall[3] * .5 : segment_length * .5 + .015
             body := gameplay_physics_add_static_box(
@@ -370,7 +370,7 @@ gameplay_physics_add_settlement_cemetery :: proc(editor: ^Editor) {
     }
     for grave, grave_index in site.plan.graves[:site.plan.grave_count] {
         x, z := settlement_cemetery_world_point(site, grave.x, grave.z)
-        y := terrain.sample_height(&editor.project, 0, x, z)
+        y := terrain.sample_surface_height(&editor.project, 0, x, z)
         body := gameplay_physics_add_static_box(
             state,
             {grave.width * .5, max(grave.height * .5, f32(.10)), grave.depth * .5},
@@ -382,7 +382,7 @@ gameplay_physics_add_settlement_cemetery :: proc(editor: ^Editor) {
     }
     memorial := site.plan.memorial
     x, z := settlement_cemetery_world_point(site, memorial.x, memorial.z)
-    y := terrain.sample_height(&editor.project, 0, x, z)
+    y := terrain.sample_surface_height(&editor.project, 0, x, z)
     body := gameplay_physics_add_static_box(
         state,
         {memorial.base_width * .5, memorial.height * .5, memorial.base_width * .42},

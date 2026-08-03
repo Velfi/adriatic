@@ -134,7 +134,7 @@ markov_town_model :: proc(profile: Settlement_Profile) -> markov.Proc_Node {
 }
 
 markov_town_height :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
-    return terrain.sample_height(project, 0, x, z)
+    return terrain.sample_surface_height(project, 0, x, z)
 }
 
 markov_town_probe :: proc(frame: ^markov.Frame, x, z: int) -> bool {
@@ -207,7 +207,7 @@ settlement_park_site_clear :: proc(project: ^terrain.Project, x, z, width, depth
 }
 
 markov_town_add_grove :: proc(project: ^terrain.Project, x, z, width, depth, height: f32, seed: u32) {
-    base_y := terrain.sample_height(project, 0, x, z)
+    base_y := terrain.sample_surface_height(project, 0, x, z)
     structure := terrain.structure_make(x, z, width, depth, base_y, height)
     structure.kind = .Foliage
     structure.width = width
@@ -221,7 +221,7 @@ markov_town_reseat_park_groves :: proc(plan: ^Settlement_Plan, project: ^terrain
     if plan == nil || project == nil do return
     for &site in plan.sites[:plan.site_count] {
         if !site.accepted || site.kind != .Park do continue
-        base_y := terrain.sample_height(project, 0, site.structure.center_x, site.structure.center_z)
+        base_y := terrain.sample_surface_height(project, 0, site.structure.center_x, site.structure.center_z)
         site.structure.base_y = base_y
         for &structure in project.structures[:project.structure_count] {
             if structure.id != site.structure.id do continue
@@ -274,7 +274,7 @@ settlement_map_frame :: proc(
     }
     // Keep the authored clearance relative to the fixture terrain so slope
     // and waterfront variants retain the same plan-view composition.
-    focus.y = terrain.sample_height(project, 0, focus.x, focus.z)
+    focus.y = terrain.sample_surface_height(project, 0, focus.x, focus.z)
     return
 }
 
@@ -863,7 +863,7 @@ settlement_lab_configure :: proc(
                         foliage_index += 1
                         continue
                     }
-                    grove_base_y := terrain.sample_height(&editor.project, 0, x, z)
+                    grove_base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
                     grove := terrain.structure_make(x, z, grove_width, grove_depth, grove_base_y, grove_height)
                     grove.kind = .Foliage
                     grove.width = grove_width
@@ -936,7 +936,7 @@ settlement_lab_configure :: proc(
     decorative_budget := profile.scale == .City ? 12 : (profile.scale == .Town ? 8 : 4)
     decorative_commit_count := min(editor.settlement_plan.decorative_foliage_count, decorative_budget)
     for &structure in editor.settlement_plan.decorative_foliage[:decorative_commit_count] {
-        structure.base_y = terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+        structure.base_y = terrain.sample_surface_height(&editor.project, 0, structure.center_x, structure.center_z)
         structure_index := terrain.add_structure(&editor.project, structure)
         if structure_index >= 0 {
             // add_structure assigns the authoritative stable ID to its copy.
@@ -1142,8 +1142,8 @@ settlement_lab_configure :: proc(
             // of the settlement was behind or beside the camera.
             camera_x := look_x - dx * camera.distance
             camera_z := look_z - dz * camera.distance
-            camera_y := terrain.sample_height(&editor.project, 0, camera_x, camera_z) + 2.4
-            look_y := terrain.sample_height(&editor.project, 0, look_x, look_z) + 3.4
+            camera_y := terrain.sample_surface_height(&editor.project, 0, camera_x, camera_z) + 2.4
+            look_y := terrain.sample_surface_height(&editor.project, 0, look_x, look_z) + 3.4
             streetscape := third_person.Camera_Pose {
                 position = {camera_x, camera_y, camera_z},
                 target   = {look_x, look_y, look_z},
@@ -1406,7 +1406,7 @@ world_markov_town_wanderers :: proc(editor: ^Editor) {
         dz := f32(math.cos(f64(phase))) * radius_z
         // Mouse model forward is {-sin(yaw), +cos(yaw)}.
         rotation := f32(math.atan2(f64(-dx), f64(dz)))
-        y := terrain.sample_height(&editor.project, 0, x, z)
+        y := terrain.sample_surface_height(&editor.project, 0, x, z)
         world_mouse_model_scaled(
             editor,
             {

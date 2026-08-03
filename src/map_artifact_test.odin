@@ -17,19 +17,20 @@ when ODIN_TEST {
         artifact.project.next_structure_id = 2
         artifact.project.river_water_splines[0].point_count = 1
         artifact.project.river_water_splines[0].points[0] = {
-            position = {12, -34},
+            position    = {12, -34},
             water_level = 7.5,
-            width = 4.25,
+            width       = 4.25,
         }
+        artifact.river_water_splines = artifact.project.river_water_splines
         artifact.project.structures = make([dynamic]terrain.Structure, 1)
         artifact.project.structure_count = 1
         artifact.project.structures[0] = {
-            id = 1,
-            width = 4,
-            depth = 5,
+            id     = 1,
+            width  = 4,
+            depth  = 5,
             height = 6,
-            color = {1, 2, 3, 255},
-            kind = .Rock,
+            color  = {1, 2, 3, 255},
+            kind   = .Rock,
         }
         for &level, index in artifact.project.levels {
             level.cell_size = terrain.FINE_CELL_SIZE * f32(u32(1) << u32(index))
@@ -49,6 +50,9 @@ when ODIN_TEST {
     map_artifact_fixture_test_source :: proc() -> ^Fixture {
         fixture := new(Fixture)
         fixture.project.revision = 17
+        fixture.project.island_transforms = terrain.default_island_transforms()
+        fixture.project.island_transforms[1].current_x = 1800
+        fixture.project.island_transforms[1].current_z = 2200
         fixture.project.sea_level = f32(2.5)
         fixture.project.next_structure_id = 8
         fixture.project.structures = make([dynamic]terrain.Structure, 1)
@@ -249,11 +253,7 @@ when ODIN_TEST {
             testing.expect(t, decoded.project.structure_count == 1)
             testing.expect(t, decoded.project.structures[0].height == 6)
             testing.expect(t, decoded.seeds == source.seeds)
-            testing.expect_value(
-                t,
-                decoded.project.river_water_splines,
-                [terrain.RIVER_WATER_SPLINE_CAPACITY]terrain.River_Water_Spline{},
-            )
+            testing.expect_value(t, decoded.river_water_splines, source.river_water_splines)
         }
 
         truncated, truncated_error, truncated_ok := map_artifact_decode(first[:MAP_ARTIFACT_HEADER_SIZE - 1])
@@ -316,6 +316,18 @@ when ODIN_TEST {
     map_artifact_fixture_helpers_round_trip_map_state :: proc(t: ^testing.T) {
         source := map_artifact_fixture_test_source()
         defer map_artifact_fixture_test_destroy(source)
+        append(&source.project.terrain_pages, terrain.Terrain_Page{level = 0, page_x = 1, page_z = 2})
+        source.project.terrain_pages[0].heights[3] = 6.25
+        chunk := terrain.Bathymetry_Chunk{
+            chunk_x = -3,
+            chunk_z = 4,
+            owner = .West,
+            heights = make([dynamic]f16, terrain.BATHYMETRY_CHUNK_SAMPLES),
+            material = make([dynamic]i8, terrain.BATHYMETRY_CHUNK_SAMPLES),
+        }
+        chunk.heights[5] = -7
+        append(&source.project.bathymetry_chunks, chunk)
+        terrain.terrain_sampling_lookup_rebuild(&source.project)
         seeds := terrain.DEFAULT_ISLAND_SEEDS
         seeds[0] = 0x10203040
         seeds[1] = 0x50607080
@@ -324,6 +336,12 @@ when ODIN_TEST {
         testing.expect(t, captured)
         if !captured do return
         defer map_artifact_destroy(artifact)
+        testing.expect_value(t, len(source.project.terrain_pages), 1)
+        testing.expect_value(t, source.project.terrain_pages[0].heights[3], f32(6.25))
+        testing.expect_value(t, len(source.project.bathymetry_chunks), 1)
+        testing.expect_value(t, f32(source.project.bathymetry_chunks[0].heights[5]), f32(-7))
+        testing.expect(t, raw_data(source.project.terrain_pages) != raw_data(artifact.project.terrain_pages))
+        testing.expect(t, raw_data(source.project.bathymetry_chunks[0].heights) != raw_data(artifact.project.bathymetry_chunks[0].heights))
         source.project.structures[0].id = 99
 
         encoded, encode_error, encoded_ok := map_artifact_encode(artifact)
@@ -356,6 +374,8 @@ when ODIN_TEST {
         testing.expect(t, target.project.levels[0].heights[9] == f32(3.75))
         testing.expect(t, target.project.city_density[11] == 12)
         testing.expect(t, target.project.climbing_leaf_density[13] == 14)
+        testing.expect(t, target.project.island_transforms[1].current_x == 1800)
+        testing.expect(t, target.project.island_transforms[1].current_z == 2200)
         testing.expect(t, target.project.river_water_splines[0].point_count > 1)
         testing.expect(t, target.project.river_water_splines[1].point_count > 1)
         testing.expect(t, target.settlement_plan.valid)
@@ -373,6 +393,18 @@ when ODIN_TEST {
         testing.expect(t, target.default_marina_islands[0] == .East)
         testing.expect(t, target.greek_placement_count == 1 && target.greek_placements[0].asset_index == 3)
         testing.expect(t, target.camera.yaw_radians == .99 && target.camera.distance == 77)
+    }
+
+    @(test)
+    map_artifact_legacy_default_map_initializes_island_transforms :: proc(t: ^testing.T) {
+        artifact, decode_error, decoded := map_artifact_read("assets/maps/default.adriatic-map")
+        defer map_artifact_error_dispose(&decode_error)
+        testing.expect(t, decoded)
+        if !decoded do return
+        defer map_artifact_destroy(artifact)
+        defaults := terrain.default_island_transforms()
+        testing.expect_value(t, artifact.project.island_transforms, defaults)
+        testing.expect_value(t, artifact.generator_version, MAP_ARTIFACT_GENERATOR_VERSION)
     }
 
     @(test)

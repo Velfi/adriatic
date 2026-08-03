@@ -708,9 +708,9 @@ architecture_foundation_detects_ridge_between_frontage_probes :: proc(t: ^testin
     // This lies on the front wall, but between the old corner, center, and
     // edge-midpoint probes that allowed the wall to pass through the ridge.
     ridge_x, ridge_z := f32(1293), f32(1309)
-    before := terrain.sample_height(project, 0, ridge_x, ridge_z)
+    before := terrain.sample_surface_height(project, 0, ridge_x, ridge_z)
     terrain.apply_stroke(project, .Raise, ridge_x, ridge_z, 2.5, .8, 1)
-    ridge_height := terrain.sample_height(project, 0, ridge_x, ridge_z)
+    ridge_height := terrain.sample_surface_height(project, 0, ridge_x, ridge_z)
     testing.expect(t, ridge_height > before)
     _, highest := architecture.architecture_foundation_height_range(project, building)
     testing.expect(t, highest >= ridge_height - .001)

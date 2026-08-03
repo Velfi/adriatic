@@ -14,10 +14,10 @@ settlement_ruin_culture :: proc(region: Settlement_Region, seed: u32) -> ruins.C
 settlement_ruin_profile :: proc(project: ^terrain.Project, point: [2]f32) -> ruins.Site {
     if project == nil do return ruins.default_site(.Flat)
     span := terrain.BASE_CELL_SIZE * 2
-    left := terrain.sample_height(project, 0, point[0] - span, point[1])
-    right := terrain.sample_height(project, 0, point[0] + span, point[1])
-    back := terrain.sample_height(project, 0, point[0], point[1] - span)
-    front := terrain.sample_height(project, 0, point[0], point[1] + span)
+    left := terrain.sample_surface_height(project, 0, point[0] - span, point[1])
+    right := terrain.sample_surface_height(project, 0, point[0] + span, point[1])
+    back := terrain.sample_surface_height(project, 0, point[0], point[1] - span)
+    front := terrain.sample_surface_height(project, 0, point[0], point[1] + span)
     slope_x, slope_z := (right - left) / (span * 2), (front - back) / (span * 2)
     grade := f32(math.sqrt(f64(slope_x * slope_x + slope_z * slope_z)))
     profile := grade > .12 ? ruins.Terrain_Profile.Terraced : grade > .035 ? .Incline : .Flat
@@ -90,12 +90,14 @@ settlement_ruin_try_place :: proc(
        !settlement_structure_clear(project, &empty_city, point[0], point[1], width, depth, 0, 3) {
         return false
     }
+    base_height, _, base_found := terrain.sample_land(project, 0, point[0], point[1])
+    if !base_found do return {}
     structure := terrain.structure_make(
         point[0],
         point[1],
         width,
         depth,
-        terrain.sample_height(project, 0, point[0], point[1]),
+        base_height,
         max(generated.elevation_range + f32(8), f32(12)),
     )
     structure.kind = .Ruins

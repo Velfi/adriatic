@@ -129,7 +129,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             editor.libellula_visible = false
             editor.player.position = {
                 position.x + 20,
-                terrain.sample_height(&editor.project, 0, position.x + 20, position.z),
+                terrain.sample_surface_height(&editor.project, 0, position.x + 20, position.z),
                 position.z,
             }
             editor.pilot.position = editor.player.position
@@ -143,7 +143,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -176,7 +176,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -200,7 +200,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -223,7 +223,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -254,7 +254,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -280,7 +280,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -306,7 +306,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -330,7 +330,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -359,7 +359,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -382,7 +382,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(
@@ -409,7 +409,7 @@ run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
             if found {
                 editor.player.position = {
                     position.x + 1.6,
-                    terrain.sample_height(&editor.project, 0, position.x + 1.6, position.z),
+                    terrain.sample_surface_height(&editor.project, 0, position.x + 1.6, position.z),
                     position.z,
                 }
                 editor.player.facing_yaw_radians = math.atan2(

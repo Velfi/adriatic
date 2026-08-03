@@ -172,7 +172,7 @@ resolve_terrain :: proc(
     radius, friction: f32,
     cached_plan: ^circulation.Plan = nil,
 ) {
-    surface_height := terrain.sample_height(project, 0, point.position.x, point.position.z)
+    surface_height := terrain.sample_surface_height(project, 0, point.position.x, point.position.z)
     fallback_plan: circulation.Plan
     plan := cached_plan
     if plan == nil {

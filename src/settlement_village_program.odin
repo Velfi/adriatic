@@ -13,14 +13,14 @@ settlement_village_reason_pick :: proc(plan: ^Settlement_Plan, project: ^terrain
         anchor = plan.neighborhoods[0].center
         tissue = plan.neighborhoods[0].tissue
     }
-    height := terrain.sample_height(project, 0, anchor[0], anchor[1])
+    height := terrain.sample_surface_height(project, 0, anchor[0], anchor[1])
     sample := f32(10)
     dx :=
-        terrain.sample_height(project, 0, anchor[0] + sample, anchor[1]) -
-        terrain.sample_height(project, 0, anchor[0] - sample, anchor[1])
+        terrain.sample_surface_height(project, 0, anchor[0] + sample, anchor[1]) -
+        terrain.sample_surface_height(project, 0, anchor[0] - sample, anchor[1])
     dz :=
-        terrain.sample_height(project, 0, anchor[0], anchor[1] + sample) -
-        terrain.sample_height(project, 0, anchor[0], anchor[1] - sample)
+        terrain.sample_surface_height(project, 0, anchor[0], anchor[1] + sample) -
+        terrain.sample_surface_height(project, 0, anchor[0], anchor[1] - sample)
     slope := linalg.length([2]f32{dx, dz}) / (sample * 2)
     if tissue == .Harbor || height <= project.sea_level + 5 do return .Harbor_Fishery
     if tissue == .Contour_Terrace || tissue == .Hillside_Accretion || slope >= .09 {
@@ -229,10 +229,10 @@ settlement_village_frontage_lane :: proc(
     sides := [2]f32{seed_side, -seed_side}
     sample := f32(10)
     gradient := [2]f32 {
-        terrain.sample_height(project, 0, route_origin[0] + sample, route_origin[1]) -
-        terrain.sample_height(project, 0, route_origin[0] - sample, route_origin[1]),
-        terrain.sample_height(project, 0, route_origin[0], route_origin[1] + sample) -
-        terrain.sample_height(project, 0, route_origin[0], route_origin[1] - sample),
+        terrain.sample_surface_height(project, 0, route_origin[0] + sample, route_origin[1]) -
+        terrain.sample_surface_height(project, 0, route_origin[0] - sample, route_origin[1]),
+        terrain.sample_surface_height(project, 0, route_origin[0], route_origin[1] + sample) -
+        terrain.sample_surface_height(project, 0, route_origin[0], route_origin[1] - sample),
     }
     gradient_length := linalg.length(gradient)
     local_slope := gradient_length / (sample * 2)
@@ -269,14 +269,14 @@ settlement_village_frontage_lane :: proc(
                 end = junction + tangent * (lane_length * .5)
             }
             score := -math.abs(angle_offset) * 2
-            previous_height := terrain.sample_height(project, 0, start[0], start[1])
+            previous_height := terrain.sample_surface_height(project, 0, start[0], start[1])
             valid := previous_height > project.sea_level + .6
             maximum_lane_grade := f32(0)
             sample_run := lane_length / 6
             for sample_index in 1 ..= 6 {
                 amount := f32(sample_index) / 6
                 point := start + tangent * (lane_length * amount)
-                height := terrain.sample_height(project, 0, point[0], point[1])
+                height := terrain.sample_surface_height(project, 0, point[0], point[1])
                 if height <= project.sea_level + .6 {
                     valid = false
                     break

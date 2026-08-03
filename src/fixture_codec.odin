@@ -42,6 +42,9 @@ fixture_codec_error_dispose :: proc(error: ^Fixture_Codec_Error) {
 fixture_codec_portable_config :: proc() -> hs.Portable_Config {
     config := hs.portable_default_config()
     config.exclusion_tag = "fixture"
+    // Inline ADRMAP data is already bounded by the portable payload ceiling,
+    // but valid maps can exceed the serializer's generic 16 MiB array limit.
+    config.limits.max_array_elements = config.limits.max_payload
     return config
 }
 

@@ -188,7 +188,7 @@ world_attendant_kiosk :: proc(editor: ^Editor) {
     if editor.airport_stamp_mode && editor.airport_preview_valid {
         position := third_person.Vec3 {
             editor.airport_preview_x,
-            terrain.sample_height(&editor.project, 0, editor.airport_preview_x, editor.airport_preview_z),
+            terrain.sample_surface_height(&editor.project, 0, editor.airport_preview_x, editor.airport_preview_z),
             editor.airport_preview_z,
         }
         world_attendant_kiosk_at(editor, position, editor.airport_stamp_yaw, true)
@@ -201,7 +201,7 @@ world_attendant_kiosk_at :: proc(
     authored_rotation: f32 = 0,
     use_authored_rotation: bool = false,
 ) {
-    ground := terrain.sample_height(&editor.project, 0, p.x, p.z)
+    ground := terrain.sample_surface_height(&editor.project, 0, p.x, p.z)
     sign := p.x >= 0 ? f32(1) : f32(-1)
     rotation := use_authored_rotation ? authored_rotation : (sign > 0 ? -f32(math.PI) * .5 : f32(math.PI) * .5)
     // A broad forecourt meets the asphalt access-road node at reception.

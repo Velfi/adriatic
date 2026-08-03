@@ -67,10 +67,10 @@ settlement_plan_generate_village_buildings :: proc(
     resource_direction := [2]f32{route_normal[0], route_normal[1]}
     sample := f32(12)
     gradient := [2]f32 {
-        terrain.sample_height(project, 0, common[0] + sample, common[1]) -
-        terrain.sample_height(project, 0, common[0] - sample, common[1]),
-        terrain.sample_height(project, 0, common[0], common[1] + sample) -
-        terrain.sample_height(project, 0, common[0], common[1] - sample),
+        terrain.sample_surface_height(project, 0, common[0] + sample, common[1]) -
+        terrain.sample_surface_height(project, 0, common[0] - sample, common[1]),
+        terrain.sample_surface_height(project, 0, common[0], common[1] + sample) -
+        terrain.sample_surface_height(project, 0, common[0], common[1] - sample),
     }
     gradient_length := linalg.length(gradient)
     if gradient_length > .001 {
@@ -104,7 +104,7 @@ settlement_plan_generate_village_buildings :: proc(
     harbor_quay_start, harbor_quay_end := resource_center, resource_center
     harbor_quay_half_width := f32(1.6)
     if resource_route_found &&
-       terrain.sample_height(project, 0, resource_center[0], resource_center[1]) > project.sea_level + .6 {
+       terrain.sample_surface_height(project, 0, resource_center[0], resource_center[1]) > project.sea_level + .6 {
         direction := resource_center - resource_route_origin
         direction_length := linalg.length(direction)
         if direction_length > .01 {
@@ -121,8 +121,8 @@ settlement_plan_generate_village_buildings :: proc(
                     for quay_half_span in quay_half_spans {
                         candidate_start := resource_center - harbor_quay_tangent * quay_half_span
                         candidate_end := resource_center + harbor_quay_tangent * quay_half_span
-                        start_height := terrain.sample_height(project, 0, candidate_start[0], candidate_start[1])
-                        end_height := terrain.sample_height(project, 0, candidate_end[0], candidate_end[1])
+                        start_height := terrain.sample_surface_height(project, 0, candidate_start[0], candidate_start[1])
+                        end_height := terrain.sample_surface_height(project, 0, candidate_end[0], candidate_end[1])
                         quay_grade := settlement_access_segment_max_grade(project, candidate_start, candidate_end)
                         if start_height <= project.sea_level + .6 ||
                            end_height <= project.sea_level + .6 ||
@@ -375,7 +375,7 @@ settlement_plan_generate_village_buildings :: proc(
                 rotation = settlement_rotation_face_point(rotation, {x, z}, placement_center)
             }
             if !settlement_structure_footprint_on_land(project, x, z, frontage, depth, rotation) do continue
-            height_at_site := terrain.sample_height(project, 0, x, z)
+            height_at_site := terrain.sample_surface_height(project, 0, x, z)
             separation := purpose == .Dwelling ? f32(2.2) : f32(3.2)
             if aegean_form do separation = purpose == .Dwelling ? f32(1.5) : f32(2.8)
             if aegean_cluster_access && (purpose == .Inn_Shop || purpose == .Workshop) {
@@ -509,7 +509,7 @@ settlement_plan_generate_village_buildings :: proc(
             } else if resource_purpose {
                 score = radius * .75
             }
-            height_error := math.abs(height_at_site - terrain.sample_height(project, 0, common[0], common[1]))
+            height_error := math.abs(height_at_site - terrain.sample_surface_height(project, 0, common[0], common[1]))
             score += height_error * (aegean_form ? f32(2.4) : f32(1.4))
             if score >= best_score do continue
             best_x, best_z, best_rotation, best_score = x, z, rotation, score

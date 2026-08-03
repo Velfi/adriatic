@@ -195,7 +195,7 @@ world_foliage_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            trunk_ground_y := terrain.sample_height(&world_renderer.editor.project, 0, trunk_x, trunk_z)
+            trunk_ground_y := terrain.sample_surface_height(&world_renderer.editor.project, 0, trunk_x, trunk_z)
             height_noise := .5 + .5 * f32(math.sin(f64(f32(structure.seed) * .013 + f32(trunk) * 1.73)))
             tree_canopy_lift := structure.height * (.075 + height_noise * .055)
             if !aerial_view {
@@ -404,7 +404,7 @@ world_foliage_formation :: proc(
                 local_z,
                 structure.rotation,
             )
-            lobe_structure.base_y = terrain.sample_height(&world_renderer.editor.project, 0, crown_x, crown_z)
+            lobe_structure.base_y = terrain.sample_surface_height(&world_renderer.editor.project, 0, crown_x, crown_z)
             // A tree crown has its own dimensions; it must not inherit the
             // aspect ratio of the authored forest footprint. Per-tree seed
             // variation also mixes crown profiles and green families across

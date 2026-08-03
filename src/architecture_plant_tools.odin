@@ -184,7 +184,7 @@ airport_stamp_site_valid :: proc(editor: ^Editor, x, z, yaw: f32) -> bool {
         for local_x in ([3]f32{-21, 0, 21}) {
             sample_x := x + local_x * cosine - local_z * sine
             sample_z := z + local_x * sine + local_z * cosine
-            if terrain.sample_height(&editor.project, 0, sample_x, sample_z) <= editor.project.sea_level + .35 {
+            if terrain.sample_surface_height(&editor.project, 0, sample_x, sample_z) <= editor.project.sea_level + .35 {
                 return false
             }
         }
@@ -194,7 +194,7 @@ airport_stamp_site_valid :: proc(editor: ^Editor, x, z, yaw: f32) -> bool {
 
 airport_stamp_add :: proc(editor: ^Editor, x, z, yaw: f32) -> int {
     if editor == nil || !airport_stamp_site_valid(editor, x, z, yaw) do return -1
-    marker := terrain.structure_make(x, z, 1, 1, terrain.sample_height(&editor.project, 0, x, z) - 2, 1)
+    marker := terrain.structure_make(x, z, 1, 1, terrain.sample_surface_height(&editor.project, 0, x, z) - 2, 1)
     marker.group_id = AIRPORT_STAMP_GROUP
     marker.rotation = yaw
     index := terrain.add_structure(&editor.project, marker)
@@ -353,7 +353,7 @@ farm_site_score :: proc(editor: ^Editor, origin_x, origin_z, yaw: f32, grid_widt
             local_z := f32(z_index) / 3 * f32(grid_height) * farmland.CELL_METERS * .48
             x := origin_x + local_x * cosine - local_z * sine
             z := origin_z + local_x * sine + local_z * cosine
-            height := terrain.sample_height(&editor.project, 0, x, z)
+            height := terrain.sample_surface_height(&editor.project, 0, x, z)
             if height > editor.project.sea_level + .35 do land += 1
             blocked := terrain.structure_index_at(&editor.project, x, z) >= 0
             for farm in editor.farms[:editor.farm_count] {
@@ -367,11 +367,11 @@ farm_site_score :: proc(editor: ^Editor, origin_x, origin_z, yaw: f32, grid_widt
             if !blocked && !pavement.on_surface do clear += 1
             sample := f32(4)
             rise_x :=
-                terrain.sample_height(&editor.project, 0, x + sample, z) -
-                terrain.sample_height(&editor.project, 0, x - sample, z)
+                terrain.sample_surface_height(&editor.project, 0, x + sample, z) -
+                terrain.sample_surface_height(&editor.project, 0, x - sample, z)
             rise_z :=
-                terrain.sample_height(&editor.project, 0, x, z + sample) -
-                terrain.sample_height(&editor.project, 0, x, z - sample)
+                terrain.sample_surface_height(&editor.project, 0, x, z + sample) -
+                terrain.sample_surface_height(&editor.project, 0, x, z - sample)
             slope_total += f32(math.sqrt(f64(rise_x * rise_x + rise_z * rise_z))) / (sample * 2)
             samples += 1
         }

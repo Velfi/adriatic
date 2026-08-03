@@ -46,7 +46,7 @@ draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
         if flying && editor.gameplay_options.show_hud {
             body := active_aircraft_body(editor)
             ground := postale_game.drivable_surface_height(
-                terrain.sample_height(&editor.project, 0, body.position.x, body.position.z),
+                terrain.sample_surface_height(&editor.project, 0, body.position.x, body.position.z),
                 editor.project.sea_level,
             )
             altitude := max(f32(0), body.position.y - ground - active_aircraft_ground_clearance(editor))

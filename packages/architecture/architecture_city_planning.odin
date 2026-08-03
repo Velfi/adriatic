@@ -70,11 +70,17 @@ city_density_bounds :: proc(field: ^[terrain.CITY_DENSITY_SAMPLES]u8) -> City_Bo
 }
 
 @(no_instrumentation)
-city_density_sample :: #force_inline proc(field: ^[terrain.CITY_DENSITY_SAMPLES]u8, world_x, world_z: f32) -> f32 {
+city_density_sample :: #force_inline proc(
+    field: ^[terrain.CITY_DENSITY_SAMPLES]u8,
+    world_x, world_z: f32,
+    project: ^terrain.Project = nil,
+) -> f32 {
     if field == nil do return 0
+    sample_x, sample_z := world_x, world_z
+    if project != nil do sample_x, sample_z = terrain.island_source_position(project, world_x, world_z)
     half := f32(terrain.RING_RESOLUTION - 1) * .5
-    gx := world_x / terrain.BASE_CELL_SIZE + half
-    gz := world_z / terrain.BASE_CELL_SIZE + half
+    gx := sample_x / terrain.BASE_CELL_SIZE + half
+    gz := sample_z / terrain.BASE_CELL_SIZE + half
     x0 := clamp(int(math.floor(f64(gx))), 0, terrain.RING_RESOLUTION - 1)
     z0 := clamp(int(math.floor(f64(gz))), 0, terrain.RING_RESOLUTION - 1)
     x1 := min(x0 + 1, terrain.RING_RESOLUTION - 1)
@@ -304,7 +310,7 @@ architecture_mass_height_range :: proc(
             local_x := -structure.width * .5 + structure.width * f32(x_index) / f32(x_intervals)
             px := structure.center_x + local_x * cosine - local_z * sine
             pz := structure.center_z + local_x * sine + local_z * cosine
-            height := terrain.sample_height(project, 0, px, pz)
+            height := terrain.sample_surface_height(project, 0, px, pz)
             lowest, highest = min(lowest, height), max(highest, height)
         }
     }
@@ -347,7 +353,7 @@ architecture_foundation_height_range :: proc(
             for point in points {
                 px := child.center_x + point[0] * cosine - point[1] * sine
                 pz := child.center_z + point[0] * sine + point[1] * cosine
-                height := terrain.sample_height(project, 0, px, pz)
+                height := terrain.sample_surface_height(project, 0, px, pz)
                 mass_lowest, mass_highest = min(mass_lowest, height), max(mass_highest, height)
             }
         }
@@ -408,7 +414,7 @@ city_plan_density_grid :: proc(
                 jitter_z := (city_hash_unit(gx, gz, seed, 2) - .5) * cell * .72
                 x, z := (f32(gx) + .5) * cell + jitter_x, (f32(gz) + .5) * cell + jitter_z
                 if !city_bounds_contains(rebuild_bounds, x, z) do continue
-                density := city_density_sample(field, x, z)
+                density := city_density_sample(field, x, z, project)
                 if density < .08 || density < band_low || (band < 3 && density >= band_high) do continue
                 probability := clamp((density - .05) * 1.08, 0, 1)
                 if city_hash_unit(gx, gz, seed, 3) > probability do continue
@@ -448,8 +454,12 @@ city_plan_density_grid :: proc(
                     z = frontage.point_z + normal_z * side * frontage_offset
                     if !city_bounds_contains(rebuild_bounds, x, z) do continue
                 } else {
-                    gradient_x := city_density_sample(field, x + cell, z) - city_density_sample(field, x - cell, z)
-                    gradient_z := city_density_sample(field, x, z + cell) - city_density_sample(field, x, z - cell)
+                    gradient_x :=
+                        city_density_sample(field, x + cell, z, project) -
+                        city_density_sample(field, x - cell, z, project)
+                    gradient_z :=
+                        city_density_sample(field, x, z + cell, project) -
+                        city_density_sample(field, x, z - cell, project)
                     if gradient_x * gradient_x + gradient_z * gradient_z > .001 {
                         rotation =
                             f32(math.atan2(f64(gradient_z), f64(gradient_x))) +

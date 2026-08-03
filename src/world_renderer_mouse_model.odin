@@ -19,7 +19,7 @@ world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     if snout_length <= 0 do snout_length = 1
     p := model.position
     if model.grounded {
-        raw_height := terrain.sample_height(&editor.project, 0, p.x, p.z)
+        raw_height := terrain.sample_surface_height(&editor.project, 0, p.x, p.z)
         p.y += mouse_surface_height_for_model(editor, p.x, p.z) - raw_height
     }
     rotation := model.rotation

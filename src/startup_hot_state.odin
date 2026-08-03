@@ -235,6 +235,13 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     if !hot_state_header_valid(header, len(payload)) do return .Invalid
     if len(payload) == 0 do return .Invalid
 
+    // Validate fixture-backed lab state before replacing any live allocations.
+    // Hot-state deserialization itself is intentionally a direct memory restore,
+    // so use temporary storage for this atomic preflight pass.
+    probe := new(Editor, context.temp_allocator)
+    _ = hs.deserialize(probe, payload, {.Dynamics}, context.temp_allocator)
+    if lab_fixture_preflight(probe.lab) != "" do return .Invalid
+
     // Existing allocations are runtime-owned. hs rebuilds dynamic data from
     // the blob, so release these before it replaces their descriptors.
     vehicles.libellula_mesh_destroy(&editor.libellula_visual_mesh)
@@ -260,5 +267,6 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     editor.attendant_dialogue_open = false
     editor.dialogue_session = {}
     editor.quit_requested = false
+    dunes_lab_rehydrate(editor)
     return .Loaded
 }

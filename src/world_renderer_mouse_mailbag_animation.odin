@@ -605,7 +605,7 @@ player_animation_update :: proc(editor: ^Editor, delta_seconds: f32) {
 }
 
 mouse_surface_height :: proc(editor: ^Editor, x, z: f32) -> f32 {
-    height := terrain.sample_height(&editor.project, 0, x, z)
+    height := terrain.sample_surface_height(&editor.project, 0, x, z)
     plan := editor_circulation_plan(editor)
     if !world_renderer.pavement_query_graph_valid ||
        world_renderer.pavement_query_revision != editor.project.revision {

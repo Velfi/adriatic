@@ -54,7 +54,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
         }
     }
     for area, area_index in plan.areas[:plan.count] {
-        area_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z)
+        area_y := terrain.sample_surface_height(&editor.project, 0, area.center_x, area.center_z)
         area_radius := f32(math.sqrt(f64(area.width * area.width + area.length * area.length))) * .5 + 2
         if !world_sphere_in_view(editor, {area.center_x, area_y, area.center_z}, area_radius) do continue
         cache := &world_renderer.architecture_street_area_cache[area_index]
@@ -173,7 +173,7 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                             jet_height = fountain_radius * .72,
                         },
                     )
-                    fountain_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z) + .24
+                    fountain_y := terrain.sample_surface_height(&editor.project, 0, area.center_x, area.center_z) + .24
                     world_fountain_structure(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
                 }
                 for corner_x in -1 ..= 1 {
@@ -229,13 +229,13 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                     jet_height = fountain_radius * .72,
                 },
             )
-            fountain_y := terrain.sample_height(&editor.project, 0, area.center_x, area.center_z) + .24
+            fountain_y := terrain.sample_surface_height(&editor.project, 0, area.center_x, area.center_z) + .24
             world_fountain_effects(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
         }
 
         if area_index == primary_plaza_index {
             wheel_x, wheel_z := world_town_mouse_wheel_position(area)
-            wheel_y := terrain.sample_height(&editor.project, 0, wheel_x, wheel_z)
+            wheel_y := terrain.sample_surface_height(&editor.project, 0, wheel_x, wheel_z)
             world_town_mouse_wheel(wheel_x, wheel_y, wheel_z, area.rotation, mouse_wheel_angle, mouse_wheel_jolt)
         }
 
@@ -330,13 +330,13 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             if z_side == 0 do continue
             tree_x := center_x + f32(x_side) * road_span * .42
             tree_z := center_z + f32(z_side) * ((max_z - min_z) * .5 + 7)
-            tree_base := terrain.sample_height(&editor.project, 0, tree_x, tree_z)
+            tree_base := terrain.sample_surface_height(&editor.project, 0, tree_x, tree_z)
             if !world_sphere_in_view(editor, {tree_x, tree_base + 7, tree_z}, 8, 2) do continue
             if !architecture.city_accent_site_clear(&editor.project, tree_x, tree_z, 5) do continue
             if (x_side == -1 && z_side == 1) || (x_side == 1 && z_side == -1) {
                 olive_x := tree_x - f32(x_side) * 8
                 olive_z := tree_z - f32(z_side) * 5
-                olive_base := terrain.sample_height(&editor.project, 0, olive_x, olive_z)
+                olive_base := terrain.sample_surface_height(&editor.project, 0, olive_x, olive_z)
                 world_architecture_olive(
                     olive_x,
                     olive_z,
@@ -386,7 +386,7 @@ world_settlement_decorative_grove :: proc(editor: ^Editor, structure: terrain.St
         local_x := math.cos(angle) * radius_x * ring
         local_z := math.sin(angle) * radius_z * ring
         x, z := world_rotate_xz(structure.center_x, structure.center_z, local_x, local_z, structure.rotation)
-        base_y := terrain.sample_height(&editor.project, 0, x, z)
+        base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
         species, plant_scale, _ := settlement_garden_woody_species(
             editor.settlement_plan.request.region,
             .Park,
@@ -461,7 +461,7 @@ world_settlement_park_edge :: proc(editor: ^Editor, plot: Settlement_Garden_Plot
         b := [2]f32{math.cos(angle_b) * radius_x, math.sin(angle_b) * radius_z}
         midpoint := (a + b) * .5
         x, z := world_rotate_xz(plot.center[0], plot.center[1], midpoint[0], midpoint[1], plot.rotation)
-        base_y := terrain.sample_height(&editor.project, 0, x, z)
+        base_y := terrain.sample_surface_height(&editor.project, 0, x, z)
         tangent := b - a
         yaw := plot.rotation + math.atan2(tangent[1], tangent[0])
         length := f32(math.sqrt(f64(tangent[0] * tangent[0] + tangent[1] * tangent[1])))
@@ -576,11 +576,11 @@ world_settlement_landscape :: proc(editor: ^Editor) {
             tree := landscape_index % 3 == 0
             footprint := tree ? f32(3.2) : f32(1.8)
             if !settlement_park_site_clear(&editor.project, x, z, footprint, footprint) do continue
-            center_y := terrain.sample_height(&editor.project, 0, x, z)
+            center_y := terrain.sample_surface_height(&editor.project, 0, x, z)
             if center_y <= editor.project.sea_level + .35 do continue
             relief := f32(0)
             for offset in ([4][2]f32{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
-                height := terrain.sample_height(
+                height := terrain.sample_surface_height(
                     &editor.project,
                     0,
                     x + offset[0] * footprint,

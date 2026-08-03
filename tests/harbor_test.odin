@@ -113,7 +113,7 @@ harbor_structures_are_supported_by_the_shore :: proc(t: ^testing.T) {
         } else if structure.kind == .Breakwater {
             breakwater_count += 1
             landfall := structure.points[0]
-            testing.expect(t, terrain.sample_height(project, 0, landfall.x, landfall.z) > project.sea_level)
+            testing.expect(t, terrain.sample_surface_height(project, 0, landfall.x, landfall.z) > project.sea_level)
             local := harbor.world_to_local(site.anchor, site.tangent, site.outward, landfall)
             harborward_sign := local.x < 0 ? f32(1) : f32(-1)
             testing.expect(
@@ -125,7 +125,7 @@ harbor_structures_are_supported_by_the_shore :: proc(t: ^testing.T) {
     for structure, structure_index in intervention.runtime_plan.structures[:intervention.runtime_plan.structure_count] {
         if structure.kind != .Pier do continue
         tip := structure.points[structure.count - 1]
-        testing.expect(t, terrain.sample_height(project, 0, tip.x, tip.z) <= project.sea_level + .2)
+        testing.expect(t, terrain.sample_surface_height(project, 0, tip.x, tip.z) <= project.sea_level + .2)
         for other in intervention.runtime_plan.structures[structure_index + 1:intervention.runtime_plan.structure_count] {
             for a_index in 0 ..< structure.count - 1 {
                 for b_index in 0 ..< other.count - 1 {
@@ -335,12 +335,12 @@ navigable_envelope_follows_shore_and_stops_at_land :: proc(t: ^testing.T) {
         shore := harbor.shoreline_sample(&site, fraction)
         outward := harbor.shoreline_outward(&site, fraction)
         endpoint := harbor.add(shore, harbor.scale(outward, extent))
-        testing.expect(t, terrain.sample_height(project, 0, endpoint.x, endpoint.z) <= project.sea_level + .08)
+        testing.expect(t, terrain.sample_surface_height(project, 0, endpoint.x, endpoint.z) <= project.sea_level + .08)
         if extent < 149 {
             obstruction := harbor.add(shore, harbor.scale(outward, extent + 5))
             testing.expect(
                 t,
-                terrain.sample_height(project, 0, obstruction.x, obstruction.z) > project.sea_level + .08,
+                terrain.sample_surface_height(project, 0, obstruction.x, obstruction.z) > project.sea_level + .08,
             )
         }
     }

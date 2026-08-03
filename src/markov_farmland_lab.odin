@@ -93,7 +93,7 @@ farmland_world_xz :: proc(grid_x, grid_z: f32) -> (f32, f32) {
 
 farmland_world_point :: proc(editor: ^Editor, grid_x, grid_z: f32, lift: f32) -> third_person.Vec3 {
     x, z := farmland_world_xz(grid_x, grid_z)
-    y := terrain.sample_height(&editor.project, 0, x, z) + lift
+    y := terrain.sample_surface_height(&editor.project, 0, x, z) + lift
     return {x, y, z}
 }
 
@@ -142,7 +142,7 @@ farmland_dry_stone_edge :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32,
         midpoint_x := a_x + dx * (t0 + t1) * .5
         midpoint_z := a_z + dz * (t0 + t1) * .5
         span := length / f32(segments)
-        base_y := terrain.sample_height(&editor.project, 0, midpoint_x, midpoint_z)
+        base_y := terrain.sample_surface_height(&editor.project, 0, midpoint_x, midpoint_z)
         if base_y <= editor.project.sea_level + .25 || terrain.active_waterway_at(&editor.project, 0, midpoint_x, midpoint_z) {
             continue
         }
@@ -174,13 +174,13 @@ farmland_vineyard_surface_is_safe :: proc(editor: ^Editor, grid_x, grid_z: f32) 
     // accepting ordinary cultivated grades. A 2 m cross samples local slope
     // and curvature closely enough to reject cliff faces without erasing hills.
     x, z := farmland_world_xz(grid_x, grid_z)
-    center := terrain.sample_height(&editor.project, 0, x, z)
+    center := terrain.sample_surface_height(&editor.project, 0, x, z)
     SAMPLE_OFFSET :: f32(2)
     neighbors := [4]f32 {
-        terrain.sample_height(&editor.project, 0, x - SAMPLE_OFFSET, z),
-        terrain.sample_height(&editor.project, 0, x + SAMPLE_OFFSET, z),
-        terrain.sample_height(&editor.project, 0, x, z - SAMPLE_OFFSET),
-        terrain.sample_height(&editor.project, 0, x, z + SAMPLE_OFFSET),
+        terrain.sample_surface_height(&editor.project, 0, x - SAMPLE_OFFSET, z),
+        terrain.sample_surface_height(&editor.project, 0, x + SAMPLE_OFFSET, z),
+        terrain.sample_surface_height(&editor.project, 0, x, z - SAMPLE_OFFSET),
+        terrain.sample_surface_height(&editor.project, 0, x, z + SAMPLE_OFFSET),
     }
     return farmland_vineyard_heights_are_safe(center, neighbors)
 }
@@ -231,7 +231,7 @@ farmland_hedgerow :: proc(editor: ^Editor, x0, z0, x1, z1: f32, seed: u32, detai
             center_z = center_z,
             width    = segment_length + .7,
             depth    = hedge_depth,
-            base_y   = terrain.sample_height(&editor.project, 0, center_x, center_z) + .08,
+            base_y   = terrain.sample_surface_height(&editor.project, 0, center_x, center_z) + .08,
             height   = hedge_height,
             rotation = math.atan2(dz, dx),
             kind     = .Foliage,
@@ -568,7 +568,7 @@ farmland_render_plan :: proc(editor: ^Editor, plan: ^farmland.Plan) {
     farmland_render_width = plan.width
     farmland_render_height = plan.height
     farmland_render_tradition = plan.tradition
-    center_height := terrain.sample_height(&editor.project, 0, farmland_render_origin_x, farmland_render_origin_z)
+    center_height := terrain.sample_surface_height(&editor.project, 0, farmland_render_origin_x, farmland_render_origin_z)
     altitude := max(editor.camera_pose.position.y - center_height, f32(0))
     detail_fade := 1 - clamp((altitude - 42) / 115, f32(0), f32(1))
     // Keep the inexpensive 5 m terrain mesh at every altitude. Coarsening to
@@ -845,7 +845,7 @@ world_authored_farmland :: proc(editor: ^Editor, include_authored := true) {
         half_width := f32(instance.plan.width) * farmland.CELL_METERS * scale_x * .5
         half_depth := f32(instance.plan.height) * farmland.CELL_METERS * scale_z * .5
         radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
-        ground := terrain.sample_height(&editor.project, 0, instance.origin_x, instance.origin_z)
+        ground := terrain.sample_surface_height(&editor.project, 0, instance.origin_x, instance.origin_z)
         if !world_renderer.retained_patio_rebuilding && !world_sphere_in_view(editor, {instance.origin_x, ground + 4, instance.origin_z}, radius, 4) {
             continue
         }
@@ -865,7 +865,7 @@ world_authored_farmland :: proc(editor: ^Editor, include_authored := true) {
         half_width := f32(preview.plan.width) * farmland.CELL_METERS * scale_x * .5
         half_depth := f32(preview.plan.height) * farmland.CELL_METERS * scale_z * .5
         radius := f32(math.sqrt(f64(half_width * half_width + half_depth * half_depth))) + 12
-        ground := terrain.sample_height(&editor.project, 0, preview.origin_x, preview.origin_z)
+        ground := terrain.sample_surface_height(&editor.project, 0, preview.origin_x, preview.origin_z)
         if !world_sphere_in_view(editor, {preview.origin_x, ground + 4, preview.origin_z}, radius, 4) do return
         farmland_render_origin_x = editor.farm_preview.origin_x
         farmland_render_origin_z = editor.farm_preview.origin_z
@@ -995,7 +995,7 @@ markov_farmland_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     atmosphere.set_weather_override(&editor.atmosphere, .Clear)
     editor.atmosphere.weather = atmosphere.weather_for(.Clear)
     editor.atmosphere.paused = true
-    center_height := terrain.sample_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
+    center_height := terrain.sample_surface_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
     if target == "high" {
         editor.camera_pose = third_person.camera_look_at(
             {MARKOV_FARMLAND_ORIGIN_X + 42, center_height + 190, MARKOV_FARMLAND_ORIGIN_Z + 54},
@@ -1095,8 +1095,8 @@ markov_farmland_lab_terrace_walls :: proc(editor: ^Editor) {
             if !markov_farmland_lab_point_in_farm(x, z, 1) do continue
             lower_x, lower_z := x - normal_x * 4, z - normal_z * 4
             upper_x, upper_z := x + normal_x * 4, z + normal_z * 4
-            lower_y := terrain.sample_height(&editor.project, 0, lower_x, lower_z)
-            upper_y := terrain.sample_height(&editor.project, 0, upper_x, upper_z)
+            lower_y := terrain.sample_surface_height(&editor.project, 0, lower_x, lower_z)
+            upper_y := terrain.sample_surface_height(&editor.project, 0, upper_x, upper_z)
             wall_height := max(upper_y - lower_y, f32(.8))
             base_stone := edge_index == 0 ? canvas2d.Color{119, 116, 103, 255} : canvas2d.Color{131, 126, 108, 255}
             COURSE_COUNT :: 4
@@ -1159,7 +1159,7 @@ markov_farmland_lab_terrain_name :: proc(kind: Farmland_Lab_Terrain) -> cstring 
 markov_farmland_lab_configure_camera :: proc(editor: ^Editor) {
     if editor == nil do return
     extent := f32(max(markov_farmland_plan.width, markov_farmland_plan.height)) * farmland.CELL_METERS
-    center_height := terrain.sample_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
+    center_height := terrain.sample_surface_height(&editor.project, 0, MARKOV_FARMLAND_ORIGIN_X, MARKOV_FARMLAND_ORIGIN_Z)
     eye := third_person.Vec3 {
         MARKOV_FARMLAND_ORIGIN_X + extent * .58,
         center_height + extent * .40,

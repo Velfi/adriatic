@@ -193,6 +193,12 @@ Plan :: struct {
     valid:                     bool,
 }
 
+translate_world :: proc(plan: ^Plan, dx, dz: f32) {
+    if plan == nil || !plan.world_conditioned do return
+    plan.world_origin.x += dx
+    plan.world_origin.z += dz
+}
+
 MAX_SITE_CONFORMANCE_BADNESS :: f32(0.03)
 
 @(no_instrumentation)

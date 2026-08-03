@@ -72,10 +72,11 @@ climbing_leaf_paint_stamp :: proc(editor: ^Editor, _: f32, _: f32, erase: bool) 
     // splash. Keep the persistent stamp tight to the chosen footprint so a
     // nearby row of buildings does not all acquire the same climber.
     stamp_radius := max(terrain.BASE_CELL_SIZE, max(target.width, target.depth) * .62)
+    stamp_x, stamp_z := terrain.island_source_position(&editor.project, target.center_x, target.center_z)
     _ = architecture.city_density_stamp(
         &editor.project.climbing_leaf_density,
-        target.center_x,
-        target.center_z,
+        stamp_x,
+        stamp_z,
         stamp_radius,
         editor.climbing_leaf_brush_strength * .08,
         editor.climbing_leaf_brush_hardness,
@@ -152,6 +153,7 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
             editor.structure_placing = false
             editor.structure_moving = false
+            editor.island_moving = false
         }
         return
     }
@@ -160,13 +162,27 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
             canvas2d.IsMouseButtonPressed(.LEFT) ? terrain.structure_index_at(&editor.project, world_x, world_z) : -1
         if index >= 0 {
             editor.structure_selected = index
+            editor.island_selected = .World
             editor.structure_moving = true
             structure_history_push_undo(editor)
             editor.structure_grab_offset_x = editor.project.structures[index].center_x - world_x
             editor.structure_grab_offset_z = editor.project.structures[index].center_z - world_z
         } else {
             editor.structure_selected = -1
-            if editor.selection_tool_active do return
+            if editor.selection_tool_active {
+                selected_island := terrain.island_at(&editor.project, world_x, world_z)
+                editor.island_selected = selected_island
+                if selected_island != .World && canvas2d.IsMouseButtonPressed(.LEFT) {
+                    center_x, center_z, center_ok := terrain.island_center(&editor.project, selected_island)
+                    if center_ok {
+                        structure_history_push_undo(editor)
+                        editor.island_moving = true
+                        editor.island_drag_start_x, editor.island_drag_start_z = world_x, world_z
+                        editor.island_drag_center_x, editor.island_drag_center_z = center_x, center_z
+                    }
+                }
+                return
+            }
             editor.structure_placing = true
             editor.structure_anchor_x = structure_editor_snap(world_x, editor)
             editor.structure_anchor_z = structure_editor_snap(world_z, editor)
@@ -215,6 +231,11 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
             if index >= 0 do editor.structure_selected = index
             editor.structure_placing = false
         }
+    } else if editor.island_moving && editor.island_selected != .World {
+        next_x := editor.island_drag_center_x + world_x - editor.island_drag_start_x
+        next_z := editor.island_drag_center_z + world_z - editor.island_drag_start_z
+        _ = editor_island_set_center(editor, editor.island_selected, next_x, next_z)
+        if canvas2d.IsMouseButtonReleased(.LEFT) do editor.island_moving = false
     } else if editor.structure_moving && editor.structure_selected >= 0 {
         structure := &editor.project.structures[editor.structure_selected]
         structure.center_x = structure_editor_snap(world_x + editor.structure_grab_offset_x, editor)
@@ -318,7 +339,7 @@ aircraft_reset :: proc(editor: ^Editor) {
     if editor.aircraft.active == .Rondine {
         rondine_game.reset(&editor.rondine, editor.project.sea_level)
     } else if editor.aircraft.active != .Postale {
-        ground := terrain.sample_height(
+        ground := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.libellula.spawn_position.x,
@@ -327,7 +348,7 @@ aircraft_reset :: proc(editor: ^Editor) {
         libellula_game.reset(&editor.libellula, ground)
     } else {
         ground := postale_game.drivable_surface_height(
-            terrain.sample_height(
+            terrain.sample_surface_height(
                 &editor.project,
                 0,
                 editor.postale.spawn_position.x,
@@ -562,7 +583,7 @@ postale_spawn_position :: proc(editor: ^Editor) -> flight.Vec3 {
     x := runway_x + half_extent * terrain.DEFAULT_RUNWAY_SPAWN_OFFSET
     z := runway_z
     ground := postale_game.drivable_surface_height(
-        terrain.sample_height(&editor.project, 0, x, z),
+        terrain.sample_surface_height(&editor.project, 0, x, z),
         editor.project.sea_level,
     )
     return {x, ground + postale_game.GROUND_CLEARANCE, z}

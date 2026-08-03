@@ -212,19 +212,19 @@ world_architecture_alley_render_cache :: proc(
         valid = true,
         alley = alley,
     }
-    entry.start_height = terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
-    entry.end_height = terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
+    entry.start_height = terrain.sample_surface_height(&editor.project, 0, alley.start_x, alley.start_z)
+    entry.end_height = terrain.sample_surface_height(&editor.project, 0, alley.end_x, alley.end_z)
     curve := settlement_access_alley_curve(plan, alley_index)
     entry.curve_segments = settlement_access_curve_sample_count(curve)
     entry.curve_points[0] = curve.points[0]
     previous := entry.curve_points[0]
-    previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
+    previous_height := terrain.sample_surface_height(&editor.project, 0, previous[0], previous[1])
     for curve_index in 1 ..= entry.curve_segments {
         amount := f32(curve_index) / f32(entry.curve_segments)
         current := settlement_access_curve_point(curve, amount)
         entry.curve_points[curve_index] = current
         run := linalg.length(current - previous)
-        current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
+        current_height := terrain.sample_surface_height(&editor.project, 0, current[0], current[1])
         if run > .01 do entry.grade = max(entry.grade, math.abs(current_height - previous_height) / run)
         entry.curve_distances[curve_index] = entry.curve_distances[curve_index - 1] + run
         previous, previous_height = current, current_height
@@ -314,7 +314,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .01 do continue
         center_x, center_z := (alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5
-        center_y := terrain.sample_height(&editor.project, 0, center_x, center_z)
+        center_y := terrain.sample_surface_height(&editor.project, 0, center_x, center_z)
         if !cacheable &&
            !world_sphere_in_view(editor, {center_x, center_y, center_z}, length * .5 + alley.half_width + 1) {
             continue
@@ -335,19 +335,19 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             curve_distances = cache.curve_distances
             grade = cache.grade
         } else {
-            start_height = terrain.sample_height(&editor.project, 0, alley.start_x, alley.start_z)
-            end_height = terrain.sample_height(&editor.project, 0, alley.end_x, alley.end_z)
+            start_height = terrain.sample_surface_height(&editor.project, 0, alley.start_x, alley.start_z)
+            end_height = terrain.sample_surface_height(&editor.project, 0, alley.end_x, alley.end_z)
             curve := settlement_access_alley_curve(plan, alley_index)
             curve_segments = settlement_access_curve_sample_count(curve)
             curve_points[0] = curve.points[0]
             previous := curve_points[0]
-            previous_height := terrain.sample_height(&editor.project, 0, previous[0], previous[1])
+            previous_height := terrain.sample_surface_height(&editor.project, 0, previous[0], previous[1])
             for curve_index in 1 ..= curve_segments {
                 amount := f32(curve_index) / f32(curve_segments)
                 current := settlement_access_curve_point(curve, amount)
                 curve_points[curve_index] = current
                 run := linalg.length(current - previous)
-                current_height := terrain.sample_height(&editor.project, 0, current[0], current[1])
+                current_height := terrain.sample_surface_height(&editor.project, 0, current[0], current[1])
                 if run > .01 do grade = max(grade, math.abs(current_height - previous_height) / run)
                 curve_distances[curve_index] = curve_distances[curve_index - 1] + run
                 previous, previous_height = current, current_height
@@ -491,9 +491,9 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                 yaw := f32(math.atan2(f64(tangent[1]), f64(tangent[0])))
                 before := point - tangent * (rest_length * .5)
                 after := point + tangent * (rest_length * .5)
-                ground_before := terrain.sample_height(&editor.project, 0, before[0], before[1])
-                ground_center := terrain.sample_height(&editor.project, 0, point[0], point[1])
-                ground_after := terrain.sample_height(&editor.project, 0, after[0], after[1])
+                ground_before := terrain.sample_surface_height(&editor.project, 0, before[0], before[1])
+                ground_center := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
+                ground_after := terrain.sample_surface_height(&editor.project, 0, after[0], after[1])
                 top := max(max(ground_before, ground_center), ground_after) + .12
                 bottom := min(min(ground_before, ground_center), ground_after) - .04
                 landing_height := max(top - bottom, f32(.16))
@@ -530,12 +530,12 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
                     (curve_points[sample_index] - curve_points[sample_index - 1]) * span_amount
                 tangent := linalg.normalize0(curve_points[sample_index] - curve_points[sample_index - 1])
                 yaw := f32(math.atan2(f64(tangent[1]), f64(tangent[0])))
-                step_y := terrain.sample_height(&editor.project, 0, point[0], point[1])
+                step_y := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
                 distance_span := run_length / f32(step_count)
                 before := point - tangent * (distance_span * .5)
                 after := point + tangent * (distance_span * .5)
-                ground_before := terrain.sample_height(&editor.project, 0, before[0], before[1])
-                ground_after := terrain.sample_height(&editor.project, 0, after[0], after[1])
+                ground_before := terrain.sample_surface_height(&editor.project, 0, before[0], before[1])
+                ground_after := terrain.sample_surface_height(&editor.project, 0, after[0], after[1])
                 top := step_y + .12
                 bottom := min(min(ground_before, ground_after), step_y) - .04
                 tread_height := max(top - bottom, f32(.12))
@@ -569,7 +569,7 @@ world_architecture_alleys :: proc(editor: ^Editor, plan: ^architecture.City_Plan
             append(&seen, point)
             radius := settlement_access_node_paving_radius(plan, point)
             if radius <= .01 do continue
-            height := terrain.sample_height(&editor.project, 0, point[0], point[1])
+            height := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
             if !cacheable && !world_sphere_in_view(editor, {point[0], height, point[1]}, radius + 1) do continue
             pad_alley := alley
             for candidate in plan.alleys[:plan.alley_count] {
@@ -598,9 +598,9 @@ world_settlement_town_skirt_supported :: proc(
     tangent := [2]f32{math.cos(rotation), math.sin(rotation)}
     half_run := max(length * .5 - .12, f32(0))
     heights := [3]f32 {
-        terrain.sample_height(&editor.project, 0, center_x - tangent[0] * half_run, center_z - tangent[1] * half_run),
-        terrain.sample_height(&editor.project, 0, center_x, center_z),
-        terrain.sample_height(&editor.project, 0, center_x + tangent[0] * half_run, center_z + tangent[1] * half_run),
+        terrain.sample_surface_height(&editor.project, 0, center_x - tangent[0] * half_run, center_z - tangent[1] * half_run),
+        terrain.sample_surface_height(&editor.project, 0, center_x, center_z),
+        terrain.sample_surface_height(&editor.project, 0, center_x + tangent[0] * half_run, center_z + tangent[1] * half_run),
     }
     low, high := heights[0], heights[0]
     for height in heights[1:] {

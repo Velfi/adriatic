@@ -500,7 +500,7 @@ settlement_access_paths_meet_stoop_handoffs_beyond_final_treads :: proc(t: ^test
         turn_sign := seed % 3 == 1 ? f32(-1) : f32(1)
         probe := threshold + outward * (turned ? f32(.68) : f32(.50))
         if turned do probe += tangent * turn_sign * (door_width * .5 + 2.4)
-        rise := structure.base_y + .20 - terrain.sample_height(project, 0, probe[0], probe[1])
+        rise := structure.base_y + .20 - terrain.sample_surface_height(project, 0, probe[0], probe[1])
         testing.expect(t, rise > .30)
         step_count := clamp(int(math.ceil(f64(rise / .20))), 2, 14)
 
@@ -691,7 +691,7 @@ settlement_village_reason_responds_to_terrain_and_tissue :: proc(t: ^testing.T) 
         suitability = 1,
         tissue      = .Harbor,
     }
-    project.sea_level = terrain.sample_height(project, 0, center, center) - 2
+    project.sea_level = terrain.sample_surface_height(project, 0, center, center) - 2
     testing.expect_value(t, settlement_village_reason_pick(&plan, project), Village_Reason.Harbor_Fishery)
     project.sea_level = -100
     plan.neighborhoods[0].tissue = .Contour_Terrace
@@ -1035,19 +1035,19 @@ settlement_hillside_lane_follows_contour_behind_road_throat :: proc(t: ^testing.
 
     sample := f32(10)
     gradient := [2]f32 {
-        terrain.sample_height(project, 0, route_origin[0] + sample, route_origin[1]) -
-        terrain.sample_height(project, 0, route_origin[0] - sample, route_origin[1]),
-        terrain.sample_height(project, 0, route_origin[0], route_origin[1] + sample) -
-        terrain.sample_height(project, 0, route_origin[0], route_origin[1] - sample),
+        terrain.sample_surface_height(project, 0, route_origin[0] + sample, route_origin[1]) -
+        terrain.sample_surface_height(project, 0, route_origin[0] - sample, route_origin[1]),
+        terrain.sample_surface_height(project, 0, route_origin[0], route_origin[1] + sample) -
+        terrain.sample_surface_height(project, 0, route_origin[0], route_origin[1] - sample),
     }
     if linalg.length(gradient) > .001 {
         testing.expect(t, math.abs(linalg.dot(linalg.normalize(gradient), lane.tangent)) < .36)
     }
-    previous_height := terrain.sample_height(project, 0, lane.start[0], lane.start[1])
+    previous_height := terrain.sample_surface_height(project, 0, lane.start[0], lane.start[1])
     maximum_grade := f32(0)
     for sample_index in 1 ..= 6 {
         point := lane.start + lane.tangent * (64 * f32(sample_index) / 6)
-        height := terrain.sample_height(project, 0, point[0], point[1])
+        height := terrain.sample_surface_height(project, 0, point[0], point[1])
         maximum_grade = max(maximum_grade, math.abs(height - previous_height) / (64.0 / 6))
         previous_height = height
     }
@@ -2060,14 +2060,14 @@ settlement_buildable_footprint_rejects_a_submerged_edge :: proc(t: ^testing.T) {
     // edge extends beyond the generated shoreline.
     for offset := f32(0); offset <= 1500; offset += 4 {
         candidate_x := center_x - offset
-        if terrain.sample_height(project, 0, candidate_x, center_z) <= project.sea_level + .6 {
+        if terrain.sample_surface_height(project, 0, candidate_x, center_z) <= project.sea_level + .6 {
             found = true
             break
         }
         shoreline_x = candidate_x
     }
     testing.expect(t, found)
-    testing.expect(t, terrain.sample_height(project, 0, shoreline_x, center_z) > project.sea_level + .6)
+    testing.expect(t, terrain.sample_surface_height(project, 0, shoreline_x, center_z) > project.sea_level + .6)
     testing.expect(t, !settlement_structure_footprint_on_land(project, shoreline_x, center_z, 16, 8, 0))
 }
 
@@ -2081,7 +2081,7 @@ settlement_buildable_footprint_rejects_an_inland_waterway :: proc(t: ^testing.T)
     for z := -half_extent; z <= half_extent && !found; z += 16 {
         for x := -half_extent; x <= half_extent; x += 16 {
             if terrain.active_waterway_at(project, 0, x, z) &&
-               terrain.sample_height(project, 0, x, z) > project.sea_level + .6 {
+               terrain.sample_surface_height(project, 0, x, z) > project.sea_level + .6 {
                 water_x, water_z = x, z
                 found = true
                 break
@@ -4394,7 +4394,7 @@ settlement_park_groves_reseat_after_terrain_preparation :: proc(t: ^testing.T) {
     original_base_y := project.structures[grove_index].base_y
 
     terrain.apply_stroke_with_hardness(project, .Raise, center, center, 40, 4, 1, .8)
-    prepared_base_y := terrain.sample_height(project, 0, center, center)
+    prepared_base_y := terrain.sample_surface_height(project, 0, center, center)
     testing.expect(t, prepared_base_y > original_base_y)
     markov_town_reseat_park_groves(&plan, project)
 
@@ -4853,8 +4853,8 @@ settlement_route_submersion_checks_segments_not_only_vertices :: proc(t: ^testin
     route.points[0] = {-30, 0}
     route.points[1] = {30, 0}
     route.count = 2
-    testing.expect(t, terrain.sample_height(project, 0, -30, 0) > project.sea_level + .45)
-    testing.expect(t, terrain.sample_height(project, 0, 30, 0) > project.sea_level + .45)
+    testing.expect(t, terrain.sample_surface_height(project, 0, -30, 0) > project.sea_level + .45)
+    testing.expect(t, terrain.sample_surface_height(project, 0, 30, 0) > project.sea_level + .45)
     testing.expect(t, settlement_route_crosses_sea(project, route))
 }
 
@@ -4976,7 +4976,7 @@ settlement_streets_preserve_grade_safe_route_waypoints :: proc(t: ^testing.T) {
         a, b := route.points[index], route.points[index + 1]
         distance := linalg.length(b - a)
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
             distance
         maximum_grade = max(maximum_grade, grade)
     }
@@ -5105,7 +5105,7 @@ settlement_short_street_detours_instead_of_accepting_an_over_grade_chord :: proc
         a, b := route.points[index], route.points[index + 1]
         distance := linalg.length(b - a)
         grade :=
-            math.abs(terrain.sample_height(project, 0, b[0], b[1]) - terrain.sample_height(project, 0, a[0], a[1])) /
+            math.abs(terrain.sample_surface_height(project, 0, b[0], b[1]) - terrain.sample_surface_height(project, 0, a[0], a[1])) /
             max(distance, f32(.01))
         maximum_grade = max(maximum_grade, grade)
     }
@@ -5120,8 +5120,8 @@ settlement_access_routes_classify_steep_terrain_as_stairs :: proc(t: ^testing.T)
     geometry: Settlement_Route
     geometry.points[0], geometry.points[1], geometry.count = {-5, 0}, {5, 0}, 2
     rise := math.abs(
-        terrain.sample_height(project, 0, geometry.points[1][0], geometry.points[1][1]) -
-        terrain.sample_height(project, 0, geometry.points[0][0], geometry.points[0][1]),
+        terrain.sample_surface_height(project, 0, geometry.points[1][0], geometry.points[1][1]) -
+        terrain.sample_surface_height(project, 0, geometry.points[0][0], geometry.points[0][1]),
     )
     testing.expect(t, rise / 10 >= .18)
 
@@ -5248,7 +5248,7 @@ settlement_map_frame_follows_constructed_bounds :: proc(t: ^testing.T) {
     focus, height := settlement_map_frame(project, {500, 500}, 50)
     testing.expect(t, math.abs(focus.x - 50) < .01)
     testing.expect(t, math.abs(focus.z - 10) < .01)
-    testing.expect_value(t, focus.y, terrain.sample_height(project, 0, focus.x, focus.z))
+    testing.expect_value(t, focus.y, terrain.sample_surface_height(project, 0, focus.x, focus.z))
     testing.expect(t, height > 127 && height < 130)
 }
 
@@ -5264,10 +5264,10 @@ settlement_terrain_strokes_refresh_finer_lod_overlaps :: proc(t: ^testing.T) {
     project := terrain.new_project()
     defer terrain.free_project(project)
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
-    before := terrain.sample_height(project, 0, center, center)
+    before := terrain.sample_surface_height(project, 0, center, center)
     terrain.apply_stroke_with_hardness(project, .Raise, center, center, 20, 5, 1, .5)
-    fine := terrain.sample_height(project, 0, center, center)
-    authored := terrain.sample_height(project, 1, center, center)
+    fine := terrain.sample_surface_height(project, 0, center, center)
+    authored := terrain.sample_surface_height(project, 1, center, center)
     testing.expect(t, fine > before + 2.5)
     testing.expect(t, math.abs(fine - authored) < .05)
 }

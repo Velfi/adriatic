@@ -114,6 +114,13 @@ Structure_History_State :: struct {
     settlement_brush_pieces:      [SETTLEMENT_BRUSH_PIECE_CAPACITY]Settlement_Brush_Piece,
     settlement_brush_piece_count: int,
     settlement_next_component_id: u32,
+    island_transforms:            [terrain.ISLAND_COUNT]terrain.Island_Transform,
+    settlement_plan:              Settlement_Plan,
+    greek_placements:             [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
+    greek_placement_count:        int,
+    default_marinas:              [terrain.ISLAND_COUNT]marina.Plan,
+    default_harbors:              [terrain.ISLAND_COUNT]harbor.Harbor_Plan,
+    default_harbor_interventions: [terrain.ISLAND_COUNT]harbor.Harbor_Intervention,
 }
 
 Terrain_History_State :: struct {
@@ -274,6 +281,10 @@ Fixture :: struct {
     strength:                                       f32,
     hardness:                                       f32,
     structure_selected:                             int,
+    island_selected:                                terrain.Island_ID `fixture:"-"`,
+    island_moving:                                  bool `fixture:"-"`,
+    island_drag_start_x, island_drag_start_z:       f32 `fixture:"-"`,
+    island_drag_center_x, island_drag_center_z:     f32 `fixture:"-"`,
     structure_placing:                              bool `fixture:"-"`,
     structure_moving:                               bool `fixture:"-"`,
     structure_anchor_x:                             f32 `fixture:"-"`,

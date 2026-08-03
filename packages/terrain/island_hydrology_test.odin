@@ -201,7 +201,7 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
     east_water := &project.river_water_splines[1]
     for water_point in east_water.points[:east_water.point_count] {
         if !level_contains(&project.levels[0], water_point.position[0], water_point.position[1]) do continue
-        ground := sample_height(project, 0, water_point.position[0], water_point.position[1])
+        ground := sample_surface_height(project, 0, water_point.position[0], water_point.position[1])
         testing.expect(t, ground <= water_point.water_level + .05)
         visible_water_points += 1
     }
@@ -212,7 +212,7 @@ default_islands_connect_seeded_rivers_to_distinct_coastal_morphologies :: proc(t
     for level in 0 ..< CLIPMAP_LEVELS {
         data := &project.levels[level]
         if !level_contains(data, east_midpoint.position[0], east_midpoint.position[1]) do continue
-        height := sample_height(project, level, east_midpoint.position[0], east_midpoint.position[1])
+        height := sample_surface_height(project, level, east_midpoint.position[0], east_midpoint.position[1])
         testing.expect(t, height == height && math.abs(height) < 1e6)
         minimum_lod_height = min(minimum_lod_height, height)
         maximum_lod_height = max(maximum_lod_height, height)

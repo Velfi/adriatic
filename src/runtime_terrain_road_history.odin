@@ -80,6 +80,18 @@ architecture_regenerate_all :: proc(editor: ^Editor) {
         architecture.city_plan_destroy(&editor.architecture_city_plan)
         return
     }
+    for island in editor.project.island_transforms {
+        if island.current_x == island.source_x && island.current_z == island.source_z do continue
+        half := f32(terrain.WORLD_SIZE_METERS * .5)
+        bounds = {
+            min_x = -half,
+            min_z = -half,
+            max_x = half,
+            max_z = half,
+            valid = true,
+        }
+        break
+    }
     plan := architecture.city_plan_density(&editor.project, &editor.project.city_density, bounds)
     _ = architecture.city_commit_plan(&editor.project, &editor.project.city_density, bounds, &plan)
     architecture.city_plan_replace(&editor.architecture_city_plan, plan)
@@ -221,12 +233,12 @@ default_map_regeneration_step :: proc(editor: ^Editor) {
         east_airport_x, east_airport_z := terrain.default_airport_center_for_project(&editor.project, 1)
         editor.attendant_position = {
             east_airport_x,
-            terrain.sample_height(&editor.project, 0, east_airport_x, east_airport_z),
+            terrain.sample_surface_height(&editor.project, 0, east_airport_x, east_airport_z),
             east_airport_z,
         }
         editor.gerta_position = {
             west_airport_x,
-            terrain.sample_height(&editor.project, 0, west_airport_x, west_airport_z),
+            terrain.sample_surface_height(&editor.project, 0, west_airport_x, west_airport_z),
             west_airport_z,
         }
         world_renderer_fixture_invalidate(editor)
@@ -307,14 +319,14 @@ structure_editor_snap :: proc(value: f32, editor: ^Editor) -> f32 {
 
 structure_update_base :: proc(editor: ^Editor, structure: ^terrain.Structure) {
     if editor == nil || structure == nil do return
-    structure.base_y = terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+    structure.base_y = terrain.sample_surface_height(&editor.project, 0, structure.center_x, structure.center_z)
 }
 
 capture_add_formation :: proc(editor: ^Editor, x, z, width, depth, height: f32, kind: terrain.Formation_Kind) -> int {
     if editor == nil do return -1
     structure := terrain.structure_make(x, z, width, depth, 0, height)
     structure.kind = kind
-    structure.base_y = terrain.sample_height(&editor.project, 0, x, z)
+    structure.base_y = terrain.sample_surface_height(&editor.project, 0, x, z)
     return terrain.add_structure(&editor.project, structure)
 }
 
@@ -345,7 +357,7 @@ structure_commit_placement :: proc(editor: ^Editor, end_x, end_z: f32) -> int {
         copy.width = max(cell, copy.width * (.58 + f32(cluster_index % 2) * .12))
         copy.depth = max(cell, copy.depth * (.58 + f32((cluster_index + 1) % 2) * .12))
         copy.height = max(cell, copy.height * (.72 + f32(cluster_index) * .06))
-        copy.base_y = terrain.sample_height(&editor.project, 0, copy.center_x, copy.center_z)
+        copy.base_y = terrain.sample_surface_height(&editor.project, 0, copy.center_x, copy.center_z)
         if editor.authoring_tool == .Foliage {
             copy.kind = .Foliage
         } else if !editor.structure_force_box && !editor.structure_cliff_mode {
@@ -418,7 +430,7 @@ formation_brush_stamp :: proc(editor: ^Editor, world_x, world_z: f32, erase: boo
         structure := terrain.structure_make(x, z, width, depth, 0, height)
         structure.rotation = angle + f32(math.sin(f64(seed * 1.13))) * .7
         structure.group_id = group_id
-        structure.base_y = terrain.sample_height(&editor.project, 0, x, z)
+        structure.base_y = terrain.sample_surface_height(&editor.project, 0, x, z)
         if editor.authoring_tool == .Foliage {
             structure.kind = .Foliage
         } else if editor.rock_placement_mode {
@@ -506,7 +518,7 @@ curve_segment_structure :: proc(editor: ^Editor, start, end: Curve_Point) -> ter
     )
     structure.rotation = math.atan2(dz, dx)
     structure.kind = editor.curve_cliff_mode ? .Cliff : .Ridge
-    structure.base_y = terrain.sample_height(&editor.project, 0, structure.center_x, structure.center_z)
+    structure.base_y = terrain.sample_surface_height(&editor.project, 0, structure.center_x, structure.center_z)
     return structure
 }
 
@@ -587,7 +599,7 @@ road_handle_at :: proc(editor: ^Editor, x, z: f32) -> (edge_index, handle_index:
     edge_index, handle_index = -1, -1
     if editor == nil || editor.road_selected_node < 0 do return
     graph := &editor.project.road_graph
-    cursor := roads.Vec3{x, terrain.sample_height(&editor.project, 0, x, z), z}
+    cursor := roads.Vec3{x, terrain.sample_surface_height(&editor.project, 0, x, z), z}
     // Match the snap affordances: the handle remains easy to acquire at an
     // overview zoom without becoming an enormous target close to the road.
     hit_radius := max(editor.road_width * .55, road_snap_world_radius(editor, cursor) * .46)

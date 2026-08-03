@@ -1,23 +1,27 @@
 package main
 
-import "core:mem"
-import "core:strings"
-import harbor "../packages/harbor"
 import fixture_file "../packages/fixture_file"
+import harbor "../packages/harbor"
 import hs "../packages/hs"
 import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
 import "core:hash"
-import "core:os"
 import "core:math"
+import "core:mem"
+import "core:os"
+import "core:strings"
 
 MAP_ARTIFACT_MAGIC :: [8]byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
 MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)
-MAP_ARTIFACT_FORMAT_VERSION :: u32(1)
+MAP_ARTIFACT_FORMAT_VERSION :: u32(4)
+MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION :: u32(3)
+MAP_ARTIFACT_LEGACY_FORMAT_VERSION :: u32(1)
 // Bump whenever procedural output changes in a way that requires shipped maps
 // to be rebuilt. This is deliberately independent of Fixture schema versions.
-MAP_ARTIFACT_GENERATOR_VERSION :: u64(3)
+MAP_ARTIFACT_GENERATOR_VERSION :: u64(6)
+MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(5)
+MAP_ARTIFACT_LEGACY_GENERATOR_VERSION :: u64(3)
 MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
 MAP_ARTIFACT_ALLOCATION_ERROR_MESSAGE :: "map artifact allocation failed"
@@ -42,6 +46,7 @@ Map_Artifact :: struct {
     generator_version:            u64,
     seeds:                        [len(terrain.DEFAULT_ISLAND_SEEDS)]u32,
     project:                      terrain.Project,
+    river_water_splines:          [terrain.RIVER_WATER_SPLINE_CAPACITY]terrain.River_Water_Spline,
     settlement_plan:              Settlement_Plan,
     marina_authored:              bool,
     marina_authored_plan:         marina.Plan,
@@ -58,6 +63,14 @@ Map_Artifact :: struct {
     default_marina_count:         int,
     greek_placements:             [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
     greek_placement_count:        int,
+}
+
+map_artifact_version_is_legacy :: #force_inline proc(format: u32, generator: u64) -> bool {
+    return(
+        (format == MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION && generator == MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION) ||
+        (format == u32(2) && generator == u64(4)) ||
+        (format == MAP_ARTIFACT_LEGACY_FORMAT_VERSION && generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION) \
+    )
 }
 
 Map_Artifact_Error_Kind :: enum {
@@ -158,6 +171,12 @@ map_artifact_portable_config :: proc() -> hs.Portable_Config {
     return config
 }
 
+map_artifact_legacy_portable_config :: proc() -> hs.Portable_Config {
+    config := map_artifact_portable_config()
+    config.exact_schema = false
+    return config
+}
+
 map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
     if artifact == nil do return "map is nil", false
     if artifact.generator_version != MAP_ARTIFACT_GENERATOR_VERSION do return "map generator version is stale", false
@@ -175,17 +194,36 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
     if math.is_nan(artifact.project.sea_level) || math.is_inf(artifact.project.sea_level, 0) {
         return "project sea level is not finite", false
     }
+    for island in artifact.project.island_transforms {
+        if math.is_nan(island.source_x) ||
+           math.is_inf(island.source_x, 0) ||
+           math.is_nan(island.source_z) ||
+           math.is_inf(island.source_z, 0) ||
+           math.is_nan(island.current_x) ||
+           math.is_inf(island.current_x, 0) ||
+           math.is_nan(island.current_z) ||
+           math.is_inf(island.current_z, 0) ||
+           !terrain.island_center_valid(island.current_x, island.current_z) {
+            return "island center is invalid", false
+        }
+    }
     for page in artifact.project.terrain_pages {
-        if page.level >= terrain.CLIPMAP_LEVELS || page.page_x >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION || page.page_z >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION {
+        if page.level >= terrain.CLIPMAP_LEVELS ||
+           page.page_x >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION ||
+           page.page_z >= terrain.TERRAIN_RESOLUTION / terrain.TERRAIN_PAGE_RESOLUTION {
             return "terrain page key is invalid", false
         }
     }
     for chunk, chunk_index in artifact.project.bathymetry_chunks {
-        if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES || len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES {
+        if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES ||
+           len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES {
             return "bathymetry chunk sample count is invalid", false
         }
+        if int(chunk.owner) < int(terrain.Island_ID.World) || int(chunk.owner) > int(terrain.Island_ID.East) {
+            return "bathymetry chunk owner is invalid", false
+        }
         for other in artifact.project.bathymetry_chunks[:chunk_index] {
-            if chunk.chunk_x == other.chunk_x && chunk.chunk_z == other.chunk_z do return "bathymetry chunk key is duplicated", false
+            if chunk.owner == other.owner && chunk.chunk_x == other.chunk_x && chunk.chunk_z == other.chunk_z do return "bathymetry chunk key is duplicated", false
         }
     }
     for &level in artifact.project.levels {
@@ -205,7 +243,7 @@ map_artifact_valid :: proc(artifact: ^Map_Artifact) -> (string, bool) {
             if math.is_nan(material) || math.is_inf(material, 0) do return "terrain material is not finite", false
         }
     }
-    for &spline in artifact.project.river_water_splines {
+    for &spline in artifact.river_water_splines {
         if spline.point_count < 0 || spline.point_count > terrain.RIVER_WATER_POINT_CAPACITY {
             return "river water spline point count is invalid", false
         }
@@ -291,10 +329,11 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
             }
         }
         if view.artifact_kind != .Map do return nil, {kind = .Sectioned, sectioned = {kind = .Invalid_Artifact, offset = 10}}, false
-        if view.schema_version != MAP_ARTIFACT_FORMAT_VERSION {
+        legacy := map_artifact_version_is_legacy(view.schema_version, view.generator_version)
+        if view.schema_version != MAP_ARTIFACT_FORMAT_VERSION && !legacy {
             return nil, {kind = .Unsupported_Format, offset = 12}, false
         }
-        if view.generator_version != MAP_ARTIFACT_GENERATOR_VERSION {
+        if view.generator_version != MAP_ARTIFACT_GENERATOR_VERSION && !legacy {
             return nil, {kind = .Stale_Generator, offset = 16}, false
         }
         payload, found := fixture_file.sectioned_container_section(&view, {kind = .Core})
@@ -304,13 +343,17 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         portable_error, portable_ok := hs.portable_decode(
             any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
             payload,
-            map_artifact_portable_config(),
+            legacy ? map_artifact_legacy_portable_config() : map_artifact_portable_config(),
             alloc,
         )
         if !portable_ok {
             map_artifact_destroy(artifact, alloc)
             return nil, {kind = .Portable, portable = portable_error}, false
         }
+        if legacy {
+            artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+        }
+        terrain.island_transforms_initialize(&artifact.project)
         if message, valid := map_artifact_valid(artifact); !valid {
             map_artifact_destroy(artifact, alloc)
             return nil, {kind = .Invalid_State, message = message}, false
@@ -326,10 +369,13 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         return nil, {kind = .Unsupported_Container, offset = 8}, false
     }
     if map_artifact_get_u16(data, 10) != 0 do return nil, {kind = .Invalid_Flags, offset = 10}, false
-    if map_artifact_get_u32(data, 12) != MAP_ARTIFACT_FORMAT_VERSION {
+    stored_format := map_artifact_get_u32(data, 12)
+    stored_generator := map_artifact_get_u64(data, 16)
+    legacy := map_artifact_version_is_legacy(stored_format, stored_generator)
+    if stored_format != MAP_ARTIFACT_FORMAT_VERSION && !legacy {
         return nil, {kind = .Unsupported_Format, offset = 12}, false
     }
-    if map_artifact_get_u64(data, 16) != MAP_ARTIFACT_GENERATOR_VERSION {
+    if stored_generator != MAP_ARTIFACT_GENERATOR_VERSION && !legacy {
         return nil, {kind = .Stale_Generator, offset = 16}, false
     }
     payload_size := map_artifact_get_u64(data, 24)
@@ -348,13 +394,17 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
     portable_error, decoded := hs.portable_decode(
         any{data = rawptr(artifact), id = typeid_of(Map_Artifact)},
         payload,
-        map_artifact_portable_config(),
+        legacy ? map_artifact_legacy_portable_config() : map_artifact_portable_config(),
         alloc,
     )
     if !decoded {
         map_artifact_destroy(artifact, alloc)
         return nil, {kind = .Portable, portable = portable_error}, false
     }
+    if legacy {
+        artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+    }
+    terrain.island_transforms_initialize(&artifact.project)
     if message, valid := map_artifact_valid(artifact); !valid {
         map_artifact_destroy(artifact, alloc)
         return nil, {kind = .Invalid_State, message = message}, false

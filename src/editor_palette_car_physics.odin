@@ -229,7 +229,7 @@ runway_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // Start beside the parked aircraft so the default camera presents it and
     // the runway immediately instead of placing the character inside its mesh.
     z := runway_z + 2.2
-    return {x, terrain.sample_height(&editor.project, 0, x, z), z}
+    return {x, terrain.sample_surface_height(&editor.project, 0, x, z), z}
 }
 
 nearest_town_spawn_position :: proc(editor: ^Editor, from: third_person.Vec3) -> third_person.Vec3 {
@@ -248,7 +248,7 @@ nearest_town_spawn_position :: proc(editor: ^Editor, from: third_person.Vec3) ->
             best_distance_squared = distance_squared
         }
     }
-    best.y = terrain.sample_height(&editor.project, 0, best.x, best.z)
+    best.y = terrain.sample_surface_height(&editor.project, 0, best.x, best.z)
     return best
 }
 
@@ -281,7 +281,7 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
     if editor.aircraft.active == .Rondine {
         rondine_game.reset(&editor.rondine, editor.project.sea_level)
     } else if editor.aircraft.active != .Postale {
-        ground := terrain.sample_height(
+        ground := terrain.sample_surface_height(
             &editor.project,
             0,
             editor.libellula.spawn_position.x,
@@ -290,7 +290,7 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
         libellula_game.reset(&editor.libellula, ground)
     } else {
         ground := postale_game.drivable_surface_height(
-            terrain.sample_height(
+            terrain.sample_surface_height(
                 &editor.project,
                 0,
                 editor.postale.spawn_position.x,
@@ -321,7 +321,7 @@ crash_recovery_relocate :: proc(editor: ^Editor) {
     } else {
         clinic.x += -math.sin(clinic_rotation) * 1.6
         clinic.z += math.cos(clinic_rotation) * 1.6
-        clinic.y = terrain.sample_height(&editor.project, 0, clinic.x, clinic.z)
+        clinic.y = terrain.sample_surface_height(&editor.project, 0, clinic.x, clinic.z)
     }
     player_place(editor, clinic, .Crash_Recovery)
     editor.story_state.clinic_visits += 1
@@ -391,7 +391,7 @@ car_spawn_position :: proc(editor: ^Editor) -> third_person.Vec3 {
     // close enough to reach from the default player spawn.
     runway := runway_spawn_position(editor)
     spawn := vehicles.car_spawn_near({runway.x + 8, runway.y, runway.z + 4})
-    spawn.y = terrain.sample_height(&editor.project, 0, spawn.x, spawn.z)
+    spawn.y = terrain.sample_surface_height(&editor.project, 0, spawn.x, spawn.z)
     return spawn
 }
 
@@ -442,7 +442,18 @@ car_physics_level_heights :: proc(editor: ^Editor, level_index: int, result: []f
         return
     }
     level := &editor.project.levels[level_index]
-    copy(result, level.heights[:])
+    // Island transforms leave authored height samples in source space. Jolt's
+    // height fields are world-space objects, so resolve each collision sample
+    // through the terrain transform instead of stranding collision at the
+    // islands' original coordinates.
+    for z in 0 ..< terrain.TERRAIN_RESOLUTION {
+        world_z := level.origin_z + f32(z) * level.cell_size
+        for x in 0 ..< terrain.TERRAIN_RESOLUTION {
+            world_x := level.origin_x + f32(x) * level.cell_size
+            result[terrain.sample_index(x, z)] =
+                terrain.sample_surface_height(&editor.project, level_index, world_x, world_z)
+        }
+    }
     if level_index == 0 do return
     finer := &editor.project.levels[level_index - 1]
     // Preserve one coarse-cell apron. Since even-sized grids at successive
@@ -470,7 +481,7 @@ car_physics_create :: proc(editor: ^Editor) {
     if editor == nil || editor.car_physics_world != nil do return
     if editor.gameplay_physics.world == nil && !gameplay_physics_create(editor) do return
     editor.car_physics_world = editor.gameplay_physics.world
-    ground := terrain.sample_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
+    ground := terrain.sample_surface_height(&editor.project, 0, editor.car.position.x, editor.car.position.z)
     for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
         editor.car_physics_terrain[level_index] = editor.gameplay_physics.terrain[level_index]
     }

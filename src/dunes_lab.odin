@@ -98,12 +98,12 @@ dunes_lab_rebuild_diagnostics :: proc(editor: ^Editor) {
     runtime := &editor.dunes_lab_runtime
     runtime.diagnostics = {}
     data := &editor.project.levels[0]
-    for z in 0 ..< terrain.TERRAIN_RESOLUTION {
+    for z := 0; z < terrain.TERRAIN_RESOLUTION; z += 4 {
         world_z := data.origin_z + f32(z) * data.cell_size
-        for x in 0 ..< terrain.TERRAIN_RESOLUTION {
+        for x := 0; x < terrain.TERRAIN_RESOLUTION; x += 4 {
             world_x := data.origin_x + f32(x) * data.cell_size
             surface := dunes_lab_sample(editor, world_x, world_z)
-            if ((x & 3) == 0) && ((z & 3) == 0) do dunes_lab_record_diagnostic(runtime, surface)
+            dunes_lab_record_diagnostic(runtime, surface)
         }
     }
     dunes_lab_finish_diagnostics(editor)
@@ -268,7 +268,7 @@ world_dunes_lab :: proc(editor: ^Editor) {
         if !ok do continue
         x := candidate.position[0]
         z := candidate.position[1] + dunes_lab_coast_curve(x)
-        ground := terrain.sample_height(&editor.project, 0, x, z)
+        ground := terrain.sample_surface_height(&editor.project, 0, x, z)
         color := canvas2d.Color {
             u8(92 + candidate.tint * 20),
             u8(119 + candidate.tint * 25),

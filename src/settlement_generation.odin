@@ -172,13 +172,13 @@ settlement_density_smoothed :: proc(frame: ^markov.Frame, grid_size, gx, gz: int
 
 settlement_terrain_slope :: proc(project: ^terrain.Project, x, z: f32) -> f32 {
     SAMPLE :: f32(8)
-    dx := terrain.sample_height(project, 0, x + SAMPLE, z) - terrain.sample_height(project, 0, x - SAMPLE, z)
-    dz := terrain.sample_height(project, 0, x, z + SAMPLE) - terrain.sample_height(project, 0, x, z - SAMPLE)
+    dx := terrain.sample_surface_height(project, 0, x + SAMPLE, z) - terrain.sample_surface_height(project, 0, x - SAMPLE, z)
+    dz := terrain.sample_surface_height(project, 0, x, z + SAMPLE) - terrain.sample_surface_height(project, 0, x, z - SAMPLE)
     return linalg.length([2]f32{dx, dz}) / (SAMPLE * 2)
 }
 
 settlement_site_suitability :: proc(project: ^terrain.Project, x, z: f32, profile: Settlement_Profile) -> f32 {
-    height := terrain.sample_height(project, 0, x, z)
+    height := terrain.sample_surface_height(project, 0, x, z)
     if height <= project.sea_level + .6 || terrain.active_waterway_at(project, 0, x, z) do return 0
     slope := settlement_terrain_slope(project, x, z)
     return clamp(1 - slope / max(profile.max_slope, f32(.01)), 0, 1)
@@ -187,12 +187,12 @@ settlement_site_suitability :: proc(project: ^terrain.Project, x, z: f32, profil
 settlement_fit_landscape_point :: proc(project: ^terrain.Project, x, z: f32, search_radius: f32) -> (f32, f32) {
     best_x, best_z := x, z
     best_score := f32(-1e9)
-    origin_height := terrain.sample_height(project, 0, x, z)
+    origin_height := terrain.sample_surface_height(project, 0, x, z)
     for iz in -2 ..= 2 {
         for ix in -2 ..= 2 {
             candidate_x := x + f32(ix) * search_radius * .5
             candidate_z := z + f32(iz) * search_radius * .5
-            height := terrain.sample_height(project, 0, candidate_x, candidate_z)
+            height := terrain.sample_surface_height(project, 0, candidate_x, candidate_z)
             if height <= project.sea_level + .6 || terrain.active_waterway_at(project, 0, candidate_x, candidate_z) {
                 continue
             }
