@@ -526,6 +526,14 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
 structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_State) {
     if editor == nil || state == nil do return
     island_transform_changed := editor.project.island_transforms != state.island_transforms
+    if island_transform_changed {
+        for current, index in editor.project.island_transforms {
+            target := state.island_transforms[index]
+            dx, dz := target.current_x - current.current_x, target.current_z - current.current_z
+            if math.abs(dx) <= .0001 && math.abs(dz) <= .0001 do continue
+            editor_island_translate_dependent_state(editor, terrain.island_id_from_index(index), dx, dz)
+        }
+    }
     resize(&editor.project.structures, state.count)
     copy(editor.project.structures[:], state.structures[:state.count])
     editor.project.structure_count = state.count
@@ -555,8 +563,10 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1
     if island_transform_changed {
+        editor.terrain_revision += 1
         world_renderer_fixture_invalidate(editor)
         gameplay_physics_rebuild_structures(editor)
+        gameplay_physics_sync_revisions(editor)
     }
 }
 

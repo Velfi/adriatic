@@ -1,6 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
+import boats "../packages/boats"
 import buildings "../packages/buildings"
 import flight "../packages/flight"
 import libellula_game "../packages/libellula"
@@ -278,6 +279,141 @@ when ODIN_TEST {
         testing.expect(t, gameplay_physics_player_needs_teleport(spawn, {}, true))
         testing.expect(t, !gameplay_physics_player_needs_teleport(spawn, spawn, true))
         testing.expect(t, gameplay_physics_player_needs_teleport(spawn, spawn, false))
+    }
+
+    @(test)
+    moving_an_island_moves_its_player_spawn_and_vehicles :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        editor.project.island_transforms = terrain.default_island_transforms()
+        defer terrain.destroy_project(&editor.project)
+
+        east_x, east_z, east_ok := terrain.island_center(&editor.project, .East)
+        testing.expect(t, east_ok)
+        editor.player.position = {east_x + 4, 3, east_z + 5}
+        editor.pilot.position = editor.player.position
+        editor.postale = postale_game.new_runtime({east_x + 10, 8, east_z + 11})
+        editor.libellula = libellula_game.new_runtime({east_x + 20, 9, east_z + 21})
+        editor.rondine = rondine_game.new_runtime({east_x + 30, 10, east_z + 31})
+        editor.car = vehicles.default_vehicle({east_x + 40, 2, east_z + 41})
+        editor.car_trailer_attached = true
+        editor.car_trailer_position = {east_x + 42, 2, east_z + 43}
+        editor.attendant_position = {east_x + 50, 2, east_z + 51}
+        editor.gerta_position = {-east_x, 2, -east_z}
+        airport := terrain.structure_make(east_x + 60, east_z + 61, 40, 30, 2, 8)
+        airport.kind = .Architecture
+        airport.group_id = AIRPORT_STAMP_GROUP
+        airport.seed = AIRPORT_STAMP_SEED
+        airport_index := terrain.add_structure(&editor.project, airport)
+        testing.expect(t, airport_index >= 0)
+        editor.project.structures[airport_index].seed = AIRPORT_STAMP_SEED
+        editor.architecture_city_plan.structures = make([dynamic]terrain.Structure, 1)
+        editor.architecture_city_plan.structures[0] = airport
+        editor.architecture_city_plan.count = 1
+        editor.architecture_city_plan.parcels = make([dynamic]architecture.City_Parcel, 1)
+        editor.architecture_city_plan.parcels[0].corners = {
+            {east_x + 55, east_z + 55},
+            {east_x + 65, east_z + 55},
+            {east_x + 65, east_z + 65},
+            {east_x + 55, east_z + 65},
+        }
+        editor.architecture_city_plan.parcel_count = 1
+        editor.architecture_city_plan.lamps = make([dynamic]architecture.City_Lamp, 1)
+        editor.architecture_city_plan.lamps[0] = {x = east_x + 62, z = east_z + 62}
+        editor.architecture_city_plan.lamp_count = 1
+        defer architecture.city_plan_destroy(&editor.architecture_city_plan)
+        editor.curve_points[0] = {east_x + 66, east_z + 66}
+        editor.curve_point_count = 1
+        editor.sdf_obstacles[0].position = {east_x + 68, 9, east_z + 68}
+        editor.sdf_obstacle_count = 1
+        editor.boat_traffic.count = 2
+        editor.boat_traffic.agents[0] = {
+            class = .Fishing,
+            position = {east_x + 70, east_z + 71},
+            route_count = 2,
+            loiter_center = {east_x + 76, east_z + 77},
+            schedule_count = 1,
+            wake_count = 1,
+        }
+        editor.boat_traffic.agents[0].route[0] = {east_x + 72, east_z + 73}
+        editor.boat_traffic.agents[0].route[1] = {east_x + 74, east_z + 75}
+        editor.boat_traffic.agents[0].schedule[0] = {0, 1440, .Patrol, .75}
+        editor.boat_traffic.agents[0].wake[0] = {position = {east_x + 68, east_z + 69}}
+        editor.boat_traffic.agents[1] = boats.Agent {
+            class = .Motor,
+            position = {-east_x, -east_z},
+            route_count = 1,
+        }
+        editor.boat_traffic.agents[1].route[0] = {-east_x, -east_z}
+
+        player_before := editor.player.position
+        postale_before := editor.postale.body.position
+        libellula_before := editor.libellula.body.position
+        rondine_before := editor.rondine.body.position
+        car_before := editor.car.position
+        trailer_before := editor.car_trailer_position
+        attendant_before := editor.attendant_position
+        gerta_before := editor.gerta_position
+        airport_before := editor.project.structures[airport_index]
+        east_boat_before := editor.boat_traffic.agents[0]
+        west_boat_before := editor.boat_traffic.agents[1]
+        terrain_revision_before := editor.terrain_revision
+        dx, dz := f32(-120), f32(-80)
+
+        editor_island_translate_dependent_state(editor, .East, dx, dz)
+        testing.expect(t, terrain.island_set_center(&editor.project, .East, east_x + dx, east_z + dz))
+        editor.terrain_revision += 1
+
+        testing.expect_value(t, editor.player.position.x, player_before.x + dx)
+        testing.expect_value(t, editor.player.position.z, player_before.z + dz)
+        testing.expect_value(t, editor.pilot.position, editor.player.position)
+        testing.expect_value(t, editor.postale.body.position.x, postale_before.x + dx)
+        testing.expect_value(t, editor.postale.body.position.z, postale_before.z + dz)
+        testing.expect_value(t, editor.libellula.body.position.x, libellula_before.x + dx)
+        testing.expect_value(t, editor.libellula.body.position.z, libellula_before.z + dz)
+        testing.expect_value(t, editor.rondine.body.position.x, rondine_before.x + dx)
+        testing.expect_value(t, editor.rondine.body.position.z, rondine_before.z + dz)
+        testing.expect_value(t, editor.car.position.x, car_before.x + dx)
+        testing.expect_value(t, editor.car.position.z, car_before.z + dz)
+        testing.expect_value(t, editor.car_trailer_position.x, trailer_before.x + dx)
+        testing.expect_value(t, editor.car_trailer_position.z, trailer_before.z + dz)
+        testing.expect_value(t, editor.attendant_position.x, attendant_before.x + dx)
+        testing.expect_value(t, editor.attendant_position.z, attendant_before.z + dz)
+        testing.expect_value(t, editor.gerta_position, gerta_before)
+        testing.expect_value(t, editor.project.structures[airport_index].center_x, airport_before.center_x + dx)
+        testing.expect_value(t, editor.project.structures[airport_index].center_z, airport_before.center_z + dz)
+        testing.expect_value(t, editor.boat_traffic.agents[0].position, east_boat_before.position + boats.Vec2{dx, dz})
+        testing.expect_value(t, editor.boat_traffic.agents[0].route[0], east_boat_before.route[0] + boats.Vec2{dx, dz})
+        testing.expect_value(
+            t,
+            editor.boat_traffic.agents[0].loiter_center,
+            east_boat_before.loiter_center + boats.Vec2{dx, dz},
+        )
+        testing.expect_value(
+            t,
+            editor.boat_traffic.agents[0].wake[0].position,
+            east_boat_before.wake[0].position + boats.Vec2{dx, dz},
+        )
+        testing.expect_value(t, editor.boat_traffic.agents[0].schedule, east_boat_before.schedule)
+        testing.expect_value(t, editor.boat_traffic.agents[1], west_boat_before)
+        testing.expect_value(t, editor.architecture_city_plan.structures[0].center_x, airport.center_x + dx)
+        testing.expect_value(t, editor.architecture_city_plan.parcels[0].corners[0][0], east_x + 55 + dx)
+        testing.expect_value(t, editor.architecture_city_plan.lamps[0].x, east_x + 62 + dx)
+        testing.expect_value(t, editor.curve_points[0].x, east_x + 66 + dx)
+        testing.expect_value(t, editor.sdf_obstacles[0].position.x, east_x + 68 + dx)
+        testing.expect_value(t, editor.terrain_revision, terrain_revision_before + 1)
+        testing.expect_value(t, editor.postale.spawn_position.x, postale_before.x + dx)
+        testing.expect_value(t, editor.postale.spawn_position.z, postale_before.z + dz)
+
+    }
+
+    @(test)
+    editor_island_move_rejects_overlapping_ownership_domains :: proc(t: ^testing.T) {
+        editor := new(Editor)
+        defer free(editor)
+        editor.project.island_transforms = terrain.default_island_transforms()
+        west_x, west_z, _ := terrain.island_center(&editor.project, .West)
+        testing.expect(t, !editor_island_set_center(editor, .East, west_x, west_z))
     }
 
     @(test)

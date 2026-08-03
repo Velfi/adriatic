@@ -43,3 +43,23 @@ island_distance_supports_coincident_centers_and_rejects_out_of_bounds_centers ::
     testing.expect(t, math.abs(f32(math.sqrt(f64(exact_dx * exact_dx + exact_dz * exact_dz))) - 1000) < .001)
     testing.expect(t, !island_set_center(project, .East, 4000, 4000))
 }
+
+@(test)
+procedural_runway_and_airport_anchors_follow_island_transform :: proc(t: ^testing.T) {
+    project := new(Project)
+    defer free(project)
+    project.island_transforms = default_island_transforms()
+
+    east_x, east_z, _ := island_center(project, .East)
+    runway_x, runway_z := default_runway_center_for_project(project, 1)
+    airport_x, airport_z := default_airport_center_for_project(project, 1)
+    dx, dz := f32(-120), f32(-80)
+    testing.expect(t, island_set_center(project, .East, east_x + dx, east_z + dz))
+
+    moved_runway_x, moved_runway_z := default_runway_center_for_project(project, 1)
+    moved_airport_x, moved_airport_z := default_airport_center_for_project(project, 1)
+    testing.expect_value(t, moved_runway_x, runway_x + dx)
+    testing.expect_value(t, moved_runway_z, runway_z + dz)
+    testing.expect_value(t, moved_airport_x, airport_x + dx)
+    testing.expect_value(t, moved_airport_z, airport_z + dz)
+}

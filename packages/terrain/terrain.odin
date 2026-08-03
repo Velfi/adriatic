@@ -701,7 +701,8 @@ default_runway_center_for_project :: proc(project: ^Project, sign: f32) -> (x, z
             if center_x * sign > 0 do return center_x, center_z
         }
     }
-    return default_runway_center(sign)
+    x, z = default_runway_center(sign)
+    return island_world_position(project, x, z)
 }
 
 // Keep the island's three arrival anchors in one compact, walkable district.
@@ -724,7 +725,10 @@ default_town_center_for_project :: proc(
 ) {
     nominal_x, nominal_z := default_town_center(sign)
     if project == nil do return nominal_x, nominal_z
-    island_x, island_z := default_island_center(sign)
+    nominal_x, nominal_z = island_world_position(project, nominal_x, nominal_z)
+    island_id := sign < 0 ? Island_ID.West : Island_ID.East
+    island_x, island_z, island_ok := island_center(project, island_id)
+    if !island_ok do island_x, island_z = default_island_center(sign)
     runway_x, runway_z := default_runway_center_for_project(project, sign)
     runway_half_length := f32(WORLD_SIZE_METERS * .5) * DEFAULT_RUNWAY_HALF_LENGTH
     best_x, best_z, best_score := nominal_x, nominal_z, f32(-1e30)
@@ -806,6 +810,7 @@ default_airport_center_for_project :: proc(project: ^Project, sign: f32) -> (x, 
     half_extent := f32(WORLD_SIZE_METERS * .5)
     runway_threshold_x := center_x - sign * half_extent * DEFAULT_RUNWAY_HALF_LENGTH
     town_x, town_z := default_town_center(sign)
+    town_x, town_z = island_world_position(project, town_x, town_z)
     approach_amount := f32(.18)
     nominal_x := runway_threshold_x + (town_x - runway_threshold_x) * approach_amount
     nominal_z := center_z + (town_z - center_z) * approach_amount
