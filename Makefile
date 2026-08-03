@@ -122,8 +122,9 @@ FIXTURE_HISTORY_VERSION ?= 1
 FIXTURE_MIGRATION_FROM_VERSION ?= 1
 FIXTURE_MIGRATION_TO_VERSION ?= 2
 FIXTURE_HISTORY_PACKAGE := packages/fixture_history/v$(shell printf '%04d' "$(FIXTURE_HISTORY_VERSION)")
-ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null)
-HOT_ODIN_SOURCES := $(shell find src packages "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
+ZELDA_ENGINE_ODIN_SOURCES := $(shell find "$(ZELDA_ENGINE_PACKAGES)" -type f -name '*.odin' 2>/dev/null)
+ODIN_SOURCES := $(shell find src packages tests -type f -name '*.odin' 2>/dev/null) $(ZELDA_ENGINE_ODIN_SOURCES)
+HOT_ODIN_SOURCES := $(shell find src packages -type f -name '*.odin' 2>/dev/null) $(ZELDA_ENGINE_ODIN_SOURCES)
 HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world.vert.spv \
 	$(HOT_SHADER_DIR)/world-instance.vert.spv \
