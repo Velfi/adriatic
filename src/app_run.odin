@@ -34,6 +34,7 @@ import "core:time"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import spy "zelda_engine:spy"
 
 adriatic_run_impl :: proc(
     persistent_canvas_state: rawptr,
@@ -377,13 +378,18 @@ adriatic_run_impl :: proc(
     engine_audio_ready := !capture_mode && !benchmark_mode && engine_sound.open(&editor.engine_audio)
     engine_audio_stream := editor.engine_audio.stream
     defer if engine_audio_ready do engine_sound.close(&editor.engine_audio)
-    fmt.eprintf(
-        "audio init: ready=%v stream=%v device=%d paused=%v gain=%.3f error=%s\n",
+    spy.debug(
+        "audio ready=",
         engine_audio_ready,
+        "stream=",
         editor.engine_audio.stream != nil,
+        "device=",
         editor.engine_audio.stream != nil ? sdl.GetAudioStreamDevice(editor.engine_audio.stream) : 0,
+        "paused=",
         editor.engine_audio.stream != nil ? sdl.AudioStreamDevicePaused(editor.engine_audio.stream) : true,
+        "gain=",
         editor.engine_audio.stream != nil ? sdl.GetAudioStreamGain(editor.engine_audio.stream) : 0,
+        "error=",
         sdl.GetError(),
     )
     startup_timings.audio_ms = startup_checkpoint(&startup_timings)
@@ -419,7 +425,7 @@ adriatic_run_impl :: proc(
             _ = vehicle_mesh_cache_store(&editor.libellula_mk2_base_mesh, mk2_mesh_cache_path)
         }
     }
-    fmt.eprintf("vehicle mesh cache: libellula-mk2 source=%s\n", mk2_mesh_cache_hit ? "disk" : "generated")
+    spy.debug("vehicle mesh cache libellula-mk2=", mk2_mesh_cache_hit ? "disk" : "generated")
     vehicles.libellula_mesh_copy(&editor.libellula_mk2_visual_mesh, &editor.libellula_mk2_base_mesh)
     editor.postale_base_mesh = new(vehicles.Aircraft_Mesh)
     defer free(editor.postale_base_mesh)
@@ -456,9 +462,10 @@ adriatic_run_impl :: proc(
             _ = aircraft_mesh_cache_store(editor.car_base_mesh, car_cache_path, CAR_MESH_CACHE_VERSION)
         }
     }
-    fmt.eprintf(
-        "vehicle mesh cache: postale=%s car=%s\n",
+    spy.debug(
+        "vehicle mesh cache postale=",
         postale_cache_hit ? "disk" : "generated",
+        "car=",
         car_cache_hit ? "disk" : "generated",
     )
     startup_timings.meshes_ms = startup_checkpoint(&startup_timings)
