@@ -503,6 +503,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.structure_building_spans)
     delete(world_renderer.structure_candidates)
     delete(world_renderer.ocean_geometry_cache)
+    for &entry in world_renderer.bathymetry_geometry_cache do delete(entry.vertices)
+    delete(world_renderer.bathymetry_geometry_cache)
     for &entry in world_renderer.town_mouse_geometry_cache {
         delete(entry.vertices)
     }

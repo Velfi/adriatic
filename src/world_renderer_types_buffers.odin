@@ -317,6 +317,16 @@ Dynamic_Shadow_Terrain_Cache :: struct {
     valid:                              bool,
 }
 
+Bathymetry_Geometry_Cache_Entry :: struct {
+    vertices:              [dynamic]World_Vertex,
+    chunk_x, chunk_z:      i32,
+    owner:                 terrain.Island_ID,
+    source:                terrain.Water_Source_Kind,
+    chunk_revision:        u64,
+    origin_x, origin_z:    f32,
+    valid:                 bool,
+}
+
 World_Renderer :: struct {
     editor:                                       ^Editor,
     ctx:                                          ^engine.Vk_Context,
@@ -479,6 +489,9 @@ World_Renderer :: struct {
     ocean_cache_markov_island:                    bool,
     ocean_cache_dunes:                            bool,
     ocean_cache_valid:                            bool,
+    bathymetry_geometry_cache:                    [dynamic]Bathymetry_Geometry_Cache_Entry,
+    bathymetry_geometry_cache_builds:             u64,
+    bathymetry_geometry_cache_reuses:             u64,
     dirty_build_ms:                               f64,
     frame_build_ms:                               f64,
     visibility_build_cpu_ms:                      f64,

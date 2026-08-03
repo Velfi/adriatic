@@ -1,5 +1,6 @@
 package main
 import "core:math"
+import "core:testing"
 
 import dio "../packages/dio"
 import roads "../packages/roads"
@@ -366,11 +367,83 @@ world_river_water :: proc(editor: ^Editor) {
     }
 }
 
+@(no_instrumentation)
+world_bathymetry_geometry_cache_matches :: #force_inline proc(
+    entry: ^Bathymetry_Geometry_Cache_Entry,
+    chunk: terrain.Bathymetry_Chunk,
+    origin_x, origin_z: f32,
+) -> bool {
+    return(
+        entry != nil &&
+        entry.valid &&
+        entry.chunk_x == chunk.chunk_x &&
+        entry.chunk_z == chunk.chunk_z &&
+        entry.owner == chunk.owner &&
+        entry.source == chunk.source &&
+        entry.chunk_revision == chunk.revision &&
+        entry.origin_x == origin_x &&
+        entry.origin_z == origin_z \
+    )
+}
+
+world_bathymetry_geometry_cache_ensure :: proc(count: int) {
+    cache := &world_renderer.bathymetry_geometry_cache
+    if count < len(cache) {
+        for &entry in cache[count:] do delete(entry.vertices)
+        resize(cache, count)
+        return
+    }
+    if count > len(cache) do resize(cache, count)
+}
+
+world_bathymetry_geometry_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
+    for &entry in world_renderer.bathymetry_geometry_cache {
+        if !entry.valid ||
+           entry.origin_x > max_x ||
+           entry.origin_z > max_z ||
+           entry.origin_x + terrain.BATHYMETRY_CHUNK_SIZE < min_x ||
+           entry.origin_z + terrain.BATHYMETRY_CHUNK_SIZE < min_z {
+            continue
+        }
+        entry.valid = false
+    }
+}
+
+when ODIN_TEST {
+    @(test)
+    world_bathymetry_geometry_cache_keys_chunk_content_and_world_origin :: proc(t: ^testing.T) {
+        chunk := terrain.Bathymetry_Chunk {
+            chunk_x = -2,
+            chunk_z = 3,
+            owner   = .West,
+            revision = 7,
+            source  = .Ocean,
+        }
+        entry := Bathymetry_Geometry_Cache_Entry {
+            valid          = true,
+            chunk_x        = chunk.chunk_x,
+            chunk_z        = chunk.chunk_z,
+            owner          = chunk.owner,
+            source         = chunk.source,
+            chunk_revision = chunk.revision,
+            origin_x       = -512,
+            origin_z       = 768,
+        }
+        testing.expect(t, world_bathymetry_geometry_cache_matches(&entry, chunk, -512, 768))
+        chunk.revision += 1
+        testing.expect(t, !world_bathymetry_geometry_cache_matches(&entry, chunk, -512, 768))
+        chunk.revision -= 1
+        testing.expect(t, !world_bathymetry_geometry_cache_matches(&entry, chunk, -256, 768))
+        testing.expect(t, !world_bathymetry_geometry_cache_matches(&entry, chunk, -512, 512))
+    }
+}
+
 world_bathymetry :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map do return
+    world_bathymetry_geometry_cache_ensure(len(editor.project.bathymetry_chunks))
     camera_x, camera_z := editor.camera_pose.position.x, editor.camera_pose.position.z
     normal := third_person.Vec3{0, 1, 0}
-    for &chunk in editor.project.bathymetry_chunks {
+    for &chunk, chunk_index in editor.project.bathymetry_chunks {
         if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES || len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES do continue
         origin_x := f32(chunk.chunk_x) * terrain.BATHYMETRY_CHUNK_SIZE
         origin_z := f32(chunk.chunk_z) * terrain.BATHYMETRY_CHUNK_SIZE
@@ -380,6 +453,17 @@ world_bathymetry :: proc(editor: ^Editor) {
             origin_z += transform.current_z - transform.source_z
         }
         if abs(origin_x - camera_x) > 512 || abs(origin_z - camera_z) > 512 do continue
+        cache := &world_renderer.bathymetry_geometry_cache[chunk_index]
+        if world_bathymetry_geometry_cache_matches(cache, chunk, origin_x, origin_z) {
+            world_renderer.bathymetry_geometry_cache_reuses += 1
+            profile := dio.flame_graph_begin(dio.flame_graph_current(), "bathymetry_chunk_cache_reuse")
+            append(&world_renderer.vertices, ..cache.vertices[:])
+            _ = dio.flame_graph_end(dio.flame_graph_current(), profile)
+            continue
+        }
+        world_renderer.bathymetry_geometry_cache_builds += 1
+        profile := dio.flame_graph_begin(dio.flame_graph_current(), "bathymetry_chunk_cache_build")
+        first := len(world_renderer.vertices)
         for z in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
             for x in 0 ..< terrain.BATHYMETRY_CHUNK_RESOLUTION - 1 {
                 center_x :=
@@ -420,6 +504,17 @@ world_bathymetry :: proc(editor: ^Editor) {
                 )
             }
         }
+        clear(&cache.vertices)
+        append(&cache.vertices, ..world_renderer.vertices[first:])
+        cache.chunk_x = chunk.chunk_x
+        cache.chunk_z = chunk.chunk_z
+        cache.owner = chunk.owner
+        cache.source = chunk.source
+        cache.chunk_revision = chunk.revision
+        cache.origin_x = origin_x
+        cache.origin_z = origin_z
+        cache.valid = true
+        _ = dio.flame_graph_end(dio.flame_graph_current(), profile)
     }
 }
 
