@@ -274,6 +274,100 @@ record_screenshot_readback :: proc(
     return do_capture, marker
 }
 
+record_world_mask_pass :: proc(
+    ctx: ^engine.Vk_Context,
+    frame: engine.Vk_Frame,
+    extent: vk.Extent2D,
+    logical_extent: [2]i32,
+) {
+    if state.world_mask_pass == nil || !state.world_mask_active do return
+    msaa_active := state.world_sample_count_effective > 1
+    samples: vk.SampleCountFlags = {._1}
+    if state.world_sample_count_effective == 2 do samples = {._2}
+    if state.world_sample_count_effective == 4 do samples = {._4}
+    color_target := msaa_active ? &state.world_msaa_mask : &state.world_mask
+    color_target_ready := !msaa_active && state.world_mask_sample_ready
+    old_layout := color_target_ready ? vk.ImageLayout.SHADER_READ_ONLY_OPTIMAL : vk.ImageLayout.UNDEFINED
+    engine.vk_cmd_image_barrier2(
+        ctx,
+        frame.command_buffer,
+        color_target.image,
+        color_target_ready ? vk.PipelineStageFlags2{.FRAGMENT_SHADER} : vk.PipelineStageFlags2{.TOP_OF_PIPE},
+        {.COLOR_ATTACHMENT_OUTPUT},
+        color_target_ready ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
+        {.COLOR_ATTACHMENT_WRITE},
+        old_layout,
+        .COLOR_ATTACHMENT_OPTIMAL,
+    )
+    if msaa_active {
+        engine.vk_cmd_image_barrier2(
+            ctx,
+            frame.command_buffer,
+            state.world_mask.image,
+            state.world_mask_sample_ready ? vk.PipelineStageFlags2{.FRAGMENT_SHADER} : vk.PipelineStageFlags2{.TOP_OF_PIPE},
+            {.COLOR_ATTACHMENT_OUTPUT},
+            state.world_mask_sample_ready ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
+            {.COLOR_ATTACHMENT_WRITE},
+            state.world_mask_sample_ready ? vk.ImageLayout.SHADER_READ_ONLY_OPTIMAL : vk.ImageLayout.UNDEFINED,
+            .COLOR_ATTACHMENT_OPTIMAL,
+        )
+    }
+    clear := vk.ClearValue{color = {float32 = {0, 0, 0, 0}}}
+    color_attachment := vk.RenderingAttachmentInfo {
+        sType = .RENDERING_ATTACHMENT_INFO,
+        imageView = color_target.view,
+        imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+        loadOp = .CLEAR,
+        storeOp = .STORE,
+        clearValue = clear,
+    }
+    if msaa_active {
+        color_attachment.resolveMode = {.AVERAGE}
+        color_attachment.resolveImageView = state.world_mask.view
+        color_attachment.resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL
+    }
+    depth_attachment := vk.RenderingAttachmentInfo {
+        sType = .RENDERING_ATTACHMENT_INFO,
+        imageView = msaa_active ? state.world_msaa_depth.view : state.depth.view,
+        imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+        loadOp = .LOAD,
+        storeOp = .STORE,
+    }
+    rendering := vk.RenderingInfo {
+        sType = .RENDERING_INFO,
+        renderArea = {extent = extent},
+        layerCount = 1,
+        colorAttachmentCount = 1,
+        pColorAttachments = &color_attachment,
+        pDepthAttachment = &depth_attachment,
+    }
+    vk.CmdBeginRendering(frame.command_buffer, &rendering)
+    mask_context := World_Mask_Pass_Context {
+        ctx = ctx,
+        frame = frame,
+        color_view = color_target.view,
+        color_format = .R8_UNORM,
+        depth_view = depth_attachment.imageView,
+        framebuffer_extent = extent,
+        logical_extent = logical_extent,
+        sample_count = samples,
+    }
+    state.world_mask_pass(&mask_context, state.world_mask_pass_user_data)
+    vk.CmdEndRendering(frame.command_buffer)
+    engine.vk_cmd_image_barrier2(
+        ctx,
+        frame.command_buffer,
+        state.world_mask.image,
+        {.COLOR_ATTACHMENT_OUTPUT},
+        {.FRAGMENT_SHADER},
+        {.COLOR_ATTACHMENT_WRITE},
+        {.SHADER_READ},
+        .COLOR_ATTACHMENT_OPTIMAL,
+        .SHADER_READ_ONLY_OPTIMAL,
+    )
+    state.world_mask_sample_ready = true
+}
+
 record_world_post_chain :: proc(ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, source_extent, swap_extent: vk.Extent2D, clear: vk.ClearValue) {
     pass_count := max(state.world_post_pass_count, 1)
     source := &state.world_scene
@@ -400,6 +494,7 @@ EndDrawing :: proc() {
                0 { if engine.vk_recreate_swapchain(ctx, w, h) && state.world_pass != nil do _ = ensure_depth_attachment() }
         return}
     if state.world_pass != nil && !ensure_depth_attachment() do return
+    if state.world_pass != nil && !ensure_world_mask_attachment() do return
     if state.world_pass != nil && !ensure_world_scene() do return
     if world_resolve_configured && state.world_post_pass_count > 1 {
         source_extent := world_scene_extent()
@@ -579,6 +674,7 @@ EndDrawing :: proc() {
     gfx_profile_end(.World_Pass, world_marker)
     vk.CmdEndRendering(frame.command_buffer)
     if world_resolve {
+        record_world_mask_pass(ctx, frame, world_extent, {state.width, state.height})
         engine.vk_cmd_image_barrier2(
             ctx,
             frame.command_buffer,

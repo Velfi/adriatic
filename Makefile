@@ -142,6 +142,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world-instance.vert.spv \
 	$(HOT_SHADER_DIR)/plant.vert.spv \
 	$(HOT_SHADER_DIR)/world.frag.spv \
+	$(HOT_SHADER_DIR)/player-outline-mask.frag.spv \
 	$(HOT_SHADER_DIR)/player-shadow.vert.spv \
 	$(HOT_SHADER_DIR)/player-shadow.frag.spv \
 	$(HOT_SHADER_DIR)/dynamic-shadow.vert.spv \
@@ -229,7 +230,7 @@ $(PLANT_ASSET_STAMP): $(PLANT_COMPILER)
 
 plant-compile: $(PLANT_ASSET_STAMP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/plant.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/bougainvillea.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/plant.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-outline-mask.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/bougainvillea.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -270,6 +271,10 @@ build/generated/shaders/plant.vert.spv: assets/shaders/world.slang
 build/generated/shaders/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/player-outline-mask.frag.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry outline_mask_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/player-shadow.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -332,6 +337,10 @@ $(DEV_DIR)/shaders/plant.vert.spv: build/generated/shaders/plant.vert.spv
 	cp $< $@
 
 $(DEV_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/player-outline-mask.frag.spv: build/generated/shaders/player-outline-mask.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -416,6 +425,10 @@ $(RELEASE_DIR)/shaders/plant.vert.spv: build/generated/shaders/plant.vert.spv
 	cp $< $@
 
 $(RELEASE_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(RELEASE_DIR)/shaders/player-outline-mask.frag.spv: build/generated/shaders/player-outline-mask.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -518,6 +531,10 @@ $(HOT_SHADER_DIR)/plant.vert.spv: assets/shaders/world.slang
 $(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry fragment_main -stage fragment -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/player-outline-mask.frag.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry outline_mask_fragment -stage fragment -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/player-shadow.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -744,11 +761,11 @@ $(INSTRUMENT_DIR)/libgfx_signposts.a: $(ZELDA_ENGINE_PACKAGES)/canvas2d/gfx_sign
 	$(CC) -O2 -c $< -o $(INSTRUMENT_DIR)/gfx_signposts.o
 	$(AR) rcs $@ $(INSTRUMENT_DIR)/gfx_signposts.o
 
-$(DEV_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/bougainvillea.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
+$(DEV_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(DEV_DIR)/libgfx_signposts.a $(DEV_DIR)/shaders/world.vert.spv $(DEV_DIR)/shaders/world.frag.spv $(DEV_DIR)/shaders/player-outline-mask.frag.spv $(DEV_DIR)/shaders/player-shadow.vert.spv $(DEV_DIR)/shaders/player-shadow.frag.spv $(DEV_DIR)/shaders/world-sky.vert.spv $(DEV_DIR)/shaders/world-sky.frag.spv $(DEV_DIR)/shaders/wireframe.vert.spv $(DEV_DIR)/shaders/wireframe.frag.spv $(DEV_DIR)/shaders/canvas.vert.spv $(DEV_DIR)/shaders/canvas.frag.spv $(DEV_DIR)/shaders/canvas-post.vert.spv $(DEV_DIR)/shaders/canvas-post.frag.spv $(DEV_DIR)/shaders/particles.vert.spv $(DEV_DIR)/shaders/particles.frag.spv $(DEV_DIR)/shaders/foliage.vert.spv $(DEV_DIR)/shaders/bougainvillea.vert.spv $(DEV_DIR)/shaders/grass.vert.spv $(DEV_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(DEV_APP_ODIN_FLAGS) -out:$@ -extra-linker-flags:"$(call link_flags,$(DEV_DIR))"
 
-$(RELEASE_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/bougainvillea.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
+$(RELEASE_APP): $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(CGLTF_LIB) $(ODIN_SOURCES) Makefile toolchain.mk $(RELEASE_DIR)/libgfx_signposts.a $(RELEASE_DIR)/shaders/world.vert.spv $(RELEASE_DIR)/shaders/world.frag.spv $(RELEASE_DIR)/shaders/player-outline-mask.frag.spv $(RELEASE_DIR)/shaders/player-shadow.vert.spv $(RELEASE_DIR)/shaders/player-shadow.frag.spv $(RELEASE_DIR)/shaders/world-sky.vert.spv $(RELEASE_DIR)/shaders/world-sky.frag.spv $(RELEASE_DIR)/shaders/wireframe.vert.spv $(RELEASE_DIR)/shaders/wireframe.frag.spv $(RELEASE_DIR)/shaders/canvas.vert.spv $(RELEASE_DIR)/shaders/canvas.frag.spv $(RELEASE_DIR)/shaders/canvas-post.vert.spv $(RELEASE_DIR)/shaders/canvas-post.frag.spv $(RELEASE_DIR)/shaders/particles.vert.spv $(RELEASE_DIR)/shaders/particles.frag.spv $(RELEASE_DIR)/shaders/foliage.vert.spv $(RELEASE_DIR)/shaders/bougainvillea.vert.spv $(RELEASE_DIR)/shaders/grass.vert.spv $(RELEASE_DIR)/shaders/foliage.frag.spv
 	@mkdir -p $(@D)
 	$(ODIN) build src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_release) $(PROFILE_DEFINE_FLAGS_release) -out:$@ -extra-linker-flags:"$(call link_flags,$(RELEASE_DIR))"
 

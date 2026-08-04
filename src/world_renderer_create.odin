@@ -122,6 +122,65 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     }
     failure_stage = "world graphics pipelines"
     if !render3d.create_color_pipeline_variants(ctx, &info, .D32_SFLOAT, &world_renderer.pipelines) do return false
+    outline_mask_frag: engine.Vk_Shader_Module
+    failure_stage = "player outline mask shader"
+    if !engine.vk_load_shader_module_with_fallback(
+        ctx,
+        "assets/shaders/world.slang",
+        "shaders/player-outline-mask.frag",
+        .Fragment,
+        "outline_mask_fragment",
+        &outline_mask_frag,
+    ) {
+        return false
+    }
+    defer engine.vk_destroy_shader_module(ctx, &outline_mask_frag)
+    mask_stages := stages
+    mask_stages[1].module = outline_mask_frag.handle
+    mask_depth := depth
+    mask_depth.depthWriteEnable = false
+    mask_depth.depthCompareOp = .EQUAL
+    mask_ca := vk.PipelineColorBlendAttachmentState {
+        colorWriteMask = {.R},
+    }
+    mask_cb := vk.PipelineColorBlendStateCreateInfo {
+        sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        attachmentCount = 1,
+        pAttachments = &mask_ca,
+    }
+    mask_info := info
+    mask_info.pStages = raw_data(mask_stages[:])
+    mask_info.pDepthStencilState = &mask_depth
+    mask_info.pColorBlendState = &mask_cb
+    mask_samples := [3]vk.SampleCountFlags{{._1}, {._2}, {._4}}
+    original_mask_multisample := mask_info.pMultisampleState
+    for samples, sample_index in mask_samples {
+        mask_multisample := original_mask_multisample^
+        mask_multisample.rasterizationSamples = samples
+        mask_info.pMultisampleState = &mask_multisample
+        mask_format: vk.Format = .R8_UNORM
+        mask_rendering := engine.vk_pipeline_rendering_info(&mask_format)
+        mask_rendering.depthAttachmentFormat = .D32_SFLOAT
+        mask_info.pNext = &mask_rendering
+        if vk.CreateGraphicsPipelines(
+            ctx.device,
+            vk.PipelineCache(0),
+            1,
+            &mask_info,
+            nil,
+            &world_renderer.player_outline_mask_pipelines[sample_index],
+        ) != .SUCCESS {
+            mask_info.pMultisampleState = original_mask_multisample
+            return false
+        }
+        engine.vk_set_debug_name(
+            ctx,
+            .PIPELINE,
+            auto_cast world_renderer.player_outline_mask_pipelines[sample_index],
+            "player outline mask pipeline",
+        )
+    }
+    mask_info.pMultisampleState = original_mask_multisample
     instance_vert: engine.Vk_Shader_Module
     if !engine.vk_load_shader_module_with_fallback(
         ctx,

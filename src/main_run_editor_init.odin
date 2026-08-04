@@ -105,6 +105,11 @@ run_initialize_editor_defaults :: proc(
             editor.photo_filter.mode = request.photo_filter_mode
             photo_filter_load_active(&editor.photo_filter)
             photo_filter_capture_enabled = request.photo_filter_enabled
+            if request.player_outline_enabled {
+                editor.tweak.player_outline.enabled = true
+                editor.tweak.player_outline.width = request.player_outline_width
+                editor.tweak.player_outline.strength = request.player_outline_strength
+            }
         }
         // Preserve the existing environment hook for capture automation.
         capture_style := os.get_env("ADRIATIC_CAPTURE_STYLE", context.temp_allocator)

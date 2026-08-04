@@ -173,6 +173,9 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         seed_terrain_grip_benchmark(editor)
     case "player":
         seed_player_benchmark(editor)
+        editor.tweak.player_outline.enabled = true
+    case "player_outline_off":
+        seed_player_benchmark(editor)
     case "grass":
         seed_player_benchmark(editor)
     case "grass_disabled":
@@ -227,6 +230,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "road_grip" &&
        scenario != "terrain_grip" &&
        scenario != "player" &&
+       scenario != "player_outline_off" &&
        scenario != "grass" &&
        scenario != "grass_disabled" &&
        scenario != "ocean_flight" &&

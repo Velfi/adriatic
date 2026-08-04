@@ -847,6 +847,15 @@ SetWorldPrePass :: proc(callback: World_Pass_Callback, user_data: rawptr = nil) 
     state.world_pre_pass_user_data = user_data
 }
 
+SetWorldMaskPass :: proc(callback: World_Mask_Pass_Callback, user_data: rawptr = nil) {
+    state.world_mask_pass = callback
+    state.world_mask_pass_user_data = user_data
+}
+
+SetWorldMaskActive :: proc(active: bool) {
+    state.world_mask_active = active
+}
+
 SetUIPass :: proc(callback: Ui_Pass_Callback, user_data: rawptr = nil) {state.ui_pass = callback
     state.ui_pass_user_data = user_data}
 
@@ -907,13 +916,81 @@ ensure_depth_attachment :: proc() -> bool {
     _ = vk.DeviceWaitIdle(state.ctx.device)
     resources.image_destroy(&state.depth, &state.ctx)
     resources.image_destroy(&state.world_msaa_depth, &state.ctx)
+    resources.image_destroy(&state.world_mask, &state.ctx)
+    resources.image_destroy(&state.world_msaa_mask, &state.ctx)
     resources.image_destroy(&state.world_msaa_color, &state.ctx)
     state.depth = replacement_depth
     state.world_msaa_depth = replacement_msaa_depth
     state.world_sample_count_effective = effective
     state.depth_initialized = false
     state.depth_sample_ready = false
+    state.world_mask_sample_ready = false
     state.world_msaa_color_initialized = false
+    return true
+}
+
+ensure_world_mask_attachment :: proc() -> bool {
+    if state.world_mask_pass == nil do return true
+    extent := world_scene_extent()
+    samples: vk.SampleCountFlags = {._1}
+    if state.world_sample_count_effective == 2 do samples = {._2}
+    if state.world_sample_count_effective == 4 do samples = {._4}
+    msaa_required := state.world_sample_count_effective > 1
+    valid := state.world_mask.width == extent.width && state.world_mask.height == extent.height &&
+        state.world_mask.view != vk.ImageView(0)
+    msaa_valid := !msaa_required ||
+        (state.world_msaa_mask.width == extent.width && state.world_msaa_mask.height == extent.height &&
+         state.world_msaa_mask.view != vk.ImageView(0))
+    if valid && msaa_valid do return true
+
+    mask, msaa_mask: resources.Image
+    if !resources.image_create(
+        &state.ctx,
+        extent.width,
+        extent.height,
+        .R8_UNORM,
+        {.COLOR_ATTACHMENT, .SAMPLED},
+        {.COLOR},
+        {._1},
+        &mask,
+        "canvas world mask",
+    ) {
+        return false
+    }
+    sampler_info := vk.SamplerCreateInfo {
+        sType = .SAMPLER_CREATE_INFO,
+        magFilter = .NEAREST,
+        minFilter = .NEAREST,
+        addressModeU = .CLAMP_TO_EDGE,
+        addressModeV = .CLAMP_TO_EDGE,
+        addressModeW = .CLAMP_TO_EDGE,
+        maxLod = 0,
+    }
+    if vk.CreateSampler(state.ctx.device, &sampler_info, nil, &mask.sampler) != .SUCCESS {
+        resources.image_destroy(&mask, &state.ctx)
+        return false
+    }
+    engine.vk_set_debug_name(&state.ctx, .SAMPLER, auto_cast mask.sampler, "canvas world mask sampler")
+    if msaa_required && !resources.image_create(
+        &state.ctx,
+        extent.width,
+        extent.height,
+        .R8_UNORM,
+        {.COLOR_ATTACHMENT},
+        {.COLOR},
+        samples,
+        &msaa_mask,
+        "canvas multisampled world mask",
+    ) {
+        resources.image_destroy(&mask, &state.ctx)
+        return false
+    }
+    _ = vk.DeviceWaitIdle(state.ctx.device)
+    resources.image_destroy(&state.world_mask, &state.ctx)
+    resources.image_destroy(&state.world_msaa_mask, &state.ctx)
+    state.world_mask = mask
+    state.world_msaa_mask = msaa_mask
+    state.world_mask_sample_ready = false
     return true
 }
 
@@ -1082,7 +1159,11 @@ update_world_post_descriptor :: proc(descriptor_index: int, source: ^resources.I
     aux1_sampler := vk.DescriptorImageInfo{sampler = state.textures[aux1_id].sampler}
     original_image := vk.DescriptorImageInfo{imageView = original_image_source.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
     original_sampler := vk.DescriptorImageInfo{sampler = original_image_source.sampler}
-    writes := [10]vk.WriteDescriptorSet{
+    mask_source := &state.world_mask
+    if mask_source.view == vk.ImageView(0) do mask_source = &state.textures[0]
+    mask_image := vk.DescriptorImageInfo{imageView = mask_source.view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+    mask_sampler := vk.DescriptorImageInfo{sampler = mask_source.sampler}
+    writes := [12]vk.WriteDescriptorSet{
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 0, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &source_image},
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 1, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &source_sampler},
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 2, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &depth_image},
@@ -1093,8 +1174,10 @@ update_world_post_descriptor :: proc(descriptor_index: int, source: ^resources.I
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 7, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &aux1_sampler},
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 8, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &original_image},
         {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 9, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &original_sampler},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 10, descriptorCount = 1, descriptorType = .SAMPLED_IMAGE, pImageInfo = &mask_image},
+        {sType = .WRITE_DESCRIPTOR_SET, dstSet = state.post_descriptors[descriptor_index], dstBinding = 11, descriptorCount = 1, descriptorType = .SAMPLER, pImageInfo = &mask_sampler},
     }
-    vk.UpdateDescriptorSets(state.ctx.device, 10, raw_data(writes[:]), 0, nil)
+    vk.UpdateDescriptorSets(state.ctx.device, 12, raw_data(writes[:]), 0, nil)
 }
 
 ensure_hdr_scene :: proc() -> bool {

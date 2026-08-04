@@ -147,6 +147,8 @@ backend_destroy :: proc() {
     resources.image_destroy(&state.depth, &state.ctx)
     resources.image_destroy(&state.world_msaa_color, &state.ctx)
     resources.image_destroy(&state.world_msaa_depth, &state.ctx)
+    resources.image_destroy(&state.world_mask, &state.ctx)
+    resources.image_destroy(&state.world_msaa_mask, &state.ctx)
     resources.image_destroy(&state.world_scene, &state.ctx)
     for &target in state.world_post_ping do resources.image_destroy(&target, &state.ctx)
     resources.image_destroy(&state.hdr_scene, &state.ctx)
@@ -554,7 +556,7 @@ backend_init :: proc() -> bool {
     if vk.CreateDescriptorSetLayout(ctx.device, &ui_layout_info, nil, &state.ui_descriptor_layout) != .SUCCESS do return false
     engine.vk_set_debug_name(ctx, .DESCRIPTOR_SET_LAYOUT, auto_cast state.ui_descriptor_layout, "canvas UI descriptor set layout")
 
-    post_bindings := [10]vk.DescriptorSetLayoutBinding{
+    post_bindings := [12]vk.DescriptorSetLayoutBinding{
         {binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 1, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -565,16 +567,18 @@ backend_init :: proc() -> bool {
         {binding = 7, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 8, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
         {binding = 9, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 10, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+        {binding = 11, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
     }; post_layout_info := vk.DescriptorSetLayoutCreateInfo {
         sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        bindingCount = 10,
+        bindingCount = 12,
         pBindings    = raw_data(post_bindings[:]),
     }; if vk.CreateDescriptorSetLayout(ctx.device, &post_layout_info, nil, &state.post_descriptor_layout) != .SUCCESS do return false
     engine.vk_set_debug_name(ctx, .DESCRIPTOR_SET_LAYOUT, auto_cast state.post_descriptor_layout, "canvas post descriptor set layout")
 
     post_pool_sizes := [2]vk.DescriptorPoolSize {
-        {type = .SAMPLED_IMAGE, descriptorCount = WORLD_POST_DESCRIPTOR_COUNT * 5},
-        {type = .SAMPLER, descriptorCount = WORLD_POST_DESCRIPTOR_COUNT * 5},
+        {type = .SAMPLED_IMAGE, descriptorCount = WORLD_POST_DESCRIPTOR_COUNT * 6},
+        {type = .SAMPLER, descriptorCount = WORLD_POST_DESCRIPTOR_COUNT * 6},
     }; post_pool_info := vk.DescriptorPoolCreateInfo {
         sType         = .DESCRIPTOR_POOL_CREATE_INFO,
         maxSets       = WORLD_POST_DESCRIPTOR_COUNT,

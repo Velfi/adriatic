@@ -601,6 +601,17 @@ dither_encode_world_post_push :: proc(destination: []u8, ctx: render2d.World_Pos
         exposure, glare := sun_exposure_update(editor, render_pose)
         // Depth presets reconstruct view distance from the active projection.
         push.hatch_tone = {exposure, glare, world_camera_near_clip(editor), WORLD_FAR_CLIP}
+        outline := editor.tweak.player_outline
+        if outline.enabled && outline.strength > 0 && world_renderer.player_vertex_count > 0 {
+            width := clamp(outline.width, 1, 3)
+            strength := clamp(outline.strength, f32(0), f32(1))
+            push.post_effect = {
+                world_srgb_to_linear_channel(clamp(outline.color[0], f32(0), f32(1))),
+                world_srgb_to_linear_channel(clamp(outline.color[1], f32(0), f32(1))),
+                world_srgb_to_linear_channel(clamp(outline.color[2], f32(0), f32(1))),
+                f32(width) + strength / 8,
+            }
+        }
         if (menu_scene_current(editor) == .Photo || photo_filter_capture_enabled) && editor.photo_filter.initialized {
             filter := editor.photo_filter
             push.hatch_offset = {f32(filter.mode), filter.intensity, filter.radius, filter.detail}

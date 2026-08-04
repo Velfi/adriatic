@@ -33,6 +33,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("    --style <name>        standard or dither")
     fmt.println("    --dither <pattern>    bayer, blue, or matriax8; selects dither style")
     fmt.println("    --photo-filter <name> deterministic Photo Mode filter preset")
+    fmt.println("    --player-outline <width,strength> enable the player outline for capture")
     fmt.println("    --camera-eye <x,y,z>  explicit camera position")
     fmt.println("    --camera-look-at <x,y,z> explicit camera target")
     fmt.println("    --camera-orbit <yaw,pitch> adjust authored camera in degrees")
@@ -315,6 +316,9 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     dither_mode := Dither_Mode.Off
     photo_filter_mode := Photo_Filter_Mode.Off
     photo_filter_enabled := false
+    player_outline_enabled := false
+    player_outline_width := i32(1)
+    player_outline_strength := f32(.8)
     turntable_frames := 0
     wind_phase_frames := 0
     camera_eye, camera_look_at, camera_offset: [3]f32
@@ -371,6 +375,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
            argument == "--settle-frames" ||
            argument == "--style" ||
            argument == "--photo-filter" ||
+           argument == "--player-outline" ||
            argument == "--dither" ||
            argument == "--camera-eye" ||
            argument == "--camera-look-at" ||
@@ -443,6 +448,17 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
                 }
                 photo_filter_mode = parsed_mode
                 photo_filter_enabled = parsed_mode != .Off
+            case "--player-outline":
+                parsed, ok := adriatic_cli_parse_f32_components(argument, value, 2)
+                if !ok do return true, false
+                width := i32(parsed[0])
+                if parsed[0] != f32(width) || width < 1 || width > 3 || parsed[1] < 0 || parsed[1] > 1 {
+                    fmt.eprintf("adriatic: --player-outline must be width 1–3 and strength 0–1, got %s\n", value)
+                    return true, false
+                }
+                player_outline_enabled = true
+                player_outline_width = width
+                player_outline_strength = parsed[1]
             case "--dither":
                 visual_style = .Dither
                 switch value {
@@ -782,6 +798,9 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
         dither_mode             = dither_mode,
         photo_filter_mode       = photo_filter_mode,
         photo_filter_enabled    = photo_filter_enabled,
+        player_outline_enabled  = player_outline_enabled,
+        player_outline_width    = player_outline_width,
+        player_outline_strength = player_outline_strength,
         camera_eye              = camera_eye,
         camera_look_at          = camera_look_at,
         camera_eye_set          = camera_eye_set,

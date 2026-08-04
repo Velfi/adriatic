@@ -8,6 +8,7 @@ struct Push {
     float4 hatch_offset;
     float4 hatch_angles;
     float4 hatch_levels;
+    float4 post_effect;
 };
 
 [[vk::push_constant]] ConstantBuffer<Push> push;
@@ -21,6 +22,8 @@ struct Push {
 [[vk::binding(7, 0)]] SamplerState post_aux_lut_sampler;
 [[vk::binding(8, 0)]] Texture2D<float4> post_original_scene;
 [[vk::binding(9, 0)]] SamplerState post_original_scene_sampler;
+[[vk::binding(10, 0)]] Texture2D<float> world_mask;
+[[vk::binding(11, 0)]] SamplerState world_mask_sampler;
 
 struct VertexInput {
     float2 position : POSITION;
@@ -594,6 +597,36 @@ PostOutput post_vertex(uint vertex_id : SV_VertexID) {
     return output;
 }
 
+float4 apply_player_outline(float4 source, float2 uv, int pass_index, int pass_count) {
+    float packed = push.post_effect.w;
+    if (packed < 1.0 || pass_index != pass_count - 1) return source;
+
+    float width = floor(packed);
+    float strength = saturate(frac(packed) * 8.0);
+    float2 texel = 1.0 / max(push.hatch_shape.xy, float2(1.0, 1.0));
+    float center_depth = world_depth.SampleLevel(world_depth_sampler, uv, 0.0);
+    float center_mask = world_mask.SampleLevel(world_mask_sampler, uv, 0.0);
+    float threshold = max(0.00002, center_depth * 0.0015);
+    float edge = 0.0;
+    float2 offsets[4] = {
+        float2(width, 0.0),
+        float2(-width, 0.0),
+        float2(0.0, width),
+        float2(0.0, -width),
+    };
+    [unroll]
+    for (int index = 0; index < 4; ++index) {
+        float2 neighbor_uv = saturate(uv + offsets[index] * texel);
+        float neighbor_depth = world_depth.SampleLevel(world_depth_sampler, neighbor_uv, 0.0);
+        float neighbor_mask = world_mask.SampleLevel(world_mask_sampler, neighbor_uv, 0.0);
+        float nearer = smoothstep(threshold, threshold * 2.0, center_depth - neighbor_depth);
+        edge = max(edge, neighbor_mask * nearer);
+    }
+    edge *= 1.0 - smoothstep(0.01, 0.25, center_mask);
+    source.rgb = lerp(source.rgb, push.post_effect.rgb, saturate(edge * strength));
+    return source;
+}
+
 [shader("fragment")]
 float4 post_fragment(PostOutput input) : SV_Target {
     // Both the HDR intermediate and the world scene sample as linear values.
@@ -617,7 +650,7 @@ float4 post_fragment(PostOutput input) : SV_Target {
         float3 warm_veil = float3(.62, .39, .19);
         source.rgb = lerp(source.rgb, warm_veil, sun_glare * .075);
         source.rgb = photo_filter(source.rgb, input.uv, texel_size, exposure, photo_mode);
-        return source;
+        return apply_player_outline(source, input.uv, pass_index, pass_count);
     }
     source.rgb *= exposure;
     // Looking into the Sun lowers retinal/camera exposure while forward
@@ -630,7 +663,11 @@ float4 post_fragment(PostOutput input) : SV_Target {
     // The world pass preserves alpha as a cheap classification channel: sky is
     // alpha-zero, while world geometry is opaque. Keep the smooth sky gradient
     // out of palette quantization; dithering remains active for the world.
-    if (visual_style != 1 || mode <= 0 || source.a < .5) return source;
+    if (visual_style != 1 || mode <= 0 || source.a < .5) {
+        int pass_index = int(round(push.hatch_levels.z));
+        int pass_count = max(int(round(push.hatch_levels.w)), 1);
+        return apply_player_outline(source, input.uv, pass_index, pass_count);
+    }
 
     float3 target = linear_to_oklab(max(source.rgb, 0.0));
     int palette_count = mode == 3 ? 8 : 16;
@@ -671,5 +708,12 @@ float4 post_fragment(PostOutput input) : SV_Target {
     pixel += int2(round(push.texture_hatch.yz));
     float threshold = dither_threshold(mode, pixel);
     int palette_index = threshold < partner_weight ? partner : closest;
-    return float4(palette_linear(mode, palette_index), source.a);
+    int pass_index = int(round(push.hatch_levels.z));
+    int pass_count = max(int(round(push.hatch_levels.w)), 1);
+    return apply_player_outline(
+        float4(palette_linear(mode, palette_index), source.a),
+        input.uv,
+        pass_index,
+        pass_count
+    );
 }

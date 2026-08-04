@@ -52,6 +52,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
         // a second approximation of the mouse in the UI layer.
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
+        world_renderer.player_vertex_first = len(world_renderer.vertices)
         world_mouse_model(
             editor,
             {
@@ -67,6 +68,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
                 grounded = false,
             },
         )
+        world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
         return
     }
     if editor.vehicle_showcase_scene {

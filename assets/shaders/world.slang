@@ -536,6 +536,11 @@ float4 shadow_fragment(VertexOutput input) : SV_Target {
     return float4(.030, .036, .039, 1.0);
 }
 
+[shader("fragment")]
+float outline_mask_fragment(VertexOutput input) : SV_Target {
+    return 1.0;
+}
+
 struct BrdfMaterial {
     float3 base_color;
     float metallic;

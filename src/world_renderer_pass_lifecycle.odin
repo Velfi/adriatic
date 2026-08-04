@@ -290,6 +290,12 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         world_push               = world_push,
         sky_push                 = sky_push,
     }
+    world_renderer.current_world_push = world_push
+    canvas2d.SetWorldMaskActive(
+        editor.tweak.player_outline.enabled &&
+        editor.tweak.player_outline.strength > 0 &&
+        world_renderer.player_vertex_count > 0,
+    )
     if !world_render_graph_ready {
         world_render_graph_ready = adriatic_render_graph(&world_render_graph)
     }
@@ -362,6 +368,7 @@ world_renderer_attach :: proc(editor: ^Editor) {
     world_renderer.editor = editor
     canvas2d.SetWorldPrePass(world_pre_pass)
     canvas2d.SetWorldPass(world_pass)
+    canvas2d.SetWorldMaskPass(world_player_outline_mask_pass)
     canvas2d.SetUIPass(imgui_ui_pass)
 }
 
@@ -403,6 +410,10 @@ world_renderer_destroy :: proc() {
     }
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
+    for &pipeline in world_renderer.player_outline_mask_pipelines {
+        if pipeline != vk.Pipeline(0) do vk.DestroyPipeline(world_renderer.ctx.device, pipeline, nil)
+        pipeline = vk.Pipeline(0)
+    }
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.transparent_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.shadow_pipelines)
     dynamic_shadow_destroy(&world_renderer.dynamic_shadow, world_renderer.ctx)

@@ -78,7 +78,11 @@
     },
     "player": {
       "enabled": false,
-      "description": "Deterministic on-foot player rendering and projected character shadow."
+      "description": "Deterministic on-foot player rendering with the selective outline enabled."
+    },
+    "player_outline_off": {
+      "enabled": false,
+      "description": "Matched deterministic on-foot player rendering with the selective outline disabled."
     },
     "grass": {
       "enabled": false,

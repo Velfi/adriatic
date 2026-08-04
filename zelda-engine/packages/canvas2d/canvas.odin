@@ -131,6 +131,17 @@ World_Pass_Context :: struct {
     sample_count:       vk.SampleCountFlags,
 }
 World_Pass_Callback :: #type proc(pass: ^World_Pass_Context, user_data: rawptr)
+World_Mask_Pass_Context :: struct {
+    ctx:                ^engine.Vk_Context,
+    frame:              engine.Vk_Frame,
+    color_view:         vk.ImageView,
+    color_format:       vk.Format,
+    depth_view:         vk.ImageView,
+    framebuffer_extent: vk.Extent2D,
+    logical_extent:     [2]i32,
+    sample_count:       vk.SampleCountFlags,
+}
+World_Mask_Pass_Callback :: #type proc(pass: ^World_Mask_Pass_Context, user_data: rawptr)
 Ui_Pass_Context :: struct {
     ctx:                ^engine.Vk_Context,
     frame:              engine.Vk_Frame,
@@ -150,8 +161,9 @@ Push :: struct {
     hatch_offset:  [4]f32,
     hatch_angles:  [4]f32,
     hatch_levels:  [4]f32,
+    post_effect:   [4]f32,
 }
-#assert(size_of(Push) == 112)
+#assert(size_of(Push) == 128)
 Hatch_Filter :: enum {
     Aliased,
     Anti_Aliased,
@@ -358,6 +370,9 @@ State :: struct {
     depth:                                     resources.Image,
     world_msaa_color:                          resources.Image,
     world_msaa_depth:                          resources.Image,
+    world_mask:                                resources.Image,
+    world_msaa_mask:                           resources.Image,
+    world_mask_sample_ready:                   bool,
     world_msaa_color_initialized:              bool,
     world_sample_count_requested:              u32,
     world_sample_count_effective:              u32,
@@ -427,6 +442,9 @@ State :: struct {
     world_pass_user_data:                      rawptr,
     world_pre_pass:                            World_Pass_Callback,
     world_pre_pass_user_data:                  rawptr,
+    world_mask_pass:                           World_Mask_Pass_Callback,
+    world_mask_pass_user_data:                 rawptr,
+    world_mask_active:                         bool,
     ui_pass:                                   Ui_Pass_Callback,
     ui_pass_user_data:                         rawptr,
     gfx_frame_signpost:                        u64,

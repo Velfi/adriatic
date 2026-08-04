@@ -112,6 +112,13 @@ Player_Animation_Tweak :: struct {
     body_softness_max_displacement: f32 `tweak:"range=.005..0.15;.005"`,
 }
 
+Player_Outline_Tweak :: struct {
+    enabled:  bool,
+    width:    i32 `tweak:"range=1..3;1"`,
+    strength: f32 `tweak:"range=0..1;.01"`,
+    color:    [3]f32 `tweak:"widget=color"`,
+}
+
 World_Tweak :: struct {
     far_clip:               f32 `tweak:"range=100..50000;10"`,
     fog_start:              f32 `tweak:"range=0..50000;10"`,
@@ -228,6 +235,7 @@ Tweak_State :: struct {
     time_scale:                     f32 `tweak:"range=0..20;.1" fixture:"-"`,
     player:                         third_person.Config,
     player_animation:               Player_Animation_Tweak,
+    player_outline:                 Player_Outline_Tweak `fixture:"-"`,
     player_tail:                    mouse_tail.Config,
     camera:                         Camera_Tweak,
     world:                          World_Tweak,
@@ -400,6 +408,12 @@ tweak_default_state :: proc() -> Tweak_State {
             body_softness_damping = 20,
             body_softness_inertial_lag = .035,
             body_softness_max_displacement = .055,
+        },
+        player_outline = {
+            enabled = false,
+            width = 1,
+            strength = .8,
+            color = {35 / 255.0, 32 / 255.0, 30 / 255.0},
         },
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
@@ -906,6 +920,13 @@ tweak_draw_player :: proc(editor: ^Editor) {
         tweak_drag_f32("Softness damping", &a.body_softness_damping, 0, 60, .5)
         tweak_drag_f32("Inertial lag", &a.body_softness_inertial_lag, 0, 1, .01)
         tweak_drag_f32("Maximum displacement", &a.body_softness_max_displacement, .005, .15, .005)
+    }
+    outline := &editor.tweak.player_outline
+    if tweak_section("Outline") {
+        im.Checkbox("Enabled", &outline.enabled)
+        im.SliderInt("Width", &outline.width, 1, 3, "%d", im.SliderFlags_AlwaysClamp)
+        im.SliderFloat("Strength", &outline.strength, 0, 1, "%.2f", im.SliderFlags_AlwaysClamp)
+        im.ColorEdit3("Color", &outline.color)
     }
     tail := &editor.tweak.player_tail
     if tweak_section("Tail physics") {
