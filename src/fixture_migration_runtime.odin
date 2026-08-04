@@ -4,6 +4,7 @@ import fixture_v0001 "../packages/fixture_history/v0001"
 import hs "../packages/hs"
 import "core:mem"
 import "core:strings"
+import back "zelda_engine:back"
 
 FIXTURE_MIGRATION_ARENA_BLOCK_SIZE :: 128 * mem.Megabyte
 FIXTURE_MIGRATION_ARENA_OUT_OF_BAND_SIZE :: 64 * mem.Megabyte
@@ -11,21 +12,32 @@ FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY :: 16
 
 fixture_migration_arena_prepare :: proc(arena: ^mem.Dynamic_Arena, allocator: mem.Allocator) -> (mem.Allocator, bool) {
     if arena == nil || allocator.procedure == nil do return {}, false
+    backing_allocator := back.tracking_allocator_backing_allocator(allocator)
     mem.dynamic_arena_init(
         arena,
-        block_allocator = allocator,
-        array_allocator = allocator,
+        block_allocator = backing_allocator,
+        array_allocator = backing_allocator,
         block_size = FIXTURE_MIGRATION_ARENA_BLOCK_SIZE,
         out_band_size = FIXTURE_MIGRATION_ARENA_OUT_OF_BAND_SIZE,
     )
-    unused_blocks, allocation_error := make([dynamic]rawptr, 0, FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY, allocator)
+    unused_blocks, allocation_error := make(
+        [dynamic]rawptr,
+        0,
+        FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY,
+        backing_allocator,
+    )
     if allocation_error != nil {
         mem.dynamic_arena_destroy(arena)
         return {}, false
     }
     arena.unused_blocks = unused_blocks
     used_blocks: [dynamic]rawptr
-    used_blocks, allocation_error = make([dynamic]rawptr, 0, FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY, allocator)
+    used_blocks, allocation_error = make(
+        [dynamic]rawptr,
+        0,
+        FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY,
+        backing_allocator,
+    )
     if allocation_error != nil {
         mem.dynamic_arena_destroy(arena)
         return {}, false
@@ -36,7 +48,7 @@ fixture_migration_arena_prepare :: proc(arena: ^mem.Dynamic_Arena, allocator: me
         [dynamic]rawptr,
         0,
         FIXTURE_MIGRATION_ARENA_TRACKING_CAPACITY,
-        allocator,
+        backing_allocator,
     )
     if allocation_error != nil {
         mem.dynamic_arena_destroy(arena)

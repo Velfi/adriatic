@@ -1,7 +1,6 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import back "../packages/back"
 import boats "../packages/boats"
 import chase_camera "../packages/chase_camera"
 import dialogue "../packages/dialogue"
@@ -32,6 +31,7 @@ import "core:os"
 import "core:strconv"
 import "core:time"
 import sdl "vendor:sdl3"
+import back "zelda_engine:back"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 import spy "zelda_engine:spy"

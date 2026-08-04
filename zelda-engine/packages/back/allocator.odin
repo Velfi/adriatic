@@ -154,6 +154,15 @@ tracking_allocator :: proc(data: ^Tracking_Allocator) -> mem.Allocator {
     return {data = data, procedure = tracking_allocator_proc}
 }
 
+// tracking_allocator_backing_allocator returns the allocator wrapped by a tracking allocator.
+// Non-tracking allocators are returned unchanged.
+tracking_allocator_backing_allocator :: proc(allocator: mem.Allocator) -> mem.Allocator {
+    if allocator.procedure != tracking_allocator_proc {
+        return allocator
+    }
+    return (^Tracking_Allocator)(allocator.data).backing
+}
+
 tracking_allocator_leak_group_add :: proc(data: ^Tracking_Allocator, entry: Tracking_Allocator_Entry) {
     key: Tracking_Leak_Group_Key = {
         location  = entry.location,

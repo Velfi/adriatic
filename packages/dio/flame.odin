@@ -1,7 +1,6 @@
 #+no-instrumentation
 package dio
 
-import back "../back"
 import im "../imgui"
 import "base:runtime"
 import "core:fmt"
@@ -14,6 +13,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import back "zelda_engine:back"
 
 // This is the Adriatic port of catermujo/rt/dio's flame graph.  The graph
 // stores completed frames locally, so the package does not depend on the

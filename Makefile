@@ -853,6 +853,12 @@ test-src: $(DEV_APP)
 test: doctor $(DEV_DIR)/libadriatic_mesh.a test-rondine test-src
 	$(ODIN) test tests $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
 
+backtrace-test: doctor
+	$(ODIN) test $(ZELDA_ENGINE_PACKAGES)/back $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS)
+
+markov-test: doctor $(DEV_DIR)/libadriatic_mesh.a
+	$(ODIN) test tests/markov_symmetry_test.odin -file $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_THREADS=1 -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -lc++"
+
 fixture-codec-test: doctor $(PHYSICS_STAMP) $(TEXTSHAPE_LIB) $(DEV_DIR)/libadriatic_mesh.a $(DEV_DIR)/libgfx_signposts.a
 	$(ODIN) test src $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -define:ODIN_TEST_NAMES=main.fixture_codec_real_fixture_round_trip_and_failures,main.fixture_codec_owned_decode_allocation_failures_and_preflight -extra-linker-flags:"$(TEXTSHAPE_LIBS) -L$(abspath $(DEV_DIR)) -lgfx_signposts -lc++"
 

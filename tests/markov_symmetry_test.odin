@@ -2,8 +2,8 @@ package tests
 
 import "core:testing"
 
-import back "../packages/back"
 import markov "../packages/markov"
+import back "zelda_engine:back"
 
 @(test)
 markov_symmetry_releases_unselected_candidates :: proc(t: ^testing.T) {
