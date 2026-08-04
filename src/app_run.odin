@@ -558,12 +558,12 @@ adriatic_run_impl :: proc(
             }
         }
         player_settings_apply(editor)
-        // Persist final values on every exit, including window close and hot reload;
-        // preference durability must not depend on a particular menu input path.
-        defer {
-            if !player_settings_save(editor) {
-                fmt.eprintln("adriatic could not save player settings")
-            }
+    }
+    // Persist final values on actual exit, including window close and hot reload;
+    // this must stay at procedure scope so Odin does not run it at block exit.
+    defer {
+        if !capture_mode && !player_settings_save(editor) {
+            fmt.eprintln("adriatic could not save player settings")
         }
     }
     if capture_mode do player_settings_apply(editor)
@@ -594,12 +594,6 @@ adriatic_run_impl :: proc(
     control_hints_load(editor)
     _ = vehicle_paint_load(editor)
     island_center := run_initialize_gameplay_actors(editor)
-    if !capture_mode {
-        // Developer tweaks live beside player settings and must be restored
-        // before the first simulation frame.  Keep capture runs deterministic.
-        tweak_load_editor(editor, true)
-        defer tweak_save_editor(editor)
-    }
     car_physics_create(editor)
     startup_timings.physics_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
@@ -690,6 +684,13 @@ adriatic_run_impl :: proc(
     if state_loaded {
         hot_state_rebind_engine_audio(editor, engine_audio_stream, ambient_audio_mix, &ambient_mix)
     }
+    // Developer tweaks live beside player settings and must be restored after
+    // hot-state restore, which otherwise overwrites them. Keep capture runs
+    // deterministic.
+    if !capture_mode do tweak_load_editor(editor, true)
+    // Keep this at procedure scope: a block-scoped defer saves startup defaults
+    // immediately and overwrites the developer's TOML before gameplay begins.
+    defer if !capture_mode do tweak_save_editor(editor)
     run_finish_startup(editor, state_loaded, show_loading_screen, initial_width, initial_height, postcard)
     startup_timings.ready_ms = startup_checkpoint(&startup_timings)
     capture_frame :=
