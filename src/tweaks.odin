@@ -1742,6 +1742,7 @@ tweak_draw_developer :: proc(editor: ^Editor) {
 imgui_draw_tweaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.tweak_panel_visible do return
     tweak_sync_from_editor(editor)
+    before := editor.tweak
     // Set initial placement and size; ImGui persists later user changes.
     im.SetNextWindowPos({570, 150}, im.Cond.FirstUseEver)
     // Override any zero-sized geometry left by the old constraints once, then
@@ -1813,4 +1814,5 @@ imgui_draw_tweaks :: proc(editor: ^Editor) {
     }
     im.End()
     tweak_apply_to_editor(editor)
+    if editor.tweak != before do tweak_save_editor(editor)
 }

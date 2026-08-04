@@ -189,7 +189,10 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     if !pause_menu_is_open(editor) && editor.active_lab_scene != "" {
         _ = lab_scene_process_input(editor)
     } else if !pause_menu_is_open(editor) {
-        if canvas2d.IsKeyPressed(.P) do editor.atmosphere.paused = !editor.atmosphere.paused
+        if canvas2d.IsKeyPressed(.P) {
+            editor.atmosphere.paused = !editor.atmosphere.paused
+            tweak_save_editor(editor)
+        }
         if canvas2d.IsKeyDown(.LEFT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes - frame_delta * 180)
         if canvas2d.IsKeyDown(.RIGHT) do atmosphere.set_world_minutes(&editor.atmosphere, editor.atmosphere.world_minutes + frame_delta * 180)
         if !town_mouse_wheel_mounted {
