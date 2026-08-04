@@ -710,6 +710,7 @@ Lab_Scene_Definition :: struct {
     suppress_infrastructure:         bool,
     suppress_procedural_circulation: bool,
     suppress_shadows:                bool,
+    day_night_cycle:                 bool,
 }
 
 Lab_Scene_Request :: struct {
@@ -1479,6 +1480,12 @@ lab_scene_destroy_active :: proc(editor: ^Editor) {
 
 lab_scene_is_active :: proc(editor: ^Editor, name: string) -> bool {
     return editor != nil && editor.active_lab_scene == name
+}
+
+lab_scene_requests_day_night_cycle :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.active_lab_scene == "" do return true
+    definition := lab_scene_find(editor.active_lab_scene)
+    return definition != nil && definition.day_night_cycle
 }
 
 lab_scene_allows_gameplay :: proc(editor: ^Editor) -> bool {

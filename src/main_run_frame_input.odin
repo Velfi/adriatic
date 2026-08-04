@@ -68,7 +68,12 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     attendant_dialogue_process_input(editor, width, height, frame_delta)
     simulation_delta = was_paused || pause_menu_is_open(editor) ? f32(0) : frame_delta
     friendship_notice_step(editor, simulation_delta)
-    atmosphere.step(&editor.atmosphere, simulation_delta, editor.tweak.time_scale)
+    atmosphere.step(
+        &editor.atmosphere,
+        simulation_delta,
+        editor.tweak.time_scale,
+        advance_time = lab_scene_requests_day_night_cycle(editor),
+    )
     surface_weather_step(editor, simulation_delta)
     if lab_scene_is_active(editor, "rainbow") {
         // The rainbow lab intentionally authors a sun-shower between the
