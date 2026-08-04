@@ -333,6 +333,7 @@ Fixture :: struct {
     building_generator_height:                      f32 `fixture:"-"`,
     building_generator_density:                     f32 `fixture:"-"`,
     building_generator_variation:                   f32 `fixture:"-"`,
+    building_generator_kind:                        Building_Generator_Kind `fixture:"-"`,
     building_generator_preview_valid:               bool `fixture:"-"`,
     airport_stamp_mode:                             bool `fixture:"-"`,
     airport_preview_valid:                          bool `fixture:"-"`,

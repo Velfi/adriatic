@@ -279,13 +279,14 @@ world_structures :: proc(editor: ^Editor) {
     world_settlement_town_civic_forecourts(editor, &editor.architecture_city_plan)
     world_architecture_alleys(editor, &editor.architecture_city_plan)
     world_architecture_lamps(editor, &editor.architecture_city_plan)
-    if editor.architecture_painting {
+    if editor.architecture_paint_mode && !editor.airport_stamp_mode {
         world_architecture_alleys(editor, &editor.architecture_preview_plan, true)
         for candidate in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
             preview := candidate
-            preview.color = {168, 239, 220, 210}
+            preview.color = editor.building_generator_preview_valid ? [4]u8{168, 239, 220, 210} : [4]u8{229, 105, 90, 190}
             world_formation(preview, &editor.project)
-            world_structure_frame(preview, preview.base_y + .05, {190, 255, 229, 210})
+            frame_color := editor.building_generator_preview_valid ? canvas2d.Color{190, 255, 229, 210} : canvas2d.Color{255, 145, 126, 220}
+            world_structure_frame(preview, preview.base_y + .05, frame_color)
         }
     }
     if editor.greek_placement_mode && editor.ruin_stamp_preview_valid {

@@ -1,15 +1,50 @@
 package main
 
 import architecture "../packages/architecture"
+import buildings "../packages/buildings"
 import dio "../packages/dio"
 import farmland "../packages/farmland"
 import harbor "../packages/harbor"
+import hero "../packages/hero_buildings"
 import marina "../packages/marina"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+
+Building_Generator_Kind :: enum u8 {
+    Ordinary,
+    Post_Office,
+    Clinic,
+    Airport_Terminal,
+    Marina_Office,
+}
+
+BUILDING_GENERATOR_AIRPORT_TERMINAL_GROUP :: u64(0x41505254524d4e4c)
+
+building_generator_select_kind :: proc(editor: ^Editor, kind: Building_Generator_Kind) {
+    if editor == nil || editor.building_generator_kind == kind do return
+    editor.building_generator_kind = kind
+    if kind == .Ordinary {
+        editor.building_generator_width = 12
+        editor.building_generator_depth = 16
+        editor.building_generator_height = 10
+        return
+    }
+    if kind == .Marina_Office {
+        editor.building_generator_width = 8.2
+        editor.building_generator_depth = 6.4
+        editor.building_generator_height = 4.8
+        return
+    }
+    hero_kind := kind == .Clinic ? hero.Kind.Clinic : kind == .Airport_Terminal ? hero.Kind.Airport_Terminal : hero.Kind.Post_Office
+    config := hero.defaults(hero_kind)
+    editor.building_generator_width = config.frontage
+    editor.building_generator_depth = config.depth
+    plan := hero.generate(u32(max(editor.building_generator_variation, f32(1)) + .5), config)
+    editor.building_generator_height = plan.arcade_height + plan.roof_height + plan.monitor_height
+}
 
 building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> terrain.Structure {
     if editor == nil do return {}
@@ -23,17 +58,71 @@ building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> te
         editor.building_generator_height,
     )
     result.kind = .Architecture
+    // Generator footprints may be smaller than the generic terrain editing
+    // minimum (notably the compact marina office).
+    result.width = editor.building_generator_width
+    result.depth = editor.building_generator_depth
+    result.height = editor.building_generator_height
     result.rotation = rotation
     result.seed = seed
-    result.building = architecture.architecture_identity(
-        {
-            density = editor.building_generator_density,
-            frontage = editor.building_generator_width,
-            depth = editor.building_generator_depth,
-            purpose_explicit = false,
-        },
-        seed,
-    )
+    if editor.building_generator_kind == .Ordinary {
+        result.building = architecture.architecture_identity(
+            {
+                density = editor.building_generator_density,
+                frontage = editor.building_generator_width,
+                depth = editor.building_generator_depth,
+                purpose_explicit = false,
+            },
+            seed,
+        )
+    } else if editor.building_generator_kind == .Post_Office ||
+              editor.building_generator_kind == .Clinic ||
+              editor.building_generator_kind == .Airport_Terminal {
+        hero_kind := editor.building_generator_kind == .Clinic ? hero.Kind.Clinic : editor.building_generator_kind == .Airport_Terminal ? hero.Kind.Airport_Terminal : hero.Kind.Post_Office
+        landmark := editor.building_generator_kind == .Clinic ? buildings.Landmark_Kind.Clinic : buildings.Landmark_Kind.Post_Office
+        config := hero.defaults(hero_kind)
+        config.frontage = editor.building_generator_width
+        config.depth = editor.building_generator_depth
+        plan := hero.generate(seed, config)
+        result.height = plan.arcade_height + plan.roof_height + plan.monitor_height
+        result.building = architecture.architecture_identity(
+            {
+                landmark_kind = landmark,
+                frontage = editor.building_generator_width,
+                depth = editor.building_generator_depth,
+                purpose_explicit = true,
+            },
+            seed,
+        )
+        if editor.building_generator_kind == .Airport_Terminal {
+            result.group_id = BUILDING_GENERATOR_AIRPORT_TERMINAL_GROUP
+            result.building = architecture.architecture_identity(
+                {
+                    density = .64,
+                    frontage = editor.building_generator_width,
+                    depth = editor.building_generator_depth,
+                    purpose_explicit = true,
+                },
+                seed,
+            )
+        }
+    } else {
+        result.height = 4.8
+        result.building = architecture.architecture_identity(
+            {
+                region = .Adriatic,
+                tissue = .Harbor,
+                density = .42,
+                frontage = editor.building_generator_width,
+                depth = editor.building_generator_depth,
+                route = .Waterfront,
+                waterfront = true,
+                landmark_kind = .Harbor_Office,
+                purpose_explicit = true,
+            },
+            seed,
+        )
+    }
     result.color = architecture.architecture_color(seed)
     _, foundation_high := architecture.architecture_foundation_height_range(&editor.project, result)
     result.base_y = foundation_high

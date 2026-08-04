@@ -14,6 +14,10 @@ world_architecture_oriented :: proc(
     lod: Structure_LOD = .Near,
 ) {
     identity := architecture.architecture_resolve_legacy_identity(structure)
+    if structure.group_id == BUILDING_GENERATOR_AIRPORT_TERMINAL_GROUP {
+        world_architecture_hero_civic(structure, .Airport_Terminal, lod)
+        return
+    }
     if identity.archetype == .Post_Office || identity.archetype == .Clinic {
         kind := identity.archetype == .Clinic ? hero.Kind.Clinic : hero.Kind.Post_Office
         // The hero generator owns the complete visible civic building. Its

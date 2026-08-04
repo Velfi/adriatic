@@ -1652,14 +1652,28 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             ui_draw_text(.Data, label, {bounds.x, bounds.y + 38}, .4, color)
             break
         }
+        bounds = editor_ui_slider_bounds(layout, row)
+        third := (bounds.width - 12) / 3
+        ui_draw_text(.Label, "TYPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
+        editor_ui_panel_button({bounds.x, bounds.y + 24, third, 30}, "HOUSE", editor.building_generator_kind == .Ordinary)
+        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 24, third, 30}, "POST", editor.building_generator_kind == .Post_Office)
+        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}, "CLINIC", editor.building_generator_kind == .Clinic)
+        row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
+        editor_ui_panel_button({bounds.x, bounds.y + 4, half, 30}, "TERMINAL", editor.building_generator_kind == .Airport_Terminal)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 4, half, 30}, "MARINA OFFICE", editor.building_generator_kind == .Marina_Office)
+        row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", editor.building_generator_width, 6, 36, 1)
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", editor.building_generator_depth, 6, 40, 1)
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.building_generator_height, 4, 48, 1)
-        row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CHARACTER", editor.building_generator_density, 0, 1, 2)
-        row += 1
+        if editor.building_generator_kind == .Ordinary {
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.building_generator_height, 4, 48, 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CHARACTER", editor.building_generator_density, 0, 1, 2)
+            row += 1
+        }
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "VARIATION", editor.building_generator_variation, 1, 256, 0)
         row += 1
         status: cstring = editor.building_generator_preview_valid ? "CLICK TO PLACE BUILDING" : "BUILDING DOES NOT FIT"
@@ -2591,14 +2605,34 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
         row += 1
         if editor.airport_stamp_mode do break
+        bounds = editor_ui_slider_bounds(layout, row)
+        third := (bounds.width - 12) / 3
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, third, 30}) {
+            building_generator_select_kind(editor, .Ordinary)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
+            building_generator_select_kind(editor, .Post_Office)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
+            building_generator_select_kind(editor, .Clinic)
+        }
+        row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 4, half, 30}) {
+            building_generator_select_kind(editor, .Airport_Terminal)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 4, half, 30}) {
+            building_generator_select_kind(editor, .Marina_Office)
+        }
+        row += 1
         _ = editor_ui_slider_input(editor, layout, 7, row, &editor.building_generator_width, 6, 36, 1)
         row += 1
         _ = editor_ui_slider_input(editor, layout, 10, row, &editor.building_generator_depth, 6, 40, 1)
         row += 1
-        _ = editor_ui_slider_input(editor, layout, 17, row, &editor.building_generator_height, 4, 48, 1)
-        row += 1
-        _ = editor_ui_slider_input(editor, layout, 18, row, &editor.building_generator_density, 0, 1, .01)
-        row += 1
+        if editor.building_generator_kind == .Ordinary {
+            _ = editor_ui_slider_input(editor, layout, 17, row, &editor.building_generator_height, 4, 48, 1)
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 18, row, &editor.building_generator_density, 0, 1, .01)
+            row += 1
+        }
         _ = editor_ui_slider_input(editor, layout, 19, row, &editor.building_generator_variation, 1, 256, 1)
         row += 2
     case .Marina:
