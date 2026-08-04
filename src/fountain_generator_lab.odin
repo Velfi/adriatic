@@ -12,6 +12,12 @@ fountain_lab_radius := f32(3.8)
 fountain_lab_jets := 10
 fountain_lab_height := f32(2.8)
 
+fountain_lab_style_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 118, 28}}
+fountain_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {168, 68, 154, 28}}
+fountain_lab_radius_bounds :: proc() -> canvas2d.Rectangle {return {38, 118, 138, 28}}
+fountain_lab_jets_bounds :: proc() -> canvas2d.Rectangle {return {188, 118, 122, 28}}
+fountain_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {322, 118, 138, 28}}
+
 fountain_lab_style_name :: proc() -> cstring {
     switch fountain_lab_style {
     case .Bowl:
@@ -75,6 +81,17 @@ fountain_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 }
 
 fountain_lab_process_input :: proc(_: ^Editor) {
+    if lab_ui_button_pressed(fountain_lab_style_bounds()) {
+        count := int(fountains.Style.Courtyard) + 1
+        fountain_lab_style = fountains.Style((int(fountain_lab_style) + 1) % count)
+    }
+    if lab_ui_button_pressed(fountain_lab_seed_bounds()) do fountain_lab_seed += 1
+    radius_delta := lab_ui_stepper_delta(fountain_lab_radius_bounds())
+    jets_delta := lab_ui_stepper_delta(fountain_lab_jets_bounds())
+    height_delta := lab_ui_stepper_delta(fountain_lab_height_bounds())
+    if radius_delta != 0 do fountain_lab_radius = clamp(fountain_lab_radius + f32(radius_delta) * .3, f32(2.2), f32(7))
+    if jets_delta != 0 do fountain_lab_jets = clamp(fountain_lab_jets + jets_delta, 0, fountains.MAX_JETS)
+    if height_delta != 0 do fountain_lab_height = clamp(fountain_lab_height + f32(height_delta) * .25, f32(.4), f32(6))
     if canvas2d.IsKeyPressed(.A) do fountain_lab_seed -= 1
     if canvas2d.IsKeyPressed(.D) do fountain_lab_seed += 1
     if canvas2d.IsKeyPressed(.S) {
@@ -114,24 +131,14 @@ fountain_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "FOUNTAIN GENERATOR LAB", {38, 38}, 20, 1, {245, 238, 197, 255})
-    status := fmt.ctprintf(
-        "SEED %08X   %s   R %.1f   %d JETS   H %.2f",
-        fountain_lab_seed,
-        fountain_lab_style_name(),
-        fountain_lab_radius,
-        fountain_lab_jets,
-        fountain_lab_height,
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "A / D seed     S style     LEFT / RIGHT radius",
-        {38, 104},
-        13,
-        1,
-        {171, 201, 207, 255},
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, "UP / DOWN jets     1 / 2 jet height", {38, 128}, 13, 1, {171, 201, 207, 255})
+    lab_ui_draw_button(fountain_lab_style_bounds(), fountain_lab_style_name(), true)
+    lab_ui_draw_button(fountain_lab_seed_bounds(), fmt.ctprintf("NEW SEED  %08X", fountain_lab_seed))
+    canvas2d.DrawTextEx(canvas2d.Font{}, "RADIUS", {38, 103}, 10, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "JETS", {188, 103}, 10, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "HEIGHT", {322, 103}, 10, 1, {171, 201, 207, 255})
+    lab_ui_draw_stepper(fountain_lab_radius_bounds(), fmt.ctprintf("%.1f M", fountain_lab_radius))
+    lab_ui_draw_stepper(fountain_lab_jets_bounds(), fmt.ctprintf("%d", fountain_lab_jets))
+    lab_ui_draw_stepper(fountain_lab_height_bounds(), fmt.ctprintf("%.2f M", fountain_lab_height))
     plan := fountains.generate(
         fountain_lab_seed,
         {
@@ -142,7 +149,7 @@ fountain_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         },
     )
     pattern_status := fmt.ctprintf(
-        "Pattern %s · mirrored choreography · validated output",
+        "Pattern %s",
         fountain_lab_pattern_name(plan.jet_pattern),
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, pattern_status, {38, 152}, 12, 1, {145, 180, 188, 255})

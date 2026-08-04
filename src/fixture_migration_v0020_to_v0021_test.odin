@@ -18,9 +18,9 @@ fixture_migration_v0020_to_v0021_defaults_postale_ace_tuning :: proc(t: ^testing
     testing.expect_value(t, tentative.tweak.postale_ace_tuning, postale_game.ace_tuning_preset())
     registry := fixture_migration_production_registry()
     testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].from_version == 20)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].to_version == 21)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].wrapper == fixture_migration_step_v0020_to_v0021)
+    testing.expect(t, registry.steps[19].from_version == 20)
+    testing.expect(t, registry.steps[19].to_version == 21)
+    testing.expect(t, registry.steps[19].wrapper == fixture_migration_step_v0020_to_v0021)
     for resolution in FIXTURE_MIGRATION_V0020_TO_V0021_RESOLUTIONS {
         testing.expect(t, resolution.kind == .Scripted)
     }

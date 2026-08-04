@@ -297,9 +297,63 @@ curve_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: 
     }
 }
 
-seed_foliage_capture :: proc(editor: ^Editor) {
+seed_foliage_capture :: proc(editor: ^Editor, target := "") {
     if editor == nil do return
     center := f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)
+    if target == "field" {
+        field_x, field_z := center, center
+        best_water_distance_squared := f32(999999)
+        for z_index in -40 ..= 40 {
+            for x_index in -40 ..= 40 {
+                x := center + f32(x_index) * 4
+                z := center + f32(z_index) * 4
+                land_height, _, land_found := terrain.sample_land(&editor.project, 0, x, z)
+                waterway := terrain.active_waterway_at(&editor.project, 0, x, z)
+                if !waterway &&
+                   (!land_found || land_height > editor.project.sea_level + CROP_FIELD_DRY_LAND_CLEARANCE) {
+                    continue
+                }
+                enclosed := true
+                enclosure_offsets := [4][2]f32{{-64, 0}, {64, 0}, {0, -64}, {0, 64}}
+                for offset in enclosure_offsets {
+                    enclosure_height, _, enclosure_found := terrain.sample_land(
+                        &editor.project,
+                        0,
+                        x + offset.x,
+                        z + offset.y,
+                    )
+                    if !enclosure_found ||
+                       terrain.active_waterway_at(&editor.project, 0, x + offset.x, z + offset.y) ||
+                       enclosure_height <= editor.project.sea_level + CROP_FIELD_DRY_LAND_CLEARANCE {
+                        enclosed = false
+                        break
+                    }
+                }
+                if !enclosed do continue
+                distance_squared := f32(x_index * x_index + z_index * z_index)
+                if distance_squared >= best_water_distance_squared do continue
+                best_water_distance_squared = distance_squared
+                field_x, field_z = x, z
+            }
+        }
+        field := capture_add_formation(editor, field_x, field_z, 220, 220, 1.4, .Field)
+        if field >= 0 do editor.project.structures[field].rotation = -.14
+        editor.authoring_tool = .Foliage
+        editor.tool = .Structure
+        editor.structure_kind = .Field
+        editor.structure_auto_kind = false
+        editor.structure_selected = -1
+        editor.structure_placing = false
+        editor.architecture_node_mode = false
+        editor.architecture_paint_mode = false
+        editor.road_mode = false
+        editor.editor_focus.x = field_x
+        editor.editor_focus.z = field_z
+        editor.editor_focus.y = terrain.sample_surface_height(&editor.project, 0, field_x, field_z) + 8
+        editor.editor_camera.pitch_radians = .32
+        editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
+        return
+    }
     _ = capture_add_formation(editor, center - 70, center + 35, 115, 92, 52, .Foliage)
     hedge := capture_add_formation(editor, center + 38, center + 58, 185, 42, 46, .Foliage)
     if hedge >= 0 do editor.project.structures[hedge].rotation = -.18

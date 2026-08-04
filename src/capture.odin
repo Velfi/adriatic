@@ -56,6 +56,7 @@ Capture_Kind :: enum {
     Aircraft_Transform_Lab,
     Markov_Wreck,
     Markov_Farmland,
+    Foliage_Transition_Lab,
     Markov_Marina,
     Ruins_Lab,
     Markov_Town,
@@ -128,7 +129,7 @@ cinematic_export_time: f32
 
 CAPTURE_SKY_KINDS :: bit_set[Capture_Kind]{.Sky_Noon, .Sky_Sunrise, .Sky_Sunset, .Sky_Storm, .Sky_Night}
 CAPTURE_BOAT_LAB_TARGETS := [?]string{"dinghy", "tanker", "cruise"}
-CAPTURE_FOLIAGE_TARGETS := [?]string{"overview", "stress"}
+CAPTURE_FOLIAGE_TARGETS := [?]string{"overview", "stress", "field"}
 CAPTURE_FOLIAGE_FOREST_TARGETS := [?]string {
     "canopy",
     "low",
@@ -491,6 +492,8 @@ capture_foliage_target_kind :: proc(kind: Capture_Kind, target: string) -> (Capt
             return .Foliage, true
         case "stress":
             return .Foliage_Stress, true
+        case "field":
+            return .Foliage, true
         }
     case .Foliage_Forest:
         switch target {
@@ -639,6 +642,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Markov_Marina, true
     case "markov-farmland":
         return .Markov_Farmland, true
+    case "foliage-transition":
+        return .Foliage_Transition_Lab, true
     case "ruins", "ruins-lab":
         return .Ruins_Lab, true
     case "markov-town":

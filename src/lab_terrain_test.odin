@@ -2,6 +2,7 @@ package main
 
 import terrain "../packages/terrain"
 import "core:testing"
+import canvas2d "zelda_engine:canvas2d"
 
 lab_terrain_test_sampler :: proc(_: ^Editor, x, z: f32) -> Lab_Terrain_Sample {
     return {height = x + z, material = .75}
@@ -34,4 +35,16 @@ lab_terrain_load_rejects_invalid_configuration_without_mutating_project :: proc(
     editor.project.revision = 41
     testing.expect(t, !lab_terrain_load(editor, {half_extent_x = -1}))
     testing.expect_value(t, editor.project.revision, u64(41))
+}
+
+@(test)
+lab_flat_terrain_is_transient_and_supplies_constant_ground :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    color := canvas2d.Color{90, 110, 72, 255}
+    testing.expect(t, lab_flat_terrain_load(editor, 7, 0, color))
+    testing.expect(t, editor.lab_flat_terrain.enabled)
+    testing.expect_value(t, editor.lab_flat_terrain.height, f32(7))
+    testing.expect_value(t, editor.lab_flat_terrain.color, color)
+    testing.expect_value(t, terrain.sample_surface_height(&editor.project, 0, 0, 0), f32(7))
 }

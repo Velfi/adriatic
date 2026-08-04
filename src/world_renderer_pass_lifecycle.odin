@@ -22,7 +22,8 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     }
     world_renderer.dynamic_shadow.frame_prepared = false
     focal_length := world_camera_focal_length(editor)
-    if !editor.vehicle_showcase_scene && !lab_scene_replaces_world(editor) {
+    if !editor.vehicle_showcase_scene &&
+       (!lab_scene_replaces_world(editor) || editor.lab_flat_terrain.enabled) {
         clipmap_update(editor, int(pass.frame.frame_index), i32(pass.framebuffer_extent.height), focal_length)
     }
     frame_index := int(pass.frame.frame_index)
@@ -471,6 +472,7 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.instance_indices)
     delete(world_renderer.instance_flattened)
     delete(world_renderer.instance_meshes)
+    delete(world_renderer.middle_tree_shadow_proxies)
     ground_grass_cache_clear()
     delete(world_renderer.grass_chunk_cache)
     delete(world_renderer.grass_chunk_pool)

@@ -413,8 +413,23 @@ world_road_triangle_colored :: #force_inline proc(
     // Step splines use discrete terrain-fitted solids below rather than the
     // road baker's continuous ribbon.
     if a.pavement == .Steps || b.pavement == .Steps || c.pavement == .Steps do return
-    requires_land := true
+    // Bridges provide their own deck surface. Omitting the baked road ribbon
+    // over the span prevents its pavement and shoulders from being projected
+    // onto (and z-fighting with) the bridge geometry below.
     source_edge := max(max(a.source_edge, b.source_edge), c.source_edge)
+    if source_edge > 0 && source_edge <= editor.project.road_graph.edge_count {
+        vertices := [3]roads.Vertex{a, b, c}
+        edge_t_sum: f32
+        edge_vertex_count: int
+        for vertex in vertices {
+            if vertex.source_edge != source_edge do continue
+            edge_t_sum += vertex.edge_t
+            edge_vertex_count += 1
+        }
+        edge_t := edge_t_sum / f32(max(edge_vertex_count, 1))
+        if _, bridge := road_bridge_deck_height(editor, source_edge - 1, edge_t); bridge do return
+    }
+    requires_land := true
     if source_edge > 0 && source_edge <= editor.project.road_graph.edge_count {
         edge := editor.project.road_graph.edges[source_edge - 1]
         requires_land = !edge.engineering_designed

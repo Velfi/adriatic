@@ -65,6 +65,8 @@ lab_mouse_control_keys :: proc(name: string) -> (keys: [LAB_MOUSE_KEY_CAPACITY]c
         count = lab_mouse_keys(&keys, .R, .ONE, .TWO, .THREE, .FOUR, .F)
     case "plant-generator":
         count = lab_mouse_keys(&keys, .R, .LEFT, .RIGHT, .ONE, .TWO, .THREE, .FOUR, .UP, .DOWN)
+    case "plant-site":
+        count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .R)
     case "rainbow":
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .DOWN, .UP, .ONE, .TWO, .THREE)
     case "road-planning":
@@ -375,6 +377,11 @@ lab_mouse_action_label :: proc(name: string, key: canvas2d.KeyboardKey) -> cstri
                 plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ? "Scroll down" : "Previous species" \
             )
         }
+    case "plant-site":
+        #partial switch key {case .LEFT:
+            return "Previous species"; case .RIGHT:
+            return "Next species"; case .R:
+            return "Resample plants"}
     case "rainbow":
         #partial switch key {case .LEFT:
             return "Earlier sun"; case .RIGHT:
@@ -943,8 +950,20 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_procedural_circulation = true,
         suppress_shadows = true,
     },
-    // `foliage-transition` is WIP: its implementation is not in this source
-    // tree yet, so do not register an unbuildable lab.
+    {
+        name = "foliage-transition",
+        configure = foliage_transition_lab_configure,
+        world_overlay = foliage_transition_lab_world,
+        process_input = foliage_transition_lab_process_input,
+        draw_ui = foliage_transition_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
     {
         name = "markov-marina",
         configure = markov_marina_lab_configure,
@@ -1144,6 +1163,20 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_hud = true,
         suppress_infrastructure = true,
         suppress_procedural_circulation = true,
+    },
+    {
+        name = "plant-site",
+        configure = plant_site_lab_configure,
+        world_overlay = plant_site_lab_world,
+        process_input = plant_site_lab_process_input,
+        draw_ui = plant_site_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
     },
     {
         name = "leaf-generator",

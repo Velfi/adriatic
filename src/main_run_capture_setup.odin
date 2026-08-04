@@ -85,7 +85,7 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
         } else if capture_foliage_forest_mode {
             seed_foliage_forest_capture(editor)
         } else if capture_foliage_mode {
-            seed_foliage_capture(editor)
+            seed_foliage_capture(editor, capture_target)
         } else if capture_road_grip_mode {
             seed_road_grip_capture(editor)
         } else if capture_terrain_grip_mode {

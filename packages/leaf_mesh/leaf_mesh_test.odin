@@ -14,6 +14,9 @@ generates_valid_meshes_for_every_shape :: proc(t: ^testing.T) {
         if config.shape == .Cypress_Spray {
             testing.expect(t, mesh.vertex_count >= 36)
             testing.expect(t, mesh.index_count >= 54)
+        } else if config.shape == .Pine_Needle_Clump {
+            testing.expect_value(t, mesh.vertex_count, config.segments * 8)
+            testing.expect_value(t, mesh.index_count, config.segments * 12)
         } else if is_palmate(config.shape) {
             testing.expect(t, mesh.index_count == (mesh.vertex_count - 2) * 3)
         } else {
@@ -24,6 +27,24 @@ generates_valid_meshes_for_every_shape :: proc(t: ^testing.T) {
             testing.expect(t, int(vertex_index) < mesh.vertex_count)
         }
     }
+}
+
+@(test)
+pine_needle_clump_has_radial_spread :: proc(t: ^testing.T) {
+    config := defaults(.Pine_Needle_Clump)
+    config.length = .13
+    config.width = .05
+    mesh := generate(config)
+    minimum_x, maximum_x := f32(1e9), f32(-1e9)
+    minimum_z, maximum_z := f32(1e9), f32(-1e9)
+    for vertex in mesh.vertices[:mesh.vertex_count] {
+        minimum_x = min(minimum_x, vertex.position[0])
+        maximum_x = max(maximum_x, vertex.position[0])
+        minimum_z = min(minimum_z, vertex.position[2])
+        maximum_z = max(maximum_z, vertex.position[2])
+    }
+    testing.expect(t, maximum_x - minimum_x > config.width)
+    testing.expect(t, maximum_z - minimum_z > config.width)
 }
 
 @(test)

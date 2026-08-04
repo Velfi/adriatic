@@ -4,6 +4,7 @@ import leaf_mesh "../packages/leaf_mesh"
 import plant_bark "../packages/plant_bark"
 import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
+import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
 import "core:math/linalg"
@@ -18,6 +19,7 @@ Generated_Plant_Cache_Entry :: struct {
     detail:            plants.Detail_Level,
     habit:             plants.Growth_Habit,
     support_signature: u64,
+    site_signature:    u64,
     maturity_step:     u8,
     result:            plants.Generate_Result,
     bark_topology:     []Generated_Bark_Segment_Topology,
@@ -40,8 +42,10 @@ Generated_Plant_World_Cache_Entry :: struct {
     seed:              u64,
     detail:            plants.Detail_Level,
     render_lod:        Generated_Plant_Render_LOD,
+    foliage_mode:      Generated_Plant_Foliage_Mode,
     habit:             plants.Growth_Habit,
     support_signature: u64,
+    site_signature:    u64,
     maturity_step:     u8,
     base:              third_person.Vec3,
     scale, yaw:        f32,
@@ -64,6 +68,24 @@ Generated_Plant_Render_LOD :: enum u8 {
     Distant,
 }
 
+Generated_Plant_Foliage_Mode :: enum u8 {
+    Leaves,
+    Density_Clumps,
+}
+
+Generated_Plant_Leaf_Clump :: struct {
+    weighted_center: third_person.Vec3,
+    minimum:         third_person.Vec3,
+    maximum:         third_person.Vec3,
+    projected_area:  f32,
+    red, green, blue: f32,
+    count:           int,
+}
+
+generated_plant_middle_branch_mesh := -1
+generated_plant_middle_clump_mesh := -1
+generated_plant_leaf_meshes: [leaf_mesh.SHAPE_COUNT * 2]int
+
 generated_plant_maturity_step :: #force_inline proc(maturity: f32) -> u8 {
     return u8(
         clamp(
@@ -78,6 +100,84 @@ generated_plant_maturity_value :: #force_inline proc(step: u8) -> f32 {
     return f32(min(int(step), GENERATED_PLANT_MATURITY_STEPS)) / GENERATED_PLANT_MATURITY_STEPS
 }
 
+generated_plant_site_context :: proc(editor: ^Editor, base: third_person.Vec3) -> plants.Site_Context {
+    if editor == nil do return {}
+    terrain_context := atmosphere_terrain_context(editor, base)
+    local := atmosphere_local_weather(editor, base)
+    slope := clamp(
+        f32(math.sqrt(f64(
+            terrain_context.terrain_gradient[0] * terrain_context.terrain_gradient[0] +
+            terrain_context.terrain_gradient[1] * terrain_context.terrain_gradient[1],
+        ))) / .45,
+        f32(0),
+        f32(1),
+    )
+    coast_distance := clamp(terrain_context.coast_distance, f32(0), f32(1800))
+    coastal_influence := 1 - coast_distance / 1800
+    surface := terrain.ground_surface_at(&editor.project, 0, base.x, base.z)
+    terrain_material := terrain.sample_material(&editor.project, 0, base.x, base.z)
+    substrate := plants.Site_Substrate.Soil
+    substrate_aridity := f32(0)
+    switch surface {
+    case .Sand:
+        substrate = .Sand
+        substrate_aridity = .16
+    case .Dirt:
+        substrate = .Soil
+        substrate_aridity = .07
+    case .Grass:
+        substrate = .Soil
+        substrate_aridity = -.08
+    }
+    if terrain_material > .72 && slope > .30 {
+        substrate = .Rock
+        substrate_aridity = .13
+    }
+    exposure := clamp(slope * .48 + terrain_context.terrain_channel * .34 + local.rain_shadow * .32, 0, 1)
+    aridity := clamp(
+        .42 + substrate_aridity + local.rain_shadow * .30 + exposure * .15 - coastal_influence * .12,
+        f32(0),
+        f32(1),
+    )
+    return {
+        valid            = terrain_context.valid,
+        aridity          = aridity,
+        exposure         = exposure,
+        slope            = slope,
+        elevation_meters = max(terrain_context.terrain_height - terrain_context.sea_level, f32(0)),
+        coast_distance_m = coast_distance,
+        substrate        = substrate,
+    }
+}
+
+generated_plant_drought_resistance :: proc(species: plants.Species) -> f32 {
+    #partial switch species {
+    case .Olive, .Rosemary, .Lavender, .Thyme, .Sage, .Mastic, .Carob,
+         .Prickly_Pear, .Golden_Barrel, .Agave, .Aloe, .Aeonium,
+         .Echeveria, .Jade_Plant, .Stonecrop, .Blue_Chalk_Sticks,
+         .Golden_Torch_Cactus:
+        return .82
+    case .Grapevine, .Fig, .Pomegranate, .Stone_Pine, .Bay_Laurel:
+        return .58
+    case .Hydrangea_Bush, .Hydrangea_Tree, .White_Poplar:
+        return .18
+    }
+    return .42
+}
+
+generated_plant_site_leaf_color :: proc(
+    species: plants.Species,
+    color: canvas2d.Color,
+    site: plants.Site_Context,
+    variant: u8,
+) -> canvas2d.Color {
+    if !site.valid do return color
+    stress := clamp((site.aridity - .38) / .62, 0, 1) * (1 - generated_plant_drought_resistance(species))
+    stress *= .82 + f32(variant % 4) * .06
+    dry := canvas2d.Color{151, 132, 73, color.a}
+    return color_lerp(color, dry, stress * .58)
+}
+
 generated_plant_cached :: proc(
     species: plants.Species,
     seed: u64,
@@ -85,9 +185,11 @@ generated_plant_cached :: proc(
     habit: plants.Growth_Habit = .Free_Standing,
     support: ^plants.Support_Surface = nil,
     maturity: f32 = 1,
+    site: plants.Site_Context = {},
 ) -> ^Generated_Plant_Cache_Entry {
     support_signature: u64
     if support != nil do support_signature = plants.support_hash(support^)
+    site_signature := plants.site_context_signature(site)
     maturity_step := generated_plant_maturity_step(maturity)
     for index in 0 ..< generated_plant_cache_count {
         entry := &generated_plant_cache[index]
@@ -96,6 +198,7 @@ generated_plant_cached :: proc(
            entry.detail == detail &&
            entry.habit == habit &&
            entry.support_signature == support_signature &&
+           entry.site_signature == site_signature &&
            entry.maturity_step == maturity_step {
             return entry
         }
@@ -109,6 +212,7 @@ generated_plant_cached :: proc(
             detail = detail,
             habit = habit,
             support = support,
+            site = site,
         },
     )
     if result.error != .None {
@@ -122,6 +226,7 @@ generated_plant_cached :: proc(
         detail            = detail,
         habit             = habit,
         support_signature = support_signature,
+        site_signature    = site_signature,
         maturity_step     = maturity_step,
         result            = result,
     }
@@ -156,8 +261,10 @@ generated_plant_world_cache_find :: proc(
     seed: u64,
     detail: plants.Detail_Level,
     render_lod: Generated_Plant_Render_LOD,
+    foliage_mode: Generated_Plant_Foliage_Mode,
     habit: plants.Growth_Habit,
     support_signature: u64,
+    site_signature: u64,
     maturity_step: u8,
     base: third_person.Vec3,
     scale, yaw, along_grade: f32,
@@ -168,8 +275,10 @@ generated_plant_world_cache_find :: proc(
            entry.seed == seed &&
            entry.detail == detail &&
            entry.render_lod == render_lod &&
+           entry.foliage_mode == foliage_mode &&
            entry.habit == habit &&
            entry.support_signature == support_signature &&
+           entry.site_signature == site_signature &&
            entry.maturity_step == maturity_step &&
            entry.base == base &&
            entry.scale == scale &&
@@ -187,8 +296,10 @@ generated_plant_world_cache_store :: proc(
     seed: u64,
     detail: plants.Detail_Level,
     render_lod: Generated_Plant_Render_LOD,
+    foliage_mode: Generated_Plant_Foliage_Mode,
     habit: plants.Growth_Habit,
     support_signature: u64,
+    site_signature: u64,
     maturity_step: u8,
     base: third_person.Vec3,
     scale, yaw, along_grade: f32,
@@ -200,8 +311,10 @@ generated_plant_world_cache_store :: proc(
         seed              = seed,
         detail            = detail,
         render_lod        = render_lod,
+        foliage_mode      = foliage_mode,
         habit             = habit,
         support_signature = support_signature,
+        site_signature    = site_signature,
         maturity_step     = maturity_step,
         base              = base,
         scale             = scale,
@@ -373,6 +486,219 @@ world_generated_leaf_smooth_facet :: #force_inline proc(
 
 generated_plant_apply_detail_floor :: #force_inline proc(detail, floor: plants.Detail_Level) -> plants.Detail_Level {
     return int(detail) < int(floor) ? floor : detail
+}
+
+generated_plant_instance :: #force_inline proc(
+    x_axis, y_axis, z_axis, translation: third_person.Vec3,
+    color: canvas2d.Color,
+) -> World_Mesh_Instance {
+    return {
+        basis_x_translation_x = {x_axis.x, x_axis.y, x_axis.z, translation.x},
+        basis_y_translation_y = {y_axis.x, y_axis.y, y_axis.z, translation.y},
+        basis_z_translation_z = {z_axis.x, z_axis.y, z_axis.z, translation.z},
+        color = world_color(color),
+    }
+}
+
+generated_plant_optimized_instance_mesh :: proc(
+    vertices: []World_Vertex,
+    source_indices: []u16,
+) -> int {
+    if len(vertices) == 0 || len(source_indices) == 0 do return -1
+    optimized := make([dynamic]u16, len(source_indices))
+    defer delete(optimized)
+    adriatic_optimize_index_buffer(
+        raw_data(optimized),
+        raw_data(source_indices),
+        u32(len(source_indices)),
+        u32(len(vertices)),
+    )
+    indices := make([dynamic]u32, len(optimized))
+    defer delete(indices)
+    for index in 0 ..< len(optimized) do indices[index] = u32(optimized[index])
+    // This representation begins beyond the close tree band. Expanding every
+    // instance back into CPU shadow triangles defeats instancing and adds no
+    // useful contact shadow at this range.
+    return world_instance_mesh_add(vertices, indices[:], false)
+}
+
+generated_plant_middle_meshes_ensure :: proc() {
+    if generated_plant_middle_branch_mesh >= 0 && generated_plant_middle_clump_mesh >= 0 do return
+
+    BRANCH_SIDES :: 8
+    branch_vertices: [BRANCH_SIDES * 2]World_Vertex
+    for side in 0 ..< BRANCH_SIDES {
+        angle := f32(side) * math.TAU / BRANCH_SIDES
+        normal := third_person.Vec3{math.cos(angle), 0, math.sin(angle)}
+        branch_vertices[side] = world_vertex(normal, {255, 255, 255, 255})
+        branch_vertices[side].position = {normal.x, 0, normal.z}
+        branch_vertices[side].normal = {normal.x, normal.y, normal.z}
+        branch_vertices[side].kind = .Bark
+        branch_vertices[side + BRANCH_SIDES] = branch_vertices[side]
+        branch_vertices[side + BRANCH_SIDES].position = {normal.x * .62, 1, normal.z * .62}
+    }
+    branch_indices: [BRANCH_SIDES * 6]u16
+    for side in 0 ..< BRANCH_SIDES {
+        next := (side + 1) % BRANCH_SIDES
+        first := side * 6
+        branch_indices[first + 0] = u16(side)
+        branch_indices[first + 1] = u16(next)
+        branch_indices[first + 2] = u16(next + BRANCH_SIDES)
+        branch_indices[first + 3] = u16(side)
+        branch_indices[first + 4] = u16(next + BRANCH_SIDES)
+        branch_indices[first + 5] = u16(side + BRANCH_SIDES)
+    }
+    generated_plant_middle_branch_mesh = generated_plant_optimized_instance_mesh(
+        branch_vertices[:],
+        branch_indices[:],
+    )
+
+    CLUMP_SIDES :: 8
+    CLUMP_VERTICES :: CLUMP_SIDES * 2 + 2
+    CLUMP_INDICES :: CLUMP_SIDES * 12
+    clump_vertices: [CLUMP_VERTICES]World_Vertex
+    clump_vertices[0] = world_vertex({0, .82, 0}, {255, 255, 255, 255})
+    clump_vertices[0].normal = {0, 1, 0}
+    clump_vertices[0].kind = .Foliage
+    clump_vertices[CLUMP_VERTICES - 1] = world_vertex({0, -.62, 0}, {255, 255, 255, 255})
+    clump_vertices[CLUMP_VERTICES - 1].normal = {0, -1, 0}
+    clump_vertices[CLUMP_VERTICES - 1].kind = .Foliage
+    for side in 0 ..< CLUMP_SIDES {
+        angle := f32(side) * math.TAU / CLUMP_SIDES
+        cosine, sine := math.cos(angle), math.sin(angle)
+        upper := 1 + side
+        lower := 1 + CLUMP_SIDES + side
+        clump_vertices[upper] = world_vertex({cosine * .78, .30, sine * .78}, {255, 255, 255, 255})
+        clump_vertices[upper].normal = {cosine * .72, .48, sine * .72}
+        clump_vertices[upper].kind = .Foliage
+        clump_vertices[lower] = world_vertex({cosine, -.20, sine}, {255, 255, 255, 255})
+        clump_vertices[lower].normal = {cosine * .82, -.30, sine * .82}
+        clump_vertices[lower].kind = .Foliage
+    }
+    clump_indices: [CLUMP_INDICES]u16
+    for side in 0 ..< CLUMP_SIDES {
+        next := (side + 1) % CLUMP_SIDES
+        upper, upper_next := 1 + side, 1 + next
+        lower, lower_next := 1 + CLUMP_SIDES + side, 1 + CLUMP_SIDES + next
+        first := side * 12
+        clump_indices[first + 0] = 0
+        clump_indices[first + 1] = u16(upper)
+        clump_indices[first + 2] = u16(upper_next)
+        clump_indices[first + 3] = u16(upper)
+        clump_indices[first + 4] = u16(lower)
+        clump_indices[first + 5] = u16(lower_next)
+        clump_indices[first + 6] = u16(upper)
+        clump_indices[first + 7] = u16(lower_next)
+        clump_indices[first + 8] = u16(upper_next)
+        clump_indices[first + 9] = u16(CLUMP_VERTICES - 1)
+        clump_indices[first + 10] = u16(lower_next)
+        clump_indices[first + 11] = u16(lower)
+    }
+    generated_plant_middle_clump_mesh = generated_plant_optimized_instance_mesh(
+        clump_vertices[:],
+        clump_indices[:],
+    )
+}
+
+generated_plant_leaf_mesh_ensure :: proc(shape: leaf_mesh.Shape, hero: bool) -> int {
+    shape_index := int(shape)
+    if shape_index < 0 || shape_index >= leaf_mesh.SHAPE_COUNT do return -1
+    cache_index := shape_index * 2 + (hero ? 1 : 0)
+    if generated_plant_leaf_meshes[cache_index] > 0 {
+        return generated_plant_leaf_meshes[cache_index] - 1
+    }
+
+    config := leaf_mesh.defaults(shape)
+    config.length = 1
+    config.width = 2
+    config.stem = 0
+    config.segments = hero ? 10 : 6
+    config.curl *= .12
+    config.cup *= .12
+    mesh := leaf_mesh.generate(config)
+    if mesh.vertex_count == 0 || mesh.index_count == 0 do return -1
+
+    vertices := make([dynamic]World_Vertex, mesh.vertex_count * 2)
+    defer delete(vertices)
+    for index in 0 ..< mesh.vertex_count {
+        source := mesh.vertices[index]
+        front := world_vertex(source.position, {255, 255, 255, 255})
+        front.normal = source.normal
+        front.kind = .Leaf
+        front.uv = source.uv
+        front.material = {f32(shape_index), 1}
+        vertices[index] = front
+        back := front
+        back.normal = -source.normal
+        vertices[index + mesh.vertex_count] = back
+    }
+    indices := make([dynamic]u16, mesh.index_count * 2)
+    defer delete(indices)
+    for index in 0 ..< mesh.index_count {
+        indices[index] = mesh.indices[index]
+    }
+    for triangle := 0; triangle + 2 < mesh.index_count; triangle += 3 {
+        target := mesh.index_count + triangle
+        offset := u16(mesh.vertex_count)
+        indices[target + 0] = mesh.indices[triangle + 2] + offset
+        indices[target + 1] = mesh.indices[triangle + 1] + offset
+        indices[target + 2] = mesh.indices[triangle + 0] + offset
+    }
+    mesh_index := generated_plant_optimized_instance_mesh(vertices[:], indices[:])
+    if mesh_index >= 0 do generated_plant_leaf_meshes[cache_index] = mesh_index + 1
+    return mesh_index
+}
+
+generated_plant_leaf_emit :: proc(
+    center, forward, up, right: third_person.Vec3,
+    width, length: f32,
+    shape: leaf_mesh.Shape,
+    color: canvas2d.Color,
+    hero: bool,
+) -> bool {
+    mesh_index := generated_plant_leaf_mesh_ensure(shape, hero)
+    if mesh_index < 0 do return false
+    world_instance_mesh_emit(
+        mesh_index,
+        generated_plant_instance(right * width, forward * length, up * width, center, color),
+    )
+    return true
+}
+
+generated_plant_middle_branch_emit :: proc(
+    segment: plant_structure.Segment,
+    transform: Generated_Plant_Transform,
+    color: canvas2d.Color,
+) {
+    generated_plant_middle_meshes_ensure()
+    start := generated_plant_point(transform, segment.start)
+    end := generated_plant_point(transform, segment.end)
+    axis := end - start
+    if linalg.dot(axis, axis) < 1e-8 do return
+    direction := linalg.normalize0(axis)
+    reference := math.abs(direction.y) > .9 ? third_person.Vec3{1, 0, 0} : third_person.Vec3{0, 1, 0}
+    right := linalg.normalize0(linalg.cross(reference, direction))
+    forward := linalg.normalize0(linalg.cross(direction, right))
+    radius := max(segment.radius_start * transform.scale, f32(.006))
+    world_instance_mesh_emit(
+        generated_plant_middle_branch_mesh,
+        generated_plant_instance(right * radius, axis, forward * radius, start, color),
+    )
+}
+
+generated_plant_middle_clump_emit :: proc(
+    center: third_person.Vec3,
+    radius_x, radius_y, radius_z, rotation: f32,
+    color: canvas2d.Color,
+) {
+    generated_plant_middle_meshes_ensure()
+    cosine, sine := math.cos(rotation), math.sin(rotation)
+    x_axis := third_person.Vec3{cosine * radius_x, 0, sine * radius_x}
+    z_axis := third_person.Vec3{-sine * radius_z, 0, cosine * radius_z}
+    world_instance_mesh_emit(
+        generated_plant_middle_clump_mesh,
+        generated_plant_instance(x_axis, {0, radius_y, 0}, z_axis, center, color),
+    )
 }
 
 // Draw a generated branch with the catalog bark sampled in plant-local
@@ -588,6 +914,51 @@ world_generated_leaf_hero :: proc(
         shade,
         shape,
     )
+}
+
+world_generated_pine_needle_clump :: proc(
+    center, forward, up, right: third_person.Vec3,
+    spread, length: f32,
+    color: canvas2d.Color,
+    hero: bool,
+) {
+    // One attachment represents a tuft, not one botanical fascicle. Enough
+    // crossed ribbons and a game-scale minimum width keep the clump legible in
+    // a full-tree view while the open radial construction preserves air.
+    needle_count := hero ? 14 : 8
+    needle_half_width := max(spread * .11, f32(.0032))
+    for needle in 0 ..< needle_count {
+        angle := f32(needle) * math.PI * 2 / f32(needle_count) + f32(needle % 2) * .19
+        radial := right * math.cos(angle) + up * math.sin(angle)
+        tangent := linalg.normalize0(linalg.cross(forward, radial))
+        if linalg.dot(tangent, tangent) < .001 do tangent = right
+        needle_length := length * (.88 + f32((needle * 7) % 5) * .03)
+        root := center + radial * spread * .035
+        shoulder := root + forward * needle_length * .48 + radial * spread * .18
+        tip := root + forward * needle_length + radial * spread * (.62 + f32(needle % 3) * .08)
+        shade := color_lerp(color, {21, 54, 30, 255}, f32(needle % 3) * .035)
+        world_generated_leaf_facet(
+            root - tangent * needle_half_width,
+            shoulder - tangent * needle_half_width * .72,
+            shoulder + tangent * needle_half_width * .72,
+            radial,
+            shade,
+        )
+        world_generated_leaf_facet(
+            root - tangent * needle_half_width,
+            shoulder + tangent * needle_half_width * .72,
+            root + tangent * needle_half_width,
+            radial,
+            shade,
+        )
+        world_generated_leaf_facet(
+            shoulder - tangent * needle_half_width * .72,
+            tip,
+            shoulder + tangent * needle_half_width * .72,
+            radial,
+            color,
+        )
+    }
 }
 
 world_generated_fleshy_node :: proc(
@@ -882,6 +1253,8 @@ world_generated_plant :: proc(
     along_grade: f32 = 0,
     maturity: f32 = 1,
     cache_geometry: bool = false,
+    site: plants.Site_Context = {},
+    foliage_mode: Generated_Plant_Foliage_Mode = .Leaves,
 ) -> bool {
     render_lod := Generated_Plant_Render_LOD.Hero
     if world_renderer.editor != nil {
@@ -892,6 +1265,9 @@ world_generated_plant :: proc(
     detail = generated_plant_apply_detail_floor(detail, detail_floor)
     support_signature: u64
     if support != nil do support_signature = plants.support_hash(support^)
+    resolved_site := site
+    if !resolved_site.valid && world_renderer.editor != nil do resolved_site = generated_plant_site_context(world_renderer.editor, base)
+    site_signature := plants.site_context_signature(resolved_site)
     maturity_step := generated_plant_maturity_step(maturity)
     shadow_first := len(world_renderer.vertices)
     if cache_geometry {
@@ -900,8 +1276,10 @@ world_generated_plant :: proc(
             seed,
             detail,
             render_lod,
+            foliage_mode,
             habit,
             support_signature,
+            site_signature,
             maturity_step,
             base,
             scale,
@@ -923,9 +1301,18 @@ world_generated_plant :: proc(
             return true
         }
     }
-    generated_entry := generated_plant_cached(species, seed, detail, habit, support, maturity)
+    generated_entry := generated_plant_cached(species, seed, detail, habit, support, maturity, resolved_site)
     if generated_entry == nil do return false
     generated := &generated_entry.result
+    density_area_scale := f32(1)
+    if foliage_mode == .Density_Clumps {
+        // Far attachments are botanical cluster representatives. Restore the
+        // projected density encoded by the catalog's Near/Far cluster ratio
+        // without allocating a second full Near architecture for every tree.
+        near_cluster_size := plants.leaf_cluster_size(species, .Near, maturity)
+        far_cluster_size := plants.leaf_cluster_size(species, .Far, maturity)
+        density_area_scale = f32(near_cluster_size) / f32(max(far_cluster_size, 1))
+    }
     transform := generated_plant_transform_make(base, yaw, scale, along_grade)
 
     _, leaf_color, accent := plant_generator_colors(species)
@@ -957,27 +1344,21 @@ world_generated_plant :: proc(
         segment_delta := segment.end - segment.start
         segment_length := f32(math.sqrt(f64(linalg.dot(segment_delta, segment_delta))))
         bark_segment := generated_entry.bark_topology[segment_index]
-        branch_first := len(world_renderer.vertices)
-        world_generated_bark_segment(
+        generated_plant_middle_branch_emit(
             segment,
-            bark,
-            seed,
             transform,
-            bark_detail_strength,
-            bark_segment.distance,
-            bark_segment.distance + segment_length,
-            !bark_segment.has_parent,
-            !bark_segment.has_child,
-        )
-        generated_plant_mark_wind_branch(
-            branch_first,
-            transform.base,
-            generated_plant_point(transform, segment.start),
-            generated_plant_point(transform, segment.end),
+            {bark.base_color[0], bark.base_color[1], bark.base_color[2], 255},
         )
     }
 
+    LEAF_CLUMP_COUNT :: 4
+    leaf_clumps: [LEAF_CLUMP_COUNT]Generated_Plant_Leaf_Clump
+    for &clump in leaf_clumps {
+        clump.minimum = {1e30, 1e30, 1e30}
+        clump.maximum = {-1e30, -1e30, -1e30}
+    }
     for attachment, attachment_index in generated.plant.attachments {
+        if foliage_mode == .Density_Clumps && attachment.kind != .Leaf do continue
         center := generated_plant_point(transform, attachment.position)
         if attachment.kind == .Fruit || attachment.kind == .Flower {
             radius := attachment.kind == .Fruit ? f32(.07) : f32(.045)
@@ -1046,6 +1427,27 @@ world_generated_plant :: proc(
         width := max(attachment.leaf.width * scale * 1.8, f32(.018))
         length := max(attachment.leaf.length * scale * 1.8, f32(.035))
         color := plant_generator_leaf_color(species, attachment.variant, leaf_color)
+        color = generated_plant_site_leaf_color(species, color, resolved_site, attachment.variant)
+        if foliage_mode == .Density_Clumps && attachment.leaf.thickness <= 0 {
+            local_angle := math.atan2(attachment.position[2], attachment.position[0])
+            angle_unit := (local_angle + math.PI) / math.TAU
+            clump_index := clamp(int(angle_unit * LEAF_CLUMP_COUNT), 0, LEAF_CLUMP_COUNT - 1)
+            clump := &leaf_clumps[clump_index]
+            area := max(width * length * .72 * density_area_scale, f32(.0001))
+            clump.weighted_center += center * area
+            clump.projected_area += area
+            clump.red += f32(color.r) * area
+            clump.green += f32(color.g) * area
+            clump.blue += f32(color.b) * area
+            clump.minimum.x = min(clump.minimum.x, center.x - width)
+            clump.minimum.y = min(clump.minimum.y, center.y - width * .35)
+            clump.minimum.z = min(clump.minimum.z, center.z - width)
+            clump.maximum.x = max(clump.maximum.x, center.x + width)
+            clump.maximum.y = max(clump.maximum.y, center.y + length * .45)
+            clump.maximum.z = max(clump.maximum.z, center.z + width)
+            clump.count += 1
+            continue
+        }
         if attachment.leaf.thickness > 0 {
             world_generated_fleshy_node(
                 center,
@@ -1066,9 +1468,17 @@ world_generated_plant :: proc(
             generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
             continue
         }
-        if hero_geometry {
-            world_generated_leaf_hero(center, forward, up, right, width, length, u32(attachment.leaf.shape), color)
-            generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
+        if generated_plant_leaf_emit(
+            center,
+            forward,
+            up,
+            right,
+            width,
+            length,
+            attachment.leaf.shape,
+            color,
+            hero_geometry,
+        ) {
             continue
         }
         tip := center + forward * length
@@ -1080,14 +1490,74 @@ world_generated_plant :: proc(
         world_generated_leaf_textured_facet(a, c, d, {.32, 0}, {.5, 1}, {1, .42}, up, color, shape)
         generated_plant_mark_wind_attachment(leaf_first, transform.base, center)
     }
+    if foliage_mode == .Density_Clumps {
+        total_projected_area := f32(0)
+        for clump in leaf_clumps do total_projected_area += clump.projected_area
+        profile := plants.garden_profile(species)
+        mature_spread := profile.mature_spread * transform.scale
+        target_projected_area := mature_spread * mature_spread * .32
+        area_normalization := clamp(
+            target_projected_area / max(total_projected_area, f32(.0001)),
+            f32(1),
+            f32(4),
+        )
+        proxy_minimum := third_person.Vec3{1e30, 1e30, 1e30}
+        proxy_maximum := third_person.Vec3{-1e30, -1e30, -1e30}
+        for clump, clump_index in leaf_clumps {
+            if clump.count == 0 || clump.projected_area <= 0 do continue
+            center := clump.weighted_center / clump.projected_area
+            span := clump.maximum - clump.minimum
+            // Match the summed projected area of the replaced cards while
+            // retaining the branch cluster's authored spatial envelope.
+            area_radius := f32(math.sqrt(f64(clump.projected_area * area_normalization * .34 / math.PI)))
+            radius_x := max(area_radius * 1.12, span.x * .34)
+            radius_y := max(area_radius * .54, span.y * .28)
+            radius_z := max(area_radius * .92, span.z * .34)
+            proxy_minimum.x = min(proxy_minimum.x, center.x - radius_x)
+            proxy_minimum.y = min(proxy_minimum.y, center.y - radius_y)
+            proxy_minimum.z = min(proxy_minimum.z, center.z - radius_z)
+            proxy_maximum.x = max(proxy_maximum.x, center.x + radius_x)
+            proxy_maximum.y = max(proxy_maximum.y, center.y + radius_y)
+            proxy_maximum.z = max(proxy_maximum.z, center.z + radius_z)
+            color := canvas2d.Color {
+                u8(clamp(clump.red / clump.projected_area, f32(0), f32(255))),
+                u8(clamp(clump.green / clump.projected_area, f32(0), f32(255))),
+                u8(clamp(clump.blue / clump.projected_area, f32(0), f32(255))),
+                255,
+            }
+            generated_plant_middle_clump_emit(
+                center,
+                radius_x,
+                radius_y,
+                radius_z,
+                yaw + f32(clump_index) * .37,
+                color,
+            )
+        }
+        if proxy_minimum.x < proxy_maximum.x {
+            proxy_center := (proxy_minimum + proxy_maximum) * .5
+            proxy_radius := (proxy_maximum - proxy_minimum) * .5
+            append(
+                &world_renderer.middle_tree_shadow_proxies,
+                Middle_Tree_Shadow_Proxy {
+                    center = proxy_center,
+                    radius_x = proxy_radius.x,
+                    radius_y = max(proxy_radius.y, f32(.18)),
+                    radius_z = proxy_radius.z,
+                },
+            )
+        }
+    }
     if cache_geometry {
         generated_plant_world_cache_store(
             species,
             seed,
             detail,
             render_lod,
+            foliage_mode,
             habit,
             support_signature,
+            site_signature,
             maturity_step,
             base,
             scale,

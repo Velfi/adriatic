@@ -12,6 +12,12 @@ umbrella_lab_radius := f32(1.85)
 umbrella_lab_height := f32(2.35)
 umbrella_lab_panels := 10
 
+umbrella_lab_type_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 118, 28}}
+umbrella_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {168, 68, 154, 28}}
+umbrella_lab_radius_bounds :: proc() -> canvas2d.Rectangle {return {38, 118, 138, 28}}
+umbrella_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {188, 118, 138, 28}}
+umbrella_lab_panels_bounds :: proc() -> canvas2d.Rectangle {return {338, 118, 122, 28}}
+
 umbrella_lab_reset_kind :: proc(kind: umbrellas.Kind) {
     config := umbrellas.defaults(kind)
     umbrella_lab_kind = kind
@@ -47,6 +53,14 @@ umbrella_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 }
 
 umbrella_lab_process_input :: proc(_: ^Editor) {
+    if lab_ui_button_pressed(umbrella_lab_type_bounds()) do umbrella_lab_reset_kind(umbrella_lab_kind == .Beach ? .Patio : .Beach)
+    if lab_ui_button_pressed(umbrella_lab_seed_bounds()) do umbrella_lab_seed += 1
+    radius_delta := lab_ui_stepper_delta(umbrella_lab_radius_bounds())
+    height_delta := lab_ui_stepper_delta(umbrella_lab_height_bounds())
+    panels_delta := lab_ui_stepper_delta(umbrella_lab_panels_bounds())
+    if radius_delta != 0 do umbrella_lab_radius = clamp(umbrella_lab_radius + f32(radius_delta) * .15, f32(1.2), f32(4))
+    if height_delta != 0 do umbrella_lab_height = clamp(umbrella_lab_height + f32(height_delta) * .15, f32(1.8), f32(4.5))
+    if panels_delta != 0 do umbrella_lab_panels = clamp(umbrella_lab_panels + panels_delta * 2, 6, umbrellas.MAX_PANELS)
     if canvas2d.IsKeyPressed(.A) do umbrella_lab_seed -= 1
     if canvas2d.IsKeyPressed(.D) do umbrella_lab_seed += 1
     if canvas2d.IsKeyPressed(.S) do umbrella_lab_reset_kind(umbrella_lab_kind == .Beach ? .Patio : .Beach)
@@ -78,28 +92,18 @@ umbrella_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
         x      = 22,
         y      = 22,
         width  = 470,
-        height = 140,
+        height = 164,
     }
     canvas2d.DrawRectangleRounded(panel, .10, 8, {10, 27, 37, 226})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {104, 168, 184, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "UMBRELLA GENERATOR", {38, 38}, 20, 1, {245, 238, 197, 255})
-    kind_name := umbrella_lab_kind == .Beach ? "BEACH" : "PATIO"
-    status := fmt.ctprintf(
-        "SEED %08X   %s   R %.2f   H %.2f   %d PANELS",
-        umbrella_lab_seed,
-        kind_name,
-        umbrella_lab_radius,
-        umbrella_lab_height,
-        umbrella_lab_panels,
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 14, 1, {208, 239, 240, 255})
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "A / D seed     S type     LEFT / RIGHT radius",
-        {38, 104},
-        13,
-        1,
-        {171, 201, 207, 255},
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, "UP / DOWN panels     1 / 2 height", {38, 128}, 13, 1, {171, 201, 207, 255})
+    kind_name: cstring = umbrella_lab_kind == .Beach ? "BEACH" : "PATIO"
+    lab_ui_draw_button(umbrella_lab_type_bounds(), kind_name, true)
+    lab_ui_draw_button(umbrella_lab_seed_bounds(), fmt.ctprintf("NEW SEED  %08X", umbrella_lab_seed))
+    canvas2d.DrawTextEx(canvas2d.Font{}, "RADIUS", {38, 103}, 10, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "HEIGHT", {188, 103}, 10, 1, {171, 201, 207, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PANELS", {338, 103}, 10, 1, {171, 201, 207, 255})
+    lab_ui_draw_stepper(umbrella_lab_radius_bounds(), fmt.ctprintf("%.2f M", umbrella_lab_radius))
+    lab_ui_draw_stepper(umbrella_lab_height_bounds(), fmt.ctprintf("%.2f M", umbrella_lab_height))
+    lab_ui_draw_stepper(umbrella_lab_panels_bounds(), fmt.ctprintf("%d", umbrella_lab_panels))
 }

@@ -100,6 +100,9 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
     if benchmark_scenario == "formation_edit" && frame >= benchmark_warmup {
         benchmark_formation_edit_step(editor, frame - benchmark_warmup)
     }
+    if benchmark_scenario == "field_edit" && frame >= benchmark_warmup {
+        benchmark_field_edit_step(editor, frame - benchmark_warmup)
+    }
     if benchmark_scenario == "land_flight" || benchmark_scenario == "land_flight_cold" {
         benchmark_land_flight_step(editor, frame)
     }

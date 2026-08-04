@@ -11,6 +11,25 @@ import canvas2d "zelda_engine:canvas2d"
 CAR_GENERATOR_LAB_KINDS := [5]cars.Kind{.Sedan, .Coupe, .Pickup, .Delivery, .Woody}
 car_generator_lab_seed: u32 = 1947
 car_generator_lab_selected := -1
+car_generator_lab_kind_dropdown_open := false
+
+car_generator_lab_kind_dropdown_bounds :: proc() -> canvas2d.Rectangle {
+    return {38, 78, 250, 28}
+}
+
+car_generator_lab_seed_bounds :: proc() -> canvas2d.Rectangle {
+    return {302, 78, 150, 28}
+}
+
+car_generator_lab_kind_option_bounds :: proc(index: int) -> canvas2d.Rectangle {
+    bounds := car_generator_lab_kind_dropdown_bounds()
+    return {bounds.x, bounds.y + bounds.height + f32(index) * 26, bounds.width, 26}
+}
+
+car_generator_lab_selection_label :: proc() -> cstring {
+    if car_generator_lab_selected < 0 do return "All body styles"
+    return fmt.ctprintf("%s", cars.kind_name(CAR_GENERATOR_LAB_KINDS[car_generator_lab_selected]))
+}
 
 car_generator_lab_select :: proc(editor: ^Editor, selected: int) {
     car_generator_lab_selected = selected
@@ -63,6 +82,7 @@ car_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     case "woody-side", "estate-side":
         selected, side_view = 4, true
     }
+    car_generator_lab_kind_dropdown_open = false
     car_generator_lab_select(editor, selected)
     if side_view {
         editor.camera_pose = third_person.camera_look_at({-4.15, 1.55, .96}, {0, .68, 0})
@@ -77,6 +97,25 @@ car_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
 
 car_generator_lab_process_input :: proc(editor: ^Editor) {
     if editor == nil do return
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        mouse := canvas2d.GetMousePosition()
+        if canvas2d.CheckCollisionPointRec(mouse, car_generator_lab_kind_dropdown_bounds()) {
+            car_generator_lab_kind_dropdown_open = !car_generator_lab_kind_dropdown_open
+        } else if car_generator_lab_kind_dropdown_open {
+            selected := false
+            for index in 0 ..< len(CAR_GENERATOR_LAB_KINDS) + 1 {
+                if canvas2d.CheckCollisionPointRec(mouse, car_generator_lab_kind_option_bounds(index)) {
+                    car_generator_lab_select(editor, index - 1)
+                    car_generator_lab_kind_dropdown_open = false
+                    selected = true
+                    break
+                }
+            }
+            if !selected do car_generator_lab_kind_dropdown_open = false
+        } else if canvas2d.CheckCollisionPointRec(mouse, car_generator_lab_seed_bounds()) {
+            car_generator_lab_seed += 1
+        }
+    }
     if canvas2d.IsKeyPressed(.G) do car_generator_lab_select(editor, -1)
     if canvas2d.IsKeyPressed(.R) do car_generator_lab_seed += 1
     if canvas2d.IsKeyPressed(.ONE) do car_generator_lab_select(editor, 0)
@@ -309,8 +348,18 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {196, 167, 106, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "EUROPEAN CAR GENERATOR", {38, 38}, 20, 1, {247, 226, 176, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "BODY STYLE  /  1938–1949", {38, 65}, 12, 1, {171, 204, 198, 255})
-    controls := fmt.ctprintf("G GALLERY   1–4 / W INSPECT   R NEXT SEED   #%d", car_generator_lab_seed)
-    canvas2d.DrawTextEx(canvas2d.Font{}, controls, {38, 82}, 11, 1, {196, 167, 106, 255})
+    dropdown := car_generator_lab_kind_dropdown_bounds()
+    seed_button := car_generator_lab_seed_bounds()
+    mouse := canvas2d.GetMousePosition()
+    control_bounds := [2]canvas2d.Rectangle{dropdown, seed_button}
+    for bounds in control_bounds {
+        hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
+        canvas2d.DrawRectangleRounded(bounds, .16, 6, hovered ? canvas2d.Color{66, 58, 43, 255} : canvas2d.Color{42, 43, 38, 248})
+        canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {196, 167, 106, 255})
+    }
+    canvas2d.DrawTextEx(canvas2d.Font{}, car_generator_lab_selection_label(), {dropdown.x + 10, dropdown.y + 7}, 12, 1, {247, 226, 176, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, car_generator_lab_kind_dropdown_open ? "^" : "v", {dropdown.x + dropdown.width - 18, dropdown.y + 7}, 12, 1, {196, 167, 106, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("NEW SEED  %d", car_generator_lab_seed), {seed_button.x + 10, seed_button.y + 7}, 11, 1, {247, 226, 176, 255})
     for kind, index in CAR_GENERATOR_LAB_KINDS {
         plan := cars.generate(kind, car_generator_lab_seed + u32(index) * 31)
         topology := cars.mesh(plan)
@@ -325,7 +374,20 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
         )
         color :=
             index == car_generator_lab_selected ? canvas2d.Color{247, 205, 121, 255} : canvas2d.Color{224, 219, 197, 255}
-        canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 107 + f32(index) * 15}, 12, 1, color)
+        canvas2d.DrawTextEx(canvas2d.Font{}, label, {38, 118 + f32(index) * 15}, 12, 1, color)
+    }
+    if car_generator_lab_kind_dropdown_open {
+        for index in 0 ..< len(CAR_GENERATOR_LAB_KINDS) + 1 {
+            bounds := car_generator_lab_kind_option_bounds(index)
+            hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
+            selected := index - 1 == car_generator_lab_selected
+            fill := (hovered || selected) ? canvas2d.Color{66, 58, 43, 255} : canvas2d.Color{30, 34, 33, 250}
+            label: cstring = "All body styles"
+            if index > 0 do label = fmt.ctprintf("%s", cars.kind_name(CAR_GENERATOR_LAB_KINDS[index - 1]))
+            canvas2d.DrawRectangleRec(bounds, fill)
+            canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {142, 123, 81, 255})
+            canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + 10, bounds.y + 6}, 12, 1, selected ? canvas2d.Color{247, 226, 176, 255} : canvas2d.Color{224, 219, 197, 255})
+        }
     }
     _ = width
     _ = height

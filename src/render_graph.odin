@@ -289,7 +289,8 @@ render_graph_terrain :: proc(user_data: rawptr) {
        (menu_scene_current(world_renderer.editor) == .Customization ||
                world_renderer.editor.vehicle_showcase_scene ||
                world_renderer.editor.wildflower_lab_scene ||
-               lab_scene_replaces_world(world_renderer.editor)) {
+               (lab_scene_replaces_world(world_renderer.editor) &&
+                !world_renderer.editor.lab_flat_terrain.enabled)) {
         return
     }
     cmd := ctx.pass.frame.command_buffer

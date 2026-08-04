@@ -529,7 +529,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 21 &&
+            FIXTURE_SCHEMA_VERSION == 22 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
@@ -562,7 +562,11 @@ when ODIN_TEST {
             production.steps[19].from_version == 20 &&
             production.steps[19].to_version == 21 &&
             production.steps[19].wrapper == fixture_migration_step_v0020_to_v0021 &&
-            production.steps[19].change_id == "field-add:adriatic:src.Tweak_State.postale_ace_tuning",
+            production.steps[19].change_id == "field-add:adriatic:src.Tweak_State.postale_ace_tuning" &&
+            production.steps[20].from_version == 21 &&
+            production.steps[20].to_version == 22 &&
+            production.steps[20].wrapper == fixture_migration_step_v0021_to_v0022 &&
+            production.steps[20].change_id == "enum-add:adriatic:packages/terrain.Formation_Kind.Field",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(

@@ -2,6 +2,16 @@ package main
 
 import terrain "../packages/terrain"
 import "core:math"
+import canvas2d "zelda_engine:canvas2d"
+
+// A renderer-owned ground plane for presentation labs. The clipmap mesh still
+// follows the camera, but every generated vertex uses this constant surface;
+// no editable terrain page or sculptable chunk owns the result.
+Lab_Flat_Terrain :: struct {
+    enabled: bool,
+    height:  f32,
+    color:   canvas2d.Color,
+}
 
 // Labs usually need one focused terrain patch, not an entire authored world.
 // The sampler is only called inside the configured patch; the shared loader
@@ -47,6 +57,7 @@ lab_terrain_config_valid :: proc(config: Lab_Terrain_Config) -> bool {
 
 lab_terrain_load :: proc(editor: ^Editor, config: Lab_Terrain_Config, sampler: Lab_Terrain_Sampler = nil) -> bool {
     if editor == nil || !lab_terrain_config_valid(config) do return false
+    editor.lab_flat_terrain = {}
     editor.project.sea_level = config.sea_level
     for level_index in 0 ..< terrain.CLIPMAP_LEVELS {
         data := &editor.project.levels[level_index]
@@ -74,5 +85,28 @@ lab_terrain_load :: proc(editor: ^Editor, config: Lab_Terrain_Config, sampler: L
     }
     editor.project.revision += 1
     world_terrain_invalidate_all(editor)
+    return true
+}
+
+lab_flat_terrain_load :: proc(
+    editor: ^Editor,
+    height: f32 = 0,
+    material: f32 = 0,
+    color: canvas2d.Color = {116, 137, 96, 255},
+) -> bool {
+    if editor == nil || height != height || math.is_inf_f32(height) do return false
+    // Keep the ordinary terrain samplers useful for actors and props inside a
+    // lab while the renderer supplies the genuinely unbounded visual plane.
+    if !lab_terrain_load(
+        editor,
+        {
+            sea_level = height - 64,
+            outside_height = height,
+            outside_material = material,
+        },
+    ) {
+        return false
+    }
+    editor.lab_flat_terrain = {enabled = true, height = height, color = color}
     return true
 }

@@ -276,6 +276,8 @@ formation_kind_name :: proc(kind: terrain.Formation_Kind) -> cstring {
         return "CLIFF"
     case .Foliage:
         return "FOLIAGE"
+    case .Field:
+        return "FIELD"
     case .Architecture:
         return "ADRIATIC NODES"
     case .Ruins:
@@ -302,7 +304,7 @@ structure_cycle_kind :: proc(editor: ^Editor) {
 structure_update_preview_kind :: proc(editor: ^Editor) {
     if editor == nil || !editor.structure_placing do return
     if editor.authoring_tool == .Foliage {
-        editor.structure_preview.kind = .Foliage
+        editor.structure_preview.kind = editor.structure_kind == .Field ? .Field : .Foliage
     } else if editor.structure_force_box {
         editor.structure_preview.kind = .Box
     } else if editor.structure_cliff_mode {
@@ -365,7 +367,7 @@ structure_commit_placement :: proc(editor: ^Editor, end_x, end_z: f32) -> int {
         copy.height = max(cell, copy.height * (.72 + f32(cluster_index) * .06))
         copy.base_y = terrain.sample_surface_height(&editor.project, 0, copy.center_x, copy.center_z)
         if editor.authoring_tool == .Foliage {
-            copy.kind = .Foliage
+            copy.kind = editor.structure_kind == .Field ? .Field : .Foliage
         } else if !editor.structure_force_box && !editor.structure_cliff_mode {
             copy.kind = terrain.formation_kind_for_gesture(copy.width, copy.depth, copy.height)
         }
@@ -375,9 +377,9 @@ structure_commit_placement :: proc(editor: ^Editor, end_x, end_z: f32) -> int {
 }
 
 formation_brush_is_target :: proc(editor: ^Editor, kind: terrain.Formation_Kind) -> bool {
-    if editor.authoring_tool == .Foliage do return kind == .Foliage
+    if editor.authoring_tool == .Foliage do return kind == .Foliage || kind == .Field
     if editor.rock_placement_mode do return kind == .Rock
-    return kind != .Foliage && kind != .Architecture
+    return kind != .Foliage && kind != .Field && kind != .Architecture
 }
 
 rock_tool_color :: proc(editor: ^Editor) -> [4]u8 {
@@ -466,6 +468,7 @@ formation_brush_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     if editor.selection_tool_active do return
     if editor.authoring_tool != .Formations && editor.authoring_tool != .Foliage do return
     if editor.authoring_tool == .Foliage && editor.plant_stamp_mode == .Climbing do return
+    if editor.authoring_tool == .Foliage && editor.structure_kind == .Field do return
     if editor.authoring_tool == .Foliage && editor.foliage_hedgerow_mode do return
     if !cursor_hit {
         if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {

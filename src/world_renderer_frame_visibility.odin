@@ -16,6 +16,8 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
     world_structure_storage_ensure(editor.project.structure_count)
     clear(&world_renderer.vertices)
+    world_instance_mesh_instances_clear()
+    clear(&world_renderer.middle_tree_shadow_proxies)
     clear(&world_renderer.late_transparent_vertices)
     clear(&world_renderer.wing_trail_vertices)
     clear(&world_renderer.wing_trail_indices)

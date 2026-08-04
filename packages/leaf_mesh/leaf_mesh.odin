@@ -15,9 +15,10 @@ Shape :: enum u8 {
     Grapevine,
     Ivy,
     Cypress_Spray,
+    Pine_Needle_Clump,
 }
 
-SHAPE_COUNT :: int(Shape.Cypress_Spray) + 1
+SHAPE_COUNT :: int(Shape.Pine_Needle_Clump) + 1
 
 Config :: struct {
     shape:     Shape,
@@ -75,6 +76,8 @@ shape_name :: proc(shape: Shape) -> string {
         return "IVY"
     case .Cypress_Spray:
         return "CYPRESS SPRAY"
+    case .Pine_Needle_Clump:
+        return "PINE NEEDLE CLUMP"
     }
     return "UNKNOWN"
 }
@@ -130,6 +133,12 @@ defaults :: proc(shape: Shape) -> Config {
         result.segments = 20
         result.curl = .08
         result.cup = .12
+    case .Pine_Needle_Clump:
+        result.width = .38
+        result.length = 1.9
+        result.segments = 14
+        result.curl = .08
+        result.cup = .04
     case .Elliptic:
     }
     return result
@@ -188,6 +197,10 @@ half_width :: proc(shape: Shape, t: f32) -> f32 {
         scales := .58 + .42 * (.5 + .5 * math.cos(position * math.PI * 12))
         base = envelope * scales
         if position < .10 do base *= position * 10
+    case .Pine_Needle_Clump:
+        // Texture tooling still expects one representative bilateral profile.
+        // The actual mesh generator fans several of these narrow needles.
+        base = .055 * math.pow(math.sin(math.PI * position), f32(.22))
     }
     return max(base, f32(0))
 }
@@ -439,6 +452,46 @@ generate_cypress_spray :: proc(config: Config) -> Mesh {
     return mesh
 }
 
+// A pine attachment is a small fascicle, not a broad lamina. Build narrow,
+// bent ribbons in several planes so the tuft retains air between its needles.
+generate_pine_needle_clump :: proc(config: Config) -> Mesh {
+    mesh: Mesh
+    length := max(config.length, f32(.01))
+    spread := max(config.width, f32(.01))
+    needle_count := clamp(config.segments, 3, 16)
+    needle_half_width := max(spread * .11, f32(.0032))
+
+    for needle in 0 ..< needle_count {
+        angle := f32(needle) * math.PI * 2 / f32(needle_count) + f32(needle % 2) * .21
+        radial := [3]f32{math.cos(angle), 0, math.sin(angle)}
+        tangent := [3]f32{-radial[2], 0, radial[0]}
+        needle_length := length * (.88 + f32((needle * 7) % 5) * .03)
+        root := radial * spread * .035
+        shoulder := root + radial * spread * .18 + [3]f32{0, needle_length * .48, 0}
+        tip := root + radial * spread * (.62 + f32(needle % 3) * .08) +
+            [3]f32{0, needle_length, config.curl * (.55 + f32(needle % 2) * .25)}
+        points := [3][3]f32{root, shoulder, tip}
+        for segment in 0 ..< 2 {
+            a, b := points[segment], points[segment + 1]
+            taper_a := segment == 0 ? f32(1) : f32(.72)
+            taper_b := segment == 0 ? f32(.72) : f32(.10)
+            base := u16(mesh.vertex_count)
+            mesh.vertices[mesh.vertex_count + 0] = {a - tangent * needle_half_width * taper_a, {}, {0, f32(segment) * .5}}
+            mesh.vertices[mesh.vertex_count + 1] = {a + tangent * needle_half_width * taper_a, {}, {1, f32(segment) * .5}}
+            mesh.vertices[mesh.vertex_count + 2] = {b + tangent * needle_half_width * taper_b, {}, {1, f32(segment + 1) * .5}}
+            mesh.vertices[mesh.vertex_count + 3] = {b - tangent * needle_half_width * taper_b, {}, {0, f32(segment + 1) * .5}}
+            mesh.vertex_count += 4
+            indices := [6]u16{base, base + 2, base + 1, base, base + 3, base + 2}
+            for index in indices {
+                mesh.indices[mesh.index_count] = index
+                mesh.index_count += 1
+            }
+        }
+    }
+    mesh_finish_normals(&mesh)
+    return mesh
+}
+
 cross_2d :: #force_inline proc(a, b, c: [3]f32) -> f32 {
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
@@ -578,6 +631,7 @@ generate :: proc(config: Config) -> Mesh {
     mesh: Mesh
     if int(config.shape) < 0 || int(config.shape) >= SHAPE_COUNT do return mesh
     if config.shape == .Cypress_Spray do return generate_cypress_spray(config)
+    if config.shape == .Pine_Needle_Clump do return generate_pine_needle_clump(config)
     if config.thickness > 0 do return generate_fleshy(config)
     if is_palmate(config.shape) do return generate_palmate(config)
     segments := clamp(config.segments, 3, MAX_SEGMENTS)

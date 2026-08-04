@@ -18,6 +18,28 @@ garden_profiles_cover_the_catalog :: proc(t: ^testing.T) {
 }
 
 @(test)
+site_context_signature_is_stable_and_environment_sensitive :: proc(t: ^testing.T) {
+    testing.expect_value(t, site_context_signature({}), u64(0))
+    dry_rock := Site_Context {
+        valid = true,
+        aridity = .84,
+        exposure = .72,
+        slope = .44,
+        elevation_meters = 380,
+        coast_distance_m = 920,
+        substrate = .Rock,
+    }
+    nearby_sample := dry_rock
+    nearby_sample.aridity += .001
+    testing.expect_value(t, site_context_signature(dry_rock), site_context_signature(nearby_sample))
+
+    humid_soil := dry_rock
+    humid_soil.aridity = .18
+    humid_soil.substrate = .Soil
+    testing.expect(t, site_context_signature(dry_rock) != site_context_signature(humid_soil))
+}
+
+@(test)
 architecture_graph_recovers_connected_axes_and_organs :: proc(t: ^testing.T) {
     source := plant_structure.Plant {
         segments = {
@@ -128,7 +150,7 @@ architecture_catalog_smoke_test :: proc(t: ^testing.T) {
             habit := default_habit(species)
             support_pointer: ^Support_Surface
             if habit != .Free_Standing do support_pointer = &support
-            generated := generate({species, 73, 1, detail, habit, support_pointer})
+            generated := generate({species, 73, 1, detail, habit, support_pointer, {}})
             testing.expectf(
                 t,
                 generated.error == .None,
@@ -174,7 +196,7 @@ architecture_catalog_growth_lod_seed_matrix :: proc(t: ^testing.T) {
         for seed in seeds {
             previous_height := f32(0)
             for maturity in maturities {
-                near := generate({species, seed, maturity, .Near, habit, support_pointer})
+                near := generate({species, seed, maturity, .Near, habit, support_pointer, {}})
                 testing.expectf(
                     t,
                     near.error == .None,
@@ -198,7 +220,7 @@ architecture_catalog_growth_lod_seed_matrix :: proc(t: ^testing.T) {
                 }
                 destroy(&near)
                 for detail in reduced_details {
-                    generated := generate({species, seed, maturity, detail, habit, support_pointer})
+                    generated := generate({species, seed, maturity, detail, habit, support_pointer, {}})
                     testing.expectf(
                         t,
                         generated.error == .None,

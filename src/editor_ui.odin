@@ -707,12 +707,7 @@ editor_ui_obstacle_component_bounds :: #force_inline proc(
     component, component_count: int,
 ) -> canvas2d.Rectangle {
     width := (bounds.width - f32(component_count - 1) * SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP) / f32(component_count)
-    return {
-        bounds.x + f32(component) * (width + SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP),
-        bounds.y,
-        width,
-        bounds.height,
-    }
+    return {bounds.x + f32(component) * (width + SDF_OBSTACLE_INSPECTOR_COMPONENT_GAP), bounds.y, width, bounds.height}
 }
 
 editor_ui_obstacle_slider_draw :: proc(
@@ -899,6 +894,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         }
         if editor.foliage_hedgerow_mode {
             return "Drag a cheap hedgerow. Radius controls its width and height."
+        }
+        if editor.structure_kind == .Field {
+            return "Drag a field. Its crop surface follows the terrain."
         }
         return "Left stamps foliage; right erases. Wheel zooms; Shift density; Alt hardness."
     case .Ridge:
@@ -1430,33 +1428,35 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             }
             row += 1
         }
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "RADIUS (m)",
-            editor.formation_brush_radius,
-            terrain.BASE_CELL_SIZE,
-            240,
-            1,
-        )
-        row += 1
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "DENSITY",
-            editor.formation_brush_strength,
-            .02,
-            1,
-            2,
-        )
-        row += 1
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "HARDNESS",
-            editor.formation_brush_hardness,
-            0,
-            1,
-            2,
-        )
-        row += 1
+        if editor.structure_kind != .Field {
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "RADIUS (m)",
+                editor.formation_brush_radius,
+                terrain.BASE_CELL_SIZE,
+                240,
+                1,
+            )
+            row += 1
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "DENSITY",
+                editor.formation_brush_strength,
+                .02,
+                1,
+                2,
+            )
+            row += 1
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "HARDNESS",
+                editor.formation_brush_hardness,
+                0,
+                1,
+                2,
+            )
+            row += 1
+        }
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := editor.project.structures[editor.structure_selected]
             ui_draw_text(
@@ -1531,9 +1531,23 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         }
         bounds := editor_ui_slider_bounds(layout, row)
         ui_draw_text(.Label, "MODE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        half := (bounds.width - 6) * .5
-        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "MASS", !editor.foliage_hedgerow_mode)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "HEDGE", editor.foliage_hedgerow_mode)
+        gap := f32(5)
+        third := (bounds.width - gap * 2) / 3
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 24, third, 30},
+            "MASS",
+            !editor.foliage_hedgerow_mode && editor.structure_kind != .Field,
+        )
+        editor_ui_panel_button(
+            {bounds.x + third + gap, bounds.y + 24, third, 30},
+            "HEDGE",
+            editor.foliage_hedgerow_mode,
+        )
+        editor_ui_panel_button(
+            {bounds.x + (third + gap) * 2, bounds.y + 24, third, 30},
+            "FIELD",
+            !editor.foliage_hedgerow_mode && editor.structure_kind == .Field,
+        )
         row += 1
         editor_ui_slider_draw(
             editor_ui_slider_bounds(layout, row),
@@ -1574,7 +1588,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         } else {
             ui_draw_text(
                 .Data,
-                editor.foliage_hedgerow_mode ? "DRAG A HEDGEROW" : "DRAG TO PLACE FOLIAGE",
+                editor.foliage_hedgerow_mode ? "DRAG A HEDGEROW" : editor.structure_kind == .Field ? "DRAG A FIELD" : "DRAG TO PLACE FOLIAGE",
                 {panel.x + 14, panel.y + 82 + f32(row) * 48},
                 .4,
                 {139, 149, 160, 255},
@@ -2474,21 +2488,23 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             }
             row += 1
         }
-        _ = editor_ui_slider_input(
-            editor,
-            layout,
-            14,
-            row,
-            &editor.formation_brush_radius,
-            terrain.BASE_CELL_SIZE,
-            240,
-            terrain.BASE_CELL_SIZE,
-        )
-        row += 1
-        _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
-        row += 1
-        _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
-        row += 1
+        if editor.structure_kind != .Field {
+            _ = editor_ui_slider_input(
+                editor,
+                layout,
+                14,
+                row,
+                &editor.formation_brush_radius,
+                terrain.BASE_CELL_SIZE,
+                240,
+                terrain.BASE_CELL_SIZE,
+            )
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 15, row, &editor.formation_brush_strength, .02, 1, .01)
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 16, row, &editor.formation_brush_hardness, 0, 1, .01)
+            row += 1
+        }
     case .Foliage:
         preview_bounds := editor_ui_slider_bounds(layout, row)
         preview_gap := f32(8)
@@ -2529,14 +2545,25 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             break
         }
         bounds := editor_ui_slider_bounds(layout, row)
-        half := (bounds.width - 6) * .5
-        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
+        gap := f32(5)
+        third := (bounds.width - gap * 2) / 3
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, third, 30}) {
             editor.foliage_hedgerow_mode = false
+            editor.structure_kind = .Foliage
             editor.structure_placing = false
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + gap, bounds.y + 24, third, 30}) {
             editor.foliage_hedgerow_mode = true
+            editor.structure_kind = .Foliage
             editor.formation_brush_painting = false
             editor.formation_brush_group_id = 0
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + gap) * 2, bounds.y + 24, third, 30}) {
+            editor.foliage_hedgerow_mode = false
+            editor.structure_kind = .Field
+            editor.formation_brush_painting = false
+            editor.formation_brush_group_id = 0
+            editor.structure_placing = false
         }
         row += 1
         _ = editor_ui_slider_input(
@@ -2860,15 +2887,17 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         position := obstacle.position
         position_changed := false
         for component in 0 ..< len(position) {
-            position_changed = editor_ui_obstacle_slider_input(
-                editor,
-                editor_ui_obstacle_component_bounds(bounds, component, len(position)),
-                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + component,
-                &position[component],
-                -SDF_OBSTACLE_POSITION_LIMIT,
-                SDF_OBSTACLE_POSITION_LIMIT,
-                1,
-            ) || position_changed
+            position_changed =
+                editor_ui_obstacle_slider_input(
+                    editor,
+                    editor_ui_obstacle_component_bounds(bounds, component, len(position)),
+                    SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + component,
+                    &position[component],
+                    -SDF_OBSTACLE_POSITION_LIMIT,
+                    SDF_OBSTACLE_POSITION_LIMIT,
+                    1,
+                ) ||
+                position_changed
         }
         if position_changed do _ = sdf_obstacle_set_position(editor, position)
 
@@ -2876,15 +2905,17 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         euler := editor.sdf_obstacle_interaction.inspector_euler
         euler_changed := false
         for component in 0 ..< len(euler) {
-            euler_changed = editor_ui_obstacle_slider_input(
-                editor,
-                editor_ui_obstacle_component_bounds(bounds, component, len(euler)),
-                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 3 + component,
-                &euler[component],
-                -SDF_OBSTACLE_EULER_LIMIT_DEGREES,
-                SDF_OBSTACLE_EULER_LIMIT_DEGREES,
-                1,
-            ) || euler_changed
+            euler_changed =
+                editor_ui_obstacle_slider_input(
+                    editor,
+                    editor_ui_obstacle_component_bounds(bounds, component, len(euler)),
+                    SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 3 + component,
+                    &euler[component],
+                    -SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                    SDF_OBSTACLE_EULER_LIMIT_DEGREES,
+                    1,
+                ) ||
+                euler_changed
         }
         if euler_changed do _ = sdf_obstacle_set_rotation_euler_degrees(editor, euler)
 
@@ -2892,15 +2923,17 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         scale := obstacle.scale
         scale_changed := false
         for component in 0 ..< len(scale) {
-            scale_changed = editor_ui_obstacle_slider_input(
-                editor,
-                editor_ui_obstacle_component_bounds(bounds, component, len(scale)),
-                SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 6 + component,
-                &scale[component],
-                SDF_OBSTACLE_MINIMUM_SCALE,
-                SDF_OBSTACLE_MAXIMUM_SCALE,
-                .05,
-            ) || scale_changed
+            scale_changed =
+                editor_ui_obstacle_slider_input(
+                    editor,
+                    editor_ui_obstacle_component_bounds(bounds, component, len(scale)),
+                    SDF_OBSTACLE_INSPECTOR_SLIDER_BASE + 6 + component,
+                    &scale[component],
+                    SDF_OBSTACLE_MINIMUM_SCALE,
+                    SDF_OBSTACLE_MAXIMUM_SCALE,
+                    .05,
+                ) ||
+                scale_changed
         }
         if scale_changed do _ = sdf_obstacle_set_scale(editor, scale)
 

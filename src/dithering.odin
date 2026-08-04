@@ -52,9 +52,10 @@ Photo_Filter_Mode :: enum i32 {
     Splash,
     Window,
     Floyd_Steinberg,
+    Vivid,
 }
 
-PHOTO_FILTER_MODE_COUNT :: int(Photo_Filter_Mode.Floyd_Steinberg) + 1
+PHOTO_FILTER_MODE_COUNT :: int(Photo_Filter_Mode.Vivid) + 1
 PHOTO_FILTER_CONTROL_COUNT :: 10
 photo_filter_capture_enabled: bool
 
@@ -115,6 +116,8 @@ photo_filter_reset_mode :: proc(settings: ^Photo_Filter_Settings, mode: Photo_Fi
         values = {1, .82, .50, 1, 1, 0, 0, 0, 0}
     case .Floyd_Steinberg:
         values = {1, .30, 1, 1, 1, 0, 0, 0, 1}
+    case .Vivid:
+        values = {1, .55, .35, 1, 1, 0, .05, 0, 0}
     case .Vignette:
         values = {1, .35, .55, 1, 1, 0, .05, 1, 0}
     case:
@@ -194,6 +197,8 @@ photo_filter_mode_label :: proc(mode: Photo_Filter_Mode) -> cstring {
         return "WINDOW"
     case .Floyd_Steinberg:
         return "FLOYD-STEINBERG"
+    case .Vivid:
+        return "VIVID"
     }
     return "OFF"
 }
@@ -232,6 +237,20 @@ photo_filter_control_label :: proc(mode: Photo_Filter_Mode, row: int) -> cstring
             "ERROR JITTER",
             "VIGNETTE",
             "SERPENTINE",
+        }
+        if row < len(labels) do return labels[row]
+    case .Vivid:
+        labels := [10]cstring {
+            "MODE",
+            "INTENSITY",
+            "VIBRANCE",
+            "LOCAL CONTRAST",
+            "SATURATION",
+            "CONTRAST",
+            "BRIGHTNESS",
+            "GRAIN",
+            "VIGNETTE",
+            "DISTORTION",
         }
         if row < len(labels) do return labels[row]
     case:
@@ -309,6 +328,8 @@ photo_filter_mode_parse :: proc(value: string) -> (Photo_Filter_Mode, bool) {
         return .Window, true
     case "floyd-steinberg":
         return .Floyd_Steinberg, true
+    case "vivid":
+        return .Vivid, true
     }
     return .Off, false
 }
@@ -370,14 +391,18 @@ when ODIN_TEST {
         testing.expect_value(t, settings.intensity, f32(1))
         testing.expect_value(t, settings.saturation, f32(1))
         testing.expect_value(t, settings.contrast, f32(1))
-        testing.expect_value(t, photo_filter_adjust_mode(.Off, -1), Photo_Filter_Mode.Floyd_Steinberg)
-        testing.expect_value(t, photo_filter_adjust_mode(.Floyd_Steinberg, 1), Photo_Filter_Mode.Off)
+        testing.expect_value(t, photo_filter_adjust_mode(.Off, -1), Photo_Filter_Mode.Vivid)
+        testing.expect_value(t, photo_filter_adjust_mode(.Vivid, 1), Photo_Filter_Mode.Off)
         testing.expect_value(t, photo_filter_mode_label(.Kuwahara), cstring("KUWAHARA"))
         testing.expect_value(t, photo_filter_mode_label(.Floyd_Steinberg), cstring("FLOYD-STEINBERG"))
         parsed_floyd, parsed_floyd_ok := photo_filter_mode_parse("floyd-steinberg")
         testing.expect(t, parsed_floyd_ok)
         testing.expect_value(t, parsed_floyd, Photo_Filter_Mode.Floyd_Steinberg)
-        testing.expect_value(t, PHOTO_FILTER_MODE_COUNT, 25)
+        testing.expect_value(t, photo_filter_mode_label(.Vivid), cstring("VIVID"))
+        parsed_vivid, parsed_vivid_ok := photo_filter_mode_parse("vivid")
+        testing.expect(t, parsed_vivid_ok)
+        testing.expect_value(t, parsed_vivid, Photo_Filter_Mode.Vivid)
+        testing.expect_value(t, PHOTO_FILTER_MODE_COUNT, 26)
         testing.expect_value(t, photo_filter_pass_count(.Adjuster), 1)
         testing.expect_value(t, photo_filter_pass_count(.Watercolor), 2)
         testing.expect_value(t, photo_filter_pass_count(.Oil), 3)

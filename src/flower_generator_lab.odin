@@ -16,6 +16,18 @@ flower_generator_isolated := false
 flower_generator_stage := flowers.Lifecycle_Stage.Bloom
 flower_generator_lifecycle_gallery := false
 flower_generator_clustered := false
+flower_generator_shape_dropdown_open := false
+flower_generator_stage_dropdown_open := false
+
+flower_generator_shape_bounds :: proc() -> canvas2d.Rectangle {return {38, 60, 174, 28}}
+flower_generator_stage_bounds :: proc() -> canvas2d.Rectangle {return {224, 60, 174, 28}}
+flower_generator_arrangement_bounds :: proc() -> canvas2d.Rectangle {return {410, 60, 112, 28}}
+flower_generator_petals_bounds :: proc() -> canvas2d.Rectangle {return {38, 106, 140, 28}}
+flower_generator_whorls_bounds :: proc() -> canvas2d.Rectangle {return {190, 106, 104, 28}}
+flower_generator_cluster_bounds :: proc() -> canvas2d.Rectangle {return {306, 106, 104, 28}}
+flower_generator_gallery_bounds :: proc() -> canvas2d.Rectangle {return {422, 106, 100, 28}}
+flower_generator_shape_option_bounds :: proc(index: int) -> canvas2d.Rectangle {return {38, 88 + f32(index) * 25, 174, 25}}
+flower_generator_stage_option_bounds :: proc(index: int) -> canvas2d.Rectangle {return {224, 88 + f32(index) * 25, 174, 25}}
 
 flower_generator_shape_name :: proc(shape: flowers.Petal_Shape) -> string {
     switch shape {
@@ -149,6 +161,8 @@ flower_generator_config :: proc(shape: flowers.Petal_Shape) -> flowers.Config {
 
 flower_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if editor == nil do return false
+    flower_generator_shape_dropdown_open = false
+    flower_generator_stage_dropdown_open = false
     flower_generator_shape = .Rounded
     flower_generator_arrangement = .Whorled
     flower_generator_petals = 5
@@ -215,6 +229,57 @@ flower_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
 }
 
 flower_generator_lab_process_input :: proc(_: ^Editor) {
+    if canvas2d.IsMouseButtonPressed(.LEFT) {
+        mouse := canvas2d.GetMousePosition()
+        if canvas2d.CheckCollisionPointRec(mouse, flower_generator_shape_bounds()) {
+            flower_generator_shape_dropdown_open = !flower_generator_shape_dropdown_open
+            flower_generator_stage_dropdown_open = false
+        } else if flower_generator_shape_dropdown_open {
+            selected := false
+            for index in 0 ..= int(flowers.Petal_Shape.Lanceolate) {
+                if canvas2d.CheckCollisionPointRec(mouse, flower_generator_shape_option_bounds(index)) {
+                    flower_generator_shape = flowers.Petal_Shape(index)
+                    flower_generator_isolated = true
+                    flower_generator_shape_dropdown_open = false
+                    selected = true
+                    break
+                }
+            }
+            if !selected do flower_generator_shape_dropdown_open = false
+        } else if canvas2d.CheckCollisionPointRec(mouse, flower_generator_stage_bounds()) {
+            flower_generator_stage_dropdown_open = !flower_generator_stage_dropdown_open
+            flower_generator_shape_dropdown_open = false
+        } else if flower_generator_stage_dropdown_open {
+            selected := false
+            for index in 0 ..= int(flowers.Lifecycle_Stage.Ripe_Fruit) {
+                if canvas2d.CheckCollisionPointRec(mouse, flower_generator_stage_option_bounds(index)) {
+                    flower_generator_stage = flowers.Lifecycle_Stage(index)
+                    flower_generator_isolated = true
+                    flower_generator_stage_dropdown_open = false
+                    selected = true
+                    break
+                }
+            }
+            if !selected do flower_generator_stage_dropdown_open = false
+        } else if lab_ui_button_pressed(flower_generator_arrangement_bounds()) {
+            flower_generator_arrangement = flower_generator_arrangement == .Whorled ? flowers.Arrangement.Spiral : flowers.Arrangement.Whorled
+            flower_generator_isolated = true
+        } else if lab_ui_button_pressed(flower_generator_whorls_bounds()) {
+            flower_generator_whorls = flower_generator_whorls == 1 ? 2 : 1
+            flower_generator_isolated = true
+        } else if lab_ui_button_pressed(flower_generator_cluster_bounds()) {
+            flower_generator_clustered = !flower_generator_clustered
+            flower_generator_isolated = true
+        } else if lab_ui_button_pressed(flower_generator_gallery_bounds()) {
+            flower_generator_lifecycle_gallery = !flower_generator_lifecycle_gallery
+            flower_generator_isolated = false
+        }
+    }
+    petals_delta := lab_ui_stepper_delta(flower_generator_petals_bounds())
+    if petals_delta != 0 {
+        flower_generator_petals = clamp(flower_generator_petals + petals_delta, 1, flowers.MAX_PETALS)
+        flower_generator_isolated = true
+    }
     if canvas2d.IsKeyPressed(.LEFT) {
         count := int(flowers.Petal_Shape.Lanceolate) + 1
         flower_generator_shape = flowers.Petal_Shape((int(flower_generator_shape) + count - 1) % count)
@@ -459,36 +524,18 @@ world_flower_generator_lab :: proc(_: ^Editor) {
 }
 
 flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
-    panel := canvas2d.Rectangle{24, 24, 650, 118}
+    panel := canvas2d.Rectangle{24, 24, 650, 124}
     canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "FLOWER MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
-    summary: cstring = "ARRANGEMENT  /  PETAL SHAPE  /  GROWTH STAGE"
-    if flower_generator_lifecycle_gallery {
-        summary = "ONE ATTACHMENT FRAME  —  FOUR OPENING STAGES / FOUR FRUIT STAGES"
-    }
-    if flower_generator_isolated {
-        arrangement: cstring = flower_generator_arrangement == .Whorled ? "WHORLED" : "SPIRAL"
-        summary = fmt.ctprintf(
-            "%s%s  /  %s  /  %s  /  %d PETALS  /  %d WHORL%s",
-            flower_generator_shape_name(flower_generator_shape),
-            flower_generator_clustered ? " FLATTENED BUSHY CLUSTER" : "",
-            arrangement,
-            flower_generator_stage_name(flower_generator_stage),
-            flower_generator_petals,
-            flower_generator_whorls,
-            flower_generator_whorls == 1 ? "" : "S",
-        )
-    }
-    canvas2d.DrawTextEx(canvas2d.Font{}, summary, {38, 68}, 13, 1, {174, 207, 160, 255})
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "LEFT/RIGHT SHAPE   1/2 PETALS   A ARRANGE   W WHORLS   C CLUSTER   L LIFECYCLE   F GALLERY",
-        {38, 96},
-        11,
-        1,
-        {184, 191, 174, 255},
-    )
+    arrangement: cstring = flower_generator_arrangement == .Whorled ? "WHORLED" : "SPIRAL"
+    lab_ui_draw_button(flower_generator_shape_bounds(), fmt.ctprintf("%s  %s", flower_generator_shape_name(flower_generator_shape), flower_generator_shape_dropdown_open ? "^" : "v"), flower_generator_isolated)
+    lab_ui_draw_button(flower_generator_stage_bounds(), fmt.ctprintf("%s  %s", flower_generator_stage_name(flower_generator_stage), flower_generator_stage_dropdown_open ? "^" : "v"), flower_generator_isolated)
+    lab_ui_draw_button(flower_generator_arrangement_bounds(), arrangement, true)
+    lab_ui_draw_stepper(flower_generator_petals_bounds(), fmt.ctprintf("%d PETALS", flower_generator_petals))
+    lab_ui_draw_button(flower_generator_whorls_bounds(), fmt.ctprintf("%d WHORL%s", flower_generator_whorls, flower_generator_whorls == 1 ? "" : "S"), flower_generator_whorls > 1)
+    lab_ui_draw_button(flower_generator_cluster_bounds(), "CLUSTER", flower_generator_clustered)
+    lab_ui_draw_button(flower_generator_gallery_bounds(), flower_generator_lifecycle_gallery ? "LIFECYCLE" : "GALLERY", flower_generator_lifecycle_gallery)
     if flower_generator_lifecycle_gallery {
         labels := [8]cstring{"BUD", "OPENING", "HALF OPEN", "BLOOM", "FRUIT SET", "IMMATURE", "RIPENING", "RIPE"}
         label_x_fractions := [8]f32{.385, .455, .525, .595, .355, .445, .535, .625}
@@ -510,6 +557,24 @@ flower_generator_lab_draw_ui :: proc(_: ^Editor, width: i32, height: i32) {
             bounds := canvas2d.Rectangle{label_x - 5, label_y - 4, 82, 21}
             canvas2d.DrawRectangleRounded(bounds, .3, 6, {19, 31, 27, 210})
             canvas2d.DrawTextEx(canvas2d.Font{}, label, {label_x, label_y}, 9, 1, {232, 224, 189, 255})
+        }
+    }
+    if flower_generator_shape_dropdown_open {
+        for index in 0 ..= int(flowers.Petal_Shape.Lanceolate) {
+            bounds := flower_generator_shape_option_bounds(index)
+            selected := index == int(flower_generator_shape)
+            hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
+            canvas2d.DrawRectangleRec(bounds, (selected || hovered) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250})
+            canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", flower_generator_shape_name(flowers.Petal_Shape(index))), {bounds.x + 10, bounds.y + 6}, 11, 1, {232, 224, 189, 255})
+        }
+    }
+    if flower_generator_stage_dropdown_open {
+        for index in 0 ..= int(flowers.Lifecycle_Stage.Ripe_Fruit) {
+            bounds := flower_generator_stage_option_bounds(index)
+            selected := index == int(flower_generator_stage)
+            hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
+            canvas2d.DrawRectangleRec(bounds, (selected || hovered) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250})
+            canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", flower_generator_stage_name(flowers.Lifecycle_Stage(index))), {bounds.x + 10, bounds.y + 6}, 11, 1, {232, 224, 189, 255})
         }
     }
 }

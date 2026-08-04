@@ -912,4 +912,21 @@ formations_are_opaque_and_raise_the_collision_surface :: proc(t: ^testing.T) {
 
     project.structures[structure_index].kind = .Foliage
     testing.expect_value(t, terrain.structure_collision_surface_height(project, 0, 6, 1), f32(1))
+
+    project.structures[structure_index].kind = .Field
+    testing.expect_value(t, terrain.structure_collision_surface_height(project, 0, 6, 1), f32(1))
+}
+
+@(test)
+fields_are_bounded_to_the_supported_heightfield_extent :: proc(t: ^testing.T) {
+    project := new(terrain.Project)
+    defer free(project)
+    defer delete(project.structures)
+    structure := terrain.structure_make(0, 0, 1000, 800, 0, 1.4)
+    structure.kind = .Field
+
+    index := terrain.add_structure(project, structure)
+
+    testing.expect_value(t, project.structures[index].width, terrain.FIELD_MAXIMUM_EXTENT)
+    testing.expect_value(t, project.structures[index].depth, terrain.FIELD_MAXIMUM_EXTENT)
 }

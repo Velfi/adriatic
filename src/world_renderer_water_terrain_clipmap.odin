@@ -849,15 +849,20 @@ clipmap_transition_weight :: #force_inline proc(level, x, z: int) -> f32 {
 }
 
 clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: int, center: [2]f32, x, z: int) {
-    data := &editor.project.levels[level]
     grid_cell := clipmap_grid_cell(editor, level)
     resolution := clipmap_grid_resolution(level)
     half_grid := f32(resolution - 1) * .5
     world_x := center[0] + (f32(x) - half_grid) * grid_cell
     world_z := center[1] + (f32(z) - half_grid) * grid_cell
-    transition_weight := clipmap_transition_weight(level, x, z)
-    height := terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
-    color, cliff_weight, normal := clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight)
+    height := editor.lab_flat_terrain.height
+    color := editor.lab_flat_terrain.color
+    cliff_weight := f32(0)
+    normal := third_person.Vec3{0, 1, 0}
+    if !editor.lab_flat_terrain.enabled {
+        transition_weight := clipmap_transition_weight(level, x, z)
+        height = terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
+        color, cliff_weight, normal = clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight)
+    }
     vertex := world_vertex({world_x, height, world_z}, color)
     vertex.kind = .Terrain
     vertex.normal = {normal.x, normal.y, normal.z}
@@ -865,8 +870,12 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     // this clipmap sample is grass so the world shader can carry the field's
     // traveling wind sheen across the ground beneath the individual cards.
     // Interpolation naturally softens the effect at painted material edges.
-    terrain_material := terrain.sample_render_material(&editor.project, level, world_x, world_z)
-    grass_weight: f32 = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
+    terrain_material := f32(0)
+    grass_weight := f32(0)
+    if !editor.lab_flat_terrain.enabled {
+        terrain_material = terrain.sample_render_material(&editor.project, level, world_x, world_z)
+        grass_weight = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
+    }
     vertex.material[0] = grass_weight * (1 - cliff_weight)
     // Negative material values identify the generated coastal sand continuum.
     // Carry that broad mask to fragments so fine dune mottling no longer has
@@ -875,6 +884,7 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     // The fragment shader uses the same interpolated slope mask for stable
     // horizontal bedding and weathering on the exposed rock.
     vertex.material[1] = cliff_weight
+    if editor.lab_flat_terrain.enabled do vertex.material[1] = -1
     vertices[z * resolution + x] = vertex
 }
 

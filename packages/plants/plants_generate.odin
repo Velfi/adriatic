@@ -87,7 +87,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         myrtle_clothe_scaffold(&interpreted.plant)
     }
     if config.species == .Lavender do lavender_clothe_scaffold(&interpreted.plant)
-    if config.species == .Stone_Pine do stone_pine_clothe_scaffold(&interpreted.plant, config.detail)
+    if config.species == .Stone_Pine do stone_pine_clothe_scaffold(&interpreted.plant, config.detail, maturity)
     source_segment_limit := climbing ? max(segment_limit / 6, 1) : segment_limit
     if climbing && len(interpreted.plant.segments) > source_segment_limit {
         source_segments := interpreted.plant.segments

@@ -458,6 +458,7 @@ shadow_instance_position :: #force_inline proc(vertex: World_Vertex, instance: W
 
 shadow_append_instances :: proc() {
     for &mesh in world_renderer.instance_meshes {
+        if !mesh.casts_shadow do continue
         vertex_first := int(mesh.first_vertex)
         index_first := int(mesh.first_index)
         index_count := int(mesh.index_count)
@@ -486,6 +487,29 @@ shadow_append_instances :: proc() {
                 shadow_append_triangle({pa[0], pa[1], pa[2]}, {pb[0], pb[1], pb[2]}, {pc[0], pc[1], pc[2]})
             }
         }
+    }
+}
+
+shadow_append_middle_tree_proxies :: proc() {
+    for proxy in world_renderer.middle_tree_shadow_proxies {
+        dx := proxy.center.x - world_renderer.dynamic_shadow.anchor.x
+        dz := proxy.center.z - world_renderer.dynamic_shadow.anchor.z
+        permitted := DYNAMIC_SHADOW_PROXY_RADIUS + max(proxy.radius_x, proxy.radius_z)
+        if dx * dx + dz * dz > permitted * permitted do continue
+        top := proxy.center + third_person.Vec3{0, proxy.radius_y, 0}
+        bottom := proxy.center - third_person.Vec3{0, proxy.radius_y, 0}
+        east := proxy.center + third_person.Vec3{proxy.radius_x, 0, 0}
+        west := proxy.center - third_person.Vec3{proxy.radius_x, 0, 0}
+        north := proxy.center + third_person.Vec3{0, 0, proxy.radius_z}
+        south := proxy.center - third_person.Vec3{0, 0, proxy.radius_z}
+        shadow_append_triangle(top, east, north)
+        shadow_append_triangle(top, north, west)
+        shadow_append_triangle(top, west, south)
+        shadow_append_triangle(top, south, east)
+        shadow_append_triangle(bottom, north, east)
+        shadow_append_triangle(bottom, west, north)
+        shadow_append_triangle(bottom, south, west)
+        shadow_append_triangle(bottom, east, south)
     }
 }
 
@@ -797,6 +821,7 @@ dynamic_shadow_build_casters :: proc(editor: ^Editor) {
 
     instances_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_instances")
     shadow_append_instances()
+    shadow_append_middle_tree_proxies()
     _ = dio.flame_graph_end(dio.flame_graph_current(), instances_scope)
 
     roads_scope := dio.flame_graph_begin(dio.flame_graph_current(), "shadow_casters_raised_roads")

@@ -161,7 +161,13 @@ World_Instance_Mesh :: struct {
     first_index:    u32,
     index_count:    u32,
     first_instance: u32,
+    casts_shadow:   bool,
     instances:      [dynamic]World_Mesh_Instance,
+}
+
+Middle_Tree_Shadow_Proxy :: struct {
+    center:                    third_person.Vec3,
+    radius_x, radius_y, radius_z: f32,
 }
 
 Architecture_Grass_Footprint :: struct {
@@ -450,6 +456,7 @@ World_Renderer :: struct {
     instance_indices:                             [dynamic]u32,
     instance_flattened:                           [dynamic]World_Mesh_Instance,
     instance_meshes:                              [dynamic]World_Instance_Mesh,
+    middle_tree_shadow_proxies:                   [dynamic]Middle_Tree_Shadow_Proxy,
     wing_trail_vertices:                          [dynamic]World_Vertex,
     wing_trail_indices:                           [dynamic]u16,
     wing_trail_optimized_indices:                 [dynamic]u16,

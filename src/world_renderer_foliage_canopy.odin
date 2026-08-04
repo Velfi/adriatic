@@ -4,6 +4,7 @@ import "core:math"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math/linalg"
+import canvas2d "zelda_engine:canvas2d"
 
 world_foliage_lobe :: proc(
     structure: terrain.Structure,
@@ -15,7 +16,23 @@ world_foliage_lobe :: proc(
     emit_outline: bool,
     lod: Structure_LOD = .Near,
     orientation_offset: f32 = 0,
+    opacity: f32 = 1,
+    color_override: canvas2d.Color = {},
 ) {
+    first_vertex := len(world_renderer.vertices)
+    defer {
+        resolved_opacity := clamp(opacity, f32(0), f32(1))
+        for &vertex in world_renderer.vertices[first_vertex:] {
+            vertex.color[3] *= resolved_opacity
+            if color_override.a > 0 {
+                source_value := (vertex.color[0] + vertex.color[1] + vertex.color[2]) / 3
+                shade := clamp(source_value / .38, f32(.62), f32(1.32))
+                vertex.color[0] = f32(color_override.r) / 255 * shade
+                vertex.color[1] = f32(color_override.g) / 255 * shade
+                vertex.color[2] = f32(color_override.b) / 255 * shade
+            }
+        }
+    }
     // Smooth normals cannot repair a faceted outer contour. Eighteen sides
     // keep the long crown ridge and hanging skirt from resolving into obvious
     // straight runs at eye level. The deterministic radius and height rhythm

@@ -858,7 +858,10 @@ Formation_Kind :: enum {
     Foliage,
     Architecture,
     Ruins,
+    Field,
 }
+
+FIELD_MAXIMUM_EXTENT :: f32(256)
 
 Cliff_Elevation_Mode :: enum {
     Raise,
@@ -1765,6 +1768,8 @@ formation_kind_next :: proc(kind: Formation_Kind) -> Formation_Kind {
         return .Foliage
     case .Foliage:
         return .Box
+    case .Field:
+        return .Box
     case .Architecture:
         return .Box
     case .Ruins:
@@ -1815,6 +1820,7 @@ structure_collision_surface_height :: proc(project: ^Project, x, z, fallback: f3
     result := fallback
     for structure in project.structures[:project.structure_count] {
         if structure.kind == .Foliage ||
+           structure.kind == .Field ||
            structure.width <= 0 ||
            structure.depth <= 0 ||
            structure.height <= 0 ||
@@ -1829,6 +1835,10 @@ structure_collision_surface_height :: proc(project: ^Project, x, z, fallback: f3
 add_structure :: proc(project: ^Project, structure: Structure) -> int {
     if project == nil do return -1
     value := structure
+    if value.kind == .Field {
+        value.width = min(value.width, FIELD_MAXIMUM_EXTENT)
+        value.depth = min(value.depth, FIELD_MAXIMUM_EXTENT)
+    }
     value.id = project.next_structure_id
     project.next_structure_id += 1
     if value.group_id == 0 do value.group_id = value.id

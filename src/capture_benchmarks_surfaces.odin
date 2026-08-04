@@ -152,6 +152,9 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         configure_foliage_understory_camera(editor)
     case "foliage_stress":
         seed_foliage_stress(editor)
+    case "field_edit":
+        seed_foliage_capture(editor, "field")
+        structure_lod_force(i32(Structure_LOD.Near))
     case "formations":
         seed_default_island_towns(editor)
     case "structure_lod":
@@ -204,6 +207,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         return false
     }
     if scenario != "foliage_stress" &&
+       scenario != "field_edit" &&
        scenario != "structure_lod" &&
        scenario != "structure_lod_near" &&
        scenario != "foliage_forest" &&
@@ -253,6 +257,14 @@ benchmark_formation_edit_step :: proc(editor: ^Editor, edit_frame: int) {
     if editor == nil || edit_frame < 0 || editor.project.structure_count <= 0 do return
     structure := &editor.project.structures[editor.project.structure_count - 1]
     structure.height = 8 + math.sin(f32(edit_frame) * .17) * .5
+    editor.project.revision += 1
+}
+
+benchmark_field_edit_step :: proc(editor: ^Editor, edit_frame: int) {
+    if editor == nil || edit_frame < 0 || editor.project.structure_count <= 0 do return
+    structure := &editor.project.structures[editor.project.structure_count - 1]
+    if structure.kind != .Field do return
+    structure.rotation = -.14 + math.sin(f32(edit_frame) * .11) * .015
     editor.project.revision += 1
 }
 

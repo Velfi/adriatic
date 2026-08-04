@@ -637,4 +637,4 @@ Fixture :: struct {
     map_source:                                     Fixture_Map_Source,
 }
 
-FIXTURE_SCHEMA_VERSION :: 21
+FIXTURE_SCHEMA_VERSION :: 22

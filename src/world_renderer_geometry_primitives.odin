@@ -178,14 +178,23 @@ world_instance_meshes_clear :: proc() {
     clear(&world_renderer.instance_vertices)
     clear(&world_renderer.instance_indices)
     clear(&world_renderer.instance_flattened)
+    generated_plant_middle_branch_mesh = -1
+    generated_plant_middle_clump_mesh = -1
+    generated_plant_leaf_meshes = {}
 }
 
-world_instance_mesh_add :: proc(vertices: []World_Vertex, indices: []u32) -> int {
+world_instance_mesh_instances_clear :: proc() {
+    for &mesh in world_renderer.instance_meshes do clear(&mesh.instances)
+    clear(&world_renderer.instance_flattened)
+}
+
+world_instance_mesh_add :: proc(vertices: []World_Vertex, indices: []u32, casts_shadow: bool = true) -> int {
     if len(vertices) == 0 || len(indices) == 0 do return -1
     mesh := World_Instance_Mesh {
         first_vertex = u32(len(world_renderer.instance_vertices)),
         first_index  = u32(len(world_renderer.instance_indices)),
         index_count  = u32(len(indices)),
+        casts_shadow = casts_shadow,
         instances    = make([dynamic]World_Mesh_Instance, 0, 64),
     }
     append(&world_renderer.instance_vertices, ..vertices)

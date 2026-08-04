@@ -196,6 +196,9 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
                 0,
                 editor.authoring_tool == .Foliage ? cell * 3 : cell * 12,
             )
+            if editor.authoring_tool == .Foliage && editor.structure_kind == .Field {
+                editor.structure_preview.height = 1.4
+            }
             editor.structure_force_box = control_key_down()
             editor.structure_cliff_mode = canvas2d.IsMouseButtonPressed(.RIGHT)
             editor.structure_scatter_mode = alt_key_down()

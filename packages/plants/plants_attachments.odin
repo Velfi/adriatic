@@ -196,11 +196,8 @@ leaf_traits :: proc(species: Species, variant: u8, maturity: f32) -> Leaf_Traits
     case .Rosemary:
         traits = {.Lanceolate, .034, .004, 0, .005, .0008, 0}
     case .Stone_Pine:
-        // Each rendered blade stands for a compact fascicle. Long individual
-        // needles turn terminal pads into radial spikes at game scale; shorter
-        // overlapping blades merge into the dense umbrella silhouette while
-        // retaining a fine fringed edge.
-        traits = {.Lanceolate, .13, .018, 0, .014, .0014, 0}
+        // Generate an open fascicle instead of substituting a broad leaf.
+        traits = {.Pine_Needle_Clump, .135, .090, 0, .018, .0028, 0}
     case .Bay_Laurel:
         traits = {.Lanceolate, .16, .052, .04, .014, .006, 0}
     case .Carob:

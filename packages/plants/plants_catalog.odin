@@ -118,6 +118,43 @@ Generate_Config :: struct {
     detail:   Detail_Level,
     habit:    Growth_Habit,
     support:  ^Support_Surface,
+    site:     Site_Context,
+}
+
+// Site_Context carries durable growing conditions rather than momentary
+// weather. Consumers may use it for botanical structure, pigment, or both.
+// All continuous values are normalized unless their names state otherwise.
+Site_Substrate :: enum u8 {
+    Unknown,
+    Sand,
+    Soil,
+    Rock,
+}
+
+Site_Context :: struct {
+    valid:             bool,
+    aridity:           f32,
+    exposure:          f32,
+    slope:             f32,
+    elevation_meters:  f32,
+    coast_distance_m:  f32,
+    substrate:         Site_Substrate,
+}
+
+site_context_signature :: proc(site: Site_Context) -> u64 {
+    if !site.valid do return 0
+    quantize := proc(value: f32, steps: int) -> u64 {
+        return u64(clamp(int(math.round(f64(clamp(value, f32(0), f32(1)) * f32(steps)))), 0, steps))
+    }
+    elevation := quantize(site.elevation_meters / 1600, 15)
+    coast := quantize(site.coast_distance_m / 1800, 15)
+    return 1 |
+        quantize(site.aridity, 7) << 1 |
+        quantize(site.exposure, 7) << 4 |
+        quantize(site.slope, 7) << 7 |
+        elevation << 10 |
+        coast << 14 |
+        u64(site.substrate) << 18
 }
 
 Attachment :: struct {

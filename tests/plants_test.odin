@@ -1089,6 +1089,9 @@ stone_pine_preserves_a_clothed_umbrella_crown_across_seeds :: proc(t: ^testing.T
         crown_minimum_z, crown_maximum_z := f32(1e9), f32(-1e9)
         crown_attachment_count := 0
         primary_attachment_count, terminal_attachment_count := 0, 0
+        pad_minimum := [3]f32{1e9, 1e9, 1e9}
+        pad_maximum := [3]f32{-1e9, -1e9, -1e9}
+        pad_attachment_count := 0
         for attachment in pine.plant.attachments {
             if attachment.kind != .Leaf || attachment.position[1] < height * .48 do continue
             crown_minimum_x = min(crown_minimum_x, attachment.position[0])
@@ -1098,15 +1101,77 @@ stone_pine_preserves_a_clothed_umbrella_crown_across_seeds :: proc(t: ^testing.T
             crown_attachment_count += 1
             if attachment.depth == 1 do primary_attachment_count += 1
             if attachment.depth >= 2 do terminal_attachment_count += 1
+            if attachment.depth >= 3 {
+                pad_minimum = linalg.min(pad_minimum, attachment.position)
+                pad_maximum = linalg.max(pad_maximum, attachment.position)
+                pad_attachment_count += 1
+            }
         }
         crown_width := max(crown_maximum_x - crown_minimum_x, crown_maximum_z - crown_minimum_z)
-        testing.expect(t, crown_attachment_count >= 48)
+        pad_width := max(pad_maximum[0] - pad_minimum[0], pad_maximum[2] - pad_minimum[2])
+        pad_height := pad_maximum[1] - pad_minimum[1]
+        // Mature specimens should read as one bushy, interlocking umbrella,
+        // not as a ring of individually legible terminal sprays.
+        testing.expect(t, crown_attachment_count >= 120)
+        // The global near-detail attachment budget stratifies this population
+        // with the branch-bound fascicles, so require a substantial surviving
+        // pad rather than its pre-budget source count.
+        testing.expect(t, pad_attachment_count >= 700)
+        testing.expect(t, pad_width / max(pad_height, f32(.001)) > 2.4)
         testing.expect(t, crown_width >= plants.leaf_traits(.Stone_Pine, 0, 1).length * 1.5)
         // Needle mass belongs to the terminal umbrella pads, leaving the old
         // inner scaffold legible instead of clothing every arm uniformly.
         testing.expect(t, terminal_attachment_count > primary_attachment_count * 4)
         plants.destroy(&pine)
     }
+}
+
+@(test)
+stone_pine_preserves_umbrella_pad_through_lods :: proc(t: ^testing.T) {
+    details := [2]plants.Detail_Level{.Medium, .Far}
+    minimum_pad_counts := [2]int{240, 28}
+    for detail, detail_index in details {
+        for seed in u64(70) ..= 76 {
+            pine := plants.generate(
+                {species = .Stone_Pine, seed = seed, maturity = 1, detail = detail, habit = .Free_Standing},
+            )
+            testing.expect_value(t, pine.error, plants.Generate_Error.None)
+            pad_minimum := [3]f32{1e9, 1e9, 1e9}
+            pad_maximum := [3]f32{-1e9, -1e9, -1e9}
+            pad_count := 0
+            for attachment in pine.plant.attachments {
+                if attachment.kind != .Leaf || attachment.depth < 3 do continue
+                pad_minimum = linalg.min(pad_minimum, attachment.position)
+                pad_maximum = linalg.max(pad_maximum, attachment.position)
+                pad_count += 1
+            }
+            pad_width := max(pad_maximum[0] - pad_minimum[0], pad_maximum[2] - pad_minimum[2])
+            pad_height := pad_maximum[1] - pad_minimum[1]
+            testing.expect(t, pad_count >= minimum_pad_counts[detail_index])
+            testing.expect(t, pad_width / max(pad_height, f32(.001)) > 2.2)
+            plants.destroy(&pine)
+        }
+    }
+}
+
+@(test)
+stone_pine_umbrella_pad_forms_late_in_lifecycle :: proc(t: ^testing.T) {
+    maturities := [3]f32{.30, .55, 1}
+    pad_counts: [3]int
+    for maturity, maturity_index in maturities {
+        pine := plants.generate(
+            {species = .Stone_Pine, seed = 73, maturity = maturity, detail = .Near, habit = .Free_Standing},
+        )
+        testing.expect_value(t, pine.error, plants.Generate_Error.None)
+        for attachment in pine.plant.attachments {
+            if attachment.kind == .Leaf && attachment.depth >= 3 do pad_counts[maturity_index] += 1
+        }
+        plants.destroy(&pine)
+    }
+    testing.expect_value(t, pad_counts[0], 0)
+    testing.expect(t, pad_counts[1] > 0)
+    testing.expect(t, pad_counts[1] < pad_counts[2])
+    testing.expect(t, pad_counts[2] >= 700)
 }
 
 @(test)

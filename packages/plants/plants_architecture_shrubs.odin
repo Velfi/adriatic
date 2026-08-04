@@ -435,7 +435,7 @@ lavender_clothe_scaffold :: proc(plant: ^plant_structure.Plant) {
     }
 }
 
-stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail_Level) {
+stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail_Level, maturity: f32) {
     if plant == nil || len(plant.segments) == 0 do return
     for segment in plant.segments {
         if segment.depth <= 0 do continue
@@ -445,22 +445,90 @@ stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail
         // scaffold and exposed the radial construction. Italian stone pines
         // retain visible inner arms but concentrate foliage into overlapping
         // pads on their terminal forks.
-        primary_stations := [2]f32{.70, .91}
-        terminal_stations := [8]f32{.18, .31, .44, .56, .67, .77, .86, .94}
+        primary_stations := [3]f32{.58, .78, .94}
+        terminal_stations := [7]f32{.16, .30, .44, .58, .71, .84, .95}
         station_count := segment.depth == 1 ? len(primary_stations) : len(terminal_stations)
         for station_index in 0 ..< station_count {
             station := segment.depth == 1 ? primary_stations[station_index] : terminal_stations[station_index]
-            row_count := segment.depth == 1 ? 1 : detail == .Near ? 3 : detail == .Medium ? 2 : 1
+            row_count := 1
             right := linalg.normalize0(linalg.cross(forward, up))
             for row_index in 0 ..< row_count {
-                row_side := row_index == 0 ? f32(0) : row_index == 1 ? f32(1) : f32(-1)
+                row_side :=
+                    row_index == 0 ? f32(0) : row_index % 2 == 1 ? f32((row_index + 1) / 2) : -f32(row_index / 2)
                 row_position :=
                     linalg.lerp(segment.start, segment.end, station) +
-                    right * row_side * .040 +
-                    up * math.abs(row_side) * .012
+                    right * row_side * .045 +
+                    up * math.abs(row_side) * .016
                 append(
                     &plant.leaves,
                     plant_structure.Leaf{position = row_position, forward = forward, up = up, depth = segment.depth},
+                )
+            }
+        }
+    }
+
+    canopy_progress := clamp((maturity - .38) / .62, f32(0), f32(1))
+    if canopy_progress <= 0 do return
+
+    // Branch-bound fascicles preserve the pine texture and fringed edge, but
+    // cannot form a continuous umbrella without exposing their radial layout.
+    // Fill the shallow crown with overlapping foliage pads distributed over a
+    // deterministic disc. These are still ordinary leaf attachments, so wind,
+    // detail scaling, color variation, and bounds remain on the normal path.
+    crown_minimum := plant_structure.Vec3{1e9, 1e9, 1e9}
+    crown_maximum := plant_structure.Vec3{-1e9, -1e9, -1e9}
+    has_crown := false
+    for segment in plant.segments {
+        if segment.depth <= 0 do continue
+        crown_minimum = linalg.min(crown_minimum, linalg.min(segment.start, segment.end))
+        crown_maximum = linalg.max(crown_maximum, linalg.max(segment.start, segment.end))
+        has_crown = true
+    }
+    if !has_crown do return
+
+    crown_center := (crown_minimum + crown_maximum) * .5
+    crown_radius := max(crown_maximum[0] - crown_minimum[0], crown_maximum[2] - crown_minimum[2]) * .48
+    mature_ring_count := detail == .Near ? 6 : detail == .Medium ? 4 : 3
+    ring_count := clamp(2 + int(canopy_progress * f32(mature_ring_count - 2) + .5), 2, mature_ring_count)
+    layer_count :=
+        canopy_progress > .68 ? (detail == .Near ? 3 : detail == .Medium ? 2 : 1) : 1
+    for ring_index in 0 ..< ring_count {
+        radial_fraction := ring_index == 0 ? f32(0) : f32(ring_index) / f32(ring_count - 1)
+        station_count := ring_index == 0 ? 1 : 10 + ring_index * 6
+        ring_phase := f32(ring_index) * .73
+        for station_index in 0 ..< station_count {
+            azimuth := ring_phase + f32(station_index) * math.PI * 2 / f32(station_count)
+            radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
+            tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
+            perimeter_noise := .94 + math.sin(azimuth * 3 + f32(ring_index) * 1.7) * .06
+            radial_jitter :=
+                ring_index == 0 ? f32(0) : math.sin(azimuth * 5.17 + f32(ring_index) * 2.31) * .32 / f32(ring_count)
+            height_jitter := math.sin(azimuth * 4.43 + f32(ring_index) * 1.19) * crown_radius * .045
+            padded_radius := clamp(radial_fraction + radial_jitter, f32(0), f32(1))
+            position :=
+                crown_center +
+                radial * crown_radius * padded_radius * perimeter_noise +
+                plant_structure.Vec3{0, crown_radius * (.22 - padded_radius * padded_radius * .14) + height_jitter, 0}
+            for layer_index in 0 ..< layer_count {
+                layer_offset := f32(layer_index) - f32(layer_count - 1) * .5
+                orientation_jitter := math.sin(azimuth * 2.71 + f32(layer_index) * 1.83)
+                forward := linalg.normalize0(
+                    radial * (.48 + orientation_jitter * .12) +
+                    tangent * (layer_offset * .42 + orientation_jitter * .24) +
+                    plant_structure.Vec3{0, .30 + math.abs(layer_offset) * .09, 0},
+                )
+                _, up := olive_leaf_frame(forward)
+                append(
+                    &plant.leaves,
+                    plant_structure.Leaf {
+                        position =
+                            position +
+                            tangent * layer_offset * crown_radius * .050 +
+                            plant_structure.Vec3{0, layer_offset * crown_radius * .090, 0},
+                        forward = forward,
+                        up = up,
+                        depth = 3,
+                    },
                 )
             }
         }
@@ -495,20 +563,35 @@ stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> pl
         trunk_radius = end_radius
     }
 
-    leader_count := iterations >= 3 ? 8 : iterations == 2 ? 6 : 4
+    leader_count := iterations >= 3 ? 10 : iterations == 2 ? 7 : 6
     phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
+    umbrella_progress := clamp((maturity - .35) / .65, f32(0), f32(1))
+    juvenile_leader_length := .82 * (1 - umbrella_progress) * (1 - umbrella_progress) * scale
+    if juvenile_leader_length > .01 {
+        leader_start := trunk_points[trunk_segments]
+        leader_end := leader_start + plant_structure.Vec3{0, juvenile_leader_length, 0}
+        append(
+            &result.plant.segments,
+            plant_structure.Segment{leader_start, leader_end, trunk_radius * .72, trunk_radius * .18, 1},
+        )
+    }
+    young_branch_lift := .42 + (.18 - .42) * umbrella_progress
+    crown_branch_y := trunk_points[trunk_segments][1] + young_branch_lift * scale
     for leader_index in 0 ..< leader_count {
         azimuth := phase + f32(leader_index) * math.PI * 2 / f32(leader_count) + olive_random_signed(&random) * .12
         radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
         origin_index := max(trunk_segments - leader_index % 2, 1)
         origin := trunk_points[origin_index]
         reach := (.78 + olive_random_signed(&random) * .10) * scale
-        first_direction := linalg.normalize0(
-            radial * .88 + plant_structure.Vec3{0, .47 + olive_random_signed(&random) * .08, 0},
-        )
-        elbow := origin + first_direction * reach * .48
-        outer_direction := linalg.normalize0(radial + plant_structure.Vec3{0, .18 + olive_random_signed(&random) * .09, 0})
-        tip := elbow + outer_direction * reach * .52
+        elbow :=
+            origin +
+            radial * reach * .46 +
+            plant_structure.Vec3{0, crown_branch_y - origin[1] + olive_random_signed(&random) * .035 * scale, 0}
+        tip_rise := .24 + (.045 - .24) * umbrella_progress
+        tip :=
+            elbow +
+            radial * reach * .54 +
+            plant_structure.Vec3{0, (tip_rise + olive_random_signed(&random) * .025) * scale, 0}
         branch_radius := max(trunk_radius * (.46 + olive_random_signed(&random) * .04), f32(.012))
         append(
             &result.plant.segments,
@@ -516,19 +599,54 @@ stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> pl
             plant_structure.Segment{elbow, tip, branch_radius * .72, branch_radius * .42, 1},
         )
 
-        // Two short, rising terminal forks broaden and flatten the crown
-        // without collapsing all needles into one spherical tuft.
+        // Layer terminal fans along the outer arm instead of emitting every
+        // spray from its tip. A tip-only fan still reads as one pom-pom at the
+        // end of each radial spoke, however many needles it carries. These
+        // three overlapping tiers fill the crown from its dark interior to its
+        // scalloped perimeter while retaining a shallow, flat-bottomed dome.
         tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
-        for side in -1 ..= 1 {
-            if side == 0 do continue
-            fork_direction := linalg.normalize0(
-                radial * .58 +
-                tangent * f32(side) * .46 +
-                plant_structure.Vec3{0, .42 + olive_random_signed(&random) * .10, 0},
-            )
-            fork_end := tip + fork_direction * reach * (.34 + olive_random_signed(&random) * .04)
-            append(&result.plant.segments, plant_structure.Segment{tip, fork_end, branch_radius * .42, branch_radius * .12, 2})
+        fan_stations := [3]f32{.18, .54, .88}
+        for fan_station, tier_index in fan_stations {
+            fan_root := linalg.lerp(elbow, tip, fan_station)
+            tier_progress := f32(tier_index) / f32(len(fan_stations) - 1)
+            for side in -1 ..= 1 {
+                side_fraction := f32(side)
+                fork_direction := linalg.normalize0(
+                    radial * (.50 + tier_progress * .22) +
+                    tangent * side_fraction * (.62 - tier_progress * .08) +
+                    plant_structure.Vec3 {
+                        0,
+                        .36 + (.13 - .36) * umbrella_progress + olive_random_signed(&random) * .04,
+                        0,
+                    },
+                )
+                fork_length := reach * (.18 + tier_progress * .10 + math.abs(side_fraction) * .020)
+                fork_end := fan_root + fork_direction * fork_length
+                fork_radius := branch_radius * (.38 - tier_progress * .08)
+                append(
+                    &result.plant.segments,
+                    plant_structure.Segment{fan_root, fork_end, fork_radius, branch_radius * .10, 2},
+                )
+            }
         }
+
+        // A shorter inward spray closes the hole between the trunk and the
+        // outer fans without clothing the clear bole or turning the crown into
+        // a solid ball.
+        bridge_direction := linalg.normalize0(
+            radial * .22 +
+            tangent * olive_random_signed(&random) * .28 +
+            plant_structure.Vec3 {
+                0,
+                .42 + (.22 - .42) * umbrella_progress + olive_random_signed(&random) * .05,
+                0,
+            },
+        )
+        bridge_end := elbow + bridge_direction * reach * .30
+        append(
+            &result.plant.segments,
+            plant_structure.Segment{elbow, bridge_end, branch_radius * .50, branch_radius * .13, 2},
+        )
     }
     return result
 }

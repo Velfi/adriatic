@@ -120,7 +120,11 @@ gameplay_physics_rebuild_structures :: proc(editor: ^Editor) {
     for body in state.static_bodies do physics.remove_body(state.world, body)
     clear(&state.static_bodies)
     for structure, index in editor.project.structures[:editor.project.structure_count] {
-        if structure.kind == .Foliage || structure.width <= 0 || structure.depth <= 0 || structure.height <= 0 {
+        if structure.kind == .Foliage ||
+           structure.kind == .Field ||
+           structure.width <= 0 ||
+           structure.depth <= 0 ||
+           structure.height <= 0 {
             continue
         }
         // A ruins structure is only a persistence/culling envelope. Using it

@@ -23,6 +23,7 @@ SPECIES = (
     "oleander",
     "bougainvillea",
     "rosemary",
+    "stone-pine",
 )
 
 

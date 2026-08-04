@@ -191,6 +191,7 @@ adriatic_run_impl :: proc(
     if capture_kind == .Markov_Wreck do capture_lab_name = "markov-wreck"
     if capture_kind == .Markov_Marina do capture_lab_name = "markov-marina"
     if capture_kind == .Markov_Farmland do capture_lab_name = "markov-farmland"
+    if capture_kind == .Foliage_Transition_Lab do capture_lab_name = "foliage-transition"
     if capture_kind == .Ruins_Lab do capture_lab_name = "ruins"
     capture_lab_mode := capture_lab_name != ""
     capture_map_mode =
@@ -226,6 +227,7 @@ adriatic_run_impl :: proc(
         capture_kind == .Markov_Wreck ||
         capture_kind == .Markov_Marina ||
         capture_kind == .Markov_Farmland ||
+        capture_kind == .Foliage_Transition_Lab ||
         capture_kind == .Ruins_Lab
     capture_target := request != nil ? request.target : (capture_mode && len(args) >= 4 ? args[3] : "")
     clean_settlement_capture := false
@@ -694,7 +696,7 @@ adriatic_run_impl :: proc(
     run_finish_startup(editor, state_loaded, show_loading_screen, initial_width, initial_height, postcard)
     startup_timings.ready_ms = startup_checkpoint(&startup_timings)
     capture_frame :=
-        capture_flight_mode || capture_player_mode || capture_kind == .Witch_Lab || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Bridge_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
+        capture_flight_mode || capture_player_mode || capture_kind == .Witch_Lab || capture_kind == .Screen_Pops_Lab || capture_kind == .Shadow_Lab || capture_kind == .Rock_Lab || capture_kind == .Boat_Lab || capture_kind == .Car_Generator_Lab || capture_kind == .Patio_Lab || capture_kind == .Garden_Lab || capture_kind == .Plant_Generator_Lab || capture_kind == .Leaf_Generator_Lab || capture_kind == .Flower_Generator_Lab || capture_kind == .Window_Generator_Lab || capture_kind == .Bridge_Generator_Lab || capture_kind == .Fountain_Generator_Lab || capture_kind == .Cemetery_Generator_Lab || capture_kind == .Rocky_Beach_Lab || capture_kind == .Windmill_Generator_Lab || capture_kind == .Hero_Building_Lab || capture_kind == .Lighthouse_Lab || capture_kind == .Mouse_Gait_Lab || capture_kind == .Mouse_Theater || capture_kind == .Rondine_Movement_Lab || capture_kind == .Foliage_Transition_Lab || capture_kind == .Markov_Marina || capture_kind == .Ruins_Lab ? 20 : 2
     if request != nil && request.settle_frames >= 0 do capture_frame = request.settle_frames
     selector_capture_pose, selector_capture_pose_set, selector_ok := run_capture_selector(
         editor,

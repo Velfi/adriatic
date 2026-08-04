@@ -43,6 +43,11 @@
       "enabled": true,
       "description": "Dense 49-patch forest canopy stress scene."
     },
+    "field_edit": {
+      "enabled": false,
+      "require_zero_static_after_warmup": false,
+      "description": "Continuously edited maximum-size terrain-following crop field."
+    },
     "formations": {
       "enabled": false,
       "description": "Generated town and formation rendering."

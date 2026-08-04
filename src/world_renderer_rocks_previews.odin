@@ -264,7 +264,7 @@ world_formation_sea_vegetation_band :: proc(
         top_radius = 1 - fraction * .25
     case .Ridge:
         top_radius = 1 - fraction * .30
-    case .Box, .Cliff, .Foliage, .Architecture, .Ruins:
+    case .Box, .Cliff, .Foliage, .Field, .Architecture, .Ruins:
         return
     }
     top_radius = max(top_radius, f32(.2))
@@ -327,6 +327,8 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
     case .Foliage:
         if settlement_cemetery_structure_is_reservation(structure) do return
         world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod)
+    case .Field:
+        world_crop_field(structure, project, lod)
     case .Architecture:
         world_architecture(structure, project, lod)
     case .Ruins:
@@ -563,7 +565,7 @@ world_structure_preview_cluster :: proc(editor: ^Editor) {
     if editor == nil do return
     preview := editor.structure_preview
     preview.color = {168, 239, 220, 255}
-    world_formation(preview)
+    world_formation(preview, &editor.project)
     world_structure_frame(preview, preview.base_y + .04, {190, 255, 229, 255})
     if !editor.structure_scatter_mode do return
     dx := editor.structure_preview_end_x - editor.structure_anchor_x
@@ -591,12 +593,12 @@ world_structure_preview_cluster :: proc(editor: ^Editor) {
         copy.base_y = terrain.sample_surface_height(&editor.project, 0, copy.center_x, copy.center_z)
         copy.seed = u32(editor.project.next_structure_id + u64(cluster_index + 1)) * 747796405
         if editor.authoring_tool == .Foliage {
-            copy.kind = .Foliage
+            copy.kind = editor.structure_kind == .Field ? .Field : .Foliage
         } else if !editor.structure_force_box && !editor.structure_cliff_mode {
             copy.kind = terrain.formation_kind_for_gesture(copy.width, copy.depth, copy.height)
         }
         copy.color = {168, 239, 220, 255}
-        world_formation(copy)
+        world_formation(copy, &editor.project)
         world_structure_frame(copy, copy.base_y + .04, {190, 255, 229, 255})
     }
 }

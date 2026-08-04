@@ -12,6 +12,15 @@ arch_wall_lab_config: arch_walls.Config
 arch_wall_lab_path: arch_walls.Path
 arch_wall_lab_shape := 0
 
+arch_wall_lab_path_bounds :: proc() -> canvas2d.Rectangle {return {38, 91, 142, 28}}
+arch_wall_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {192, 91, 142, 28}}
+arch_wall_lab_thickness_bounds :: proc() -> canvas2d.Rectangle {return {346, 91, 142, 28}}
+arch_wall_lab_spacing_bounds :: proc() -> canvas2d.Rectangle {return {500, 91, 142, 28}}
+
+arch_wall_lab_path_name :: proc() -> cstring {
+    return arch_wall_lab_shape == 0 ? "CURVE" : arch_wall_lab_shape == 1 ? "LONG" : "COURTYARD"
+}
+
 arch_wall_lab_terrain :: proc(_: ^Editor, x, z: f32) -> Lab_Terrain_Sample {
     height := math.sin(x * .105) * 1.15 + math.sin(z * .14 + x * .035) * .72 + x * .035
     return {height = height, material = .18 + height * .025}
@@ -78,6 +87,13 @@ arch_wall_lab_height :: proc(position: arch_walls.Vec2, data: rawptr) -> f32 {
 }
 
 arch_wall_generator_lab_process_input :: proc(_: ^Editor) {
+    if lab_ui_button_pressed(arch_wall_lab_path_bounds()) do arch_wall_lab_set_path(arch_wall_lab_shape + 1)
+    height_delta := lab_ui_stepper_delta(arch_wall_lab_height_bounds())
+    thickness_delta := lab_ui_stepper_delta(arch_wall_lab_thickness_bounds())
+    spacing_delta := lab_ui_stepper_delta(arch_wall_lab_spacing_bounds())
+    if height_delta != 0 do arch_wall_lab_config.height = clamp(arch_wall_lab_config.height + f32(height_delta) * .2, f32(1.4), f32(7))
+    if thickness_delta != 0 do arch_wall_lab_config.thickness = clamp(arch_wall_lab_config.thickness + f32(thickness_delta) * .05, f32(.25), f32(1.6))
+    if spacing_delta != 0 do arch_wall_lab_config.arch_spacing = clamp(arch_wall_lab_config.arch_spacing + f32(spacing_delta), f32(4), f32(20))
     if canvas2d.IsKeyPressed(.S) do arch_wall_lab_set_path(arch_wall_lab_shape + 1)
     if canvas2d.IsKeyPressed(.LEFT) do arch_wall_lab_config.height = max(f32(1.4), arch_wall_lab_config.height - .2)
     if canvas2d.IsKeyPressed(.RIGHT) do arch_wall_lab_config.height = min(f32(7), arch_wall_lab_config.height + .2)
@@ -164,7 +180,7 @@ world_arch_wall_generator_lab :: proc(editor: ^Editor) {
 arch_wall_generator_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
     plan := arch_walls.generate(&arch_wall_lab_path, arch_wall_lab_config, arch_wall_lab_height, editor)
     defer arch_walls.dispose(&plan)
-    panel := canvas2d.Rectangle{22, 22, 770, 142}
+    panel := canvas2d.Rectangle{22, 22, 770, 158}
     canvas2d.DrawRectangleRounded(panel, .10, 8, {21, 27, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {143, 151, 126, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "ARCH + WALL GENERATOR LAB", {38, 38}, 20, 1, {237, 228, 194, 255})
@@ -177,20 +193,13 @@ arch_wall_generator_lab_draw_ui :: proc(editor: ^Editor, _: i32, _: i32) {
         arch_wall_lab_config.thickness,
     )
     canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 13, 1, {190, 213, 189, 255})
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "S PATH   LEFT / RIGHT HEIGHT   UP / DOWN THICKNESS   A / D ARCH SPACING",
-        {38, 104},
-        12,
-        1,
-        {199, 198, 177, 255},
-    )
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "Walls sample both terrain edges; length adds spans without stretching them.",
-        {38, 132},
-        12,
-        1,
-        {199, 198, 177, 255},
-    )
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PATH", {38, 80}, 9, 1, {199, 198, 177, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "HEIGHT", {192, 80}, 9, 1, {199, 198, 177, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "THICKNESS", {346, 80}, 9, 1, {199, 198, 177, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "ARCH SPACING", {500, 80}, 9, 1, {199, 198, 177, 255})
+    lab_ui_draw_button(arch_wall_lab_path_bounds(), arch_wall_lab_path_name(), true)
+    lab_ui_draw_stepper(arch_wall_lab_height_bounds(), fmt.ctprintf("%.1f M", arch_wall_lab_config.height))
+    lab_ui_draw_stepper(arch_wall_lab_thickness_bounds(), fmt.ctprintf("%.2f M", arch_wall_lab_config.thickness))
+    lab_ui_draw_stepper(arch_wall_lab_spacing_bounds(), fmt.ctprintf("%.0f M", arch_wall_lab_config.arch_spacing))
+    canvas2d.DrawTextEx(canvas2d.Font{}, "Walls follow both terrain edges.", {38, 132}, 11, 1, {199, 198, 177, 255})
 }

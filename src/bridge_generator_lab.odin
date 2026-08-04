@@ -12,6 +12,15 @@ bridge_lab_config: bridges.Config
 bridge_lab_cleft_width := f32(30)
 bridge_lab_cleft_depth := f32(7)
 bridge_lab_bank_slope := f32(4)
+bridge_lab_archetype_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 232, 28}}
+bridge_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {282, 68, 154, 28}}
+bridge_lab_length_bounds :: proc() -> canvas2d.Rectangle {return {38, 116, 128, 28}}
+bridge_lab_spans_bounds :: proc() -> canvas2d.Rectangle {return {178, 116, 118, 28}}
+bridge_lab_clearance_bounds :: proc() -> canvas2d.Rectangle {return {308, 116, 136, 28}}
+bridge_lab_cleft_width_bounds :: proc() -> canvas2d.Rectangle {return {456, 116, 136, 28}}
+bridge_lab_cleft_depth_bounds :: proc() -> canvas2d.Rectangle {return {604, 116, 136, 28}}
+bridge_lab_cutwaters_bounds :: proc() -> canvas2d.Rectangle {return {38, 160, 122, 28}}
+bridge_lab_shops_bounds :: proc() -> canvas2d.Rectangle {return {172, 160, 104, 28}}
 
 bridge_lab_archetype_name :: proc(value: bridges.Archetype) -> cstring {
     switch value {
@@ -179,6 +188,40 @@ bridge_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool 
 
 bridge_generator_lab_process_input :: proc(editor: ^Editor) {
     terrain_changed := false
+    if lab_ui_button_pressed(bridge_lab_archetype_bounds()) {
+        count := int(bridges.Archetype.Iron_Truss) + 1
+        bridge_lab_apply_archetype(bridges.Archetype((int(bridge_lab_config.archetype) + 1) % count))
+        terrain_changed = true
+    }
+    if lab_ui_button_pressed(bridge_lab_seed_bounds()) {
+        bridge_lab_seed += 1
+        terrain_changed = true
+    }
+    length_delta := lab_ui_stepper_delta(bridge_lab_length_bounds())
+    spans_delta := lab_ui_stepper_delta(bridge_lab_spans_bounds())
+    clearance_delta := lab_ui_stepper_delta(bridge_lab_clearance_bounds())
+    cleft_width_delta := lab_ui_stepper_delta(bridge_lab_cleft_width_bounds())
+    cleft_depth_delta := lab_ui_stepper_delta(bridge_lab_cleft_depth_bounds())
+    if length_delta != 0 {
+        bridge_lab_config.length = clamp(bridge_lab_config.length + f32(length_delta) * 2, f32(10), f32(80))
+        bridge_lab_cleft_width = min(bridge_lab_cleft_width, bridge_lab_config.length * .90)
+        terrain_changed = true
+    }
+    if spans_delta != 0 do bridge_lab_config.span_count = clamp(bridge_lab_config.span_count + spans_delta, 1, bridges.MAX_SPANS)
+    if clearance_delta != 0 {
+        bridge_lab_config.clearance = clamp(bridge_lab_config.clearance + f32(clearance_delta) * .5, f32(2.5), f32(16))
+        terrain_changed = true
+    }
+    if cleft_width_delta != 0 {
+        bridge_lab_cleft_width = clamp(bridge_lab_cleft_width + f32(cleft_width_delta), f32(4), bridge_lab_config.length * .90)
+        terrain_changed = true
+    }
+    if cleft_depth_delta != 0 {
+        bridge_lab_cleft_depth = clamp(bridge_lab_cleft_depth + f32(cleft_depth_delta) * .5, f32(2), f32(18))
+        terrain_changed = true
+    }
+    if lab_ui_button_pressed(bridge_lab_cutwaters_bounds()) do bridge_lab_config.pier_cutwaters = !bridge_lab_config.pier_cutwaters
+    if bridge_lab_config.archetype == .Venetian_Canal && lab_ui_button_pressed(bridge_lab_shops_bounds()) do bridge_lab_config.urban_shops = !bridge_lab_config.urban_shops
     if canvas2d.IsKeyPressed(.A) do bridge_lab_seed -= 1
     if canvas2d.IsKeyPressed(.D) do bridge_lab_seed += 1
     if canvas2d.IsKeyPressed(.A) || canvas2d.IsKeyPressed(.D) do terrain_changed = true
@@ -634,36 +677,21 @@ world_bridge_generator_lab :: proc(_: ^Editor) {
 
 bridge_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     plan := bridges.generate(bridge_lab_seed, bridge_lab_config)
-    panel := canvas2d.Rectangle{22, 22, 820, 176}
+    panel := canvas2d.Rectangle{22, 22, 820, 184}
     canvas2d.DrawRectangleRounded(panel, .10, 8, {21, 27, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .10, 8, 1, {143, 151, 126, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "BRIDGE GENERATOR LAB", {38, 38}, 20, 1, {237, 228, 194, 255})
-    span_count := plan.pier_count + 1
-    status := fmt.ctprintf(
-        "%s   %s   %s   %.0f M   %d SPAN%s",
-        bridge_lab_region_name(plan.region),
-        bridge_lab_archetype_name(plan.archetype),
-        bridge_lab_material_name(plan.material),
-        plan.length,
-        span_count,
-        span_count == 1 ? "" : "S",
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, status, {38, 72}, 13, 1, {190, 213, 189, 255})
-    canvas2d.DrawTextEx(
-        canvas2d.Font{},
-        "A / D VARIANT   S ARCHETYPE   R REGION   LEFT / RIGHT LENGTH   UP / DOWN SPANS",
-        {38, 102},
-        12,
-        1,
-        {199, 198, 177, 255},
-    )
-    secondary_controls: cstring =
-        bridge_lab_config.archetype == .Venetian_Canal ? "1 / 2 CLEARANCE   C CUTWATERS   U SHOPS" : "1 / 2 CLEARANCE   C CUTWATERS"
-    canvas2d.DrawTextEx(canvas2d.Font{}, secondary_controls, {38, 130}, 12, 1, {199, 198, 177, 255})
-    cleft_status := fmt.ctprintf(
-        "Q / E CLEFT WIDTH %.0f M   Z / X CLEFT DEPTH %.1f M",
-        bridge_lab_cleft_width,
-        bridge_lab_cleft_depth,
-    )
-    canvas2d.DrawTextEx(canvas2d.Font{}, cleft_status, {38, 156}, 12, 1, {199, 198, 177, 255})
+    lab_ui_draw_button(bridge_lab_archetype_bounds(), bridge_lab_archetype_name(plan.archetype), true)
+    lab_ui_draw_button(bridge_lab_seed_bounds(), fmt.ctprintf("NEW SEED  %06X", bridge_lab_seed))
+    labels := [5]cstring{"LENGTH", "SPANS", "CLEARANCE", "CLEFT WIDTH", "CLEFT DEPTH"}
+    xs := [5]f32{38, 178, 308, 456, 604}
+    for label, index in labels do canvas2d.DrawTextEx(canvas2d.Font{}, label, {xs[index], 103}, 9, 1, {199, 198, 177, 255})
+    lab_ui_draw_stepper(bridge_lab_length_bounds(), fmt.ctprintf("%.0f M", bridge_lab_config.length))
+    lab_ui_draw_stepper(bridge_lab_spans_bounds(), fmt.ctprintf("%d", bridge_lab_config.span_count))
+    lab_ui_draw_stepper(bridge_lab_clearance_bounds(), fmt.ctprintf("%.1f M", bridge_lab_config.clearance))
+    lab_ui_draw_stepper(bridge_lab_cleft_width_bounds(), fmt.ctprintf("%.0f M", bridge_lab_cleft_width))
+    lab_ui_draw_stepper(bridge_lab_cleft_depth_bounds(), fmt.ctprintf("%.1f M", bridge_lab_cleft_depth))
+    lab_ui_draw_button(bridge_lab_cutwaters_bounds(), "CUTWATERS", bridge_lab_config.pier_cutwaters)
+    if bridge_lab_config.archetype == .Venetian_Canal do lab_ui_draw_button(bridge_lab_shops_bounds(), "SHOPS", bridge_lab_config.urban_shops)
+    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s  /  %s", bridge_lab_region_name(plan.region), bridge_lab_material_name(plan.material)), {300, 168}, 11, 1, {190, 213, 189, 255})
 }

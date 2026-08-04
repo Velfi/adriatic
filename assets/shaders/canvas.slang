@@ -558,6 +558,20 @@ float3 photo_filter(float3 source, float2 uv, float2 texel, float exposure, int 
         float vignette_mask = smoothstep(1.15, .25, dot(centered_uv, centered_uv));
         result *= lerp(1.0, vignette_mask, vignette);
         return lerp(source, max(result, 0.0), intensity);
+    } else if (mode == 25) { // Vivid: selective color lift plus local luminance contrast.
+        float3 vivid = linear_to_oklab(max(center, 0.0));
+        float3 blurred = linear_to_oklab(max(blur, 0.0));
+        float chroma = length(vivid.yz);
+
+        // Protect near-neutrals from acquiring a tint and strong colors from
+        // clipping. The lift is concentrated in subdued, already-colored areas.
+        float colored = smoothstep(.012, .08, chroma);
+        float chroma_headroom = 1.0 - smoothstep(.16, .34, chroma);
+        vivid.yz *= 1.0 + radius * .9 * colored * chroma_headroom;
+
+        // Add clarity on the perceptual lightness axis without changing hue.
+        vivid.x += (vivid.x - blurred.x) * detail * .7;
+        result = max(oklab_to_linear(vivid), 0.0);
     }
 
     float adjusted_luma = photo_luma(result);

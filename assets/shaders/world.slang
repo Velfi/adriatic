@@ -2177,6 +2177,32 @@ float3 shade_terrain_limestone(VertexOutput input, float3 color) {
     return lerp(result, turf_rim, rim_profile * rim_break * .38);
 }
 
+float lab_grid_line(float2 position, float spacing, float line_width) {
+    float2 coordinate = position / spacing;
+    float2 distance_to_line = abs(frac(coordinate + .5) - .5);
+    float2 footprint = max(fwidth(coordinate), float2(.00001, .00001));
+    float nearest = min(distance_to_line.x / footprint.x, distance_to_line.y / footprint.y);
+    return 1.0 - smoothstep(line_width, line_width + 1.0, nearest);
+}
+
+float3 shade_lab_terrain_grid(VertexOutput input, float3 color) {
+    if (input.material.y > -.5) return color;
+    float2 p = input.world_position.xz;
+    float footprint = max(
+        length(ddx(input.world_position.xz)),
+        length(ddy(input.world_position.xz))
+    );
+    float meter = lab_grid_line(p, 1.0, .32) * (1.0 - smoothstep(.35, 2.4, footprint));
+    float ten_meter = lab_grid_line(p, 10.0, .42) * (1.0 - smoothstep(4.0, 28.0, footprint));
+    float hundred_meter = lab_grid_line(p, 100.0, .52);
+    float kilometer = lab_grid_line(p, 1000.0, .72);
+    float line = max(meter * .10, ten_meter * .22);
+    line = max(line, hundred_meter * .40);
+    line = max(line, kilometer * .70);
+    float3 grid_color = srgb_to_linear(float3(47.0, 62.0, 43.0) / 255.0);
+    return lerp(color, grid_color, line);
+}
+
 float3 shade_foliage(VertexOutput input) {
     float3 normal = normalize(input.normal);
     float3 geometric_normal = normal;
@@ -3146,12 +3172,27 @@ float4 shade_lighthouse_glitter(VertexOutput input) {
 float4 fragment_main(VertexOutput input) : SV_Target {
     // Indexed clipmap grids retain sea-level vertices so their topology stays
     // reusable. Do not let those terrain fragments cover the ocean pass.
-    if (input.kind == MATERIAL_TERRAIN && input.world_position.y <= .001) {
+    if (input.kind == MATERIAL_TERRAIN && input.world_position.y <= .001 && input.material.y > -.5) {
         discard;
     }
-    float fog = combined_fog(input);
+    // Diagnostic lab planes are measuring instruments. Atmospheric fog made
+    // their metre hierarchy disappear in the same long views they exist to
+    // evaluate, so keep the grid optically stable while ordinary terrain
+    // continues through the authored atmosphere.
+    float fog = input.kind == MATERIAL_TERRAIN && input.material.y < -.5
+        ? 0.0
+        : combined_fog(input);
     float3 base = input.color.rgb;
     float output_alpha = input.color.a;
+    if (input.kind == MATERIAL_FOLIAGE && input.color.a < .999) {
+        // Stable world-space coverage turns authored proxy opacity into an
+        // opaque dither fade. This avoids sorting and depth-order artifacts
+        // while distant canopy masses grow through the outgoing plants.
+        float2 dither_cell = floor(input.world_position.xz * 3.5);
+        float dither = hash12(dither_cell + float2(17.3, 41.7));
+        if (dither > saturate(input.color.a)) discard;
+        output_alpha = 1.0;
+    }
     switch (input.kind) {
         case MATERIAL_FOG_SHELL: {
             float2 wind = push.water.zw;
@@ -3172,6 +3213,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = shade_terrain_dunes(input, base);
             base = shade_grass_wind_sheen(input, base);
             base = shade_terrain_limestone(input, base);
+            base = shade_lab_terrain_grid(input, base);
             break;
         case MATERIAL_WATER:
             if (input.color.a < 0.0 && push.camera_position.y > input.world_position.y + .08) {
