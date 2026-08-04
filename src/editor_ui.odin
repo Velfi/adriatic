@@ -2,6 +2,7 @@ package main
 
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
+import buildings "../packages/buildings"
 import farmland "../packages/farmland"
 import road_designer "../packages/road_designer"
 import roads "../packages/roads"
@@ -54,6 +55,110 @@ land_paint_target :: #force_inline proc(kind: Land_Paint_Kind) -> f32 {
 Plant_Stamp_Mode :: enum u8 {
     Ground,
     Climbing,
+}
+
+EDITOR_ARCHITECTURE_TYPES := [22]buildings.Archetype {
+    .Legacy,
+    .Dwelling,
+    .Townhouse,
+    .Shop_House,
+    .Mixed_Use_Dwelling,
+    .Workshop,
+    .Farmstead,
+    .Barn_Granary,
+    .Mill,
+    .Fishery,
+    .Storehouse,
+    .Harbor_Office,
+    .Market_Hall,
+    .Palace_Loggia,
+    .Campanile,
+    .Church,
+    .Monastery,
+    .Fortress_Gate,
+    .Cycladic_Bell,
+    .Post_Office,
+    .Lighthouse,
+    .Clinic,
+}
+
+editor_architecture_archetype_name :: proc(archetype: buildings.Archetype) -> cstring {
+    switch archetype {
+    case .Legacy: return "HOUSE"
+    case .Dwelling: return "HOUSE"
+    case .Townhouse: return "TOWNHOUSE"
+    case .Shop_House: return "STOREFRONT"
+    case .Mixed_Use_Dwelling: return "MIXED USE"
+    case .Workshop: return "WORKSHOP"
+    case .Farmstead: return "FARMHOUSE"
+    case .Barn_Granary: return "BARN"
+    case .Mill: return "MILL"
+    case .Fishery: return "FISHERY"
+    case .Storehouse: return "STOREHOUSE"
+    case .Campanile: return "CAMPANILE"
+    case .Palace_Loggia: return "PALACE"
+    case .Church: return "CHURCH"
+    case .Monastery: return "MONASTERY"
+    case .Fortress_Gate: return "FORTRESS GATE"
+    case .Harbor_Office: return "HARBOR OFFICE"
+    case .Market_Hall: return "MARKET HALL"
+    case .Cycladic_Bell: return "BELL TOWER"
+    case .Post_Office: return "POST OFFICE"
+    case .Lighthouse: return "LIGHTHOUSE"
+    case .Clinic: return "CLINIC"
+    }
+    return "BUILDING"
+}
+
+editor_architecture_identity_reclassified :: proc(identity: buildings.Identity, direction: int) -> buildings.Identity {
+    result := identity
+    current := -1
+    for archetype, index in EDITOR_ARCHITECTURE_TYPES {
+        if archetype == result.archetype {
+            current = index
+            break
+        }
+    }
+    if current < 0 do current = 0
+    count := len(EDITOR_ARCHITECTURE_TYPES)
+    next := (current + (direction < 0 ? -1 : 1) + count) % count
+    result.archetype = EDITOR_ARCHITECTURE_TYPES[next]
+    result.landmark_kind = .None
+    #partial switch result.archetype {
+    case .Legacy, .Dwelling, .Townhouse:
+        result.purpose = .Dwelling
+    case .Shop_House, .Mixed_Use_Dwelling:
+        result.purpose = .Inn_Shop
+    case .Workshop:
+        result.purpose = .Workshop
+    case .Farmstead:
+        result.purpose = .Farmstead
+    case .Barn_Granary:
+        result.purpose = .Barn_Granary
+    case .Mill:
+        result.purpose = .Mill
+    case .Fishery:
+        result.purpose = .Fishery
+    case .Storehouse, .Harbor_Office, .Market_Hall, .Palace_Loggia:
+        result.purpose = .Storehouse
+    case .Campanile:
+        result.landmark_kind = .Campanile
+    case .Church:
+        result.landmark_kind = .Church
+    case .Monastery:
+        result.landmark_kind = .Monastery
+    case .Fortress_Gate:
+        result.landmark_kind = .Fortress_Gate
+    case .Cycladic_Bell:
+        result.landmark_kind = .Cycladic_Bell
+    case .Post_Office:
+        result.landmark_kind = .Post_Office
+    case .Lighthouse:
+        result.landmark_kind = .Lighthouse
+    case .Clinic:
+        result.landmark_kind = .Clinic
+    }
+    return result
 }
 
 // GreekAssets remains as a frozen enum value for historical Fixture decoding,
@@ -1038,6 +1143,30 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", structure.depth, cell, 400, 1)
             row += 1
             editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", structure.height, cell, 400, 1)
+            row += 1
+            if structure.kind == .Architecture {
+                identity := architecture.architecture_resolve_legacy_identity(structure)
+                type_bounds := editor_ui_slider_bounds(layout, row)
+                ui_draw_text(.Label, "TYPE", {type_bounds.x, type_bounds.y}, .5, {209, 215, 222, 255})
+                type_name := editor_architecture_archetype_name(identity.archetype)
+                type_size := ui_measure_text(.Data, type_name, .5)
+                ui_draw_text(
+                    .Data,
+                    type_name,
+                    {type_bounds.x + type_bounds.width - type_size.x, type_bounds.y},
+                    .5,
+                    {134, 224, 216, 255},
+                )
+                half := (type_bounds.width - 6) * .5
+                editor_ui_panel_button({type_bounds.x, type_bounds.y + 24, half, 30}, "PREVIOUS")
+                editor_ui_panel_button({type_bounds.x + half + 6, type_bounds.y + 24, half, 30}, "NEXT")
+                row += 1
+            }
+            regenerate_bounds := editor_ui_slider_bounds(layout, row)
+            editor_ui_panel_button(
+                {regenerate_bounds.x, regenerate_bounds.y + 8, regenerate_bounds.width, 32},
+                "REGENERATE",
+            )
             row += 1
             ui_draw_text(.Data, "DRAG  MOVE", {panel.x + 14, panel.y + 82 + f32(row) * 48}, .4, {139, 149, 160, 255})
             ui_draw_text(.Data, "R  ROTATE", {panel.x + 14, panel.y + 106 + f32(row) * 48}, .4, {139, 149, 160, 255})
@@ -2267,6 +2396,46 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             changed = editor_ui_slider_input(editor, layout, 102, 2, &structure.depth, cell, 400, 1, 2) || changed
             changed = editor_ui_slider_input(editor, layout, 103, 3, &structure.height, cell, 400, 1, 2) || changed
             if changed do editor.project.revision += 1
+            row := 4
+            if structure.kind == .Architecture {
+                type_bounds := editor_ui_slider_bounds(layout, row)
+                if pressed {
+                    half := (type_bounds.width - 6) * .5
+                    direction := 0
+                    if canvas2d.CheckCollisionPointRec(mouse, {type_bounds.x, type_bounds.y + 24, half, 30}) {
+                        direction = -1
+                    } else if canvas2d.CheckCollisionPointRec(
+                        mouse,
+                        {type_bounds.x + half + 6, type_bounds.y + 24, half, 30},
+                    ) {
+                        direction = 1
+                    }
+                    if direction != 0 {
+                        structure_history_push_undo(editor)
+                        identity := architecture.architecture_resolve_legacy_identity(structure^)
+                        structure.building = editor_architecture_identity_reclassified(identity, direction)
+                        editor.project.revision += 1
+                        return
+                    }
+                }
+                row += 1
+            }
+            regenerate_bounds := editor_ui_slider_bounds(layout, row)
+            if pressed && canvas2d.CheckCollisionPointRec(
+                mouse,
+                {regenerate_bounds.x, regenerate_bounds.y + 8, regenerate_bounds.width, 32},
+            ) {
+                structure_history_push_undo(editor)
+                if structure.kind == .Architecture {
+                    // Legacy identity is seed-derived. Materialize it before
+                    // changing the seed so regeneration changes the design,
+                    // not the selected building type.
+                    structure.building = architecture.architecture_resolve_legacy_identity(structure^)
+                }
+                structure.seed += u32(0x9e3779b9)
+                editor.project.revision += 1
+                return
+            }
         } else if editor.island_selected != .World {
             center_x, center_z, center_ok := terrain.island_center(&editor.project, editor.island_selected)
             if center_ok {
