@@ -43,6 +43,7 @@ Capture_Kind :: enum {
     Window_Generator_Lab,
     Bridge_Generator_Lab,
     Fountain_Generator_Lab,
+    Umbrella_Generator_Lab,
     Cemetery_Generator_Lab,
     Estuary_Delta_Lab,
     Rocky_Beach_Lab,
@@ -604,6 +605,8 @@ capture_kind_from_name :: proc(name: string) -> (Capture_Kind, bool) {
         return .Bridge_Generator_Lab, true
     case "fountain-generator", "fountain-generator-lab":
         return .Fountain_Generator_Lab, true
+    case "umbrella-generator", "umbrella-generator-lab":
+        return .Umbrella_Generator_Lab, true
     case "cemetery-generator", "cemetery-generator-lab", "graveyard-generator", "graveyard-generator-lab":
         return .Cemetery_Generator_Lab, true
     case "estuary-delta", "estuary-delta-lab":

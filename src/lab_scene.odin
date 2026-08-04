@@ -47,6 +47,8 @@ lab_mouse_control_keys :: proc(name: string) -> (keys: [LAB_MOUSE_KEY_CAPACITY]c
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .A, .W, .ONE, .TWO, .G, .L, .F, .C)
     case "fountain-generator":
         count = lab_mouse_keys(&keys, .A, .D, .S, .LEFT, .RIGHT, .DOWN, .UP, .ONE, .TWO)
+    case "umbrella-generator":
+        count = lab_mouse_keys(&keys, .A, .D, .S, .LEFT, .RIGHT, .DOWN, .UP, .ONE, .TWO)
     case "garden":
         count = lab_mouse_keys(&keys, .ONE, .TWO, .THREE, .FOUR, .R)
     case "hero-building":
@@ -282,6 +284,17 @@ lab_mouse_action_label :: proc(name: string, key: canvas2d.KeyboardKey) -> cstri
             return "More jets"; case .ONE:
             return "Lower jets"; case .TWO:
             return "Higher jets"}
+    case "umbrella-generator":
+        #partial switch key {case .A:
+            return "Previous seed"; case .D:
+            return "Next seed"; case .S:
+            return "Change type"; case .LEFT:
+            return "Smaller canopy"; case .RIGHT:
+            return "Larger canopy"; case .DOWN:
+            return "Fewer panels"; case .UP:
+            return "More panels"; case .ONE:
+            return "Shorter pole"; case .TWO:
+            return "Taller pole"}
     case "garden":
         #partial switch key {case .R:
             return "Regenerate"; case .ONE:
@@ -903,6 +916,20 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_shadows = true,
     },
     {
+        name = "foliage-transition",
+        configure = foliage_transition_lab_configure,
+        world_overlay = foliage_transition_lab_world,
+        process_input = foliage_transition_lab_process_input,
+        draw_ui = foliage_transition_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = false,
+        replace_world = false,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = true,
+    },
+    {
         name = "markov-marina",
         configure = markov_marina_lab_configure,
         world_overlay = world_markov_marina,
@@ -1222,6 +1249,19 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         world_overlay = world_fountain_generator_lab,
         process_input = fountain_lab_process_input,
         draw_ui = fountain_lab_draw_ui,
+        isolate_content = true,
+        enter_gameplay = true,
+        replace_world = true,
+        suppress_hud = true,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+    },
+    {
+        name = "umbrella-generator",
+        configure = umbrella_lab_configure,
+        world_overlay = world_umbrella_generator_lab,
+        process_input = umbrella_lab_process_input,
+        draw_ui = umbrella_lab_draw_ui,
         isolate_content = true,
         enter_gameplay = true,
         replace_world = true,

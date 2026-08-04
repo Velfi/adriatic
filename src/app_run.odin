@@ -177,6 +177,7 @@ adriatic_run_impl :: proc(
     if capture_kind == .Window_Generator_Lab do capture_lab_name = "window-generator"
     if capture_kind == .Bridge_Generator_Lab do capture_lab_name = "bridge-generator"
     if capture_kind == .Fountain_Generator_Lab do capture_lab_name = "fountain-generator"
+    if capture_kind == .Umbrella_Generator_Lab do capture_lab_name = "umbrella-generator"
     if capture_kind == .Cemetery_Generator_Lab do capture_lab_name = "cemetery-generator"
     if capture_kind == .Estuary_Delta_Lab do capture_lab_name = "estuary-delta"
     if capture_kind == .Rocky_Beach_Lab do capture_lab_name = "coastal-ecology"

@@ -66,7 +66,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  road, road-dust, road-grip, terrain-grip, building, story-meeting")
     fmt.println("  foliage, foliage-forest")
     fmt.println(
-        "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, rock-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, window-generator, bridge-generator, fountain-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, markov-marina, ruins-lab",
+        "  grass-wind, screen-pops, wildflower-lab, rainbow-lab, shadow-lab, rock-lab, boat-lab, car-generator-lab, patio-lab, garden-lab, plant-generator, leaf-generator, flower-generator, window-generator, bridge-generator, fountain-generator, umbrella-generator, cemetery-generator, estuary-delta, windmill-generator, hero-building, lighthouse-lab, mouse-gait-lab, mouse-theater, rondine-movement-lab, markov-wreck, markov-farmland, foliage-transition, markov-marina, ruins-lab",
     )
     fmt.println("  markov-city, markov-town, markov-village, aegean-city, aegean-town, aegean-village")
     fmt.println("  narrow, compact, sky-noon, sky-sunrise, sky-sunset, sky-storm, sky-night, player-*")
