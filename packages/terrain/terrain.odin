@@ -1653,8 +1653,10 @@ init_project_seeded :: proc(
     delete(result.structures)
     delete(result.terrain_pages)
     bathymetry_destroy(&result.bathymetry_chunks)
+    marine_habitat_destroy(&result.marine_habitat_chunks)
     delete(result.terrain_page_lookup)
     delete(result.bathymetry_chunk_lookup)
+    delete(result.marine_habitat_lookup)
     result^ = {}
     result.sea_level = 0
     result.revision = 1

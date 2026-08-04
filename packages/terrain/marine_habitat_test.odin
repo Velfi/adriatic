@@ -66,6 +66,20 @@ marine_habitat_is_deterministic :: proc(t: ^testing.T) {
 }
 
 @(test)
+marine_habitat_is_released_when_project_is_reinitialized :: proc(t: ^testing.T) {
+    project := marine_habitat_test_project()
+    defer free_project(project)
+    marine_habitat_rebuild_all(project)
+    testing.expect(t, len(project.marine_habitat_chunks) > 0)
+    testing.expect(t, len(project.marine_habitat_lookup) > 0)
+
+    init_project(project)
+
+    testing.expect_value(t, len(project.marine_habitat_chunks), 0)
+    testing.expect_value(t, len(project.marine_habitat_lookup), 0)
+}
+
+@(test)
 marine_habitat_paint_changes_only_the_selected_ecology :: proc(t: ^testing.T) {
     project := marine_habitat_test_project()
     defer free_project(project)
