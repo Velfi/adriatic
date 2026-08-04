@@ -324,6 +324,7 @@ FocusButton :: proc(id: int) { state.gui.focused = ui.Gui_Id(id + 1) }
 input_begin_frame :: proc() {
     state.text_input_length = 0
     render2d.sdl_input_begin_frame(&state.platform_input)
+    state.mouse_down = state.platform_input.mouse_down
     state.mouse_pressed = state.platform_input.mouse_pressed
     state.mouse_released = state.platform_input.mouse_released
     state.mouse_delta = state.platform_input.mouse_delta
