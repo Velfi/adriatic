@@ -62,3 +62,52 @@ car_authored_wheels_map_to_jolt_axles_and_sides :: proc(t: ^testing.T) {
     testing.expect(t, car_authored_wheel_index({-1, 0, 1}) == 2)
     testing.expect(t, car_authored_wheel_index({1, 0, 1}) == 3)
 }
+
+@(test)
+gameplay_physics_drives_car_forward_across_frames :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    editor.gameplay_physics.world = physics.create_world(128, 1)
+    testing.expect(t, editor.gameplay_physics.world != nil)
+    defer physics.destroy_world(editor.gameplay_physics.world)
+
+    floor := physics.add_box(editor.gameplay_physics.world, {20, .5, 20}, {0, -.5, 0}, .Static)
+    testing.expect(t, floor != physics.INVALID_BODY)
+    vehicle := physics.create_vehicle(
+        editor.gameplay_physics.world,
+        {
+            half_width = .7,
+            half_height = .25,
+            half_length = 1.2,
+            mass = 700,
+            center_of_mass_offset_y = -.15,
+            wheel_x = .78,
+            front_wheel_z = .82,
+            rear_wheel_z = -.82,
+            wheel_y = -.2,
+            wheel_radius = .32,
+            wheel_width = .24,
+            suspension_min = .08,
+            suspension_max = .3,
+            suspension_frequency = 2.4,
+            suspension_damping = .9,
+            max_steer_angle = .6,
+            max_engine_torque = 520,
+            max_brake_torque = 1100,
+            max_handbrake_torque = 1400,
+        },
+        {0, .75, 0},
+    )
+    testing.expect(t, vehicle != nil)
+    defer physics.destroy_vehicle(editor.gameplay_physics.world, vehicle)
+
+    physics.set_vehicle_input(editor.gameplay_physics.world, vehicle, 1, 0, 0, 0)
+    for _ in 0 ..< 360 {
+        gameplay_physics_begin_frame(editor)
+        gameplay_physics_step_world(editor, 1.0 / 120.0)
+    }
+
+    position, _, ok := physics.get_transform(editor.gameplay_physics.world, physics.vehicle_body(vehicle))
+    testing.expect(t, ok)
+    testing.expectf(t, position.z > 3, "expected gameplay car to drive forward, got z %v", position.z)
+}

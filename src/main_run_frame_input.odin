@@ -28,6 +28,10 @@ import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
 
 run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) {
+    // The unified physics world may be stepped by the first active controller
+    // (car, player, or another simulation system). Release the per-frame gate
+    // before any of those systems run so it advances once on every frame.
+    gameplay_physics_begin_frame(editor)
     benchmark_frame_start = canvas2d.GetTime()
     frame_now := canvas2d.GetTime()
     frame_delta = frame == 0 ? f32(0) : min(f32(frame_now - editor.last_frame_time), f32(.1))
