@@ -43,7 +43,7 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
     footstep_slide = f32(0)
     crash_recovery_update(editor, simulation_delta)
     if editor.in_map &&
-       editor.active_lab_scene == "" &&
+       lab_scene_allows_gameplay(editor) &&
        !pause_menu_is_open(editor) &&
        simulation_delta > 0 &&
        !capture_car_mode &&

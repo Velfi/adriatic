@@ -69,6 +69,8 @@ lab_mouse_control_keys :: proc(name: string) -> (keys: [LAB_MOUSE_KEY_CAPACITY]c
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .DOWN, .UP, .ONE, .TWO, .THREE)
     case "road-planning":
         count = lab_mouse_keys(&keys, .R, .SPACE, .S, .ONE, .TWO, .THREE, .FOUR, .P, .O, .ENTER)
+    case "landform-maze":
+        count = lab_mouse_keys(&keys, .ENTER, .N, .R, .ONE, .TWO, .THREE, .FOUR)
     case "rock":
         count = lab_mouse_keys(&keys, .E, .M, .ESCAPE)
     case "estuary-delta":
@@ -394,6 +396,15 @@ lab_mouse_action_label :: proc(name: string, key: canvas2d.KeyboardKey) -> cstri
             return road_planning_lab.paused ? "Resume optimizer" : "Pause optimizer"; case .O:
             return road_planning_lab.show_all ? "Hide other routes" : "Show all routes"; case .ENTER:
             return "Commit route"}
+    case "landform-maze":
+        #partial switch key {case .ENTER:
+            return landform_maze_lab.flying ? "Edit maze" : "Fly maze"; case .N:
+            return "New maze"; case .R:
+            return "Restart flight"; case .ONE:
+            return "Lower ridges"; case .TWO:
+            return "Raise ridges"; case .THREE:
+            return "Narrow corridors"; case .FOUR:
+            return "Widen corridors"}
     case "rock":
         #partial switch key {case .E:
             return rock_lab.edge_strength > .01 ? "Hide edge wear" : "Show edge wear"; case .M:
@@ -688,6 +699,7 @@ Lab_Scene_Definition :: struct {
     exit:                            Lab_Exit_Proc,
     isolate_content:                 bool,
     enter_gameplay:                  bool,
+    allow_gameplay:                  bool,
     replace_world:                   bool,
     suppress_hud:                    bool,
     suppress_infrastructure:         bool,
@@ -701,6 +713,21 @@ Lab_Scene_Request :: struct {
 }
 
 LAB_SCENES := [?]Lab_Scene_Definition {
+    {
+        name = "landform-maze",
+        configure = landform_maze_lab_configure,
+        process_input = landform_maze_lab_process_input,
+        draw_ui = landform_maze_lab_draw_ui,
+        exit = landform_maze_lab_exit,
+        isolate_content = true,
+        enter_gameplay = false,
+        allow_gameplay = true,
+        replace_world = false,
+        suppress_hud = false,
+        suppress_infrastructure = true,
+        suppress_procedural_circulation = true,
+        suppress_shadows = false,
+    },
     {
         name = "witch",
         configure = witch_lab_configure,
@@ -851,6 +878,7 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         draw_ui = markov_wreck_draw_ui,
         isolate_content = true,
         enter_gameplay = false,
+        allow_gameplay = true,
         replace_world = true,
         suppress_hud = false,
         suppress_infrastructure = true,
@@ -1432,6 +1460,12 @@ lab_scene_destroy_active :: proc(editor: ^Editor) {
 
 lab_scene_is_active :: proc(editor: ^Editor, name: string) -> bool {
     return editor != nil && editor.active_lab_scene == name
+}
+
+lab_scene_allows_gameplay :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.active_lab_scene == "" do return true
+    definition := lab_scene_find(editor.active_lab_scene)
+    return definition != nil && definition.allow_gameplay
 }
 
 lab_scene_configure_camera :: proc(
