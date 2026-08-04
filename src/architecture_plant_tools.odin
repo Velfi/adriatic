@@ -19,9 +19,24 @@ Building_Generator_Kind :: enum u8 {
     Clinic,
     Airport_Terminal,
     Marina_Office,
+    Windmill,
+    Patio,
+    Garden,
+    Cemetery,
+    Plaza,
 }
 
 BUILDING_GENERATOR_AIRPORT_TERMINAL_GROUP :: u64(0x41505254524d4e4c)
+BUILDING_GENERATOR_SITE_GROUP_TAG :: u64(0x4255494c00000000)
+BUILDING_GENERATOR_SITE_GROUP_MASK :: u64(0xffffffff00000000)
+
+building_generator_is_site_kind :: #force_inline proc(kind: Building_Generator_Kind) -> bool {
+    return kind == .Patio || kind == .Garden || kind == .Cemetery || kind == .Plaza
+}
+
+building_generator_site_marker :: #force_inline proc(structure: terrain.Structure) -> bool {
+    return structure.group_id & BUILDING_GENERATOR_SITE_GROUP_MASK == BUILDING_GENERATOR_SITE_GROUP_TAG
+}
 
 building_generator_select_kind :: proc(editor: ^Editor, kind: Building_Generator_Kind) {
     if editor == nil || editor.building_generator_kind == kind do return
@@ -36,6 +51,36 @@ building_generator_select_kind :: proc(editor: ^Editor, kind: Building_Generator
         editor.building_generator_width = 8.2
         editor.building_generator_depth = 6.4
         editor.building_generator_height = 4.8
+        return
+    }
+    if kind == .Windmill {
+        editor.building_generator_width = 10
+        editor.building_generator_depth = 10
+        editor.building_generator_height = 8
+        return
+    }
+    if kind == .Patio {
+        editor.building_generator_width = 8
+        editor.building_generator_depth = 6
+        editor.building_generator_height = .1
+        return
+    }
+    if kind == .Garden {
+        editor.building_generator_width = 12
+        editor.building_generator_depth = 10
+        editor.building_generator_height = .1
+        return
+    }
+    if kind == .Cemetery {
+        editor.building_generator_width = 30
+        editor.building_generator_depth = 36
+        editor.building_generator_height = .1
+        return
+    }
+    if kind == .Plaza {
+        editor.building_generator_width = 18
+        editor.building_generator_depth = 16
+        editor.building_generator_height = .1
         return
     }
     hero_kind := kind == .Clinic ? hero.Kind.Clinic : kind == .Airport_Terminal ? hero.Kind.Airport_Terminal : hero.Kind.Post_Office
@@ -65,7 +110,11 @@ building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> te
     result.height = editor.building_generator_height
     result.rotation = rotation
     result.seed = seed
-    if editor.building_generator_kind == .Ordinary {
+    if building_generator_is_site_kind(editor.building_generator_kind) {
+        result.kind = .Foliage
+        result.height = .01
+        result.group_id = BUILDING_GENERATOR_SITE_GROUP_TAG | u64(editor.building_generator_kind)
+    } else if editor.building_generator_kind == .Ordinary {
         result.building = architecture.architecture_identity(
             {
                 density = editor.building_generator_density,
@@ -106,7 +155,7 @@ building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> te
                 seed,
             )
         }
-    } else {
+    } else if editor.building_generator_kind == .Marina_Office {
         result.height = 4.8
         result.building = architecture.architecture_identity(
             {
@@ -122,10 +171,21 @@ building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> te
             },
             seed,
         )
+    } else {
+        result.building = {
+            archetype = .Mill,
+            purpose = .Mill,
+            region = .Adriatic,
+        }
     }
-    result.color = architecture.architecture_color(seed)
-    _, foundation_high := architecture.architecture_foundation_height_range(&editor.project, result)
-    result.base_y = foundation_high
+    if building_generator_is_site_kind(editor.building_generator_kind) {
+        result.color = {0, 0, 0, 0}
+        result.base_y = height
+    } else {
+        result.color = architecture.architecture_color(seed)
+        _, foundation_high := architecture.architecture_foundation_height_range(&editor.project, result)
+        result.base_y = foundation_high
+    }
     return result
 }
 
@@ -155,8 +215,63 @@ building_generator_commit :: proc(editor: ^Editor) {
     added := terrain.add_structure(&editor.project, candidate)
     if added < 0 do return
     editor.project.structures[added].seed = candidate.seed
-    append(&editor.architecture_city_plan.structures, candidate)
-    editor.architecture_city_plan.count += 1
+    switch editor.building_generator_kind {
+    case .Patio:
+        if editor.settlement_plan.patio_count < SETTLEMENT_PATIO_CAPACITY {
+            editor.settlement_plan.patios[editor.settlement_plan.patio_count] = {
+                center = {candidate.center_x, candidate.center_z},
+                base_y = candidate.base_y,
+                width = candidate.width,
+                depth = candidate.depth,
+                rotation = candidate.rotation,
+                seed = candidate.seed,
+                style = editor.settlement_plan.request.region == .Aegean ? .Aegean : .Adriatic,
+            }
+            editor.settlement_plan.patio_count += 1
+            world_renderer.retained_patio_dirty = true
+        }
+    case .Garden:
+        if editor.settlement_plan.site_count < len(editor.settlement_plan.sites) &&
+           editor.settlement_plan.garden_count < len(editor.settlement_plan.gardens) {
+            site_index := editor.settlement_plan.site_count
+            editor.settlement_plan.sites[site_index] = {
+                structure = editor.project.structures[added],
+                kind = .Park,
+                accepted = true,
+            }
+            editor.settlement_plan.site_count += 1
+            editor.settlement_plan.gardens[editor.settlement_plan.garden_count] = {
+                center = {candidate.center_x, candidate.center_z},
+                width = candidate.width,
+                depth = candidate.depth,
+                rotation = candidate.rotation,
+                seed = candidate.seed,
+                site_index = site_index,
+                style = .Courtyard,
+            }
+            editor.settlement_plan.garden_count += 1
+            editor.settlement_plan.valid = true
+        }
+    case .Cemetery:
+        editor.project.structures[added].group_id = SETTLEMENT_CEMETERY_GROUP_TAG | u64(candidate.seed)
+        world_renderer.retained_patio_dirty = true
+    case .Plaza:
+        if editor.settlement_plan.terrain_edit_count < len(editor.settlement_plan.terrain_edits) {
+            editor.settlement_plan.terrain_edits[editor.settlement_plan.terrain_edit_count] = {
+                kind = .Plaza,
+                center = {candidate.center_x, candidate.center_z},
+                half_extent = {candidate.width * .5, candidate.depth * .5},
+                target_height = candidate.base_y,
+                feather = 1,
+            }
+            editor.settlement_plan.terrain_edit_count += 1
+            editor.settlement_plan.valid = true
+            editor.circulation_plan_valid = false
+        }
+    case .Ordinary, .Post_Office, .Clinic, .Airport_Terminal, .Marina_Office, .Windmill:
+        append(&editor.architecture_city_plan.structures, candidate)
+        editor.architecture_city_plan.count += 1
+    }
     editor.project.revision += 1
     editor.building_generator_variation = min(editor.building_generator_variation + 1, f32(256))
 }

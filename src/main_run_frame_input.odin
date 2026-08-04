@@ -498,6 +498,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         formation_brush_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         ruin_stamp_update_preview(editor, world_x, world_z, cursor_hit && !ui_hit)
         ruin_stamp_process_input(editor, cursor_hit && !ui_hit)
+        mouse_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
@@ -509,6 +510,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
        !editor.farm_paint_mode &&
        !editor.wreck_paint_mode &&
        !editor.climbing_leaf_paint_mode &&
+       !editor.mouse_placement_mode &&
        !editor.selection_tool_active &&
        editor.authoring_tool != .Formations &&
        (editor.authoring_tool != .Foliage || editor.foliage_hedgerow_mode || editor.structure_kind == .Field) &&

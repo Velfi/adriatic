@@ -529,7 +529,7 @@ when ODIN_TEST {
         production := fixture_migration_production_registry()
         testing.expect(
             t,
-            FIXTURE_SCHEMA_VERSION == 22 &&
+            FIXTURE_SCHEMA_VERSION == 23 &&
             len(production.steps) == FIXTURE_SCHEMA_VERSION - 1 &&
             production.steps[0].from_version == 1 &&
             production.steps[0].to_version == 2 &&
@@ -566,7 +566,11 @@ when ODIN_TEST {
             production.steps[20].from_version == 21 &&
             production.steps[20].to_version == 22 &&
             production.steps[20].wrapper == fixture_migration_step_v0021_to_v0022 &&
-            production.steps[20].change_id == "enum-add:adriatic:packages/terrain.Formation_Kind.Field",
+            production.steps[20].change_id == "enum-add:adriatic:packages/terrain.Formation_Kind.Field" &&
+            production.steps[21].from_version == 22 &&
+            production.steps[21].to_version == 23 &&
+            production.steps[21].wrapper == fixture_migration_step_v0022_to_v0023 &&
+            production.steps[21].change_id == "enum-add:adriatic:src.Authoring_Tool.Mice",
         )
 
         result, migration_error, migrated := fixture_migration_run_with_registry(

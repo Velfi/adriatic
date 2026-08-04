@@ -329,6 +329,23 @@ fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
             return "greek_placements.asset_index"
         }
     }
+    if !fixture_editor_count_valid(fixture.mouse_placement_count, len(fixture.mouse_placements)) {
+        return "mouse_placement_count"
+    }
+    seen_mice: [MOUSE_PLACEMENT_CAPACITY]bool
+    for &placement in fixture.mouse_placements[:fixture.mouse_placement_count] {
+        resident_index := int(placement.resident)
+        if resident_index < 0 || resident_index >= MOUSE_PLACEMENT_CAPACITY {
+            return "mouse_placements.resident"
+        }
+        if seen_mice[resident_index] do return "mouse_placements.resident"
+        seen_mice[resident_index] = true
+        if placement.x != placement.x || math.is_inf_f32(placement.x) ||
+           placement.z != placement.z || math.is_inf_f32(placement.z) ||
+           placement.rotation != placement.rotation || math.is_inf_f32(placement.rotation) {
+            return "mouse_placements.position"
+        }
+    }
     if fixture.marina_authored {
         plan := &fixture.marina_authored_plan
         if !fixture_editor_count_valid(plan.segment_count, len(plan.segments)) {

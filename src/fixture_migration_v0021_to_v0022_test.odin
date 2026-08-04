@@ -19,9 +19,9 @@ fixture_migration_v0021_to_v0022_preserves_existing_formation_kind :: proc(t: ^t
     testing.expect_value(t, int(terrain.Formation_Kind.Field), 9)
     registry := fixture_migration_production_registry()
     testing.expect(t, len(registry.steps) == FIXTURE_SCHEMA_VERSION - 1)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].from_version == 21)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].to_version == 22)
-    testing.expect(t, registry.steps[len(registry.steps) - 1].wrapper == fixture_migration_step_v0021_to_v0022)
+    testing.expect(t, registry.steps[len(registry.steps) - 2].from_version == 21)
+    testing.expect(t, registry.steps[len(registry.steps) - 2].to_version == 22)
+    testing.expect(t, registry.steps[len(registry.steps) - 2].wrapper == fixture_migration_step_v0021_to_v0022)
     for resolution in FIXTURE_MIGRATION_V0021_TO_V0022_RESOLUTIONS {
         testing.expect(t, resolution.kind == .Scripted)
     }

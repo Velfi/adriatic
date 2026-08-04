@@ -519,6 +519,8 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.settlement_plan = editor.settlement_plan
     state.greek_placements = editor.greek_placements
     state.greek_placement_count = editor.greek_placement_count
+    state.mouse_placements = editor.mouse_placements
+    state.mouse_placement_count = editor.mouse_placement_count
     state.default_marinas = editor.default_marinas
     state.default_harbors = editor.default_harbors
     state.default_harbor_interventions = editor.default_harbor_interventions
@@ -559,6 +561,8 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.settlement_plan = state.settlement_plan
     editor.greek_placements = state.greek_placements
     editor.greek_placement_count = state.greek_placement_count
+    editor.mouse_placements = state.mouse_placements
+    editor.mouse_placement_count = state.mouse_placement_count
     editor.default_marinas = state.default_marinas
     editor.default_harbors = state.default_harbors
     editor.default_harbor_interventions = state.default_harbor_interventions

@@ -279,6 +279,12 @@ fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION -
         wrapper = fixture_migration_step_v0021_to_v0022,
         change_id = "enum-add:adriatic:packages/terrain.Formation_Kind.Field",
     },
+    {
+        from_version = FIXTURE_MIGRATION_V0022_TO_V0023_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0022_TO_V0023_TO_VERSION,
+        wrapper = fixture_migration_step_v0022_to_v0023,
+        change_id = "enum-add:adriatic:src.Authoring_Tool.Mice",
+    },
 }
 
 fixture_migration_production_registry :: proc() -> Fixture_Migration_Registry {

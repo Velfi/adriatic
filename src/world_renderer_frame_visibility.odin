@@ -140,6 +140,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_marin(editor)
     world_lighthouse_keepers(editor)
     world_town_mice(editor)
+    world_authored_mice(editor)
     world_settlement_inhabitants(editor, true, false)
     dio.flame_graph_end(dio.flame_graph_current(), profile_npcs)
     profile_authored := dio.flame_graph_begin(dio.flame_graph_current(), "world_transient_authored_decorations")

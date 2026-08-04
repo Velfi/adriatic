@@ -325,7 +325,7 @@ world_formation :: proc(structure: terrain.Structure, project: ^terrain.Project 
         world_cliff_formation(stone, lod)
         world_formation_foliage(stone, lod)
     case .Foliage:
-        if settlement_cemetery_structure_is_reservation(structure) do return
+        if settlement_cemetery_structure_is_reservation(structure) || building_generator_site_marker(structure) do return
         world_foliage_formation(structure, terrain.BASE_CELL_SIZE, lod)
     case .Field:
         world_crop_field(structure, project, lod)

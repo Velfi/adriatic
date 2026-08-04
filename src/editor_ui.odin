@@ -5,6 +5,7 @@ import atmosphere "../packages/atmosphere"
 import farmland "../packages/farmland"
 import road_designer "../packages/road_designer"
 import roads "../packages/roads"
+import story "../packages/story"
 import terrain "../packages/terrain"
 import "core:c"
 import "core:fmt"
@@ -29,6 +30,7 @@ Authoring_Tool :: enum {
     Roads,
     GreekAssets,
     Obstacles,
+    Mice,
 }
 
 Land_Paint_Kind :: enum u8 {
@@ -56,8 +58,8 @@ Plant_Stamp_Mode :: enum u8 {
 
 // GreekAssets remains as a frozen enum value for historical Fixture decoding,
 // but is no longer part of the live editor tool palette.
-AUTHORING_TOOL_COUNT :: 14
-AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 4
+AUTHORING_TOOL_COUNT :: 16
+AUTHORING_TOOL_DISPLAY_COUNT :: AUTHORING_TOOL_COUNT - 5
 AUTHORING_TOOL_PALETTE_COUNT :: AUTHORING_TOOL_DISPLAY_COUNT + 2
 AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Sculpt,
@@ -70,6 +72,7 @@ AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Marina,
     .Wreck,
     .Obstacles,
+    .Mice,
 }
 EDITOR_UI_TOP_HEIGHT :: f32(54)
 EDITOR_UI_RAIL_WIDTH :: f32(184)
@@ -149,6 +152,8 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "RUIN STAMP"
     case .Obstacles:
         return "OBSTACLES"
+    case .Mice:
+        return "MICE"
     }
     return "TOOL"
 }
@@ -241,6 +246,8 @@ authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
         return "G"
     case .Obstacles:
         return ""
+    case .Mice:
+        return ""
     }
     return ""
 }
@@ -276,6 +283,7 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     editor.formation_brush_group_id = 0
     editor.rock_placement_mode = false
     editor.greek_placement_mode = false
+    editor.mouse_placement_mode = false
     editor.road_mode = false
     editor.curve_mode = false
     switch resolved {
@@ -332,6 +340,9 @@ authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
         editor.structure_selected = -1
     case .Obstacles:
         editor.tool = .Structure
+    case .Mice:
+        editor.tool = .Structure
+        editor.mouse_placement_mode = true
     }
     editor.tweak.terrain.tool = editor.tool
     curve_reset(editor)
@@ -922,6 +933,8 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         return "Click an asset, then click terrain to place it. Wheel zooms; Alt rotates; Shift scales."
     case .Obstacles:
         return ""
+    case .Mice:
+        return "Choose a mouse, then click terrain to place it. Right removes a mouse."
     }
     return ""
 }
@@ -1664,6 +1677,17 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         editor_ui_panel_button({bounds.x, bounds.y + 4, half, 30}, "TERMINAL", editor.building_generator_kind == .Airport_Terminal)
         editor_ui_panel_button({bounds.x + half + 6, bounds.y + 4, half, 30}, "MARINA OFFICE", editor.building_generator_kind == .Marina_Office)
         row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        third = (bounds.width - 12) / 3
+        editor_ui_panel_button({bounds.x, bounds.y + 4, third, 30}, "WINDMILL", editor.building_generator_kind == .Windmill)
+        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 4, third, 30}, "PATIO", editor.building_generator_kind == .Patio)
+        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 4, third, 30}, "GARDEN", editor.building_generator_kind == .Garden)
+        row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
+        editor_ui_panel_button({bounds.x, bounds.y + 4, half, 30}, "CEMETERY", editor.building_generator_kind == .Cemetery)
+        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 4, half, 30}, "PLAZA", editor.building_generator_kind == .Plaza)
+        row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", editor.building_generator_width, 6, 36, 1)
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", editor.building_generator_depth, 6, 40, 1)
@@ -2052,6 +2076,35 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             {209, 215, 222, 255},
         )
         row += 1
+    case .Mice:
+        available_count := mouse_placement_available_count(editor)
+        if available_count == 0 {
+            ui_draw_text(
+                .Data,
+                "ALL MICE PLACED",
+                {panel.x + 14, editor_ui_slider_bounds(layout, row).y + 12},
+                .45,
+                {134, 224, 216, 255},
+            )
+            row += 1
+        } else {
+            editor.mouse_placement_selected = clamp(editor.mouse_placement_selected, 0, available_count - 1)
+            resident, _ := mouse_placement_available_at(editor, editor.mouse_placement_selected)
+            editor_ui_panel_button(
+                editor_ui_slider_bounds(layout, row),
+                fmt.ctprintf("MOUSE   %s", story.resident_name(resident)),
+                true,
+                true,
+            )
+            row += 1
+            bounds := editor_ui_slider_bounds(layout, row)
+            half := (bounds.width - 6) * .5
+            editor_ui_panel_button({bounds.x, bounds.y, half, 32}, "PREVIOUS", false, available_count > 1)
+            editor_ui_panel_button({bounds.x + half + 6, bounds.y, half, 32}, "NEXT", false, available_count > 1)
+            row += 1
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "ROTATION", editor.mouse_placement_rotation, -math.PI, math.PI, 2)
+            row += 1
+        }
     }
 
     if show_world_summary {
@@ -2623,6 +2676,24 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             building_generator_select_kind(editor, .Marina_Office)
         }
         row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        third = (bounds.width - 12) / 3
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 4, third, 30}) {
+            building_generator_select_kind(editor, .Windmill)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 4, third, 30}) {
+            building_generator_select_kind(editor, .Patio)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 4, third, 30}) {
+            building_generator_select_kind(editor, .Garden)
+        }
+        row += 1
+        bounds = editor_ui_slider_bounds(layout, row)
+        half = (bounds.width - 6) * .5
+        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 4, half, 30}) {
+            building_generator_select_kind(editor, .Cemetery)
+        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 4, half, 30}) {
+            building_generator_select_kind(editor, .Plaza)
+        }
+        row += 1
         _ = editor_ui_slider_input(editor, layout, 7, row, &editor.building_generator_width, 6, 36, 1)
         row += 1
         _ = editor_ui_slider_input(editor, layout, 10, row, &editor.building_generator_depth, 6, 40, 1)
@@ -2815,6 +2886,25 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             editor.ruin_stamp_preview_valid = false
         }
         row += 2
+    case .Mice:
+        available_count := mouse_placement_available_count(editor)
+        if available_count > 0 {
+            editor.mouse_placement_selected = clamp(editor.mouse_placement_selected, 0, available_count - 1)
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row)) && available_count > 1 {
+                editor.mouse_placement_selected = (editor.mouse_placement_selected + 1) % available_count
+            }
+            row += 1
+            bounds := editor_ui_slider_bounds(layout, row)
+            half := (bounds.width - 6) * .5
+            if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y, half, 32}) && available_count > 1 {
+                editor.mouse_placement_selected = (editor.mouse_placement_selected + available_count - 1) % available_count
+            } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y, half, 32}) && available_count > 1 {
+                editor.mouse_placement_selected = (editor.mouse_placement_selected + 1) % available_count
+            }
+            row += 1
+            _ = editor_ui_slider_input(editor, layout, 20, row, &editor.mouse_placement_rotation, -math.PI, math.PI, .05)
+            row += 1
+        }
     case .Obstacles:
         actions := editor_ui_slider_bounds(layout, row)
         half := (actions.width - 6) * .5

@@ -118,6 +118,8 @@ Structure_History_State :: struct {
     settlement_plan:              Settlement_Plan,
     greek_placements:             [GREEK_PLACEMENT_CAPACITY]Greek_Placement,
     greek_placement_count:        int,
+    mouse_placements:             [MOUSE_PLACEMENT_CAPACITY]Mouse_Placement,
+    mouse_placement_count:        int,
     default_marinas:              [terrain.ISLAND_COUNT]marina.Plan,
     default_harbors:              [terrain.ISLAND_COUNT]harbor.Harbor_Plan,
     default_harbor_interventions: [terrain.ISLAND_COUNT]harbor.Harbor_Intervention,
@@ -404,6 +406,11 @@ Fixture :: struct {
     greek_placement_count:                          int `fixture:"-" fixture_map:"-"`,
     greek_placement_selected:                       int,
     greek_placement_mode:                           bool,
+    mouse_placements:                               [MOUSE_PLACEMENT_CAPACITY]Mouse_Placement,
+    mouse_placement_count:                          int,
+    mouse_placement_selected:                       int `fixture:"-"`,
+    mouse_placement_rotation:                       f32,
+    mouse_placement_mode:                           bool `fixture:"-"`,
     curve_points:                                   [CURVE_POINT_CAPACITY]Curve_Point,
     curve_point_count:                              int,
     curve_drawing:                                  bool `fixture:"-"`,
@@ -644,4 +651,4 @@ Fixture :: struct {
     map_source:                                     Fixture_Map_Source,
 }
 
-FIXTURE_SCHEMA_VERSION :: 22
+FIXTURE_SCHEMA_VERSION :: 23
