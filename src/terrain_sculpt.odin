@@ -43,6 +43,7 @@ Terrain_Authoring_Settings :: struct {
     size:                  f32,
     feather:               f32,
     flow:                  f32,
+    brush_strength:        f32,
     spacing:               f32,
     inner_core:            f32,
     affect_seabed:         bool,
@@ -95,6 +96,7 @@ Terrain_Sculpt_Session :: struct {
     base:                           ^Terrain_History_State,
     path:                           [TERRAIN_SCULPT_PATH_CAPACITY]terrain.Cliff_Point,
     path_count:                     int,
+    applied_path_count:             int,
     start_height, end_height:       f32,
     grade_valid:                    bool,
     effective_resolution:           f32,
@@ -129,6 +131,7 @@ terrain_authoring_defaults :: proc(state: ^Terrain_Sculpt_State, sea_level: f32)
             size               = 120,
             feather            = 36,
             flow               = .65,
+            brush_strength     = .10,
             spacing            = .2,
             inner_core         = .55,
             direction          = 1,
@@ -327,8 +330,13 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
     case:
         return false
     }
+    first_point := 0
+    if !session.finalizing {
+        first_point = session.applied_path_count
+        if first_point >= session.path_count do first_point = session.path_count - 1
+    }
     changed := false
-    for point in session.path[:session.path_count] {
+    for point in session.path[first_point:session.path_count] {
         changed =
             terrain.apply_authoring_brush(
                 &editor.project,
@@ -340,7 +348,10 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
                     size = settings.size,
                     inner_core = settings.inner_core,
                     feather = settings.feather,
-                    flow = settings.flow,
+                    // Flow defines the authored brush profile. Strength makes a
+                    // held stroke deliberate instead of reapplying a full flow
+                    // value on every rendered frame.
+                    flow = settings.flow * settings.brush_strength,
                     direction = settings.direction,
                     affect_seabed = settings.affect_seabed,
                     target_height = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
@@ -368,6 +379,7 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
             ) ||
             changed
     }
+    if !session.finalizing do session.applied_path_count = session.path_count
     return changed
 }
 
@@ -417,9 +429,10 @@ terrain_sculpt_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cu
     session := &editor.terrain_sculpt.session
     if editor == nil || !session.active do return
     settings := editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
-    // Cursor-derived values must always be sampled from the captured terrain,
-    // never from the previous frame's destructive preview.
-    terrain_sculpt_restore_base(editor)
+    drag_preview := terrain_action_is_spline(editor.terrain_sculpt.action) || terrain_action_is_area(editor.terrain_sculpt.action)
+    // Spline and area tools are position-defined previews. Brush tools are
+    // hold-defined and must build on their preceding held stamp.
+    if drag_preview do terrain_sculpt_restore_base(editor)
     if cursor_hit {
         session.current_x, session.current_z = world_x, world_z
         session.valid = terrain.island_at(&editor.project, world_x, world_z) == session.owner
@@ -464,8 +477,20 @@ terrain_sculpt_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cu
     if terrain_action_is_spline(editor.terrain_sculpt.action) || terrain_action_is_area(editor.terrain_sculpt.action) {
         session.dirty_radius = f32(math.sqrt(f64(dx * dx + dz * dz))) * .5 + settings.size + settings.feather
     }
-    session.changed = terrain_sculpt_apply(editor, session)
-    world_terrain_changed(editor, session.dirty_x, session.dirty_z, session.dirty_radius)
+    session.changed = terrain_sculpt_apply(editor, session) || session.changed
+    world_terrain_changed(editor, session.dirty_x, session.dirty_z, session.dirty_radius, true)
+    // A spline preview's final dirty bounds can cover the full drag. Keep the
+    // live renderer focused on the current tip so it can show immediate
+    // feedback without regenerating that whole accumulated span every frame.
+    preview_radius := settings.size + settings.feather
+    world_renderer.terrain_live_edit_frame_dirty = {
+        valid    = true,
+        revision = editor.terrain_revision,
+        min_x    = session.current_x - preview_radius,
+        min_z    = session.current_z - preview_radius,
+        max_x    = session.current_x + preview_radius,
+        max_z    = session.current_z + preview_radius,
+    }
 }
 
 terrain_sculpt_cancel :: proc(editor: ^Editor) {
@@ -492,21 +517,39 @@ terrain_sculpt_commit :: proc(editor: ^Editor) {
             abs(session.current_z - session.start_z) > .01
     }
     dirty_x, dirty_z, dirty_radius := session.dirty_x, session.dirty_z, session.dirty_radius
-    terrain_sculpt_restore_base(editor)
+    incremental_brush := !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action)
+    if !incremental_brush do terrain_sculpt_restore_base(editor)
     if !meaningful {
+        if incremental_brush do terrain_sculpt_restore_base(editor)
         world_terrain_changed(editor, dirty_x, dirty_z, dirty_radius)
         free(session.base)
         editor.terrain_sculpt.session = {}
         return
     }
-    terrain_history_push_undo(editor)
+    if incremental_brush {
+        final := new(Terrain_History_State)
+        if final == nil {
+            terrain_sculpt_cancel(editor)
+            terrain_file_feedback(editor, "NOT ENOUGH MEMORY")
+            return
+        }
+        terrain_history_capture(editor, final)
+        terrain_sculpt_restore_base(editor)
+        terrain_history_push_undo(editor)
+        terrain_history_restore(editor, final)
+        free(final)
+    } else {
+        terrain_history_push_undo(editor)
+    }
     free(session.base)
     session.base = nil
-    session.finalizing = true
-    if !terrain_sculpt_apply(editor, session) {
-        editor.terrain_undo_count -= 1
-        editor.terrain_sculpt.session = {}
-        return
+    if !incremental_brush {
+        session.finalizing = true
+        if !terrain_sculpt_apply(editor, session) {
+            editor.terrain_undo_count -= 1
+            editor.terrain_sculpt.session = {}
+            return
+        }
     }
     _ = terrain.bathymetry_refresh_generated_bounds(
         &editor.project,

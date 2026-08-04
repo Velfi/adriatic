@@ -1101,6 +1101,10 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "FLOW", settings.flow, 0, 1, 2)
         row += 1
+        if !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action) {
+            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", settings.brush_strength, .01, 10, 2)
+            row += 1
+        }
         switch editor.terrain_sculpt.action {
         case .Coast:
             editor_ui_slider_draw(
@@ -2331,6 +2335,9 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 301, row, &settings.size, 4, 500, 1); row += 1
         _ = editor_ui_slider_input(editor, layout, 302, row, &settings.feather, 0, 250, 1); row += 1
         _ = editor_ui_slider_input(editor, layout, 303, row, &settings.flow, 0, 1, .01); row += 1
+        if !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action) {
+            _ = editor_ui_slider_input(editor, layout, 335, row, &settings.brush_strength, .01, 10, .01); row += 1
+        }
         switch editor.terrain_sculpt.action {
         case .Coast:
             _ = editor_ui_slider_input(editor, layout, 304, row, &settings.beach_elevation, -5, 20, .1); row += 1

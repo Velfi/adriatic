@@ -145,7 +145,7 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
                     world_z + editor.radius,
                 )
             }
-            world_terrain_changed(editor, world_x, world_z, editor.radius)
+            world_terrain_changed(editor, world_x, world_z, editor.radius, true)
         }
         if canvas2d.IsMouseButtonDown(.RIGHT) {
             if editor.tool == .Paint && editor.marine_ecology_paint {
@@ -179,8 +179,14 @@ run_frame_finish_world_simulation :: proc(using run: ^Run_State, using frame_sta
                     world_z + editor.radius,
                 )
             }
-            world_terrain_changed(editor, world_x, world_z, editor.radius)
+            world_terrain_changed(editor, world_x, world_z, editor.radius, true)
         }
+    }
+    if !editor.in_map &&
+       editor.tool != .Structure &&
+       !terrain_sculpt_owns_direct_brush(editor) &&
+       (canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)) {
+        world_terrain_live_edit_flush(editor)
     }
     if capture_story_meeting_mode &&
        frame == capture_frame &&

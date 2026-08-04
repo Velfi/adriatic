@@ -79,6 +79,43 @@ authoring_brush_respects_seabed_policy :: proc(t: ^testing.T) {
 }
 
 @(test)
+authoring_strong_coast_brush_reaches_existing_land :: proc(t: ^testing.T) {
+    project := new(Project); defer free(project)
+    init_project(project); defer destroy_project(project)
+    x, z, _ := island_center(project, .East)
+    source_x, source_z, ok := terrain_operator_source_point(project, .East, x, z)
+    testing.expect(t, ok)
+    level := terrain_operator_authored_level(project, source_x - 8, source_z - 8, source_x + 8, source_z + 8)
+    data := &project.levels[level]
+    sx := clamp(int(math.round(f64((source_x - data.origin_x) / data.cell_size))), 0, TERRAIN_RESOLUTION - 1)
+    sz := clamp(int(math.round(f64((source_z - data.origin_z) / data.cell_size))), 0, TERRAIN_RESOLUTION - 1)
+    index := sample_index(sx, sz)
+    data.heights[index] = project.sea_level + 42
+    before := data.heights[index]
+    testing.expect(
+        t,
+        apply_authoring_brush(
+            project,
+            {
+                owner = .East,
+                operation = .Coast,
+                world_x = x,
+                world_z = z,
+                size = 12,
+                inner_core = 1,
+                flow = 6.5,
+                direction = 1,
+                affect_seabed = true,
+                beach_height = 2,
+                shelf_depth = -12,
+                iterations = 8,
+            },
+        ),
+    )
+    testing.expect(t, data.heights[index] > before)
+}
+
+@(test)
 authoring_grade_rejects_excessive_slope :: proc(t: ^testing.T) {
     project := new(Project); defer free(project)
     init_project(project); defer destroy_project(project)

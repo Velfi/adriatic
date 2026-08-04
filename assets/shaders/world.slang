@@ -2154,11 +2154,23 @@ float3 shade_terrain_dunes(VertexOutput input, float3 color) {
     color *= lerp(.990, 1.012, ripple_crest * ripple_weight);
     color *= lerp(1.0, .986, ripple_trough * ripple_weight);
 
-    float3 normal = normalize(input.normal);
-    float3 light = normalize(float3(-.45, .85, -.3));
-    float shade = clamp(.48 + max(dot(normal, light), 0.0) * .52, .42, 1.05);
-    color *= shade;
     return saturate(color);
+}
+
+float3 shade_terrain_lighting(VertexOutput input, float3 color) {
+    float3 normal = normalize(input.normal);
+    float daylight = saturate(push.sun.w);
+    float3 key_direction = normalize(push.sun.xyz);
+    float direct = saturate(dot(normal, key_direction));
+    float shadow_visibility = dynamic_shadow_visibility(input.world_position, normal);
+
+    // Palette terrain needs a broad sky fill, but its relief must remain
+    // legible from the editor camera. The actual sun owns the directional
+    // term; at night the same vector holds the moon and the environment pass
+    // below supplies the final low-light color treatment.
+    float ambient = lerp(.18, .42, daylight);
+    float key = lerp(.18, .62, daylight);
+    return color * (ambient + direct * shadow_visibility * key);
 }
 
 float3 shade_terrain_limestone(VertexOutput input, float3 color) {
@@ -3316,6 +3328,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             base = shade_terrain_dunes(input, base);
             base = shade_grass_wind_sheen(input, base);
             base = shade_terrain_limestone(input, base);
+            base = shade_terrain_lighting(input, base);
             base = shade_lab_terrain_grid(input, base);
             break;
         case MATERIAL_WATER:
@@ -3527,7 +3540,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         if (surface_normal.y < 0.0) surface_normal = -surface_normal;
     }
     if (input.kind == MATERIAL_UNSHADED ||
-        input.kind == MATERIAL_TERRAIN ||
         input.kind == MATERIAL_FOLIAGE ||
         input.kind == MATERIAL_LEAF ||
         input.kind == MATERIAL_PETAL ||

@@ -2776,6 +2776,29 @@ sample_authored_field_raw :: #force_inline proc(
     return
 }
 
+// Rendering samples the same authored heightfield as gameplay, but keeps the
+// material field continuous across clipmap levels. Discrete material ownership
+// remains in sample_authored_field_raw for editing and physics.
+@(no_instrumentation)
+sample_authored_render_field :: #force_inline proc(
+    project: ^Project,
+    level: int,
+    x, z: f32,
+) -> (
+    height, material: f32,
+    contained: bool,
+) {
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
+    for candidate in level ..< CLIPMAP_LEVELS {
+        data := &project.levels[candidate]
+        if !level_contains(data, x, z) do continue
+        height = sample_level_height(data, x, z)
+        material = sample_level_render_material(data, x, z)
+        return height, material, true
+    }
+    return
+}
+
 sample_land_raw :: #force_inline proc(
     project: ^Project,
     level: int,
@@ -2848,6 +2871,49 @@ sample_land :: proc(project: ^Project, level: int, x, z: f32) -> (height, materi
     return
 }
 
+@(no_instrumentation)
+sample_land_render :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+    if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
+
+    // Geometry may use a coarse clipmap at distance, but a narrow shoreline
+    // cannot afford to inherit that level's sample phase. Resolve its color
+    // mask from the finest resident field instead, falling back only when a
+    // point lies outside that field's authored extent.
+    render_level := 0
+
+    source_owned := false
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if island_contains_source(island, x, z) {
+            source_owned = true
+            break
+        }
+    }
+    if !source_owned {
+        contained: bool
+        height, material, contained = sample_authored_render_field(project, render_level, x, z)
+        found = contained && height > project.sea_level + SHORELINE_EPSILON
+    }
+
+    for _, index in project.island_transforms {
+        island := island_transform_at(project, index)
+        if !island_contains_world(island, x, z) do continue
+        source_x := x - (island.current_x - island.source_x)
+        source_z := z - (island.current_z - island.source_z)
+        candidate_height, candidate_material, candidate_found := sample_authored_render_field(
+            project,
+            render_level,
+            source_x,
+            source_z,
+        )
+        if !candidate_found || candidate_height <= project.sea_level + SHORELINE_EPSILON do continue
+        if !found || candidate_height > height || (candidate_height == height && index == 0) {
+            height, material, found = candidate_height, candidate_material, true
+        }
+    }
+    return
+}
+
 // Blend a rendered fine-grid vertex onto the next coarser surface near the
 // outside of its clipmap patch. At weight 1 the fine edge follows the coarse
 // grid's bilinear surface exactly, eliminating the T-junction crack between
@@ -2878,9 +2944,37 @@ active_waterway_at :: #force_inline proc(project: ^Project, level: int, x, z: f3
 
 @(no_instrumentation)
 sample_render_material :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> f32 {
-    _, material, found := sample_land(project, level, x, z)
+    _, material, found := sample_land_render(project, level, x, z)
     if found do return material
     return 0
+}
+
+// A beach is narrower than distant clipmap cells. Preserve its signed mask at
+// a coarse vertex whenever it crosses that vertex's surrounding cell, rather
+// than allowing grid phase to erase a whole beach segment. The extra taps are
+// only needed near low, non-sand terrain; normal land keeps one field lookup.
+@(no_instrumentation)
+sample_render_material_with_shoreline_coverage :: #force_inline proc(
+    project: ^Project,
+    level: int,
+    x, z, footprint: f32,
+) -> f32 {
+    height, material, found := sample_land_render(project, level, x, z)
+    if !found || material < 0 || footprint <= 2 || height > project.sea_level + 6 do return material
+
+    offsets := [4]struct {x, z: f32}{{-footprint, 0}, {footprint, 0}, {0, -footprint}, {0, footprint}}
+    for offset in offsets {
+        candidate_height, candidate_material, candidate_found := sample_land_render(
+            project,
+            level,
+            x + offset.x,
+            z + offset.z,
+        )
+        if candidate_found && candidate_height > project.sea_level + SHORELINE_EPSILON {
+            material = min(material, candidate_material)
+        }
+    }
+    return material
 }
 
 // Ground_Surface is the discrete, drivable ground classification derived from

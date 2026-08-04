@@ -11,40 +11,33 @@ import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
 
-world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
-    if editor == nil do return
-    editor.terrain_revision += 1
-    revision := editor.terrain_revision
-    changed := Terrain_Dirty_Bounds {
-        valid    = true,
-        revision = revision,
-        min_x    = x - radius,
-        min_z    = z - radius,
-        max_x    = x + radius,
-        max_z    = z + radius,
+terrain_dirty_bounds_include :: proc(target: ^Terrain_Dirty_Bounds, added: Terrain_Dirty_Bounds) {
+    if target == nil || !added.valid do return
+    if !target.valid {
+        target^ = added
+        return
     }
-    cache_dirty := &world_renderer.clipmap_cache_dirty
-    if cache_dirty.valid {
-        cache_dirty.min_x = min(cache_dirty.min_x, changed.min_x)
-        cache_dirty.min_z = min(cache_dirty.min_z, changed.min_z)
-        cache_dirty.max_x = max(cache_dirty.max_x, changed.max_x)
-        cache_dirty.max_z = max(cache_dirty.max_z, changed.max_z)
-        cache_dirty.revision = revision
-    } else {
-        cache_dirty^ = changed
-    }
-    for &dirty in world_renderer.clipmap_dirty {
-        if dirty.valid {
-            if dirty.revision + 1 != revision do dirty.full_rebuild = true
-            dirty.min_x = min(dirty.min_x, changed.min_x)
-            dirty.min_z = min(dirty.min_z, changed.min_z)
-            dirty.max_x = max(dirty.max_x, changed.max_x)
-            dirty.max_z = max(dirty.max_z, changed.max_z)
-            dirty.revision = revision
-        } else {
-            dirty = changed
-        }
-    }
+    target.full_rebuild = target.full_rebuild || added.full_rebuild
+    target.min_x = min(target.min_x, added.min_x)
+    target.min_z = min(target.min_z, added.min_z)
+    target.max_x = max(target.max_x, added.max_x)
+    target.max_z = max(target.max_z, added.max_z)
+    target.revision = added.revision
+}
+
+@(no_instrumentation)
+terrain_dirty_bounds_intersects_circle :: #force_inline proc(
+    changed: Terrain_Dirty_Bounds,
+    x, z, radius: f32,
+) -> bool {
+    closest_x := clamp(x, changed.min_x, changed.max_x)
+    closest_z := clamp(z, changed.min_z, changed.max_z)
+    dx, dz := x - closest_x, z - closest_z
+    return dx * dx + dz * dz <= radius * radius
+}
+
+world_terrain_invalidate_derived :: proc(editor: ^Editor, changed: Terrain_Dirty_Bounds) {
+    if editor == nil || !changed.valid do return
     ground_grass_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     world_bathymetry_geometry_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     world_ocean_sample_grid_invalidate_bounds(changed)
@@ -57,6 +50,30 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
     if world_renderer.pavement_query_revision != 0 {
         world_renderer.pavement_query_revision = editor.project.revision
     }
+    for &entry in world_renderer.architecture_street_area_cache {
+        if !entry.valid do continue
+        radius := f32(math.sqrt(f64(entry.area.width * entry.area.width + entry.area.length * entry.area.length))) * .5 + 2
+        if terrain_dirty_bounds_intersects_circle(changed, entry.area.center_x, entry.area.center_z, radius) {
+            entry.valid = false
+            continue
+        }
+        entry.project_revision = editor.project.revision
+        entry.terrain_revision = editor.terrain_revision
+    }
+    for &entry in world_renderer.settlement_fountain_geometry_cache {
+        if !entry.valid do continue
+        if terrain_dirty_bounds_intersects_circle(changed, entry.origin.x, entry.origin.z, entry.radius + 2.3) {
+            entry.valid = false
+            continue
+        }
+        entry.terrain_revision = editor.terrain_revision
+    }
+    // These derived city meshes have no cheap bounds index yet. They remain
+    // valid while a preview moves, then rebuild once from the final terrain.
+    for &entry in world_renderer.architecture_alley_render_cache do entry.valid = false
+    world_renderer.architecture_alley_geometry_valid = false
+    world_renderer.laundry_geometry_valid = false
+    world_renderer.resident_home_cache_valid = false
     for &entry in world_renderer.static_geometry_cache {
         if !entry.valid do continue
         if world_terrain_structure_intersects(entry.structure, changed) {
@@ -87,6 +104,129 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
             entry.ground_terrain_revision = editor.terrain_revision
         }
     }
+    world_renderer.dynamic_shadow_terrain_cache.valid = false
+}
+
+world_terrain_defer_derived :: proc(editor: ^Editor, changed: Terrain_Dirty_Bounds) {
+    if editor == nil || !changed.valid do return
+    world_renderer.terrain_live_edit_active = true
+    terrain_dirty_bounds_include(&world_renderer.terrain_live_edit_dirty, changed)
+    world_renderer.terrain_live_edit_frame_dirty = changed
+
+    // Keep the previously baked secondary world alive while the stroke moves.
+    // Only the coarse terrain rings change live; roads, water, and grounded
+    // presentation geometry reconcile once when the stroke ends.
+    world_renderer.grass_cache_project_revision = editor.project.revision
+    if world_renderer.road_revision != 0 do world_renderer.road_revision = editor.project.revision
+    if world_renderer.road_geometry_valid {
+        world_renderer.road_geometry_revision = editor.project.revision
+        world_renderer.road_geometry_terrain_revision = editor.terrain_revision
+    }
+    if world_renderer.pavement_query_revision != 0 {
+        world_renderer.pavement_query_revision = editor.project.revision
+    }
+    if world_renderer.ocean_cache_valid {
+        world_renderer.ocean_cache_project_revision = editor.project.revision
+        world_renderer.ocean_cache_terrain_revision = editor.terrain_revision
+    }
+    for &entry in world_renderer.architecture_street_area_cache {
+        if !entry.valid do continue
+        entry.project_revision = editor.project.revision
+        entry.terrain_revision = editor.terrain_revision
+    }
+    for &entry in world_renderer.settlement_fountain_geometry_cache {
+        if !entry.valid do continue
+        entry.terrain_revision = editor.terrain_revision
+    }
+    if editor.circulation_plan_valid do editor.circulation_revision = editor.project.revision
+    world_renderer.architecture_alley_terrain_revision = editor.terrain_revision
+    world_renderer.architecture_alley_project_revision = editor.project.revision
+    if world_renderer.architecture_alley_geometry_valid {
+        world_renderer.architecture_alley_geometry_terrain_revision = editor.terrain_revision
+        world_renderer.architecture_alley_geometry_project_revision = editor.project.revision
+    }
+    if world_renderer.laundry_geometry_valid {
+        world_renderer.laundry_geometry_revision = editor.project.revision
+        world_renderer.laundry_geometry_terrain_revision = editor.terrain_revision
+    }
+    if world_renderer.resident_home_cache_valid {
+        world_renderer.resident_home_project_revision = editor.project.revision
+        world_renderer.resident_home_terrain_revision = editor.terrain_revision
+    }
+    if world_renderer.town_mouse_placement_valid {
+        world_renderer.town_mouse_placement_project_revision = editor.project.revision
+        world_renderer.town_mouse_placement_terrain_revision = editor.terrain_revision
+    }
+    for &entry in world_renderer.town_mouse_geometry_cache {
+        if !entry.valid do continue
+        entry.project_revision = editor.project.revision
+        entry.terrain_revision = editor.terrain_revision
+        if entry.ground_valid {
+            entry.ground_project_revision = editor.project.revision
+            entry.ground_terrain_revision = editor.terrain_revision
+        }
+    }
+    if world_renderer.dynamic_shadow_terrain_cache.valid {
+        world_renderer.dynamic_shadow_terrain_cache.project_revision = editor.project.revision
+        world_renderer.dynamic_shadow_terrain_cache.terrain_revision = editor.terrain_revision
+    }
+}
+
+world_terrain_live_edit_flush :: proc(editor: ^Editor) {
+    if editor == nil do return
+    dirty := world_renderer.terrain_live_edit_dirty
+    world_renderer.terrain_live_edit_dirty = {}
+    world_renderer.terrain_live_edit_frame_dirty = {}
+    world_renderer.terrain_live_edit_active = false
+    if !dirty.valid do return
+
+    dirty.revision = editor.terrain_revision
+    terrain_dirty_bounds_include(&world_renderer.clipmap_cache_dirty, dirty)
+    world_terrain_invalidate_derived(editor, dirty)
+}
+
+world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32, defer_derived := false) {
+    if editor == nil do return
+    editor.terrain_revision += 1
+    revision := editor.terrain_revision
+    changed := Terrain_Dirty_Bounds {
+        valid    = true,
+        revision = revision,
+        min_x    = x - radius,
+        min_z    = z - radius,
+        max_x    = x + radius,
+        max_z    = z + radius,
+    }
+    if defer_derived {
+        world_terrain_defer_derived(editor, changed)
+        return
+    }
+    if world_renderer.terrain_live_edit_dirty.valid {
+        terrain_dirty_bounds_include(&changed, world_renderer.terrain_live_edit_dirty)
+        changed.revision = revision
+        world_renderer.terrain_live_edit_dirty = {}
+        world_renderer.terrain_live_edit_frame_dirty = {}
+        world_renderer.terrain_live_edit_active = false
+    }
+    cache_dirty := &world_renderer.clipmap_cache_dirty
+    if cache_dirty.valid {
+        terrain_dirty_bounds_include(cache_dirty, changed)
+    } else {
+        cache_dirty^ = changed
+    }
+    for &dirty in world_renderer.clipmap_dirty {
+        if dirty.valid {
+            if dirty.revision + 1 != revision do dirty.full_rebuild = true
+            dirty.min_x = min(dirty.min_x, changed.min_x)
+            dirty.min_z = min(dirty.min_z, changed.min_z)
+            dirty.max_x = max(dirty.max_x, changed.max_x)
+            dirty.max_z = max(dirty.max_z, changed.max_z)
+            dirty.revision = revision
+        } else {
+            dirty = changed
+        }
+    }
+    world_terrain_invalidate_derived(editor, changed)
 }
 
 world_terrain_invalidate_all :: proc(editor: ^Editor) {
@@ -114,6 +254,9 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
         full_rebuild = true,
         revision     = editor.terrain_revision,
     }
+    world_renderer.terrain_live_edit_active = false
+    world_renderer.terrain_live_edit_dirty = {}
+    world_renderer.terrain_live_edit_frame_dirty = {}
     for &entry in world_renderer.static_geometry_cache do entry.valid = false
     world_renderer.retained_static_dirty = true
     for &entry in world_renderer.foliage_geometry_cache do entry.valid = false
@@ -159,9 +302,101 @@ world_structure_storage_ensure :: proc(count: int) {
     reserve(&world_renderer.structure_candidates, capacity)
 }
 
+// Preview must leave input time for the next SDL poll. Updating a bounded
+// dirty patch in an already allocated mesh gives small brushes immediate
+// feedback and lets large strokes retain their last complete terrain stack.
+CLIPMAP_LIVE_EDIT_VERTEX_BUDGET :: 512
+
+clipmap_dirty_vertex_range :: proc(
+    editor: ^Editor,
+    level: int,
+    center: [2]f32,
+    dirty: Terrain_Dirty_Bounds,
+) -> (range_min_x, range_min_z, range_max_x, range_max_z: int, valid: bool) {
+    if editor == nil || !dirty.valid do return 0, 0, 0, 0, false
+    data := &editor.project.levels[level]
+    grid_cell := clipmap_grid_cell(editor, level)
+    resolution := clipmap_grid_resolution(level)
+    half_grid := f32(resolution - 1) * .5
+    padding := data.cell_size * 2
+    grid_min_x := center[0] - half_grid * grid_cell
+    grid_min_z := center[1] - half_grid * grid_cell
+    grid_max_x := center[0] + half_grid * grid_cell
+    grid_max_z := center[1] + half_grid * grid_cell
+    if dirty.max_x + padding < grid_min_x ||
+       dirty.max_z + padding < grid_min_z ||
+       dirty.min_x - padding > grid_max_x ||
+       dirty.min_z - padding > grid_max_z {
+        return 0, 0, 0, 0, false
+    }
+    range_min_x = clamp(int(math.floor(f64((dirty.min_x - padding - grid_min_x) / grid_cell))), 0, resolution - 1)
+    range_min_z = clamp(int(math.floor(f64((dirty.min_z - padding - grid_min_z) / grid_cell))), 0, resolution - 1)
+    range_max_x = clamp(int(math.ceil(f64((dirty.max_x + padding - grid_min_x) / grid_cell))), 0, resolution - 1)
+    range_max_z = clamp(int(math.ceil(f64((dirty.max_z + padding - grid_min_z) / grid_cell))), 0, resolution - 1)
+    return range_min_x, range_min_z, range_max_x, range_max_z, true
+}
+
+clipmap_live_edit_dirty :: proc(editor: ^Editor, level: int, dirty: Terrain_Dirty_Bounds) -> Terrain_Dirty_Bounds {
+    if editor == nil || !dirty.valid do return {}
+    cell := clipmap_grid_cell(editor, level)
+    padding := editor.project.levels[level].cell_size * 2
+    side := f32(math.floor(math.sqrt(f64(CLIPMAP_LIVE_EDIT_VERTEX_BUDGET))))
+    radius := max((side - 3) * cell * .5 - padding, cell)
+    center_x := (dirty.min_x + dirty.max_x) * .5
+    center_z := (dirty.min_z + dirty.max_z) * .5
+    return {
+        valid    = true,
+        revision = dirty.revision,
+        min_x    = max(dirty.min_x, center_x - radius),
+        min_z    = max(dirty.min_z, center_z - radius),
+        max_x    = min(dirty.max_x, center_x + radius),
+        max_z    = min(dirty.max_z, center_z + radius),
+    }
+}
+
+clipmap_update_live_edit :: proc(editor: ^Editor, frame_index: int) {
+    if editor == nil do return
+    dirty := &world_renderer.terrain_live_edit_frame_dirty
+    if !dirty.valid do return
+    first_level := world_renderer.clipmap_first_level
+    for level in first_level ..< terrain.CLIPMAP_LEVELS {
+        if !world_renderer.clipmap_cache_valid[level] do continue
+        center := world_renderer.clipmap_cache_center[level]
+        live_dirty := clipmap_live_edit_dirty(editor, level, dirty^)
+        _, _, _, _, in_level := clipmap_dirty_vertex_range(editor, level, center, live_dirty)
+        if !in_level do continue
+        generated := clipmap_update_level(
+            editor,
+            world_renderer.clipmap_cache_vertex[level][:],
+            level,
+            center,
+            &live_dirty,
+        )
+        if generated == 0 do continue
+        upload_profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_upload")
+        buffer := &world_renderer.clipmap_vertex[frame_index][level]
+        mem.copy_non_overlapping(
+            buffer.mapped,
+            raw_data(world_renderer.clipmap_cache_vertex[level][:]),
+            len(world_renderer.clipmap_cache_vertex[level]) * size_of(World_Vertex),
+        )
+        _ = dio.flame_graph_end(dio.flame_graph_current(), upload_profile)
+        world_renderer.clipmap_center[frame_index][level] = center
+        world_renderer.clipmap_valid[frame_index][level] = true
+        world_renderer.clipmap_cells_generated += u64(generated)
+        world_renderer.clipmap_levels_generated += 1
+        world_renderer.clipmap_levels_copied += 1
+        return
+    }
+}
+
 clipmap_update :: proc(editor: ^Editor, frame_index: int, viewport_height: i32, focal_length: f32) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "clipmap_update")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
+    if world_renderer.terrain_live_edit_active {
+        clipmap_update_live_edit(editor, frame_index)
+        return
+    }
     cache_revision_changed := world_renderer.clipmap_cache_revision != editor.terrain_revision
     dirty := &world_renderer.clipmap_cache_dirty
     localized_revision :=

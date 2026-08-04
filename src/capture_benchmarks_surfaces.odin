@@ -268,7 +268,7 @@ benchmark_terrain_edit_step :: proc(editor: ^Editor, edit_frame: int) {
         1,
         editor.hardness,
     )
-    world_terrain_changed(editor, world_x, world_z, editor.radius)
+    world_terrain_changed(editor, world_x, world_z, editor.radius, true)
 }
 
 benchmark_formation_edit_step :: proc(editor: ^Editor, edit_frame: int) {

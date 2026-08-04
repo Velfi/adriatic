@@ -12,6 +12,7 @@ terrain_workspace_defaults_keep_seabed_policy_tool_specific :: proc(t: ^testing.
     testing.expect(t, state.settings[int(Terrain_Action.Coast)].affect_seabed)
     testing.expect(t, state.settings[int(Terrain_Action.Shelf)].affect_seabed)
     testing.expect(t, !state.settings[int(Terrain_Action.Ridge)].affect_seabed)
+    testing.expect_value(t, state.settings[int(Terrain_Action.Coast)].brush_strength, f32(.10))
     testing.expect_value(t, state.settings[int(Terrain_Action.Terrace)].terrace_reference, f32(3))
 }
 

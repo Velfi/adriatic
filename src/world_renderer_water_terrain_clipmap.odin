@@ -339,16 +339,15 @@ world_ocean_cache_build :: proc(
 }
 
 world_ocean :: proc(editor: ^Editor) {
-    camera := perspective_camera(
-        editor.camera_pose,
-        editor.in_map && driving_aircraft(editor) ? editor.flight_camera.focal_length : 1.35,
-    )
-    // Bathymetry owns this exact camera-local rectangle. The far ocean is
+    // Bathymetry owns this exact view-target rectangle. An orbit camera may
+    // sit far behind its target, so centering the detailed grid on camera
+    // position lets the island's back shore fall into the coarse far ocean.
+    // The far ocean is
     // clipped around it below, so the two water meshes never overlap and
     // therefore cannot z-fight regardless of camera distance or depth-buffer
     // precision.
-    local_center_x := f32(math.floor(f64(camera.position.x / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
-    local_center_z := f32(math.floor(f64(camera.position.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
+    local_center_x := f32(math.floor(f64(editor.camera_pose.target.x / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
+    local_center_z := f32(math.floor(f64(editor.camera_pose.target.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
     markov_island := lab_scene_is_active(editor, "markov-island")
     dunes := lab_scene_is_active(editor, "dunes")
     dirty := world_renderer.ocean_sample_grid_dirty
@@ -585,7 +584,6 @@ world_bathymetry :: proc(editor: ^Editor) {
     // a giant sand shelf through the water.
     if !settings.affect_seabed do return
     world_bathymetry_geometry_cache_ensure(len(editor.project.bathymetry_chunks))
-    camera_x, camera_z := editor.camera_pose.position.x, editor.camera_pose.position.z
     normal := third_person.Vec3{0, 1, 0}
     for &chunk, chunk_index in editor.project.bathymetry_chunks {
         if len(chunk.heights) != terrain.BATHYMETRY_CHUNK_SAMPLES || len(chunk.material) != terrain.BATHYMETRY_CHUNK_SAMPLES do continue
@@ -596,7 +594,16 @@ world_bathymetry :: proc(editor: ^Editor) {
             origin_x += transform.current_x - transform.source_x
             origin_z += transform.current_z - transform.source_z
         }
-        if abs(origin_x - camera_x) > 512 || abs(origin_z - camera_z) > 512 do continue
+        // Camera distance is not visibility: an overview camera can see a
+        // whole underwater chunk while sitting thousands of metres above it.
+        // Frustum-test the chunk volume instead of clipping a fixed square
+        // around the camera position.
+        chunk_center := third_person.Vec3 {
+            origin_x + terrain.BATHYMETRY_CHUNK_SIZE * .5,
+            editor.project.sea_level - terrain.DEEP_OCEAN_DEPTH * .5,
+            origin_z + terrain.BATHYMETRY_CHUNK_SIZE * .5,
+        }
+        if !world_sphere_in_view(editor, chunk_center, terrain.BATHYMETRY_CHUNK_SIZE) do continue
         cache := &world_renderer.bathymetry_geometry_cache[chunk_index]
         if world_bathymetry_geometry_cache_matches(cache, chunk, origin_x, origin_z) {
             world_renderer.bathymetry_geometry_cache_reuses += 1
@@ -688,10 +695,11 @@ world_box :: proc(center, size: third_person.Vec3, color: canvas2d.Color) {
 }
 
 @(no_instrumentation)
-clipmap_vertex_color :: #force_inline proc(
+clipmap_vertex_color_with_material :: #force_inline proc(
     editor: ^Editor,
     level: int,
     x, z, height, transition_weight: f32,
+    painted: f32,
 ) -> (
     canvas2d.Color,
     f32,
@@ -705,7 +713,6 @@ clipmap_vertex_color :: #force_inline proc(
     normal := linalg.normalize0(
         linalg.cross(third_person.Vec3{0, front - back, cell * 2}, third_person.Vec3{cell * 2, right - left, 0}),
     )
-    painted := terrain.sample_render_material(&editor.project, level, x, z)
     // Expose pale Adriatic limestone only where the grade is genuinely
     // cliff-like. The broad transition avoids drawing a contour around the
     // threshold and leaves ordinary hills under their ground cover. Generated
@@ -714,28 +721,27 @@ clipmap_vertex_color :: #force_inline proc(
     cliff_weight := clamp((.91 - normal.y) / .24, 0, 1)
     cliff_weight = cliff_weight * cliff_weight * (3 - 2 * cliff_weight)
     if painted < 0 do cliff_weight = 0
-    light := linalg.normalize0(third_person.Vec3{-.45, .85, -.3})
-    shade := clamp(.48 + max(linalg.dot(normal, light), 0) * .52, .42, 1.05)
-    fragment_dune_lighting := painted < 0
     base := terrain_color(max(height, editor.project.sea_level + .12), painted, editor.project.sea_level, x, z)
     limestone := terrain_color_variation(canvas2d.Color{222, 216, 188, 255}, x * .73, z * .73)
-    ground_lit := canvas2d.Color {
-        u8(clamp(f32(base.r) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
-        u8(clamp(f32(base.g) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
-        u8(clamp(f32(base.b) * (fragment_dune_lighting ? f32(1) : shade), 0, 255)),
-        255,
-    }
-    // Sun-bleached limestone keeps a pale body even on a face turned away
-    // from the key light; crushing it to the soil lighting floor makes the
-    // same warm hue read as mud.
-    limestone_shade := max(shade, f32(.68))
-    limestone_lit := canvas2d.Color {
-        u8(clamp(f32(limestone.r) * limestone_shade, 0, 255)),
-        u8(clamp(f32(limestone.g) * limestone_shade, 0, 255)),
-        u8(clamp(f32(limestone.b) * limestone_shade, 0, 255)),
-        255,
-    }
-    return color_lerp(ground_lit, limestone_lit, cliff_weight), cliff_weight, normal
+    // Lighting belongs in the fragment shader, where terrain shares the
+    // current atmospheric sun and dynamic-shadow visibility with the rest of
+    // the world. Keeping these palette colors unlit also prevents vertices
+    // from baking one fixed sun direction into every editor frame.
+    return color_lerp(base, limestone, cliff_weight), cliff_weight, normal
+}
+
+@(no_instrumentation)
+clipmap_vertex_color :: #force_inline proc(
+    editor: ^Editor,
+    level: int,
+    x, z, height, transition_weight: f32,
+) -> (
+    canvas2d.Color,
+    f32,
+    third_person.Vec3,
+) {
+    painted := terrain.sample_render_material(&editor.project, level, x, z)
+    return clipmap_vertex_color_with_material(editor, level, x, z, height, transition_weight, painted)
 }
 
 @(no_instrumentation)
@@ -858,10 +864,28 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     color := editor.lab_flat_terrain.color
     cliff_weight := f32(0)
     normal := third_person.Vec3{0, 1, 0}
+    terrain_material := f32(0)
+    grass_weight := f32(0)
     if !editor.lab_flat_terrain.enabled {
         transition_weight := clipmap_transition_weight(level, x, z)
         height = terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
-        color, cliff_weight, normal = clipmap_vertex_color(editor, level, world_x, world_z, height, transition_weight)
+        terrain_material = terrain.sample_render_material_with_shoreline_coverage(
+            &editor.project,
+            level,
+            world_x,
+            world_z,
+            grid_cell * .5,
+        )
+        color, cliff_weight, normal = clipmap_vertex_color_with_material(
+            editor,
+            level,
+            world_x,
+            world_z,
+            height,
+            transition_weight,
+            terrain_material,
+        )
+        grass_weight = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
     }
     vertex := world_vertex({world_x, height, world_z}, color)
     vertex.kind = .Terrain
@@ -870,12 +894,6 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     // this clipmap sample is grass so the world shader can carry the field's
     // traveling wind sheen across the ground beneath the individual cards.
     // Interpolation naturally softens the effect at painted material edges.
-    terrain_material := f32(0)
-    grass_weight := f32(0)
-    if !editor.lab_flat_terrain.enabled {
-        terrain_material = terrain.sample_render_material(&editor.project, level, world_x, world_z)
-        grass_weight = terrain.ground_surface_at(&editor.project, level, world_x, world_z) == .Grass ? 1 : 0
-    }
     vertex.material[0] = grass_weight * (1 - cliff_weight)
     // Negative material values identify the generated coastal sand continuum.
     // Carry that broad mask to fragments so fine dune mottling no longer has

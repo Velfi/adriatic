@@ -6,6 +6,8 @@ Authoring_Preview_Quality :: enum u8 {
     Interactive,
     Final,
 }
+AUTHORING_BRUSH_MAX_FLOW :: f32(8)
+
 Authoring_Brush_Operation :: enum u8 {
     Coast,
     Shelf,
@@ -234,7 +236,7 @@ apply_authoring_brush :: proc(project: ^Project, request: Authoring_Brush_Reques
                 distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
                 mask :=
                     authoring_mask(distance, request.size, request.inner_core, request.feather) *
-                    clamp(request.flow, f32(0), f32(1)) /
+                    clamp(request.flow, f32(0), AUTHORING_BRUSH_MAX_FLOW) /
                     f32(iterations)
                 index := sample_index(x, z)
                 current := data.heights[index]
@@ -242,10 +244,15 @@ apply_authoring_brush :: proc(project: ^Project, request: Authoring_Brush_Reques
                 next := current
                 switch request.operation {
                 case .Coast:
+                    // High-strength coastal strokes need to reach existing
+                    // land, not just the default beach/shelf elevation band.
+                    coastal_range :=
+                        max(request.beach_height + abs(request.shelf_depth), f32(1)) *
+                        max(clamp(request.flow, f32(0), AUTHORING_BRUSH_MAX_FLOW), f32(1))
                     coastal := clamp(
                         1 -
                         abs(current - project.sea_level) /
-                            max(request.beach_height + abs(request.shelf_depth), f32(1)),
+                            coastal_range,
                         f32(0),
                         f32(1),
                     )
