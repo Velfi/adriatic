@@ -129,6 +129,26 @@
       "enabled": false,
       "description": "Generated courtyard garden exercising L-system branches, leaves, flowers, and mesh optimization."
     },
+    "plant_gallery": {
+      "enabled": false,
+      "description": "Complete generated-plant species gallery at a fixed camera."
+    },
+    "plant_transition": {
+      "enabled": false,
+      "description": "Bounded oak and pine rows crossing every semantic plant LOD boundary."
+    },
+    "olive_orchard": {
+      "enabled": false,
+      "description": "Mature olive reference exercising continuous woody hulls and dense instanced foliage."
+    },
+    "plant_climbers": {
+      "enabled": false,
+      "description": "Support-heavy climbing families with routed axes and exclusions."
+    },
+    "plant_runtime_max": {
+      "enabled": false,
+      "description": "Largest runtime-generated mature plant and its branch mesh."
+    },
     "boids_10k": {
       "enabled": false,
       "description": "Ten thousand simulated and rendered seabird boids arranged as 1,112 local flocks."

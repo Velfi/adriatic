@@ -6,6 +6,7 @@ import "core:math/linalg"
 
 oleander_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x6f6c65616e646572
     if random == 0 do random = 1
     growth := .18 + maturity * .82
@@ -15,7 +16,9 @@ oleander_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
     for cane_index in 0 ..< active_count {
         azimuth := phase + f32(cane_index) * math.PI * 2 / f32(active_count) + olive_random_signed(&random) * .10
         radial := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
-        direction := linalg.normalize0(radial * (.28 + olive_random_signed(&random) * .04) + plant_structure.Vec3{0, 1, 0})
+        direction := linalg.normalize0(
+            radial * (.28 + olive_random_signed(&random) * .04) + plant_structure.Vec3{0, 1, 0},
+        )
         position := radial * (.025 + f32(cane_index % 3) * .009)
         radius := .020 * (.24 + maturity * .76)
         node_count := detail == .Far ? 4 : detail == .Medium ? 5 : 6
@@ -56,6 +59,86 @@ oleander_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
     return result
 }
 
+oleander_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plant_Graph {
+    builder := graph_builder_make(.Oleander, seed, maturity)
+    random := seed ~ 0x6f6c65616e646572
+    if random == 0 do random = 1
+    growth := .18 + maturity * .82
+    cane_count := detail == .Near ? 9 : detail == .Medium ? 7 : 5
+    node_count := detail == .Far ? 4 : detail == .Medium ? 5 : 6
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.TAU
+    for cane in 0 ..< cane_count {
+        key := 1000 + u64(cane)
+        emergence := f32(cane) * .075
+        angle := phase + f32(cane) * math.TAU / f32(cane_count)
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        direction := linalg.normalize0(radial * .28 + plant_structure.Vec3{0, 1, 0})
+        axis, unit, visible := graph_builder_axis(&builder, -1, -1, .Renewal_Cane, .Orthotropic, key, emergence)
+        if !visible do continue
+        position := radial * (.025 + f32(cane % 3) * .009)
+        radius := .020 * (.24 + maturity * .76)
+        parent := -1
+        for node in 0 ..< node_count {
+            next := position + direction * (.105 + f32(node) * .006) * growth
+            parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                radius,
+                radius * .84,
+                key * 256 + u64(node),
+                emergence + f32(node) * .025,
+            )
+            tangent := linalg.normalize0(linalg.cross(direction, radial))
+            if linalg.dot(tangent, tangent) < .1 do tangent = {1, 0, 0}
+            binormal := linalg.normalize0(linalg.cross(tangent, direction))
+            whorl_count := node & 1 == 0 ? 3 : 2
+            for leaf in 0 ..< whorl_count {
+                leaf_angle := f32(leaf) * math.TAU / f32(whorl_count) + f32(node & 1) * math.PI * .5
+                leaf_forward := linalg.normalize0(
+                    tangent * math.cos(leaf_angle) + binormal * math.sin(leaf_angle) + direction * .16,
+                )
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    1,
+                    .Leaf,
+                    leaf_forward,
+                    direction,
+                    key * 4096 + u64(node) * 8 + u64(leaf),
+                    emergence + f32(node) * .025,
+                    u8(leaf),
+                )
+            }
+            if detail != .Far && node >= node_count - 2 {
+                side := cane & 1 == 0 ? tangent : -tangent
+                flower_axis := graph_builder_shoot(
+                    &builder,
+                    parent,
+                    linalg.normalize0(direction * .35 + side * .75),
+                    .11 * growth,
+                    radius * .42,
+                    .Flowering_Shoot,
+                    .Arching,
+                    key * 64 + u64(node),
+                    max(f32(.48), emergence + f32(node) * .025),
+                )
+                if flower_axis >= 0 {
+                    flower_node := len(builder.graph.internodes) - 1
+                    organ := graph_builder_reproductive(&builder, flower_node, 1, .Flower, key * 8192 + u64(node), .48)
+                    if organ >= 0 do builder.graph.organs[organ].render_depth = -9
+                }
+            }
+            position = next
+            radius *= .84
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
 myrtle_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
     // Myrtle and pomegranate are both renewing multi-cane shrubs, but Myrtle
     // is finer, narrower, and more continuously leafy. Reusing the balanced
@@ -82,6 +165,7 @@ myrtle_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant
 
 mastic_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x3c6ef372fe94f82b
     if random == 0 do random = 1
     foliage_random := seed ~ 0xa54ff53a5f1d36f1
@@ -116,6 +200,7 @@ mastic_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant
 
 agapanthus_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x510e527fade682d1
     if random == 0 do random = 1
     phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.PI * 2
@@ -161,8 +246,173 @@ agapanthus_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) 
     return result
 }
 
+agapanthus_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plant_Graph {
+    builder := graph_builder_make(.Agapanthus, seed, maturity)
+    random := seed ~ 0x510e527fade682d1
+    if random == 0 do random = 1
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.TAU
+    growth := .25 + maturity * .75
+    axis, unit, _ := graph_builder_axis(&builder, -1, -1, .Leader, .Orthotropic, 1)
+    core := graph_builder_internode(&builder, axis, unit, -1, {}, {0, .025, 0}, .006, .004, 256)
+    leaf_count := detail == .Near ? 22 : detail == .Medium ? 14 : 9
+    for leaf in 0 ..< leaf_count {
+        angle := phase + f32(leaf) * 2.399963
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        ring := leaf % 3
+        forward := linalg.normalize0(radial + plant_structure.Vec3{0, .32 + .12 * f32(ring), 0})
+        _ = graph_builder_organ(
+            &builder,
+            core,
+            0,
+            .Rosette_Leaf,
+            forward,
+            {-radial[2], 0, radial[0]},
+            1000 + u64(leaf),
+            f32(leaf) * .006,
+            u8(leaf & 3),
+        )
+    }
+    if detail != .Far {
+        scape_count := detail == .Near ? 3 : 2
+        for scape in 0 ..< scape_count {
+            key := 2000 + u64(scape)
+            angle := phase + f32(scape) * math.TAU / f32(scape_count)
+            radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+            start := radial * (.035 + f32(scape % 2) * .018)
+            height := (.60 + f32(scape) * .055) * growth
+            scape_axis, scape_unit, visible := graph_builder_axis(
+                &builder,
+                -1,
+                -1,
+                .Inflorescence,
+                .Orthotropic,
+                key,
+                .42 + f32(scape) * .035,
+            )
+            if !visible do continue
+            node := graph_builder_internode(
+                &builder,
+                scape_axis,
+                scape_unit,
+                -1,
+                start,
+                start + radial * .120 + plant_structure.Vec3{0, height, 0},
+                .009,
+                .0045,
+                key * 256,
+                .42 + f32(scape) * .035,
+            )
+            organ := graph_builder_reproductive(&builder, node, 1, .Flower, key * 256 + 1, .42)
+            if organ >= 0 do builder.graph.organs[organ].render_depth = -5
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
+native_herb_graph :: proc(species: Species, seed: u64, maturity: f32, detail: Detail_Level) -> Plant_Graph {
+    builder := graph_builder_make(species, seed, maturity)
+    phase := f32((seed ~ 0x484552425f475241) % 10_000) / 10_000 * math.TAU
+    growth := .22 + maturity * .78
+    stem_count, node_count := 12, 3
+    height, spread, radius := f32(.42), f32(.38), f32(.004)
+    role := Axis_Role.Renewal_Cane
+    flower_depth, flower_modulus := 0, 0
+    flower_emergence := f32(2)
+    #partial switch species {
+    case .Rosemary:
+        stem_count = detail == .Near ? 18 : detail == .Medium ? 12 : 8
+        node_count, height, spread, radius = 4, .55, .36, .0032
+    case .Lavender:
+        stem_count = detail == .Near ? 24 : detail == .Medium ? 16 : 10
+        node_count, height, spread, radius = 3, .34, .46, .0018
+        flower_depth, flower_modulus, flower_emergence = -7, 3, .35
+    case .Thyme:
+        stem_count = detail == .Near ? 18 : detail == .Medium ? 12 : 8
+        node_count, height, spread, radius = 3, .13, .82, .0014
+        role = .Runner
+        flower_depth, flower_modulus, flower_emergence = -8, 4, .32
+    case .Sage:
+        stem_count = detail == .Near ? 10 : detail == .Medium ? 8 : 6
+        node_count, height, spread, radius = 4, .46, .40, .0048
+        flower_depth, flower_modulus, flower_emergence = -6, 2, .35
+    case:
+        return graph_builder_take(&builder)
+    }
+    for stem in 0 ..< stem_count {
+        key := 1000 + u64(stem)
+        emergence := f32(stem) * .68 / f32(max(stem_count - 1, 1))
+        angle := phase + f32(stem) * 2.399963
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
+        orientation := role == .Runner ? Axis_Orientation.Prostrate : .Arching
+        axis, unit, visible := graph_builder_axis(&builder, -1, -1, role, orientation, key, emergence)
+        if !visible do continue
+        position := radial * .018 * growth
+        parent := -1
+        current_radius := radius * (.30 + maturity * .70)
+        for node in 0 ..< node_count {
+            progress := f32(node + 1) / f32(node_count)
+            next :=
+                radial * spread * growth * progress +
+                plant_structure.Vec3{0, height * growth * progress, 0} +
+                tangent * math.sin(progress * math.PI) * .025 * growth
+            parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                current_radius,
+                current_radius * .72,
+                key * 256 + u64(node),
+                emergence + f32(node) * .055,
+            )
+            if parent >= 0 {
+                leaf_tilt := species == .Rosemary || species == .Lavender ? f32(.30) : f32(.16)
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    .72,
+                    .Leaf,
+                    linalg.normalize0(tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
+                    radial,
+                    key * 1024 + u64(node) * 2,
+                    emergence + f32(node) * .055,
+                )
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    .72,
+                    .Leaf,
+                    linalg.normalize0(-tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
+                    -radial,
+                    key * 1024 + u64(node) * 2 + 1,
+                    emergence + f32(node) * .055,
+                    1,
+                )
+            }
+            position = next
+            current_radius *= .72
+        }
+        if flower_modulus > 0 && stem % flower_modulus != 0 && parent >= 0 && detail != .Far {
+            organ := graph_builder_reproductive(
+                &builder,
+                parent,
+                1,
+                .Flower,
+                key * 4096,
+                max(flower_emergence, emergence),
+            )
+            if organ >= 0 do builder.graph.organs[organ].render_depth = flower_depth
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
 sage_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x9b05688c2b3e6c1f
     if random == 0 do random = 1
     foliage_random := seed ~ 0x1f83d9abfb41bd6b
@@ -197,7 +447,12 @@ sage_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_s
             }
             append(
                 &result.plant.leaves,
-                plant_structure.Leaf{position = terminal, forward = direction, up = {-radial[2], 0, radial[0]}, depth = -6},
+                plant_structure.Leaf {
+                    position = terminal,
+                    forward = direction,
+                    up = {-radial[2], 0, radial[0]},
+                    depth = -6,
+                },
             )
         }
     }
@@ -206,6 +461,7 @@ sage_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_s
 
 lavender_architecture :: proc(seed: u64, maturity: f32, generations: int) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0xa54ff53a5f1d36f1
     if random == 0 do random = 1
     scale := .24 + maturity * .76
@@ -245,6 +501,7 @@ lavender_architecture :: proc(seed: u64, maturity: f32, generations: int) -> pla
 
 thyme_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x5be0cd19137e2179
     if random == 0 do random = 1
     scale := .24 + maturity * .76
@@ -277,7 +534,10 @@ thyme_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> pl
             )
         }
         for shoot_index in 0 ..< shoots_per_cluster {
-            angle := cluster_angle + f32(shoot_index) * math.PI * 2 / f32(shoots_per_cluster) + olive_random_signed(&random) * .42
+            angle :=
+                cluster_angle +
+                f32(shoot_index) * math.PI * 2 / f32(shoots_per_cluster) +
+                olive_random_signed(&random) * .42
             position := center
             radius := .0009 * (.30 + maturity * .70)
             direction: plant_structure.Vec3
@@ -287,7 +547,10 @@ thyme_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> pl
                     plant_structure.Vec3{math.cos(angle), .08 + olive_random_signed(&random) * .035, math.sin(angle)},
                 )
                 next := position + direction * (.036 * scale * (1 + olive_random_signed(&random) * .16))
-                append(&result.plant.segments, plant_structure.Segment{position, next, radius, radius * .72, segment_index})
+                append(
+                    &result.plant.segments,
+                    plant_structure.Segment{position, next, radius, radius * .72, segment_index},
+                )
                 tangent := plant_structure.Vec3{-direction[2], .08, direction[0]}
                 for fraction in leaf_fractions {
                     leaf_position := linalg.lerp(position, next, fraction) + plant_structure.Vec3{0, .005 * scale, 0}
@@ -318,10 +581,7 @@ thyme_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> pl
                 flower_radial := plant_structure.Vec3{math.cos(flower_angle), 0, math.sin(flower_angle)}
                 flower_base := center + flower_radial * (.018 * scale)
                 flower_tip := flower_base + flower_radial * (.010 * scale) + plant_structure.Vec3{0, .050 * scale, 0}
-                append(
-                    &result.plant.segments,
-                    plant_structure.Segment{flower_base, flower_tip, .0008, .00035, 2},
-                )
+                append(&result.plant.segments, plant_structure.Segment{flower_base, flower_tip, .0008, .00035, 2})
                 append(
                     &result.plant.leaves,
                     plant_structure.Leaf {
@@ -430,7 +690,10 @@ lavender_clothe_scaffold :: proc(plant: ^plant_structure.Plant) {
             outward := plant_structure.Vec3{math.cos(azimuth), 0, math.sin(azimuth)}
             forward := linalg.normalize0(outward * .96 + plant_structure.Vec3{0, .18, 0})
             up := plant_structure.Vec3{-outward[2], 0, outward[0]}
-            append(&plant.leaves, plant_structure.Leaf{position = position, forward = forward, up = up, depth = segment.depth})
+            append(
+                &plant.leaves,
+                plant_structure.Leaf{position = position, forward = forward, up = up, depth = segment.depth},
+            )
         }
     }
 }
@@ -490,8 +753,7 @@ stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail
     crown_radius := max(crown_maximum[0] - crown_minimum[0], crown_maximum[2] - crown_minimum[2]) * .48
     mature_ring_count := detail == .Near ? 6 : detail == .Medium ? 4 : 3
     ring_count := clamp(2 + int(canopy_progress * f32(mature_ring_count - 2) + .5), 2, mature_ring_count)
-    layer_count :=
-        canopy_progress > .68 ? (detail == .Near ? 3 : detail == .Medium ? 2 : 1) : 1
+    layer_count := canopy_progress > .68 ? (detail == .Near ? 3 : detail == .Medium ? 2 : 1) : 1
     for ring_index in 0 ..< ring_count {
         radial_fraction := ring_index == 0 ? f32(0) : f32(ring_index) / f32(ring_count - 1)
         station_count := ring_index == 0 ? 1 : 10 + ring_index * 6
@@ -521,10 +783,9 @@ stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail
                 append(
                     &plant.leaves,
                     plant_structure.Leaf {
-                        position =
-                            position +
-                            tangent * layer_offset * crown_radius * .050 +
-                            plant_structure.Vec3{0, layer_offset * crown_radius * .090, 0},
+                        position = position +
+                        tangent * layer_offset * crown_radius * .050 +
+                        plant_structure.Vec3{0, layer_offset * crown_radius * .090, 0},
                         forward = forward,
                         up = up,
                         depth = 3,
@@ -537,6 +798,7 @@ stone_pine_clothe_scaffold :: proc(plant: ^plant_structure.Plant, detail: Detail
 
 stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0xd6e8feb86659fd93
     if random == 0 do random = 1
     scale := .22 + maturity * .78
@@ -615,10 +877,10 @@ stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> pl
                     radial * (.50 + tier_progress * .22) +
                     tangent * side_fraction * (.62 - tier_progress * .08) +
                     plant_structure.Vec3 {
-                        0,
-                        .36 + (.13 - .36) * umbrella_progress + olive_random_signed(&random) * .04,
-                        0,
-                    },
+                            0,
+                            .36 + (.13 - .36) * umbrella_progress + olive_random_signed(&random) * .04,
+                            0,
+                        },
                 )
                 fork_length := reach * (.18 + tier_progress * .10 + math.abs(side_fraction) * .020)
                 fork_end := fan_root + fork_direction * fork_length
@@ -636,11 +898,7 @@ stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> pl
         bridge_direction := linalg.normalize0(
             radial * .22 +
             tangent * olive_random_signed(&random) * .28 +
-            plant_structure.Vec3 {
-                0,
-                .42 + (.22 - .42) * umbrella_progress + olive_random_signed(&random) * .05,
-                0,
-            },
+            plant_structure.Vec3{0, .42 + (.22 - .42) * umbrella_progress + olive_random_signed(&random) * .05, 0},
         )
         bridge_end := elbow + bridge_direction * reach * .30
         append(
@@ -651,7 +909,12 @@ stone_pine_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> pl
     return result
 }
 
-olive_emit_spray :: proc(plant: ^plant_structure.Plant, random: ^u64, position, direction: plant_structure.Vec3, depth: int) {
+olive_emit_spray :: proc(
+    plant: ^plant_structure.Plant,
+    random: ^u64,
+    position, direction: plant_structure.Vec3,
+    depth: int,
+) {
     stem := linalg.normalize0(direction)
     side := linalg.normalize0(linalg.cross(stem, plant_structure.Vec3{0, 1, 0}))
     if linalg.dot(side, side) < .2 do side = {1, 0, 0}

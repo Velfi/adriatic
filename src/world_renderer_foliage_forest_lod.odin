@@ -62,6 +62,14 @@ world_foliage_is_forest :: #force_inline proc(
     return
 }
 
+world_foliage_should_condense_to_field :: #force_inline proc(width, depth, height: f32, lod: Structure_LOD) -> bool {
+    if lod == .Near || height > 3.5 do return false
+    wide, narrow := max(width, depth), min(width, depth)
+    if narrow < 18 || wide / max(narrow, f32(.01)) > 3.5 do return false
+    mature, woodland := world_foliage_is_forest(width, depth, height, lod, false)
+    return !mature && !woodland
+}
+
 world_foliage_far_forest_mass :: proc(structure: terrain.Structure, width, depth, canopy_lift: f32) {
     // Seven decimated crowns alone read as separate gumdrops. Lay three broad,
     // low shelves underneath them so the distant value shape becomes one

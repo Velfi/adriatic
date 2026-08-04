@@ -63,8 +63,6 @@ lab_mouse_control_keys :: proc(name: string) -> (keys: [LAB_MOUSE_KEY_CAPACITY]c
         count = lab_mouse_keys(&keys, .ONE, .TWO, .THREE, .FOUR)
     case "mouse-wheel":
         count = lab_mouse_keys(&keys, .R, .ONE, .TWO, .THREE, .FOUR, .F)
-    case "plant-generator":
-        count = lab_mouse_keys(&keys, .R, .LEFT, .RIGHT, .ONE, .TWO, .THREE, .FOUR, .UP, .DOWN)
     case "plant-site":
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .R)
     case "rainbow":

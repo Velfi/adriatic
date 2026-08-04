@@ -4,8 +4,105 @@ import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
+native_climber_graph :: proc(species: Species, seed: u64, maturity: f32, detail: Detail_Level) -> Plant_Graph {
+    builder := graph_builder_make(species, seed, maturity)
+    random := seed ~ 0x434c494d4245525f
+    if random == 0 do random = 1
+    growth := .12 + clamp(maturity, f32(0), f32(1)) * .88
+    cane_count := detail == .Near ? 9 : detail == .Medium ? 7 : 5
+    node_count := detail == .Near ? 7 : detail == .Medium ? 6 : 5
+    twining := species == .Wisteria || species == .Star_Jasmine
+    phase := f32(plant_structure.random_next(&random) % 10_000) / 10_000 * math.TAU
+    for cane in 0 ..< cane_count {
+        key := 20_000 + u64(cane)
+        emergence := .03 + f32(cane) * .055
+        axis, unit, visible := graph_builder_axis(
+            &builder,
+            -1,
+            -1,
+            .Climber,
+            twining ? Axis_Orientation.Twining : .Arching,
+            key,
+            emergence,
+            .72,
+        )
+        if !visible do continue
+        lane := cane_count == 1 ? f32(0) : f32(cane) / f32(cane_count - 1) * 2 - 1
+        position := plant_structure.Vec3{lane * .34 * growth, 0, 0}
+        parent := -1
+        radius :=
+            (species == .Wisteria ? f32(.018) : species == .Grapevine ? f32(.014) : f32(.009)) * (.28 + maturity * .72)
+        for node in 0 ..< node_count {
+            progress := f32(node + 1) / f32(node_count)
+            weave := math.sin(progress * math.TAU * (1.25 + f32(cane % 3) * .25) + phase + f32(cane))
+            rise := (.14 + f32(node) * .012) * growth
+            next :=
+                position +
+                plant_structure.Vec3{weave * .075 * growth, rise, math.cos(phase + f32(node) * 1.7) * .025 * growth}
+            parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                radius,
+                radius * .84,
+                key * 256 + u64(node),
+                emergence + f32(node) * .045,
+            )
+            if parent < 0 do break
+            direction := linalg.normalize0(next - position)
+            side := linalg.normalize0(plant_structure.Vec3{-direction[2], .12, direction[0]})
+            leaf := graph_builder_organ(
+                &builder,
+                parent,
+                .72,
+                .Leaf,
+                side,
+                direction,
+                key * 1024 + u64(node) * 4,
+                emergence + f32(node) * .045,
+                u8((cane + node) & 3),
+            )
+            if leaf >= 0 do builder.graph.organs[leaf].render_depth = node + 1
+            if maturity > .30 && detail != .Far && node >= 2 && (node + cane) % 3 == 0 {
+                kind: Architecture_Organ
+                depth := -10
+                if species == .Grapevine {
+                    kind = (node + cane) % 2 == 0 ? .Fruit : .Tendril
+                    depth = -14
+                } else if species == .Bougainvillea {
+                    kind = (node + cane) % 4 == 0 ? .Thorn : .Flower
+                    depth = -15
+                } else {
+                    kind = .Flower
+                    if species == .Climbing_Rose do depth = -11
+                    if species == .Star_Jasmine do depth = -16
+                }
+                organ := graph_builder_organ(
+                    &builder,
+                    parent,
+                    1,
+                    kind,
+                    direction,
+                    side,
+                    key * 1024 + u64(node) * 4 + 1,
+                    .30 + f32(node) * .035,
+                    u8(node & 3),
+                )
+                if organ >= 0 do builder.graph.organs[organ].render_depth = depth
+            }
+            position = next
+            radius *= .84
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
 pelargonium_architecture :: proc(seed: u64, maturity: f32) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     growth := clamp(maturity, f32(0), f32(1))
     eased := growth * growth * (3 - 2 * growth)
     size := .16 + eased * .84
@@ -45,7 +142,10 @@ pelargonium_architecture :: proc(seed: u64, maturity: f32) -> plant_structure.In
                     depth = 0,
                 },
             )
-            append(&result.plant.leaves, plant_structure.Leaf{position = next, forward = direction, up = radial, depth = 0})
+            append(
+                &result.plant.leaves,
+                plant_structure.Leaf{position = next, forward = direction, up = radial, depth = 0},
+            )
             position = next
             radius *= .78
         }
@@ -76,6 +176,81 @@ pelargonium_architecture :: proc(seed: u64, maturity: f32) -> plant_structure.In
     return result
 }
 
+pelargonium_graph :: proc(seed: u64, maturity: f32) -> Plant_Graph {
+    builder := graph_builder_make(.Pelargonium, seed, maturity)
+    growth := clamp(maturity, f32(0), f32(1))
+    eased := growth * growth * (3 - 2 * growth)
+    size := .16 + eased * .84
+    random := seed ~ 0x70656c6172676f6e
+    if random == 0 do random = 1
+    phase := olive_random_signed(&random) * math.PI
+    for stem in 0 ..< 12 {
+        key := 1000 + u64(stem)
+        emergence := f32(stem) / 15
+        angle := phase + f32(stem) * 2.399963
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        direction := linalg.normalize0(radial * (.34 + f32(stem % 4) * .035) + plant_structure.Vec3{0, .90, 0})
+        axis, unit, visible := graph_builder_axis(&builder, -1, -1, .Renewal_Cane, .Arching, key, emergence)
+        if !visible do continue
+        position := radial * (.018 + f32(stem % 3) * .008) * size
+        radius := (.002 + eased * .0012)
+        parent := -1
+        for node in 0 ..< 4 {
+            node_emergence := emergence + f32(node) * .10
+            length := (.055 + eased * .030) * (1 - f32(node) * .025) * size
+            direction = linalg.normalize0(direction + radial * (.035 + f32(node) * .025))
+            next := position + direction * length
+            parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                radius,
+                radius * .78,
+                key * 256 + u64(node),
+                node_emergence,
+            )
+            if parent >= 0 {
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    1,
+                    .Leaf,
+                    direction,
+                    radial,
+                    key * 512 + u64(node),
+                    node_emergence,
+                    u8(node),
+                )
+            }
+            position = next
+            radius *= .78
+        }
+        if stem & 1 == 0 && parent >= 0 {
+            peduncle_direction := linalg.normalize0(direction * .34 + radial * .08 + plant_structure.Vec3{0, .94, 0})
+            flower_axis := graph_builder_shoot(
+                &builder,
+                parent,
+                peduncle_direction,
+                (.055 + clamp((growth - .30) / .70, f32(0), f32(1)) * .028) * size,
+                max(radius * .48, f32(.0012)),
+                .Flowering_Shoot,
+                .Orthotropic,
+                key * 64,
+                max(f32(.30), emergence + .30),
+            )
+            if flower_axis >= 0 {
+                flower_node := len(builder.graph.internodes) - 1
+                organ := graph_builder_reproductive(&builder, flower_node, 1, .Flower, key * 1024, .30)
+                if organ >= 0 do builder.graph.organs[organ].render_depth = -4
+            }
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
 hydrangea_architecture :: proc(
     species: Species,
     seed: u64,
@@ -83,6 +258,7 @@ hydrangea_architecture :: proc(
     detail: Detail_Level,
 ) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x68796472616e6765
     if random == 0 do random = 1
     growth := .22 + clamp(maturity, f32(0), f32(1)) * .78
@@ -150,7 +326,10 @@ hydrangea_architecture :: proc(
                 plant_structure.Vec3{0, rise * height_progress, 0}
             direction := linalg.normalize0(next - position)
             end_radius := radius * .72
-            append(&result.plant.segments, plant_structure.Segment{position, next, radius, end_radius, segment_index + 1})
+            append(
+                &result.plant.segments,
+                plant_structure.Segment{position, next, radius, end_radius, segment_index + 1},
+            )
             // Opposite leaf pairs clothe each shoot from its first node while
             // leaving enough gaps for the woody structure to remain readable.
             leaf_position := linalg.lerp(position, next, .58)
@@ -169,7 +348,12 @@ hydrangea_architecture :: proc(
                     up = leaf_normal,
                     depth = segment_index + 1,
                 },
-                plant_structure.Leaf{position = next, forward = leaf_forward, up = leaf_normal, depth = segment_index + 1},
+                plant_structure.Leaf {
+                    position = next,
+                    forward = leaf_forward,
+                    up = leaf_normal,
+                    depth = segment_index + 1,
+                },
             )
             position = next
             radius = end_radius
@@ -195,8 +379,132 @@ hydrangea_architecture :: proc(
     return result
 }
 
+hydrangea_graph :: proc(species: Species, seed: u64, maturity: f32, detail: Detail_Level) -> Plant_Graph {
+    builder := graph_builder_make(species, seed, maturity)
+    growth := .22 + clamp(maturity, f32(0), f32(1)) * .78
+    is_tree := species == .Hydrangea_Tree
+    stem_count :=
+        is_tree ? (detail == .Near ? 11 : detail == .Medium ? 8 : 6) : (detail == .Near ? 24 : detail == .Medium ? 20 : 18)
+    phase := f32((seed ~ 0x68796472616e6765) % 10_000) / 10_000 * math.TAU
+    crown_base: plant_structure.Vec3
+    crown_parent, crown_axis := -1, -1
+    crown_radius := f32(.010) * (.35 + maturity * .65)
+    if is_tree {
+        axis, unit, _ := graph_builder_axis(&builder, -1, -1, .Leader, .Orthotropic, 1)
+        crown_axis = axis
+        radius := f32(.045) * (.35 + maturity * .65)
+        position: plant_structure.Vec3
+        for node in 0 ..< 4 {
+            angle := phase + f32(node) * 1.7
+            next :=
+                position +
+                plant_structure.Vec3{math.cos(angle) * .012 * growth, .245 * growth, math.sin(angle) * .012 * growth}
+            crown_parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                crown_parent,
+                position,
+                next,
+                radius,
+                radius * .84,
+                256 + u64(node),
+                f32(node) * .045,
+            )
+            position = next
+            radius *= .84
+        }
+        crown_base = position
+        crown_radius = radius * .30
+    }
+    for stem in 0 ..< stem_count {
+        key := 1000 + u64(stem)
+        emergence := f32(stem) * .70 / f32(max(stem_count - 1, 1))
+        inner := !is_tree && stem % 3 == 0
+        ring_count := inner ? max(stem_count / 3, 1) : max(stem_count - stem_count / 3, 1)
+        ring_index := inner ? stem / 3 : stem - (stem + 2) / 3
+        ring_phase := inner ? phase + math.PI / f32(ring_count) : phase
+        angle := ring_phase + f32(ring_index) * math.TAU / f32(ring_count)
+        radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
+        tangent := plant_structure.Vec3{-radial[2], 0, radial[0]}
+        position := crown_base
+        if !is_tree {
+            spread := inner ? f32(.018) : f32(.052 + f32(ring_index % 3) * .012)
+            position = radial * spread * growth
+        }
+        parent_axis := is_tree ? crown_axis : -1
+        parent_internode := is_tree ? crown_parent : -1
+        axis, unit, visible := graph_builder_axis(
+            &builder,
+            parent_axis,
+            parent_internode,
+            is_tree ? Axis_Role.Scaffold : .Renewal_Cane,
+            .Arching,
+            key,
+            emergence,
+        )
+        if !visible do continue
+        stem_origin := position
+        radius := is_tree ? crown_radius : f32(.009) * (.35 + maturity * .65)
+        reach := (is_tree ? f32(.52) : inner ? f32(.16) : f32(.50)) * growth
+        rise := (is_tree ? f32(.56) : inner ? f32(.70) : f32(.58)) * growth
+        parent := parent_internode
+        for node in 0 ..< 3 {
+            progress := f32(node + 1) / 3
+            next :=
+                stem_origin +
+                radial * reach * math.sin(progress * math.PI * .5) +
+                plant_structure.Vec3{0, rise * progress * (.78 + progress * .22), 0}
+            parent = graph_builder_internode(
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                radius,
+                radius * .72,
+                key * 256 + u64(node),
+                emergence + f32(node) * .045,
+            )
+            if parent >= 0 {
+                normal := linalg.normalize0(plant_structure.Vec3{0, .72, 0} + radial * .62)
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    .58,
+                    .Leaf,
+                    tangent,
+                    normal,
+                    key * 1024 + u64(node) * 2,
+                    emergence + f32(node) * .045,
+                )
+                _ = graph_builder_organ(
+                    &builder,
+                    parent,
+                    .58,
+                    .Leaf,
+                    -tangent,
+                    normal,
+                    key * 1024 + u64(node) * 2 + 1,
+                    emergence + f32(node) * .045,
+                    1,
+                )
+            }
+            position = next
+            radius *= .72
+        }
+        if parent >= 0 {
+            organ := graph_builder_reproductive(&builder, parent, 1, .Flower, key * 4096, max(f32(.22), emergence))
+            if organ >= 0 do builder.graph.organs[organ].render_depth = -9
+        }
+    }
+    return graph_builder_take(&builder)
+}
+
 rosemary_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x726f73656d617279
     if random == 0 do random = 1
     growth := .24 + clamp(maturity, f32(0), f32(1)) * .76
@@ -217,7 +525,10 @@ rosemary_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
                 plant_structure.Vec3{0, .98, 0},
             )
             next := position + direction * (.064 * growth * (1 + olive_random_signed(&random) * .14))
-            append(&result.plant.segments, plant_structure.Segment{position, next, radius, radius * .74, segment_index})
+            append(
+                &result.plant.segments,
+                plant_structure.Segment{position, next, radius, radius * .74, segment_index},
+            )
             for fraction, fraction_index in leaf_fractions {
                 leaf_position := linalg.lerp(position, next, fraction)
                 leaf_azimuth := azimuth + f32(segment_index * len(leaf_fractions) + fraction_index) * 2.399963
@@ -236,7 +547,10 @@ rosemary_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
                 side_sign := (stem_index + segment_index) % 4 == 0 ? f32(-1) : f32(1)
                 side_direction := linalg.normalize0(direction * .72 + tangent * side_sign * .54 + radial * .16)
                 side_end := next + side_direction * (.050 * growth)
-                append(&result.plant.segments, plant_structure.Segment{next, side_end, radius * .60, radius * .34, segment_index + 1})
+                append(
+                    &result.plant.segments,
+                    plant_structure.Segment{next, side_end, radius * .60, radius * .34, segment_index + 1},
+                )
                 for fraction in leaf_fractions {
                     append(
                         &result.plant.leaves,
@@ -258,6 +572,7 @@ rosemary_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
 
 grapevine_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x677261706576696e
     if random == 0 do random = 1
     growth := .28 + clamp(maturity, f32(0), f32(1)) * .72
@@ -343,6 +658,7 @@ grapevine_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -
 
 star_jasmine_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0x737461726a61736d
     if random == 0 do random = 1
     growth := .24 + clamp(maturity, f32(0), f32(1)) * .76
@@ -421,7 +737,11 @@ star_jasmine_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level
     return result
 }
 
-bougainvillea_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
+bougainvillea_architecture :: proc(
+    seed: u64,
+    maturity: f32,
+    detail: Detail_Level,
+) -> plant_structure.Interpret_Result {
     // Bougainvillea establishes several long searching canes across masonry,
     // then clothes those connected routes with short flowering laterals. The
     // generic recursive grammar begins from a narrow freestanding silhouette;
@@ -535,7 +855,11 @@ wisteria_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) ->
     return result
 }
 
-climbing_rose_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> plant_structure.Interpret_Result {
+climbing_rose_architecture :: proc(
+    seed: u64,
+    maturity: f32,
+    detail: Detail_Level,
+) -> plant_structure.Interpret_Result {
     result := star_jasmine_architecture(seed ~ 0xbf58476d1ce4e5b9, maturity, detail)
     for &segment in result.plant.segments {
         segment.radius_start *= 1.55
@@ -549,12 +873,7 @@ climbing_rose_architecture :: proc(seed: u64, maturity: f32, detail: Detail_Leve
             direction := linalg.normalize0(terminal.end - terminal.start)
             append(
                 &result.plant.leaves,
-                plant_structure.Leaf {
-                    position = terminal.end,
-                    forward = direction,
-                    up = {0, 0, 1},
-                    depth = -11,
-                },
+                plant_structure.Leaf{position = terminal.end, forward = direction, up = {0, 0, 1}, depth = -11},
             )
         }
     }
@@ -646,7 +965,12 @@ olive_leaf_frame :: proc(direction: plant_structure.Vec3) -> (forward, up: plant
     return
 }
 
-lemon_emit_leaf :: proc(plant: ^plant_structure.Plant, random: ^u64, position, shoot_direction: plant_structure.Vec3, depth: int) {
+lemon_emit_leaf :: proc(
+    plant: ^plant_structure.Plant,
+    random: ^u64,
+    position, shoot_direction: plant_structure.Vec3,
+    depth: int,
+) {
     shoot := linalg.normalize0(shoot_direction)
     side := linalg.normalize0(linalg.cross(shoot, plant_structure.Vec3{0, 1, 0}))
     if linalg.dot(side, side) < .2 do side = {1, 0, 0}

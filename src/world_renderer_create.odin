@@ -41,22 +41,19 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         stride    = u32(size_of(World_Vertex)),
         inputRate = .VERTEX,
     }
-    attrs := [9]vk.VertexInputAttributeDescription {
+    attrs := [6]vk.VertexInputAttributeDescription {
         {location = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, format = .R32_UINT, offset = u32(offset_of(World_Vertex, kind))},
         {location = 3, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, normal))},
         {location = 4, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, material))},
         {location = 5, format = .R32G32_SFLOAT, offset = u32(offset_of(World_Vertex, uv))},
-        {location = 6, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_origin))},
-        {location = 7, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_anchor))},
-        {location = 8, format = .R32_SFLOAT, offset = u32(offset_of(World_Vertex, wind_enabled))},
     }
     vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 1,
         pVertexBindingDescriptions      = &binding,
-        vertexAttributeDescriptionCount = 9,
+        vertexAttributeDescriptionCount = 6,
         pVertexAttributeDescriptions    = raw_data(attrs[:]),
     }
     ia := vk.PipelineInputAssemblyStateCreateInfo {
@@ -143,7 +140,7 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         {binding = 0, stride = u32(size_of(World_Vertex)), inputRate = .VERTEX},
         {binding = 1, stride = u32(size_of(World_Mesh_Instance)), inputRate = .INSTANCE},
     }
-    instance_attrs := [11]vk.VertexInputAttributeDescription {
+    instance_attrs := [13]vk.VertexInputAttributeDescription {
         {location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(World_Vertex, position))},
         {location = 1, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(World_Vertex, color))},
         {location = 2, binding = 0, format = .R32_UINT, offset = u32(offset_of(World_Vertex, kind))},
@@ -180,12 +177,24 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
             format = .R32G32B32A32_SFLOAT,
             offset = u32(offset_of(World_Mesh_Instance, normal_override)),
         },
+        {
+            location = 11,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, plant_root_compliance)),
+        },
+        {
+            location = 12,
+            binding = 1,
+            format = .R32G32B32A32_SFLOAT,
+            offset = u32(offset_of(World_Mesh_Instance, plant_motion)),
+        },
     }
     instance_vi := vk.PipelineVertexInputStateCreateInfo {
         sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         vertexBindingDescriptionCount   = 2,
         pVertexBindingDescriptions      = raw_data(instance_bindings[:]),
-        vertexAttributeDescriptionCount = 11,
+        vertexAttributeDescriptionCount = 13,
         pVertexAttributeDescriptions    = raw_data(instance_attrs[:]),
     }
     instance_info := info

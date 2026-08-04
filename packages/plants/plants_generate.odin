@@ -5,6 +5,8 @@ import "core:math"
 import "core:math/linalg"
 
 generate :: proc(config: Generate_Config) -> Generate_Result {
+    workspace_started := generation_workspace_begin()
+    defer generation_workspace_end(workspace_started)
     result: Generate_Result
     if int(config.species) < 0 || int(config.species) >= SPECIES_COUNT {
         result.error = .Invalid_Species
@@ -41,7 +43,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         catalog_segment_limit, _ := limits(config.detail)
         expansion_segment_limit = max(expansion_segment_limit, catalog_segment_limit)
     }
-    interpreted, architecture_error := generate_architecture_stage(
+    interpreted, native_graph, architecture_error := generate_architecture_stage(
         config,
         profile,
         maturity,
@@ -49,16 +51,18 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         detail_reduction,
         expansion_segment_limit,
     )
+    defer destroy_graph(&native_graph)
     if architecture_error != .None {
         result.error = architecture_error
         return result
     }
     if interpreted.error != .None {
-        plant_structure.destroy_plant(&interpreted.plant)
+        generation_workspace_dispose_interpreted(&interpreted.plant)
         result.error = .Interpretation_Failed
         return result
     }
-    if iterations > 0 &&
+    if len(native_graph.internodes) == 0 &&
+       iterations > 0 &&
        config.species != .Prickly_Pear &&
        config.species != .Golden_Barrel &&
        config.species != .Agave &&
@@ -83,12 +87,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
        config.species != .Sage {
         sprout_newest_generation(&interpreted.plant, generation_progress)
     }
-    if config.species == .Myrtle || config.species == .Mastic || config.species == .Sage {
-        myrtle_clothe_scaffold(&interpreted.plant)
-    }
-    if config.species == .Lavender do lavender_clothe_scaffold(&interpreted.plant)
-    if config.species == .Stone_Pine do stone_pine_clothe_scaffold(&interpreted.plant, config.detail, maturity)
-    source_segment_limit := climbing ? max(segment_limit / 6, 1) : segment_limit
+    source_segment_limit := climbing && len(native_graph.internodes) == 0 ? max(segment_limit / 6, 1) : segment_limit
     if climbing && len(interpreted.plant.segments) > source_segment_limit {
         source_segments := interpreted.plant.segments
         thinned_segments := make([dynamic]plant_structure.Segment, 0, source_segment_limit)
@@ -99,61 +98,9 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         delete(source_segments)
         interpreted.plant.segments = thinned_segments
     } else if len(interpreted.plant.segments) > source_segment_limit {
-        plant_structure.destroy_plant(&interpreted.plant)
+        generation_workspace_dispose_interpreted(&interpreted.plant)
         result.error = .Segment_Limit
         return result
-    }
-    if config.species == .Italian_Cypress {
-        for segment, segment_index in interpreted.plant.segments {
-            direction := linalg.normalize0(segment.end - segment.start)
-            append(
-                &interpreted.plant.leaves,
-                plant_structure.Leaf {
-                    position = (segment.start + segment.end) * .5,
-                    forward = direction,
-                    up = {1, 0, 0},
-                    depth = segment.depth,
-                },
-            )
-            if segment.depth == 1 && config.detail == .Near {
-                append(
-                    &interpreted.plant.leaves,
-                    plant_structure.Leaf {
-                        position = segment.start + (segment.end - segment.start) * .78,
-                        forward = direction,
-                        up = {1, 0, 0},
-                        depth = segment.depth,
-                    },
-                )
-                branch_interval := segment_index / 17
-                relative_interval := f32(branch_interval) / 18
-                lower_density := clamp((.46 - relative_interval) / .40, f32(0), f32(1))
-                density_hash := (config.seed + 1) * 0x9e3779b97f4a7c15 ~ u64(segment_index + 23) * 0xbf58476d1ce4e5b9
-                density_hash = (density_hash ~ (density_hash >> 29)) * 0x94d049bb133111eb
-                if f32(density_hash % 10_000) < lower_density * 10_000 {
-                    append(
-                        &interpreted.plant.leaves,
-                        plant_structure.Leaf {
-                            position = segment.start + (segment.end - segment.start) * .28,
-                            forward = direction,
-                            up = {1, 0, 0},
-                            depth = segment.depth,
-                        },
-                    )
-                }
-            }
-            if segment.depth == 0 && config.detail != .Far {
-                append(
-                    &interpreted.plant.leaves,
-                    plant_structure.Leaf {
-                        position = segment.start + (segment.end - segment.start) * .20,
-                        forward = direction,
-                        up = {1, 0, 0},
-                        depth = segment.depth,
-                    },
-                )
-            }
-        }
     }
     attachment_count := 0
     cluster_size := leaf_cluster_size(config.species, config.detail, maturity)
@@ -183,19 +130,18 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             // Reproductive and defensive attachments are borne by leafy
             // shoots; they do not replace the subtending foliage.
             attachment_count += 2
-        } else if config.species == .Italian_Cypress && kind == .Fruit {
-            attachment_count += leaf_cluster_size + 1
         } else {
             attachment_count += kind == .Leaf ? leaf_cluster_size : 1
         }
     }
     if attachment_count > attachment_limit {
-        plant_structure.destroy_plant(&interpreted.plant)
+        generation_workspace_dispose_interpreted(&interpreted.plant)
         result.error = .Attachment_Limit
         return result
     }
     result.plant.species = config.species
     result.plant.habit = habit
+    result.plant.maturity = maturity
     if config.species == .Olive {
         result.plant.wood = {
             radial_irregularity = .20,
@@ -215,7 +161,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     result.plant.root_kind = climbing && config.support.planter ? .Planter : .Soil
     result.plant.wind_compliance = woody_wind_compliance(config.species, maturity)
     if climbing do result.plant.support_signature = support_hash(config.support^)
-    climbing_route_samples := climbing ? 6 : 1
+    climbing_route_samples := climbing && len(native_graph.internodes) == 0 ? 6 : 1
     if config.species == .Grapevine do climbing_route_samples = 1
     routed_segment_capacity := len(interpreted.plant.segments) * climbing_route_samples
     result.plant.segments = make([dynamic]plant_structure.Segment, 0, routed_segment_capacity)
@@ -242,7 +188,8 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         }
     }
     extra_route_demand := 0
-    maximum_route_samples := config.detail == .Near ? 12 : config.detail == .Medium ? 9 : 6
+    maximum_route_samples :=
+        len(native_graph.internodes) > 0 ? 1 : config.detail == .Near ? 12 : config.detail == .Medium ? 9 : 6
     if config.species == .Grapevine do maximum_route_samples = 1
     if climbing && maximum_route_samples > climbing_route_samples {
         for source in interpreted.plant.segments {
@@ -388,8 +335,7 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             config.detail,
             leaf.depth,
         )
-        cypress_cone := config.species == .Italian_Cypress && generated_kind == .Fruit
-        kind := cypress_cone ? Attachment_Kind.Leaf : generated_kind
+        kind := generated_kind
         attachment_cluster_size := cluster_size
         if config.species == .Italian_Cypress {
             attachment_cluster_size = cypress_generated_cluster_size(
@@ -540,24 +486,8 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
                 )
             }
         }
-        if cypress_cone {
-            cone_position := position + forward * .010 + up * .006
-            append(
-                &result.plant.attachments,
-                Attachment {
-                    kind = .Fruit,
-                    stage = attachment_stage(.Fruit, config.seed, index, maturity),
-                    position = cone_position,
-                    forward = forward,
-                    up = up,
-                    depth = leaf.depth,
-                    variant = variant,
-                },
-            )
-            update_bounds(&result.plant.bounds, cone_position, &first)
-        }
     }
-    if habit == .Wall_Trained && len(result.plant.segments) > 0 {
+    if habit == .Wall_Trained && len(native_graph.internodes) == 0 && len(result.plant.segments) > 0 {
         cadence_density := config.detail == .Near ? f32(16) : config.detail == .Medium ? f32(8) : f32(4)
         cadence_ceiling := int(math.ceil(config.support.width * config.support.height * cadence_density))
         eligible_count := 0
@@ -623,7 +553,10 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             }
         }
     }
-    finalize_segment_topology(&result.plant)
-    plant_structure.destroy_plant(&interpreted.plant)
+    finalize_segment_topology(&result.plant, config.seed, config.species)
+    if len(native_graph.internodes) > 0 {
+        generated_graph_adopt_native(&result.plant, &native_graph, profile)
+    }
+    generation_workspace_dispose_interpreted(&interpreted.plant)
     return result
 }

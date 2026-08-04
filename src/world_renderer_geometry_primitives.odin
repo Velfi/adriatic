@@ -191,16 +191,39 @@ world_instance_mesh_instances_clear :: proc() {
 world_instance_mesh_add :: proc(vertices: []World_Vertex, indices: []u32, casts_shadow: bool = true) -> int {
     if len(vertices) == 0 || len(indices) == 0 do return -1
     mesh := World_Instance_Mesh {
-        first_vertex = u32(len(world_renderer.instance_vertices)),
-        first_index  = u32(len(world_renderer.instance_indices)),
-        index_count  = u32(len(indices)),
-        casts_shadow = casts_shadow,
-        instances    = make([dynamic]World_Mesh_Instance, 0, 64),
+        first_vertex    = u32(len(world_renderer.instance_vertices)),
+        vertex_capacity = u32(len(vertices)),
+        first_index     = u32(len(world_renderer.instance_indices)),
+        index_count     = u32(len(indices)),
+        index_capacity  = u32(len(indices)),
+        casts_shadow    = casts_shadow,
+        instances       = make([dynamic]World_Mesh_Instance, 0, 64),
     }
     append(&world_renderer.instance_vertices, ..vertices)
     append(&world_renderer.instance_indices, ..indices)
     append(&world_renderer.instance_meshes, mesh)
     return len(world_renderer.instance_meshes) - 1
+}
+
+world_instance_mesh_replace :: proc(
+    mesh_index: int,
+    vertices: []World_Vertex,
+    indices: []u32,
+    casts_shadow: bool = true,
+) -> bool {
+    if mesh_index < 0 || mesh_index >= len(world_renderer.instance_meshes) || len(vertices) == 0 || len(indices) == 0 {
+        return false
+    }
+    mesh := &world_renderer.instance_meshes[mesh_index]
+    if len(vertices) > int(mesh.vertex_capacity) || len(indices) > int(mesh.index_capacity) do return false
+    first_vertex := int(mesh.first_vertex)
+    first_index := int(mesh.first_index)
+    copy(world_renderer.instance_vertices[first_vertex:first_vertex + len(vertices)], vertices)
+    copy(world_renderer.instance_indices[first_index:first_index + len(indices)], indices)
+    mesh.index_count = u32(len(indices))
+    mesh.casts_shadow = casts_shadow
+    clear(&mesh.instances)
+    return true
 }
 
 world_instance_mesh_emit :: proc(mesh_index: int, instance: World_Mesh_Instance) {
@@ -332,12 +355,12 @@ world_scene_moonlight :: proc(sky: atmosphere.Sky_State) -> f32 {
 
 @(no_instrumentation)
 world_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}, {}, {}, 0}
+    return {{point.x, point.y, point.z}, world_color(color), .BRDF, {0, 1, 0}, {0, .9}, {}}
 }
 
 @(no_instrumentation)
 world_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}, {}, {}, 0}
+    return {{point.x, point.y, point.z}, world_color(color), .Water, {0, 1, 0}, {}, {}}
 }
 
 @(no_instrumentation)
@@ -409,7 +432,7 @@ world_ocean_vertex :: #force_inline proc(
 
 @(no_instrumentation)
 world_fountain_water_vertex :: #force_inline proc(point: third_person.Vec3, color: canvas2d.Color) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}, {}, {}, 0}
+    return {{point.x, point.y, point.z}, world_color(color), .Fountain_Water, {0, 1, 0}, {}, {}}
 }
 
 @(no_instrumentation)
@@ -418,7 +441,7 @@ world_foliage_vertex :: #force_inline proc(
     color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}, {}, {}, 0}
+    return {{point.x, point.y, point.z}, world_color(color), .Foliage, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 @(no_instrumentation)
@@ -427,7 +450,7 @@ world_eye_vertex :: #force_inline proc(
     color: canvas2d.Color,
     normal: third_person.Vec3,
 ) -> World_Vertex {
-    return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}, {}, {}, 0}
+    return {{point.x, point.y, point.z}, world_color(color), .Eye, {normal.x, normal.y, normal.z}, {}, {}}
 }
 
 @(no_instrumentation)
@@ -579,9 +602,6 @@ world_greek_asset_vertex :: proc(
         {normal.x, normal.y, normal.z},
         {clamp(metallic, 0, 1), clamp(roughness, .04, 1)},
         {},
-        {},
-        {},
-        0,
     }
 }
 

@@ -58,6 +58,23 @@ fork_depths_create_separate_watertight_hulls :: proc(t: ^testing.T) {
 }
 
 @(test)
+explicit_axes_override_renderer_depth :: proc(t: ^testing.T) {
+    segments := [3]plant_structure.Segment {
+        {{0, 0, 0}, {0, 1, 0}, .2, .15, 7},
+        {{0, 1, 0}, {0, 2, 0}, .15, .09, 42},
+        {{0, 1, 0}, {1, 2, 0}, .10, .04, 7},
+    }
+    axes := [3]int{0, 0, 1}
+    mesh := generate(
+        segments[:],
+        {radial_segments = 6, samples_per_segment = 2, minimum_radius = .01, axis_ids = axes[:]},
+    )
+    defer destroy(&mesh)
+    testing.expect(t, len(mesh.vertices) >= 46)
+    testing.expect(t, len(mesh.indices) > 0)
+}
+
+@(test)
 radial_irregularity_creates_deterministic_fluting :: proc(t: ^testing.T) {
     segments := [1]plant_structure.Segment{{{0, 0, 0}, {0, 2, 0}, .3, .24, 0}}
     config := Config {

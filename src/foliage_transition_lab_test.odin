@@ -1,6 +1,7 @@
 package main
 
 import leaf_mesh "../packages/leaf_mesh"
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -54,6 +55,39 @@ foliage_transition_middle_diagnostics_are_explicitly_bounded :: proc(t: ^testing
 }
 
 @(test)
+plant_instance_shadow_deformation_keeps_leaf_pivot_on_branch :: proc(t: ^testing.T) {
+    instance := generated_plant_instance(
+        {1, 0, 0},
+        {0, 1, 0},
+        {0, 0, 1},
+        {2, 3, 4},
+        {255, 255, 255, 255},
+        {2, 0, 4},
+        1,
+        .73,
+        .8,
+        .9,
+        1,
+    )
+    leaf := world_vertex({}, {255, 255, 255, 255})
+    leaf.kind = .Leaf
+    branch := leaf
+    branch.kind = .Bark
+    leaf_position := shadow_instance_position(leaf, instance, 12.5, .6, 5, 2)
+    branch_position := shadow_instance_position(branch, instance, 12.5, .6, 5, 2)
+    for component in 0 ..< 3 {
+        testing.expect(t, math.abs(leaf_position[component] - branch_position[component]) < 1e-5)
+    }
+
+    root_instance := instance
+    root_instance.basis_y_translation_y[3] = 0
+    root := shadow_instance_position(branch, root_instance, 12.5, .6, 5, 2)
+    testing.expect(t, math.abs(root[0] - 2) < 1e-5)
+    testing.expect(t, math.abs(root[1]) < 1e-5)
+    testing.expect(t, math.abs(root[2] - 4) < 1e-5)
+}
+
+@(test)
 middle_tree_instance_meshes_persist_while_frame_instances_clear :: proc(t: ^testing.T) {
     world_instance_meshes_clear()
     vertices := [3]World_Vertex {
@@ -73,6 +107,19 @@ middle_tree_instance_meshes_persist_while_frame_instances_clear :: proc(t: ^test
     testing.expect_value(t, len(world_renderer.instance_meshes), 1)
     testing.expect_value(t, len(world_renderer.instance_meshes[mesh_index].instances), 0)
     testing.expect_value(t, len(world_renderer.instance_flattened), 0)
+    replacement_vertices := [2]World_Vertex {
+        {position = {2, 0, 0}},
+        {position = {0, 2, 0}},
+    }
+    replacement_indices := [3]u32{0, 1, 0}
+    testing.expect(
+        t,
+        world_instance_mesh_replace(mesh_index, replacement_vertices[:], replacement_indices[:], true),
+    )
+    testing.expect(t, world_renderer.instance_meshes[mesh_index].casts_shadow)
+    testing.expect_value(t, world_renderer.instance_meshes[mesh_index].index_count, u32(3))
+    oversized_vertices := [4]World_Vertex{}
+    testing.expect(t, !world_instance_mesh_replace(mesh_index, oversized_vertices[:], replacement_indices[:]))
     world_instance_meshes_clear()
     delete(world_renderer.instance_vertices)
     delete(world_renderer.instance_indices)

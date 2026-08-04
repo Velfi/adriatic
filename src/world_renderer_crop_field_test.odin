@@ -84,3 +84,12 @@ world_crop_field_volume_edge_interpolates_to_the_contour :: proc(t: ^testing.T) 
     testing.expect(t, math.abs(edge.x - 2.5) < .0001)
     testing.expect(t, edge.y == 2)
 }
+
+@(test)
+world_foliage_lod_only_condenses_broad_low_plant_fields :: proc(t: ^testing.T) {
+    testing.expect(t, !world_foliage_should_condense_to_field(90, 70, 1.5, .Near))
+    testing.expect(t, world_foliage_should_condense_to_field(90, 70, 1.5, .Medium))
+    testing.expect(t, world_foliage_should_condense_to_field(90, 70, 1.5, .Far))
+    testing.expect(t, !world_foliage_should_condense_to_field(90, 70, 42, .Far))
+    testing.expect(t, !world_foliage_should_condense_to_field(120, 14, 1.5, .Far))
+}

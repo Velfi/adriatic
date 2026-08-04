@@ -199,6 +199,16 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
         _ = lab_scene_load(editor, {definition = lab_scene_find("shadow")})
     case "garden":
         _ = lab_scene_load(editor, {definition = lab_scene_find("garden"), target = "courtyard"})
+    case "plant_gallery":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "gallery"})
+    case "plant_transition":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("foliage-transition")})
+    case "olive_orchard":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "olive"})
+    case "plant_climbers":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "climbing-garden"})
+    case "plant_runtime_max":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "stone-pine"})
     case "boids_10k":
         _ = lab_scene_load(editor, {definition = lab_scene_find("boid"), target = "stress-10k"})
     case "boids_0":
@@ -227,6 +237,11 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "municipal_route_night_storm" &&
        scenario != "shadow_lab" &&
        scenario != "garden" &&
+       scenario != "plant_gallery" &&
+       scenario != "plant_transition" &&
+       scenario != "olive_orchard" &&
+       scenario != "plant_climbers" &&
+       scenario != "plant_runtime_max" &&
        scenario != "boids_0" &&
        scenario != "boids_10k" {
         editor.editor_camera.distance = 260

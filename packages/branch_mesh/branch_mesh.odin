@@ -80,6 +80,10 @@ Config :: struct {
     radial_irregularity: f32,
     twist:               f32,
     seed:                u64,
+    // Optional explicit topology from plants.Generated_Plant. When supplied,
+    // chains are grouped by botanical axis instead of inferred from renderer
+    // depth and storage adjacency.
+    axis_ids:            []int,
 }
 
 destroy :: proc(mesh: ^Mesh) {
@@ -109,10 +113,19 @@ append_ring :: proc(
     along: f32,
 ) -> u32 {
     unit_tangent := linalg.normalize0(tangent)
-    reference := math.abs(unit_tangent[1]) > .88 ? plant_structure.Vec3{1, 0, 0} : plant_structure.Vec3{0, 1, 0}
-    right := linalg.normalize0(linalg.cross(reference, unit_tangent))
-    if linalg.dot(previous_right^, previous_right^) > .5 && linalg.dot(right, previous_right^) < 0 {
-        right = -right
+    right: plant_structure.Vec3
+    if linalg.dot(previous_right^, previous_right^) > .5 {
+        // Rotation-minimizing transport: project the previous frame onto the
+        // new tangent plane. This avoids the roll and occasional frame flip
+        // caused by rebuilding every ring from a fixed world axis.
+        transported := previous_right^ - unit_tangent * linalg.dot(previous_right^, unit_tangent)
+        if linalg.dot(transported, transported) > 1e-8 {
+            right = linalg.normalize0(transported)
+        }
+    }
+    if linalg.dot(right, right) < .5 {
+        reference := math.abs(unit_tangent[1]) > .88 ? plant_structure.Vec3{1, 0, 0} : plant_structure.Vec3{0, 1, 0}
+        right = linalg.normalize0(linalg.cross(reference, unit_tangent))
     }
     previous_right^ = right
     up := linalg.normalize0(linalg.cross(unit_tangent, right))
@@ -265,7 +278,12 @@ generate :: proc(segments: []plant_structure.Segment, config: Config) -> Mesh {
             append(&chain, segments[current])
             next_index := -1
             for candidate in current + 1 ..< len(segments) {
-                if used[candidate] || segments[candidate].depth != segments[current].depth do continue
+                if used[candidate] do continue
+                same_axis := segments[candidate].depth == segments[current].depth
+                if len(config.axis_ids) == len(segments) {
+                    same_axis = config.axis_ids[candidate] == config.axis_ids[current]
+                }
+                if !same_axis do continue
                 if near(segments[candidate].start, segments[current].end) {
                     next_index = candidate
                     break

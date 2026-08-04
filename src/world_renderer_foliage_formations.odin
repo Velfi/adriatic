@@ -10,13 +10,20 @@ world_foliage_formation :: proc(
     lod: Structure_LOD = .Near,
     aerial_view := false,
 ) {
-    shadow_first := len(world_renderer.vertices)
-    defer world_register_shadow_caster(shadow_first)
     // Authored foliage retains the tool's one-cell minimum. Derived foliage,
     // such as scrub placed on a ridge or cliff, can opt into its exact
     // footprint while still using this same crown generator.
     width := max(structure.width, minimum_footprint)
     depth := max(structure.depth, minimum_footprint)
+    if world_foliage_should_condense_to_field(width, depth, structure.height, lod) && world_renderer.editor != nil {
+        condensed := structure
+        condensed.width = width
+        condensed.depth = depth
+        world_crop_field(condensed, &world_renderer.editor.project, lod)
+        return
+    }
+    shadow_first := len(world_renderer.vertices)
+    defer world_register_shadow_caster(shadow_first)
     wide, narrow := max(width, depth), min(width, depth)
     aspect := wide / max(narrow, f32(.01))
     mature_forest, aerial_woodland := world_foliage_is_forest(width, depth, structure.height, lod, aerial_view)

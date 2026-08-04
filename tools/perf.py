@@ -9,6 +9,7 @@ import platform
 import statistics
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,8 @@ def git_state() -> dict[str, Any]:
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=ROOT,
         check=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     ).stdout.strip()
     dirty = subprocess.run(
@@ -59,17 +61,30 @@ def run_once(executable: Path, name: str, scenario: dict[str, Any]) -> dict[str,
         str(world[0]),
         str(world[1]),
     ]
-    completed = subprocess.run(
+    process = subprocess.Popen(
         command,
         cwd=ROOT,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    output = completed.stdout + "\n" + completed.stderr
-    if completed.returncode != 0:
+    if platform.system() == "Darwin":
+        time.sleep(0.75)
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to set frontmost of process "adriatic" to true',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    stdout, stderr = process.communicate()
+    output = stdout + "\n" + stderr
+    if process.returncode != 0:
         raise RuntimeError(
-            f"{name} exited with {completed.returncode}\n{output[-4000:]}"
+            f"{name} exited with {process.returncode}\n{output[-4000:]}"
         )
     for line in output.splitlines():
         if line.startswith(RESULT_PREFIX):

@@ -6,6 +6,7 @@ import "core:math/linalg"
 
 olive_architecture :: proc(seed: u64, maturity: f32, iterations: int) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed ~ 0xa0761d6478bd642f
     if random == 0 do random = 1
     foliage_random := seed ~ 0xe7037ed1a0b428db
@@ -151,6 +152,7 @@ cypress_architecture :: proc(
     reference_tier_count: f32,
 ) -> plant_structure.Interpret_Result {
     result: plant_structure.Interpret_Result
+    architecture_result_begin(&result)
     random := seed
     if random == 0 do random = 1
     step := f32(.37) * (.22 + maturity * .78)
@@ -354,10 +356,29 @@ generate_architecture_stage :: proc(
     iterations, detail_reduction, expansion_segment_limit: int,
 ) -> (
     plant_structure.Interpret_Result,
+    Plant_Graph,
     Generate_Error,
 ) {
     interpreted: plant_structure.Interpret_Result
-    if config.species == .Olive {
+    native_graph: Plant_Graph
+    if config.species == .Olive ||
+       config.species == .Fig ||
+       config.species == .Lemon ||
+       config.species == .Pomegranate ||
+       config.species == .Almond ||
+       config.species == .Stone_Pine ||
+       config.species == .Bay_Laurel ||
+       config.species == .Carob ||
+       config.species == .Strawberry_Tree ||
+       config.species == .Myrtle ||
+       config.species == .Mastic ||
+       config.species == .Holm_Oak ||
+       config.species == .Oriental_Plane ||
+       config.species == .European_Hackberry ||
+       config.species == .White_Poplar {
+        native_graph = native_woody_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
+    } else if config.species == .Olive {
         // Far LOD keeps the medium woody silhouette and spends its savings on
         // leaf clustering and mesh tessellation. Removing another entire
         // branch generation makes olives read as bare candelabras.
@@ -379,13 +400,17 @@ generate_architecture_stage :: proc(
     } else if config.species == .Mastic {
         interpreted = mastic_architecture(config.seed, maturity, iterations)
     } else if config.species == .Agapanthus {
-        interpreted = agapanthus_architecture(config.seed, maturity, config.detail)
+        native_graph = agapanthus_graph(config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Lavender {
-        interpreted = lavender_architecture(config.seed, maturity, iterations)
+        native_graph = native_herb_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Thyme {
-        interpreted = thyme_architecture(config.seed, maturity, config.detail)
+        native_graph = native_herb_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Sage {
-        interpreted = sage_architecture(config.seed, maturity, iterations)
+        native_graph = native_herb_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Carob {
         interpreted = carob_architecture(config.seed, maturity, iterations)
     } else if config.species == .Bay_Laurel {
@@ -407,44 +432,50 @@ generate_architecture_stage :: proc(
         // Its redundant secondary leader anchors are omitted below, leaving
         // this denser topology beneath both hard geometry ceilings.
         if config.detail == .Far do tier_count = min(tier_count, 11)
-        interpreted = cypress_architecture(config.seed, maturity, tier_count, reference_tier_count)
+        _ = tier_count
+        _ = reference_tier_count
+        native_graph = native_cypress_graph(config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Pelargonium {
-        interpreted = pelargonium_architecture(config.seed, maturity)
+        native_graph = pelargonium_graph(config.seed, maturity)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Rosemary {
-        interpreted = rosemary_architecture(config.seed, maturity, config.detail)
+        native_graph = native_herb_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Oleander {
-        interpreted = oleander_architecture(config.seed, maturity, config.detail)
+        native_graph = oleander_graph(config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Hydrangea_Bush || config.species == .Hydrangea_Tree {
-        interpreted = hydrangea_architecture(config.species, config.seed, maturity, config.detail)
-    } else if config.species == .Grapevine {
-        interpreted = grapevine_architecture(config.seed, maturity, config.detail)
-    } else if config.species == .Bougainvillea {
-        interpreted = bougainvillea_architecture(config.seed, maturity, config.detail)
-    } else if config.species == .Star_Jasmine {
-        interpreted = star_jasmine_architecture(config.seed, maturity, config.detail)
-    } else if config.species == .Wisteria {
-        interpreted = wisteria_architecture(config.seed, maturity, config.detail)
-    } else if config.species == .Climbing_Rose {
-        interpreted = climbing_rose_architecture(config.seed, maturity, config.detail)
+        native_graph = hydrangea_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
+    } else if config.species == .Grapevine ||
+       config.species == .Bougainvillea ||
+       config.species == .Star_Jasmine ||
+       config.species == .Wisteria ||
+       config.species == .Climbing_Rose {
+        native_graph = native_climber_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Prickly_Pear {
-        interpreted = prickly_pear_architecture(config.seed, maturity)
+        native_graph = prickly_pear_graph(config.seed, maturity)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Golden_Barrel || config.species == .Agave || config.species == .Aloe {
-        interpreted = fleshy_plant_architecture(config.species, config.seed, maturity, config.detail)
+        native_graph = fleshy_plant_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Aeonium ||
        config.species == .Echeveria ||
        config.species == .Jade_Plant ||
        config.species == .Stonecrop ||
        config.species == .Blue_Chalk_Sticks ||
        config.species == .Golden_Torch_Cactus {
-        interpreted = succulent_catalog_architecture(config.species, config.seed, maturity, config.detail)
+        native_graph = succulent_catalog_graph(config.species, config.seed, maturity, config.detail)
+        interpreted = graph_compile(&native_graph)
     } else if config.species == .Stone_Pine {
         interpreted = stone_pine_architecture(config.seed, maturity, iterations)
     } else {
         // The catalog switch is intentionally exhaustive. New species must
         // select an architectural family or a dedicated botanical builder;
         // silently falling back to a generic architecture is not allowed.
-        return {}, .Expansion_Failed
+        return {}, {}, .Expansion_Failed
     }
-    canonicalize_architecture(&interpreted, config.species, maturity)
-    return interpreted, .None
+    return interpreted, native_graph, .None
 }

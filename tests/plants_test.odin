@@ -906,6 +906,7 @@ plant_generated_geometry_preserves_winding :: proc(t: ^testing.T) {
 
             branch_config := branch_mesh.Config {
                 minimum_radius = .012,
+                axis_ids       = result.plant.segment_axes[:],
             }
             switch detail {
             case .Near:

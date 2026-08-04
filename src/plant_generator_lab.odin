@@ -6,8 +6,8 @@ import branch_mesh "../packages/branch_mesh"
 import buildings "../packages/buildings"
 import flower_mesh "../packages/flower_mesh"
 import leaf_mesh "../packages/leaf_mesh"
-import plant_structure "../packages/plant_structure"
 import plant_bark "../packages/plant_bark"
+import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
@@ -39,10 +39,6 @@ plant_generator_barrel_mesh: barrel_cactus_mesh.Mesh
 plant_generator_barrel_mesh_ready: bool
 plant_generator_torch_mesh: barrel_cactus_mesh.Mesh
 plant_generator_torch_mesh_ready: bool
-plant_generator_wind_base: third_person.Vec3
-plant_generator_wind_height: f32
-plant_generator_wind_compliance: f32
-plant_generator_wind_habit: plants.Growth_Habit
 plant_generator_camera_close := false
 plant_generator_camera_base := false
 plant_generator_succulent_garden := false
@@ -374,6 +370,7 @@ plant_generator_rebuild :: proc() {
             radial_irregularity = result.plant.wood.radial_irregularity,
             twist               = result.plant.wood.twist,
             seed                = plant_generator_seed + u64(index * 977),
+            axis_ids            = result.plant.segment_axes[:],
         }
         switch plant_generator_detail {
         case .Near:
@@ -945,39 +942,39 @@ plant_generator_lab_configure :: proc(editor: ^Editor, requested_target: string)
 }
 
 plant_generator_maturity_minus_bounds :: proc() -> canvas2d.Rectangle {
-    return {592, 56, 28, 28}
+    return {38, 252, 28, 28}
 }
 
 plant_generator_maturity_track_bounds :: proc() -> canvas2d.Rectangle {
-    return {630, 62, 132, 16}
+    return {76, 258, 170, 16}
 }
 
 plant_generator_maturity_plus_bounds :: proc() -> canvas2d.Rectangle {
-    return {772, 56, 28, 28}
+    return {256, 252, 28, 28}
 }
 
 plant_generator_view_dropdown_bounds :: proc() -> canvas2d.Rectangle {
-    return {38, 56, 246, 28}
+    return {38, 88, 246, 28}
 }
 
 plant_generator_detail_dropdown_bounds :: proc() -> canvas2d.Rectangle {
-    return {298, 56, 124, 28}
+    return {38, 144, 246, 28}
 }
 
 plant_generator_seed_button_bounds :: proc() -> canvas2d.Rectangle {
-    return {436, 56, 138, 28}
+    return {38, 200, 246, 28}
 }
 
 plant_generator_detail_option_bounds :: proc(index: int) -> canvas2d.Rectangle {
     bounds := plant_generator_detail_dropdown_bounds()
-    return {bounds.x, bounds.y + bounds.height + f32(index) * 26, bounds.width, 26}
+    return {300, bounds.y + f32(index) * 26, bounds.width, 26}
 }
 
 plant_generator_view_option_bounds :: proc(index: int) -> canvas2d.Rectangle {
     bounds := plant_generator_view_dropdown_bounds()
     column := index % 4
     row := index / 4
-    return {24 + f32(column) * 198, bounds.y + bounds.height + f32(row) * 26, 198, 26}
+    return {300 + f32(column) * 198, bounds.y + f32(row) * 26, 198, 26}
 }
 
 plant_generator_view_option_count :: proc() -> int {
@@ -993,9 +990,12 @@ plant_generator_view_label :: proc() -> cstring {
 
 plant_generator_view_option_label :: proc(index: int) -> cstring {
     switch index {
-    case 0: return "All plants"
-    case 1: return "Succulent garden"
-    case 2: return "Climbing garden"
+    case 0:
+        return "All plants"
+    case 1:
+        return "Succulent garden"
+    case 2:
+        return "Climbing garden"
     }
     return fmt.ctprintf("%s", plants.species_name(plants.Species(index - 3)))
 }
@@ -1060,10 +1060,43 @@ plant_generator_move_root :: proc(cursor_x: f32) -> bool {
     return math.abs(root_x - plant_generator_root_drag_origin_x) > .001
 }
 
+plant_generator_camera_orbit_zoom :: proc(editor: ^Editor, orbit_x, orbit_y, wheel: f32) {
+    if editor == nil do return
+    target := editor.camera_pose.target
+    offset := editor.camera_pose.position - target
+    distance := max(linalg.length(offset), f32(.001))
+    yaw := f32(math.atan2(f64(offset.x), f64(offset.z))) - orbit_x * .008
+    pitch := f32(math.asin(f64(clamp(offset.y / distance, -1, 1)))) - orbit_y * .006
+    pitch = clamp(pitch, f32(-.65), f32(1.25))
+    if math.abs(wheel) > .01 {
+        distance = clamp(distance * f32(math.pow(.86, f64(wheel))), f32(.35), f32(120))
+    }
+    horizontal := math.cos(pitch) * distance
+    position := target + third_person.Vec3 {
+        math.sin(yaw) * horizontal,
+        math.sin(pitch) * distance,
+        math.cos(yaw) * horizontal,
+    }
+    editor.camera_pose = third_person.camera_look_at(position, target)
+    third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
+}
+
 plant_generator_lab_process_input :: proc(editor: ^Editor) {
     changed := false
     camera_changed := false
     mouse := canvas2d.GetMousePosition()
+    gallery := plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden
+    wheel_delta := canvas2d.GetMouseWheelMoveV()
+    wheel := math.abs(wheel_delta.x) > math.abs(wheel_delta.y) ? wheel_delta.x : wheel_delta.y
+    sidebar := canvas2d.Rectangle{24, 24, 276, 342}
+    viewport_input := !canvas2d.CheckCollisionPointRec(mouse, sidebar)
+    if viewport_input && canvas2d.IsMouseButtonDown(.RIGHT) {
+        delta := canvas2d.GetMouseDelta()
+        plant_generator_camera_orbit_zoom(editor, delta.x, delta.y, 0)
+    }
+    if viewport_input && !gallery && math.abs(wheel) > .01 {
+        plant_generator_camera_orbit_zoom(editor, 0, 0, wheel)
+    }
     if canvas2d.IsMouseButtonPressed(.LEFT) {
         if canvas2d.CheckCollisionPointRec(mouse, plant_generator_view_dropdown_bounds()) {
             plant_generator_view_dropdown_open = !plant_generator_view_dropdown_open
@@ -1099,40 +1132,40 @@ plant_generator_lab_process_input :: proc(editor: ^Editor) {
             plant_generator_seed += 1
             changed = true
         } else {
-        window_cursor, window_cursor_ok := plant_generator_window_cursor(editor, mouse)
-        if plant_generator_climber_interior_corner && window_cursor_ok && mouse.y > 150 {
-            for opening, index in plant_generator_exclusions[:2] {
-                if window_cursor.x >= opening.minimum_x &&
-                   window_cursor.x <= opening.maximum_x &&
-                   window_cursor.y >= opening.minimum_y &&
-                   window_cursor.y <= opening.maximum_y {
-                    plant_generator_window_dragging = index
-                    plant_generator_window_drag_anchor = window_cursor
-                    plant_generator_window_drag_origin = opening
-                    plant_generator_window_drag_moved = false
-                    break
+            window_cursor, window_cursor_ok := plant_generator_window_cursor(editor, mouse)
+            if plant_generator_climber_interior_corner && window_cursor_ok && mouse.y > 150 {
+                for opening, index in plant_generator_exclusions[:2] {
+                    if window_cursor.x >= opening.minimum_x &&
+                       window_cursor.x <= opening.maximum_x &&
+                       window_cursor.y >= opening.minimum_y &&
+                       window_cursor.y <= opening.maximum_y {
+                        plant_generator_window_dragging = index
+                        plant_generator_window_drag_anchor = window_cursor
+                        plant_generator_window_drag_origin = opening
+                        plant_generator_window_drag_moved = false
+                        break
+                    }
+                }
+                root_x := -2.45 + plant_generator_root_offset
+                if plant_generator_window_dragging < 0 &&
+                   math.abs(window_cursor.x - root_x) <= .48 &&
+                   window_cursor.y >= 0 &&
+                   window_cursor.y <= .62 {
+                    plant_generator_root_dragging = true
+                    plant_generator_root_drag_anchor_x = window_cursor.x
+                    plant_generator_root_drag_origin_x = root_x
+                    plant_generator_root_drag_moved = false
                 }
             }
-            root_x := -2.45 + plant_generator_root_offset
-            if plant_generator_window_dragging < 0 &&
-               math.abs(window_cursor.x - root_x) <= .48 &&
-               window_cursor.y >= 0 &&
-               window_cursor.y <= .62 {
-                plant_generator_root_dragging = true
-                plant_generator_root_drag_anchor_x = window_cursor.x
-                plant_generator_root_drag_origin_x = root_x
-                plant_generator_root_drag_moved = false
+            if plant_generator_window_dragging >= 0 || plant_generator_root_dragging {
+                // The world handle owns this press; do not also activate panel controls.
+            } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_minus_bounds()) {
+                changed = plant_generator_set_maturity(plant_generator_maturity - .05) || changed
+            } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_plus_bounds()) {
+                changed = plant_generator_set_maturity(plant_generator_maturity + .05) || changed
+            } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_track_bounds()) {
+                plant_generator_maturity_dragging = true
             }
-        }
-        if plant_generator_window_dragging >= 0 || plant_generator_root_dragging {
-            // The world handle owns this press; do not also activate panel controls.
-        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_minus_bounds()) {
-            changed = plant_generator_set_maturity(plant_generator_maturity - .05) || changed
-        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_plus_bounds()) {
-            changed = plant_generator_set_maturity(plant_generator_maturity + .05) || changed
-        } else if canvas2d.CheckCollisionPointRec(mouse, plant_generator_maturity_track_bounds()) {
-            plant_generator_maturity_dragging = true
-        }
         }
     }
     if plant_generator_maturity_dragging && canvas2d.IsMouseButtonDown(.LEFT) {
@@ -1194,9 +1227,6 @@ plant_generator_lab_process_input :: proc(editor: ^Editor) {
         plant_generator_climbing_garden = false
         changed = true
     }
-    gallery := plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden
-    wheel_delta := canvas2d.GetMouseWheelMoveV()
-    wheel := math.abs(wheel_delta.x) > math.abs(wheel_delta.y) ? wheel_delta.x : wheel_delta.y
     if gallery && math.abs(wheel) > .01 {
         plant_generator_gallery_scroll = clamp(
             plant_generator_gallery_scroll - wheel * 3.4,
@@ -1269,51 +1299,7 @@ plant_generator_point :: proc(
         base.y + point[1] * scale,
         base.z + (point[0] * sine + point[2] * cosine) * scale,
     }
-    editor := world_renderer.editor
-    if editor == nil || plant_generator_wind_height <= .001 do return result
-    trained := plant_generator_wind_habit != .Free_Standing
-    // Ties, wires, and masonry hold climbing wood in place. Only callers
-    // transforming a foliage vertex opt into localized flutter below.
-    if trained && trained_foliage_weight < 0 do return result
-    wind := editor.atmosphere.weather.wind
-    wind_speed := f32(math.sqrt(f64(wind[0] * wind[0] + wind[1] * wind[1])))
-    if wind_speed <= .001 do return result
-    direction := third_person.Vec3{wind[0] / wind_speed, 0, wind[1] / wind_speed}
-    across := third_person.Vec3{-direction.z, 0, direction.x}
-    height_weight := clamp((result.y - plant_generator_wind_base.y) / plant_generator_wind_height, 0, 1)
-    root_offset := third_person.Vec3{result.x - plant_generator_wind_base.x, 0, result.z - plant_generator_wind_base.z}
-    reach_weight := clamp(linalg.length(root_offset) / plant_generator_wind_height, 0, 1)
-    // Height alone makes a near-horizontal branch move as one rigid piece:
-    // its joint and tip have almost identical weights, even though the leaves
-    // at the tip make the motion conspicuous. Radial reach supplies the
-    // missing along-branch gradient while the squared response keeps roots
-    // and the lower trunk firmly planted.
-    flex_weight := clamp(height_weight + reach_weight * .52, 0, 1)
-    bend_weight := trained ? clamp(trained_foliage_weight, f32(0), f32(1)) : flex_weight * flex_weight
-    // A batched capture advances deterministic review phases without
-    // relaunching the app (and regenerating terrain) for every screenshot.
-    time := cinematic_export_active ? cinematic_export_time * .45 : editor.atmosphere.front_seconds
-    phase := time * (.72 + wind_speed * .018) + plant_generator_wind_base.x * .071 - plant_generator_wind_base.z * .053
-    gust := f32(math.sin(f64(phase))) * .72 + f32(math.sin(f64(phase * .43 + 1.9))) * .28
-    cross_gust := f32(math.sin(f64(phase * 1.31 + 4.2)))
-    // Compliance is catalog-authored around .18 for mature free-standing
-    // trees. Normalize around that baseline so it controls relative species
-    // flexibility while windy weather still produces a readable crown arc.
-    compliance := clamp(plant_generator_wind_compliance / .18, .25, 2.4)
-    // Wind displacement is measured in world metres, so it must scale with
-    // the specimen. A tree-calibrated absolute offset can exceed the complete
-    // height of thyme and other mats, making leaf vertices appear detached
-    // even though their petiole anchors and branch nodes coincide. Mature
-    // shrubs and trees converge to the existing motion above this range.
-    specimen_scale := clamp(plant_generator_wind_height / .65, f32(.08), f32(1))
-    amplitude :=
-        clamp((wind_speed - 1) / 13, 0, 1) *
-        (trained ? f32(.16) : f32(.62)) *
-        compliance *
-        specimen_scale
-    result += direction * (amplitude * (.48 + gust * .52) * bend_weight)
-    result += across * (amplitude * cross_gust * .13 * bend_weight)
-    result.y -= amplitude * .08 * bend_weight * (1 + gust * .3)
+    _ = trained_foliage_weight
     return result
 }
 
@@ -1572,17 +1558,19 @@ plant_generator_leaf_point :: proc(
     // positions and branches; cancelling the scale here made magnified small
     // plants retain unscaled leaves, producing needle-like succulents and
     // incorrect leaf-to-stem proportions throughout the catalog.
-    local := position + right * point[0] + forward * point[1] + up * point[2]
-    // Leaf meshes originate at their petiole. Distance from that attachment
-    // supplies a continuous pin-to-tip weight, so trained leaves rustle
-    // without their bases sliding along the wall-mounted cane.
-    tip_weight := clamp(
-        (linalg.length(plant_structure.Vec3{point[0], point[1], point[2]}) - .006) / (.12 - .006),
-        f32(0),
-        f32(1),
-    )
-    tip_weight = tip_weight * tip_weight * (3 - 2 * tip_weight)
-    return plant_generator_point(base, local, yaw, scale, tip_weight)
+    // Sample wind once at the petiole, exactly as the parent branch does,
+    // then carry the authored leaf mesh rigidly from that attachment. The old
+    // per-vertex pin-to-tip deformation applied metre-scale wind offsets
+    // across centimetres of leaf and visibly stretched the blade.
+    attachment := plant_generator_point(base, position, yaw, scale, 0)
+    local_offset := right * point[0] + forward * point[1] + up * point[2]
+    cosine, sine := math.cos(yaw), math.sin(yaw)
+    world_offset := third_person.Vec3 {
+        (local_offset[0] * cosine - local_offset[2] * sine) * scale,
+        local_offset[1] * scale,
+        (local_offset[0] * sine + local_offset[2] * cosine) * scale,
+    }
+    return attachment + world_offset
 }
 
 plant_generator_leaf_normal :: #force_inline proc(
@@ -2183,10 +2171,16 @@ plant_generator_draw_torch_spines :: proc(base: third_person.Vec3, yaw, display_
         for rib in 0 ..< rib_count {
             angle := f32(rib) * math.PI * 2 / f32(rib_count)
             radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
-            root := plant_generator_point(base, radial * body_radius + plant_structure.Vec3{0, y, 0}, yaw, display_scale)
+            root := plant_generator_point(
+                base,
+                radial * body_radius + plant_structure.Vec3{0, y, 0},
+                yaw,
+                display_scale,
+            )
             tip := plant_generator_point(
                 base,
-                radial * (body_radius + .045) + plant_structure.Vec3{0, y + (rib & 1 == 0 ? f32(.012) : f32(-.008)), 0},
+                radial * (body_radius + .045) +
+                plant_structure.Vec3{0, y + (rib & 1 == 0 ? f32(.012) : f32(-.008)), 0},
                 yaw,
                 display_scale,
             )
@@ -2301,10 +2295,6 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
     wood, leaf_color, accent := plant_generator_colors(species)
     yaw := result.habit == .Free_Standing ? f32(index) * .31 : f32(0)
     display_scale := plant_generator_display_scale(species)
-    plant_generator_wind_base = base
-    plant_generator_wind_height = max((result.bounds.maximum[1] - result.bounds.minimum[1]) * display_scale, f32(.1))
-    plant_generator_wind_compliance = result.wind_compliance
-    plant_generator_wind_habit = result.habit
     if result.habit != .Free_Standing {
         // A wall panel and trellis make the climbers' constraints legible.
         world_box({base.x, 3.5, base.z - .16}, {8.8, 7.2, .24}, {197, 187, 161, 255})
@@ -2371,6 +2361,42 @@ plant_generator_draw_result :: proc(index: int, base: third_person.Vec3) {
             }
         }
     }
+
+    // The lab is a presentation of the production plant generator, not a
+    // second renderer. Route the specimen through the same geometry, LOD, and
+    // wind metadata path used by plants everywhere else in the world.
+    support := plant_generator_support(species)
+    support_pointer: ^plants.Support_Surface
+    if result.habit != .Free_Standing do support_pointer = &support
+    forced_lod: Generated_Plant_Render_LOD
+    switch plant_generator_detail {
+    case .Near:
+        forced_lod = .Near
+    case .Medium:
+        forced_lod = .Medium
+    case .Far:
+        forced_lod = .Far
+    }
+    if world_generated_plant_render_lod(
+        species,
+        plant_generator_seed + u64(index * 977),
+        base,
+        display_scale,
+        yaw,
+        result.habit,
+        support_pointer,
+        plant_generator_detail,
+        0,
+        plant_generator_maturity,
+        false,
+        {},
+        .Leaves,
+        forced_lod,
+        1,
+    ) {
+        return
+    }
+
     shadow_first := len(world_renderer.vertices)
     if species == .Golden_Barrel {
         plant_generator_draw_cactus_body(
@@ -2615,16 +2641,16 @@ plant_generator_draw_grid_labels :: proc(editor: ^Editor, width, height: i32) {
 plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     if plant_generator_capture_sheet do return
     plant_generator_draw_grid_labels(editor, width, height)
-    panel := canvas2d.Rectangle{24, 24, 792, 126}
+    panel := canvas2d.Rectangle{24, 24, 276, 342}
     canvas2d.DrawRectangleRounded(panel, .14, 8, {19, 31, 27, 232})
     canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "ADRIATIC PLANT GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PLANT GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     view_dropdown := plant_generator_view_dropdown_bounds()
     detail_dropdown := plant_generator_detail_dropdown_bounds()
     seed_button := plant_generator_seed_button_bounds()
     mouse := canvas2d.GetMousePosition()
-    canvas2d.DrawTextEx(canvas2d.Font{}, "PLANT", {view_dropdown.x, 39}, 10, 1, {184, 191, 174, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "DETAIL", {detail_dropdown.x, 39}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "PLANT", {view_dropdown.x, 72}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "LOD", {detail_dropdown.x, 128}, 10, 1, {184, 191, 174, 255})
     control_bounds := [3]canvas2d.Rectangle{view_dropdown, detail_dropdown, seed_button}
     for bounds in control_bounds {
         hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
@@ -2632,18 +2658,53 @@ plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         canvas2d.DrawRectangleRounded(bounds, .16, 6, fill)
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {111, 146, 111, 255})
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_view_label(), {view_dropdown.x + 10, view_dropdown.y + 7}, 12, 1, {232, 224, 189, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_view_dropdown_open ? "^" : "v", {view_dropdown.x + view_dropdown.width - 18, view_dropdown.y + 7}, 12, 1, {196, 194, 174, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_detail_label(plant_generator_detail), {detail_dropdown.x + 10, detail_dropdown.y + 7}, 12, 1, {232, 224, 189, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_detail_dropdown_open ? "^" : "v", {detail_dropdown.x + detail_dropdown.width - 18, detail_dropdown.y + 7}, 12, 1, {196, 194, 174, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("NEW SEED  %d", plant_generator_seed), {seed_button.x + 10, seed_button.y + 7}, 11, 1, {232, 224, 189, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        plant_generator_view_label(),
+        {view_dropdown.x + 10, view_dropdown.y + 7},
+        12,
+        1,
+        {232, 224, 189, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        plant_generator_view_dropdown_open ? "^" : "v",
+        {view_dropdown.x + view_dropdown.width - 18, view_dropdown.y + 7},
+        12,
+        1,
+        {196, 194, 174, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        plant_generator_detail_label(plant_generator_detail),
+        {detail_dropdown.x + 10, detail_dropdown.y + 7},
+        12,
+        1,
+        {232, 224, 189, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        plant_generator_detail_dropdown_open ? "^" : "v",
+        {detail_dropdown.x + detail_dropdown.width - 18, detail_dropdown.y + 7},
+        12,
+        1,
+        {196, 194, 174, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("NEW SEED  %d", plant_generator_seed),
+        {seed_button.x + 10, seed_button.y + 7},
+        11,
+        1,
+        {232, 224, 189, 255},
+    )
     minus := plant_generator_maturity_minus_bounds()
     track := plant_generator_maturity_track_bounds()
     plus := plant_generator_maturity_plus_bounds()
-    canvas2d.DrawTextEx(canvas2d.Font{}, "MATURITY", {592, 39}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "MATURITY", {38, 236}, 10, 1, {184, 191, 174, 255})
     canvas2d.DrawRectangleRounded(minus, .22, 6, {38, 51, 43, 244})
     canvas2d.DrawRectangleRoundedLinesEx(minus, .22, 6, 1, {111, 146, 111, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "-", {602, 62}, 13, 1, {232, 224, 189, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "-", {minus.x + 10, minus.y + 6}, 13, 1, {232, 224, 189, 255})
     canvas2d.DrawRectangleRounded({track.x, track.y + 5, track.width, 6}, 1, 4, {48, 64, 54, 255})
     fill_width := track.width * plant_generator_maturity
     canvas2d.DrawRectangleRounded({track.x, track.y + 5, fill_width, 6}, 1, 4, {174, 207, 160, 255})
@@ -2651,17 +2712,19 @@ plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
     canvas2d.DrawCircleV({knob_x, track.y + 8}, 7, {232, 224, 189, 255})
     canvas2d.DrawRectangleRounded(plus, .22, 6, {38, 51, 43, 244})
     canvas2d.DrawRectangleRoundedLinesEx(plus, .22, 6, 1, {111, 146, 111, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, "+", {781, 62}, 13, 1, {232, 224, 189, 255})
-    help: cstring = "R SEED   LEFT/RIGHT MATURITY   TWO-FINGER SCROLL   1/2/3 DETAIL   4 GALLERY"
+    canvas2d.DrawTextEx(canvas2d.Font{}, "+", {plus.x + 9, plus.y + 6}, 13, 1, {232, 224, 189, 255})
+    help: cstring = "RIGHT DRAG ORBIT   SCROLL ZOOM"
     if plant_generator_climber_interior_corner {
-        help = "DRAG WINDOWS OR ROOT   R SEED   LEFT/RIGHT MATURITY   1/2/3 DETAIL   4 GALLERY"
+        help = "LEFT DRAG EDIT   RIGHT DRAG ORBIT"
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, help, {38, 91}, 11, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, help, {38, 294}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "R SEED   LEFT/RIGHT MATURITY", {38, 310}, 10, 1, {184, 191, 174, 255})
+    canvas2d.DrawTextEx(canvas2d.Font{}, "1/2/3 LOD   4 GALLERY", {38, 326}, 10, 1, {184, 191, 174, 255})
     if plant_generator_climbing_garden {
         canvas2d.DrawTextEx(
             canvas2d.Font{},
             "CLIMBING GARDEN  /  BOUGAINVILLEA  GRAPEVINE  WISTERIA  CLIMBING ROSE  STAR JASMINE",
-            {38, 116},
+            {38, 346},
             10,
             1,
             {216, 194, 151, 255},
@@ -2670,16 +2733,16 @@ plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
         canvas2d.DrawTextEx(
             canvas2d.Font{},
             "SUCCULENT GARDEN  /  CACTI  ROSETTES  JADE  STONECROP  CHALK STICKS",
-            {38, 116},
+            {38, 346},
             10,
             1,
             {216, 194, 151, 255},
         )
     } else if plant_generator_isolated >= 0 {
         isolated_label := fmt.ctprintf("%s", plants.species_name(plants.Species(plant_generator_isolated)))
-        canvas2d.DrawTextEx(canvas2d.Font{}, isolated_label, {38, 116}, 10, 1, {216, 194, 151, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, isolated_label, {38, 346}, 10, 1, {216, 194, 151, 255})
     } else {
-        canvas2d.DrawTextEx(canvas2d.Font{}, "ALL PLANTS", {38, 116}, 10, 1, {216, 194, 151, 255})
+        canvas2d.DrawTextEx(canvas2d.Font{}, "ALL PLANTS", {38, 346}, 10, 1, {216, 194, 151, 255})
     }
 
     if plant_generator_detail_dropdown_open {
@@ -2690,21 +2753,39 @@ plant_generator_lab_draw_ui :: proc(editor: ^Editor, width, height: i32) {
             fill := (hovered || selected) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250}
             canvas2d.DrawRectangleRec(bounds, fill)
             canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {107, 121, 104, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_detail_label(plants.Detail_Level(index)), {bounds.x + 10, bounds.y + 6}, 12, 1, {232, 224, 189, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                plant_generator_detail_label(plants.Detail_Level(index)),
+                {bounds.x + 10, bounds.y + 6},
+                12,
+                1,
+                {232, 224, 189, 255},
+            )
         }
     }
     if plant_generator_view_dropdown_open {
         for index in 0 ..< plant_generator_view_option_count() {
             bounds := plant_generator_view_option_bounds(index)
             hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
-            selected := index == 0 && plant_generator_isolated < 0 && !plant_generator_succulent_garden && !plant_generator_climbing_garden ||
-                        index == 1 && plant_generator_succulent_garden ||
-                        index == 2 && plant_generator_climbing_garden ||
-                        index >= 3 && plant_generator_isolated == index - 3
+            selected :=
+                index == 0 &&
+                    plant_generator_isolated < 0 &&
+                    !plant_generator_succulent_garden &&
+                    !plant_generator_climbing_garden ||
+                index == 1 && plant_generator_succulent_garden ||
+                index == 2 && plant_generator_climbing_garden ||
+                index >= 3 && plant_generator_isolated == index - 3
             fill := (hovered || selected) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250}
             canvas2d.DrawRectangleRec(bounds, fill)
             canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {107, 121, 104, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, plant_generator_view_option_label(index), {bounds.x + 9, bounds.y + 6}, 11, 1, selected ? canvas2d.Color{232, 224, 189, 255} : canvas2d.Color{196, 207, 198, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                plant_generator_view_option_label(index),
+                {bounds.x + 9, bounds.y + 6},
+                11,
+                1,
+                selected ? canvas2d.Color{232, 224, 189, 255} : canvas2d.Color{196, 207, 198, 255},
+            )
         }
     }
 }

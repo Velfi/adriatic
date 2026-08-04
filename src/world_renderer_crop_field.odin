@@ -43,14 +43,11 @@ world_crop_field_clipped_cell :: proc(
     structure: terrain.Structure,
     project: ^terrain.Project,
     local: [4][2]f32,
+    values: [4]f32,
+    points: [4][3]f32,
     color: canvas2d.Color,
 ) {
-    values: [4]f32
-    for point, index in local {
-        values[index] = world_crop_field_volume_value(structure, point.x, point.y)
-    }
-
-    polygon: [8][2]f32
+    polygon_points: [8][3]f32
     polygon_count := 0
     previous := local[3]
     previous_value := values[3]
@@ -59,11 +56,12 @@ world_crop_field_clipped_cell :: proc(
         current_value := values[index]
         current_inside := current_value >= 0
         if current_inside != previous_inside {
-            polygon[polygon_count] = world_crop_field_volume_edge(previous, current, previous_value, current_value)
+            edge := world_crop_field_volume_edge(previous, current, previous_value, current_value)
+            polygon_points[polygon_count] = world_crop_field_point(structure, project, edge.x, edge.y)
             polygon_count += 1
         }
         if current_inside {
-            polygon[polygon_count] = current
+            polygon_points[polygon_count] = points[index]
             polygon_count += 1
         }
         previous = current
@@ -72,10 +70,10 @@ world_crop_field_clipped_cell :: proc(
     }
     if polygon_count < 3 do return
 
-    a := world_crop_field_point(structure, project, polygon[0].x, polygon[0].y)
+    a := polygon_points[0]
     for index in 1 ..< polygon_count - 1 {
-        b := world_crop_field_point(structure, project, polygon[index].x, polygon[index].y)
-        c := world_crop_field_point(structure, project, polygon[index + 1].x, polygon[index + 1].y)
+        b := polygon_points[index]
+        c := polygon_points[index + 1]
         world_triangle(a, b, c, color)
     }
 }
@@ -121,6 +119,56 @@ world_crop_field :: proc(structure: terrain.Structure, project: ^terrain.Project
     half_width, half_depth := structure.width * .5, structure.depth * .5
     wheat_light := canvas2d.Color{181, 150, 61, 255}
     wheat_dark := canvas2d.Color{174, 143, 57, 255}
+    if structure.kind == .Foliage {
+        wheat_light = {91, 132, 68, 255}
+        wheat_dark = {77, 117, 60, 255}
+    }
+    grid_stride := columns + 1
+    volume_values: [129 * 129]f32
+    terrain_points: [129 * 129][3]f32
+    cell_inland: [128 * 128]bool
+    for row in 0 ..= rows {
+        local_z := -half_depth + f32(row) * step_z
+        for column in 0 ..= columns {
+            local_x := -half_width + f32(column) * step_x
+            index := row * grid_stride + column
+            volume_values[index] = world_crop_field_volume_value(structure, local_x, local_z)
+            terrain_points[index] = world_crop_field_point(structure, project, local_x, local_z)
+        }
+    }
+    cell_radius := f32(math.sqrt(f64(step_x * step_x + step_z * step_z))) * .5
+    for row in 0 ..< rows {
+        for column in 0 ..< columns {
+            a_index := row * grid_stride + column
+            b_index := (row + 1) * grid_stride + column
+            c_index := b_index + 1
+            d_index := a_index + 1
+            intersects_volume :=
+                volume_values[a_index] >= 0 ||
+                volume_values[b_index] >= 0 ||
+                volume_values[c_index] >= 0 ||
+                volume_values[d_index] >= 0
+            if !intersects_volume {
+                local_x := -half_width + (f32(column) + .5) * step_x
+                local_z := -half_depth + (f32(row) + .5) * step_z
+                intersects_volume = world_crop_field_volume_value(structure, local_x, local_z) >= 0
+            }
+            if !intersects_volume do continue
+            center_x, center_z := world_rotate_xz(
+                structure.center_x,
+                structure.center_z,
+                -half_width + (f32(column) + .5) * step_x,
+                -half_depth + (f32(row) + .5) * step_z,
+                structure.rotation,
+            )
+            cell_inland[row * columns + column] = world_crop_field_is_inland(
+                project,
+                center_x,
+                center_z,
+                CROP_FIELD_SHORE_CLEARANCE + cell_radius,
+            )
+        }
+    }
 
     for row in 0 ..< rows {
         for column in 0 ..< columns {
@@ -128,19 +176,20 @@ world_crop_field :: proc(structure: terrain.Structure, project: ^terrain.Project
             x1 := x0 + step_x
             z0 := -half_depth + f32(row) * step_z
             z1 := z0 + step_z
-            center_x, center_z := world_rotate_xz(
-                structure.center_x,
-                structure.center_z,
-                (x0 + x1) * .5,
-                (z0 + z1) * .5,
-                structure.rotation,
-            )
-            cell_radius := f32(math.sqrt(f64(step_x * step_x + step_z * step_z))) * .5
-            if !world_crop_field_is_inland(project, center_x, center_z, CROP_FIELD_SHORE_CLEARANCE + cell_radius) {
-                continue
-            }
+            if !cell_inland[row * columns + column] do continue
+            a_index := row * grid_stride + column
+            b_index := (row + 1) * grid_stride + column
+            c_index := b_index + 1
+            d_index := a_index + 1
             color := ((column + row + int(structure.seed)) & 1) == 0 ? wheat_light : wheat_dark
-            world_crop_field_clipped_cell(structure, project, {{x0, z0}, {x0, z1}, {x1, z1}, {x1, z0}}, color)
+            world_crop_field_clipped_cell(
+                structure,
+                project,
+                {{x0, z0}, {x0, z1}, {x1, z1}, {x1, z0}},
+                {volume_values[a_index], volume_values[b_index], volume_values[c_index], volume_values[d_index]},
+                {terrain_points[a_index], terrain_points[b_index], terrain_points[c_index], terrain_points[d_index]},
+                color,
+            )
         }
     }
 }

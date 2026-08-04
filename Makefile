@@ -97,6 +97,8 @@ INSTRUMENT_DIR := $(BUILD_DIR)/instrument
 SPIKE_DIR := $(BUILD_DIR)/spike
 DEBUG_TEST_DIR := $(BUILD_DIR)/debug
 DEV_APP := $(DEV_DIR)/$(APP)
+PLANT_COMPILER := $(BUILD_DIR)/tools/plant-compile
+PLANT_ASSET_STAMP := assets/generated/plants/.compiled-v4
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
 INSTRUMENT_APP := $(INSTRUMENT_DIR)/$(APP)
@@ -157,7 +159,7 @@ HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/grass.vert.spv \
 	$(HOT_SHADER_DIR)/foliage.frag.spv
 
-.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep spike spike-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-static run-release benchmark capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
+.PHONY: all bootstrap bootstrap-fork check-odin-version doctor textshape-build cgltf-build physics-deps physics-build shaders assets-dev assets-release assets-hot assets-validation build release validation validation-build lldb instrument instrument-build instrument-deep spike spike-build profile profile-info dev debug hot hot-build hot-app hot-host hot-shaders run run-static run-release benchmark plant-compile capture-live mcp fixture-schema-generate fixture-schema-check fixture-history-generate fixture-history-check fixture-migration-scaffold fixture-migration-scaffold-check fixture-codec-test fixture-editor-load-test fixture-editor-store-test fixture-upgrade-test fixture-lifecycle-test fixture-lifecycle-debug fixture-migration-test fixture-migration-v0015-to-v0016-test fixture-dunes-lab-test fixture-dunes-lab-preflight-test fmt module-size-check vet check test test-src test-rondine clean
 
 all: build
 
@@ -197,24 +199,34 @@ doctor: check-odin-version
 	echo "Zelda Engine: $$(git -C "$(ZELDA_ENGINE_ROOT)" rev-parse --short HEAD 2>/dev/null || echo unversioned)"; \
 	echo "Toolchain lock: $(ODIN_FORK_VERSION)"
 
-assets-dev:
+assets-dev: $(PLANT_ASSET_STAMP)
 	@mkdir -p "$(DEV_DIR)/assets"
 	rsync -a --delete assets/ "$(DEV_DIR)/assets/"
 
-assets-release:
+assets-release: $(PLANT_ASSET_STAMP)
 	@mkdir -p "$(RELEASE_DIR)/assets"
 	rsync -a --delete assets/ "$(RELEASE_DIR)/assets/"
 
-assets-hot:
+assets-hot: $(PLANT_ASSET_STAMP)
 	@mkdir -p "$(HOT_DIR)/assets"
 	rsync -a --delete assets/ "$(HOT_DIR)/assets/"
 
-assets-validation: shaders
+assets-validation: shaders $(PLANT_ASSET_STAMP)
 	@mkdir -p "$(VALIDATION_DIR)/assets" "$(VALIDATION_DIR)/shaders"
 	rsync -a --delete assets/ "$(VALIDATION_DIR)/assets/"
 	rsync -a --delete build/generated/shaders/ "$(VALIDATION_DIR)/shaders/"
 
 build: doctor assets-dev $(DEV_APP)
+
+$(PLANT_COMPILER): tools/plant_compile/main.odin $(shell find packages/plant_assets packages/plants packages/branch_mesh packages/plant_structure packages/leaf_mesh -type f -name '*.odin' 2>/dev/null) $(DEV_DIR)/libadriatic_mesh.a
+	@mkdir -p $(@D)
+	$(ODIN) build tools/plant_compile $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) -o:speed -out:$@ -extra-linker-flags:"-L$(abspath $(DEV_DIR)) -ladriatic_mesh -lc++ $(LINKER_PLATFORM_FLAGS)"
+
+$(PLANT_ASSET_STAMP): $(PLANT_COMPILER)
+	$(PLANT_COMPILER)
+	@touch $@
+
+plant-compile: $(PLANT_ASSET_STAMP)
 
 shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/bougainvillea.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 

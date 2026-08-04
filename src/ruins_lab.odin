@@ -1733,9 +1733,6 @@ ruins_lab_road_vertex :: proc(vertex: roads.Vertex, color: canvas2d.Color) -> Wo
         {vertex.uv[0], vertex.uv[1], f32(vertex.pavement)},
         {vertex.road_half_width, vertex.surface == .Junction ? 1 : 0},
         {vertex.use_intensity, 0},
-        {},
-        {},
-        0,
     }
 }
 

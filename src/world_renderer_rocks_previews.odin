@@ -356,6 +356,13 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     dx := camera.x - structure.center_x
     dz := camera.z - structure.center_z
     distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
+    condensed_field := world_foliage_should_condense_to_field(
+        max(structure.width, terrain.BASE_CELL_SIZE),
+        max(structure.depth, terrain.BASE_CELL_SIZE),
+        structure.height,
+        lod_result.tier,
+    )
+    if condensed_field do aerial_view = false
     // Foliage topology and surface detail vary with camera distance, while a
     // few accent cards choose the camera-facing side of a crown. Quantizing
     // both values keeps those authored LOD decisions responsive without
@@ -365,6 +372,10 @@ world_foliage_formation_cached :: proc(structure: terrain.Structure, structure_i
     distance_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor(distance / 16))
     direction := math.atan2(dz, dx)
     direction_bucket := lod_result.tier == .Far ? i32(0) : i32(math.floor((direction + math.PI) * 16 / (math.PI * 2)))
+    if condensed_field {
+        distance_bucket = 0
+        direction_bucket = 0
+    }
     if entry.valid &&
        entry.structure == structure &&
        entry.aerial_view == aerial_view &&

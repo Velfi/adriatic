@@ -61,11 +61,6 @@ World_Vertex :: struct {
     // Vehicle: paintable, atlas layer.
     material: [2]f32,
     uv:       [2]f32,
-    // Generated plants carry their root and the exact woody attachment point
-    // so wind deformation cannot pull leaf stems away from their branches.
-    wind_origin:  [3]f32,
-    wind_anchor:  [3]f32,
-    wind_enabled: f32,
 }
 
 World_Land_Surface_Sample :: struct {
@@ -154,19 +149,26 @@ World_Mesh_Instance :: struct {
     basis_z_translation_z: [4]f32,
     color:                 [4]f32,
     normal_override:       [4]f32,
+    // xyz: rooted plant origin, w: species/maturity compliance. Zero keeps
+    // ordinary world instances on the existing non-hierarchical path.
+    plant_root_compliance: [4]f32,
+    // x: deterministic phase, y: stiffness, z: flutter, w: LOD opacity.
+    plant_motion:          [4]f32,
 }
 
 World_Instance_Mesh :: struct {
-    first_vertex:   u32,
-    first_index:    u32,
-    index_count:    u32,
-    first_instance: u32,
-    casts_shadow:   bool,
-    instances:      [dynamic]World_Mesh_Instance,
+    first_vertex:    u32,
+    vertex_capacity: u32,
+    first_index:     u32,
+    index_count:     u32,
+    index_capacity:  u32,
+    first_instance:  u32,
+    casts_shadow:    bool,
+    instances:       [dynamic]World_Mesh_Instance,
 }
 
 Middle_Tree_Shadow_Proxy :: struct {
-    center:                    third_person.Vec3,
+    center:                       third_person.Vec3,
     radius_x, radius_y, radius_z: f32,
 }
 

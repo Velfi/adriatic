@@ -20,6 +20,7 @@ adriatic_cli_usage :: proc() {
     fmt.println("  adriatic map import <legacy.terrain> <output.adriatic-map>")
     fmt.println("  adriatic dialogue-preview <output.wav> [preset] [text] [formant-shift] [base-pitch] [expression]")
     fmt.println("  adriatic plant-sheet <species> [--output output.png] [--seed n] [--keep-frames]")
+    fmt.println("  adriatic plant-compile [--output directory]")
     fmt.println(
         "  adriatic cinematic-export <mode> <output.mp4> [--audio track.wav] [--duration seconds] [--fps 1–60]",
     )
@@ -291,6 +292,7 @@ adriatic_cli :: proc(args: []string) -> (handled, success: bool) {
     if args[1] == "map" do return true, adriatic_cli_map(args)
     if args[1] == "dialogue-preview" do return true, dialogue_voice_preview_cli(args)
     if args[1] == "plant-sheet" do return true, adriatic_cli_plant_sheet(args)
+    if args[1] == "plant-compile" do return true, plant_asset_compile_cli(args)
     if args[1] == "cinematic-export" do return true, cinematic_export_cli(args)
     if args[1] != "capture" do return false, true
     if len(args) < 3 {

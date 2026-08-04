@@ -6,6 +6,8 @@
 src.bin
 imgui.ini
 /plans/
+/assets/generated/plants/*.plant
+/assets/generated/plants/.compiled-*
 
 # Local fixture bake cache.
 /fixtures/labs/*.adriatic-map

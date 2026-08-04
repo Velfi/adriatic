@@ -6,6 +6,7 @@ import fog_field "../packages/fog_field"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import vk "vendor:vulkan"
@@ -375,9 +376,9 @@ shadow_append_triangle :: proc(a, b, c: third_person.Vec3) {
     color := world_color(canvas2d.Color{255, 255, 255, 255})
     append(
         &world_renderer.shadow_vertices,
-        World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
-        World_Vertex{{b.x, b.y, b.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
-        World_Vertex{{c.x, c.y, c.z}, color, .Unshaded, {0, 1, 0}, {}, {}, {}, {}, 0},
+        World_Vertex{{a.x, a.y, a.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
+        World_Vertex{{b.x, b.y, b.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
+        World_Vertex{{c.x, c.y, c.z}, color, .Unshaded, {0, 1, 0}, {}, {}},
     )
 }
 
@@ -439,8 +440,12 @@ shadow_append_indexed :: proc(vertices: []World_Vertex, indices: []u32) -> bool 
     return appended
 }
 
-shadow_instance_position :: #force_inline proc(vertex: World_Vertex, instance: World_Mesh_Instance) -> [3]f32 {
-    return {
+shadow_instance_position :: proc(
+    vertex: World_Vertex,
+    instance: World_Mesh_Instance,
+    wind_time, severity, wind_x, wind_z: f32,
+) -> [3]f32 {
+    position := third_person.Vec3 {
         instance.basis_x_translation_x[0] * vertex.position[0] +
         instance.basis_y_translation_y[0] * vertex.position[1] +
         instance.basis_z_translation_z[0] * vertex.position[2] +
@@ -454,9 +459,63 @@ shadow_instance_position :: #force_inline proc(vertex: World_Vertex, instance: W
         instance.basis_z_translation_z[2] * vertex.position[2] +
         instance.basis_z_translation_z[3],
     }
+    compliance := instance.plant_root_compliance[3]
+    if compliance <= 0 do return {position.x, position.y, position.z}
+    wind := third_person.Vec3{wind_x, 0, wind_z}
+    wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
+    wind_direction := wind_speed > .001 ? wind / wind_speed : third_person.Vec3{1, 0, 0}
+    wind_across := third_person.Vec3{-wind_direction.z, 0, wind_direction.x}
+    origin := third_person.Vec3 {
+        instance.basis_x_translation_x[3],
+        instance.basis_y_translation_y[3],
+        instance.basis_z_translation_z[3],
+    }
+    root := third_person.Vec3 {
+        instance.plant_root_compliance[0],
+        instance.plant_root_compliance[1],
+        instance.plant_root_compliance[2],
+    }
+    is_leaf := vertex.kind == .Leaf || vertex.kind == .Petal
+    sample := is_leaf ? origin : position
+    rooted := sample - root
+    reach := f32(math.sqrt(f64(linalg.dot(rooted, rooted))))
+    height_weight := clamp(rooted.y / max(reach, f32(.001)), f32(0), f32(1))
+    bend_weight := (1 - f32(math.exp(f64(-reach * .72)))) * linalg.lerp(f32(.68), f32(1), height_weight)
+    phase := wind_time * (.34 + wind_speed * .012) + instance.plant_motion[0]
+    phase += (root.x * wind_direction.x + root.z * wind_direction.z) * .018
+    phase += (root.x * wind_across.x + root.z * wind_across.z) * .006
+    broad := math.sin(phase) + math.sin(phase * .47 + 1.9) * .34
+    amplitude := linalg.lerp(f32(.08), f32(.48), clamp(wind_speed / 14 + severity * .24, f32(0), f32(1)))
+    amplitude *= compliance * max(instance.plant_motion[1], f32(.05))
+    broad_offset :=
+        wind_direction * broad * amplitude * bend_weight +
+        wind_across * math.sin(phase * 1.31 + 4.2) * amplitude * .07 * bend_weight
+    broad_offset.y = -amplitude * .025 * bend_weight
+    if is_leaf {
+        flutter := math.sin(phase * 3.1 + instance.plant_motion[0] * 2.7)
+        angle := flutter * amplitude * instance.plant_motion[2] * .12
+        pivot_axis := linalg.normalize0(
+            third_person.Vec3 {
+                instance.basis_x_translation_x[0],
+                instance.basis_x_translation_x[1],
+                instance.basis_x_translation_x[2],
+            },
+        )
+        from_pivot := position - origin
+        cosine, sine := math.cos(angle), math.sin(angle)
+        rotated :=
+            from_pivot * cosine +
+            linalg.cross(pivot_axis, from_pivot) * sine +
+            pivot_axis * linalg.dot(pivot_axis, from_pivot) * (1 - cosine)
+        position = origin + rotated + broad_offset
+    } else {
+        position += broad_offset
+    }
+    return {position.x, position.y, position.z}
 }
 
 shadow_append_instances :: proc() {
+    sky := atmosphere_sky(world_renderer.editor)
     for &mesh in world_renderer.instance_meshes {
         if !mesh.casts_shadow do continue
         vertex_first := int(mesh.first_vertex)
@@ -481,9 +540,30 @@ shadow_append_instances :: proc() {
                    c >= len(world_renderer.instance_vertices) {
                     continue
                 }
-                pa := shadow_instance_position(world_renderer.instance_vertices[a], instance)
-                pb := shadow_instance_position(world_renderer.instance_vertices[b], instance)
-                pc := shadow_instance_position(world_renderer.instance_vertices[c], instance)
+                pa := shadow_instance_position(
+                    world_renderer.instance_vertices[a],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
+                pb := shadow_instance_position(
+                    world_renderer.instance_vertices[b],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
+                pc := shadow_instance_position(
+                    world_renderer.instance_vertices[c],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
                 shadow_append_triangle({pa[0], pa[1], pa[2]}, {pb[0], pb[1], pb[2]}, {pc[0], pc[1], pc[2]})
             }
         }

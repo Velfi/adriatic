@@ -132,13 +132,13 @@ Site_Substrate :: enum u8 {
 }
 
 Site_Context :: struct {
-    valid:             bool,
-    aridity:           f32,
-    exposure:          f32,
-    slope:             f32,
-    elevation_meters:  f32,
-    coast_distance_m:  f32,
-    substrate:         Site_Substrate,
+    valid:            bool,
+    aridity:          f32,
+    exposure:         f32,
+    slope:            f32,
+    elevation_meters: f32,
+    coast_distance_m: f32,
+    substrate:        Site_Substrate,
 }
 
 site_context_signature :: proc(site: Site_Context) -> u64 {
@@ -148,13 +148,15 @@ site_context_signature :: proc(site: Site_Context) -> u64 {
     }
     elevation := quantize(site.elevation_meters / 1600, 15)
     coast := quantize(site.coast_distance_m / 1800, 15)
-    return 1 |
+    return(
+        1 |
         quantize(site.aridity, 7) << 1 |
         quantize(site.exposure, 7) << 4 |
         quantize(site.slope, 7) << 7 |
         elevation << 10 |
         coast << 14 |
-        u64(site.substrate) << 18
+        u64(site.substrate) << 18 \
+    )
 }
 
 Attachment :: struct {
@@ -208,10 +210,17 @@ Bounds :: struct {
 Generated_Plant :: struct {
     species:           Species,
     habit:             Growth_Habit,
+    maturity:          f32,
+    graph:             Plant_Graph,
     segments:          [dynamic]plant_structure.Segment,
     segment_parents:   [dynamic]int,
     segment_axes:      [dynamic]int,
+    segment_ids:       [dynamic]u64,
+    axis_parents:      [dynamic]int,
+    axis_roles:        [dynamic]Axis_Role,
+    axis_orientations: [dynamic]Axis_Orientation,
     attachments:       [dynamic]Attachment,
+    attachment_ids:    [dynamic]u64,
     bounds:            Bounds,
     wood:              Wood_Traits,
     root_kind:         Root_Kind,
@@ -244,7 +253,13 @@ destroy :: proc(result: ^Generate_Result) {
     delete(result.plant.segments)
     delete(result.plant.segment_parents)
     delete(result.plant.segment_axes)
+    delete(result.plant.segment_ids)
+    delete(result.plant.axis_parents)
+    delete(result.plant.axis_roles)
+    delete(result.plant.axis_orientations)
     delete(result.plant.attachments)
+    delete(result.plant.attachment_ids)
+    destroy_graph(&result.plant.graph)
     result^ = {}
 }
 
@@ -406,7 +421,7 @@ detail_for_distance :: proc(distance: f32) -> Detail_Level {
 detail_tier :: proc(distance: f32) -> int {
     switch detail_for_distance(distance) {
     case .Near:
-        return 2
+        return 1
     case .Medium:
         return 1
     case .Far:
@@ -537,30 +552,33 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
     case .Olive:
         // Olive leaves occur in opposite pairs along the newest shoots.
         // Three-way radial clusters read as palmate leaf stars.
-        return 2
+        return 1
     case .Lemon:
         // Citrus leaves alternate along young shoots. Two staggered blades
         // read as a short leafy run; the generic three-way cluster makes
         // every anchor a palmate star and overpacks the mature crown.
-        return 2
+        return 1
     case .Pomegranate:
         // Narrow leaves sit in opposite pairs on young pomegranate shoots.
         // The generic three-card whorl turns the dense multi-stem vase into
         // an opaque mound and hides its fruit.
-        return 2
+        return 1
     case .Hydrangea_Bush, .Hydrangea_Tree:
         // Broad hydrangea leaves occur in opposite pairs. A generic
         // three-card whorl makes every node an opaque palmate fan and buries
         // the terminal inflorescences inside foliage.
-        return 2
+        return 1
+    case .Oleander:
+        // The native graph authors opposite and three-leaf whorls explicitly.
+        return 1
     case .Carob:
         // Each card stands in for part of a compound evergreen leaf. A
         // four-way near cluster closes the mature crown without increasing
         // architecture complexity or affecting the distance budgets.
-        return detail == .Near ? 4 : 2
+        return 1
     case .Holm_Oak:
         // Small evergreen oak leaves overlap densely into a heavy crown.
-        return detail == .Near ? 4 : 2
+        return 1
     case .Rosemary:
         // Dense opposite needles overlap into continuous aromatic sprays.
         // Five near-detail directions keep a mature shrub from reading as a
@@ -569,7 +587,7 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
     case .Lavender:
         // Lavender's narrow leaves form opposite pairs along fine shoots.
         // Five cards at every station made the plant an opaque bottlebrush.
-        return 2
+        return 1
     case .Thyme:
         // The dedicated thyme architecture emits both members of every opposite
         // pair explicitly. Expanding each authored blade again displaces
@@ -591,10 +609,10 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
         // Arbutus leaves alternate along red-barked shoots; one authored
         // station represents a short evergreen run at game scale. Two
         // crossed blades retain crown mass without restoring three-card stars.
-        return 2
+        return 1
     case .Sage:
         // Broad sage leaves occur in opposite pairs along soft shoots.
-        return 2
+        return 1
     case .Fig:
         // One broad lobed blade already supplies a strong silhouette. Paired
         // copies turn each shoot into an opaque paddle and hide the vase.
@@ -607,11 +625,11 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
         // Hackberry leaves also alternate; repeated three-card stars conceal
         // the species' light irregular branching. Two crossed surrogates keep
         // its smaller foliage continuous without restoring dense starbursts.
-        return 2
+        return 1
     case .White_Poplar:
         // Small alternate deltoid leaves need paired game-scale coverage, but
         // the generic three-card whorl creates opaque vertical clumps.
-        return 2
+        return 1
     case .Prickly_Pear:
         // Each grammar marker is already one complete cladode. Expanding it
         // through the generic three-leaf cluster stacks multiple metre-scale
@@ -630,19 +648,23 @@ leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32)
         // per marker; generic clusters would stack duplicate geometry.
         return 1
     case .Stone_Pine:
-        return detail == .Near ? 6 : detail == .Medium ? 3 : 1
+        return 1
     case .Myrtle:
         // Myrtle carries small opposite leaves; three-way whorls read as
         // palmate stars on the now-legible fine cane scaffold.
-        return 2
+        return 1
     case .Mastic:
-        return 2
+        return 1
+    case .Bay_Laurel:
+        return 1
     case .Grapevine:
         // One marker represents one full palmate grape leaf. The generic
         // near-detail cluster stacks three broad cards at identical wire
         // stations, merging each cordon tier into a clipped green cylinder.
         return 1
-    case .Oleander, .Bougainvillea, .Bay_Laurel, .Wisteria, .Climbing_Rose, .Star_Jasmine, .Italian_Cypress:
+    case .Italian_Cypress:
+        return 1
+    case .Bougainvillea, .Wisteria, .Climbing_Rose, .Star_Jasmine:
     }
     return base
 }
