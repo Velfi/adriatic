@@ -461,9 +461,11 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     density = saturate(density * lerp(.76, 1.24, overcast));
     color = lerp(color, cloud, density * lerp(.32, .68, overcast));
 
-    // Rain shafts hang below the shelf as broad translucent curtains. Their
-    // streaking is directional and low-frequency so it remains stable during
-    // flight rather than sparkling like screen noise.
+    // Rain shafts hang below the geographic front as broad translucent
+    // curtains. Never fall back to an observer-local, dome-wide rain effect:
+    // without an active front there is no direction in which distant rain can
+    // truthfully be placed.
+    float geographic_front = sky.haze_severity.w > 0.0 ? 1.0 : 0.0;
     float rain_column = fbm3(float3(
         ray.x * 18.0 + drift.x * 2.4,
         ray.z * 18.0 + drift.y * 2.4,
@@ -471,7 +473,8 @@ float4 sky_fragment(SkyOutput input) : SV_Target {
     ));
     float rain_horizon = (1.0 - smoothstep(.015, .27, elevation)) *
                          smoothstep(.42, .72, rain_column + shelf_horizon * .24);
-    float rain_curtain = rain_horizon * precipitation * smoothstep(.34, .72, severity);
+    float rain_curtain = geographic_front * rain_horizon * precipitation *
+                         smoothstep(.34, .72, severity);
     float3 rain_color = lerp(float3(.31, .39, .42), float3(.12, .19, .23), severity);
     color = lerp(color, rain_color, rain_curtain * .58);
 
