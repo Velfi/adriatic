@@ -474,6 +474,14 @@ world_static_formation_cached :: proc(
     }
     entry := &world_renderer.static_geometry_cache[structure_index]
     lod_result := structure_lod_for(structure, entry.lod, force_near)
+    // Architecture can embed catalog plants whose hero geometry is selected
+    // independently of the enclosing structure LOD. Include that selection in
+    // the cache key so walking toward a plant cannot retain geometry generated
+    // while the camera was farther away.
+    plant_lod := generated_plant_render_lod(
+        world_renderer.editor.camera_pose.position,
+        {structure.center_x, structure.base_y, structure.center_z},
+    )
     focal_length := f32(1.35)
     if world_renderer.editor.in_map && driving_aircraft(world_renderer.editor) {
         focal_length = world_renderer.editor.flight_camera.focal_length
@@ -481,7 +489,10 @@ world_static_formation_cached :: proc(
     camera := perspective_camera(world_renderer.editor.camera_pose, focal_length)
     billboard_right := [3]f32{camera.right.x, camera.right.y, camera.right.z}
     billboard_up := [3]f32{camera.up.x, camera.up.y, camera.up.z}
-    if entry.valid && entry.structure == structure && entry.lod == lod_result.tier {
+    if entry.valid &&
+       entry.structure == structure &&
+       entry.lod == lod_result.tier &&
+       (structure.kind != .Architecture || entry.plant_lod == plant_lod) {
         world_retained_static_draw_emit(structure_index)
         append(&world_renderer.foliage_vertices, ..entry.foliage_vertices[:])
         for card in entry.bougainvillea_cards {
@@ -540,6 +551,7 @@ world_static_formation_cached :: proc(
     entry.valid = true
     entry.structure = structure
     entry.lod = lod_result.tier
+    entry.plant_lod = plant_lod
     entry.lod_transition = lod_result.transition
     entry.billboard_right = billboard_right
     entry.billboard_up = billboard_up

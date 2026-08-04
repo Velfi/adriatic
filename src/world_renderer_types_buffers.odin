@@ -186,6 +186,7 @@ Static_Geometry_Cache_Entry :: struct {
     valid:                  bool,
     structure:              terrain.Structure,
     lod:                    Structure_LOD,
+    plant_lod:              Generated_Plant_Render_LOD,
     lod_transition:         f32,
     billboard_right:        [3]f32,
     billboard_up:           [3]f32,
