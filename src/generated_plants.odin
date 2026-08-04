@@ -14,7 +14,6 @@ import canvas2d "zelda_engine:canvas2d"
 
 GENERATED_PLANT_CACHE_CAPACITY :: (SETTLEMENT_PATIO_CAPACITY * 2 + MARINA_GEOMETRY_CACHE_CAPACITY * 3) * 3
 GENERATED_PLANT_MATURITY_STEPS :: 5
-GENERATED_PLANT_RUNTIME_IMPOSTOR_LIMIT :: 24
 GENERATED_PLANT_RUNTIME_CACHE_BYTES_MAX :: 128 * 1024 * 1024
 
 Generated_Plant_Cache_Entry :: struct {
@@ -1188,28 +1187,6 @@ generated_plant_impostor_mesh_ensure :: proc(entry: ^Generated_Plant_Cache_Entry
 generated_plant_runtime_impostor_ensure :: proc(entry: ^Generated_Plant_Cache_Entry) -> bool {
     if entry == nil do return false
     if len(entry.impostor_color) > 0 do return true
-    retained := 0
-    victim := -1
-    oldest := ~u64(0)
-    for index in 0 ..< generated_plant_cache_count {
-        candidate := &generated_plant_cache[index]
-        if candidate.compiled_asset || len(candidate.impostor_color) == 0 do continue
-        retained += 1
-        if candidate != entry && candidate.last_used < oldest {
-            oldest = candidate.last_used
-            victim = index
-        }
-    }
-    if retained >= GENERATED_PLANT_RUNTIME_IMPOSTOR_LIMIT && victim >= 0 {
-        delete(generated_plant_cache[victim].impostor_color)
-        delete(generated_plant_cache[victim].impostor_normal)
-        generated_plant_cache[victim].impostor_color = nil
-        generated_plant_cache[victim].impostor_normal = nil
-        for &mesh_index in generated_plant_cache[victim].impostor_meshes {
-            if mesh_index >= 0 do world_plant_mesh_release(mesh_index)
-            mesh_index = -1
-        }
-    }
     generated := &entry.result.plant
     if len(generated.segments) == 0 do return false
     asset: plant_assets.Plant_Asset
@@ -1264,6 +1241,11 @@ generated_plant_runtime_impostor_ensure :: proc(entry: ^Generated_Plant_Cache_En
     entry.impostor_views = asset.header.impostor_views
     asset.impostor_color = nil
     asset.impostor_normal = nil
+    // A count limit of 24 made dense settlements evict a still-visible plant
+    // whenever another distant variant entered view. Keep the working set by
+    // its real memory cost instead; the cache's normal LRU eviction releases
+    // whole cold entries when the shared runtime budget is exceeded.
+    generated_plant_cache_evict_runtime_to_budget()
     return true
 }
 
