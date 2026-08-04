@@ -23,10 +23,14 @@ screen_streak_count :: proc(airspeed: f32) -> int {
     return 12 + int(strength * 46 + .5)
 }
 
-world_wind_streak_count :: proc(weather_speed: f32) -> int {
+world_rain_streak_count :: proc(weather_speed: f32) -> int {
     strength := eased_range(weather_speed, 1, 9)
     if strength <= 0 do return 0
     return 10 + int(strength * 34 + .5)
+}
+
+rain_streak_visibility :: proc(precipitation: f32) -> f32 {
+    return smooth_step(clamp((precipitation - .08) / .42, 0, 1))
 }
 
 // Camera buffet is deliberately much weaker than flyby shake. A layered gust

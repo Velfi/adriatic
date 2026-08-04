@@ -107,6 +107,7 @@ Sky_Front_Field :: struct {
     active:                 bool,
     signed_distance_widths: f32,
     horizon_ray_widths:     f32,
+    direction:              [2]f32,
 }
 
 Sky_State :: struct {
@@ -394,6 +395,7 @@ sky_front_field :: proc(state: ^Atmosphere, position: [3]f32) -> Sky_Front_Field
         active = true,
         signed_distance_widths = clamp(along / width, f32(-8), f32(8)),
         horizon_ray_widths = 6500 / width,
+        direction = front.direction,
     }
 }
 

@@ -1,4 +1,5 @@
 package main
+import "core:math"
 import "core:mem"
 
 import atmosphere "../packages/atmosphere"
@@ -229,6 +230,15 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         world_push.camera_forward[3] = 3.05
     }
     world_push.fog_color[3] = world_scene_moonlight(sky)
+    sky_wind := sky.weather.wind
+    if sky_front.active {
+        // Terrain and gust sampling can rotate the observer-local wind away
+        // from the analytic front. Preserve its speed for cloud drift while
+        // using the front's canonical direction to keep the dome aligned with
+        // the same geographic weather band sampled by gameplay.
+        sky_wind_speed := f32(math.sqrt(f64(sky_wind[0] * sky_wind[0] + sky_wind[1] * sky_wind[1])))
+        sky_wind = sky_front.direction * sky_wind_speed
+    }
     sky_push := Sky_Push {
         camera_right   = {
             camera.right.x,
@@ -241,12 +251,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         sun_direction  = {sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2], f32(sky.cloud_seed)},
         moon_direction = {sky.moon_direction[0], sky.moon_direction[1], sky.moon_direction[2], sky.moon_illumination},
         time_light     = {sky.world_minutes, sky.cloud_time_seconds, sky.daylight, sky.twilight},
-        wind_cloud     = {
-            sky.weather.wind[0],
-            sky.weather.wind[1],
-            sky.weather.cloud_cover,
-            sky.weather.precipitation,
-        },
+        wind_cloud     = {sky_wind[0], sky_wind[1], sky.weather.cloud_cover, sky.weather.precipitation},
         haze_severity  = {
             sky.weather.haze,
             sky.weather.severity,

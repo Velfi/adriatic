@@ -169,7 +169,7 @@ world_frame_build_transient :: proc(editor: ^Editor) {
     world_petal_particles(editor)
     world_wing_trails(editor)
     world_rondine_wake_fans(editor)
-    world_wind_streaks(editor)
+    world_rain_streaks(editor)
     world_fog_shells(editor)
     dio.flame_graph_end(dio.flame_graph_current(), profile_effects)
     // Keep transparent municipal pools contiguous at the end of the existing

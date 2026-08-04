@@ -172,6 +172,8 @@ when ODIN_TEST {
         testing.expect(t, field.active)
         testing.expect(t, math.abs(field.signed_distance_widths) <= .13)
         testing.expect(t, field.horizon_ray_widths > 2)
+        testing.expect(t, math.abs(field.direction[0] - front.direction[0]) < .0001)
+        testing.expect(t, math.abs(field.direction[1] - front.direction[1]) < .0001)
         testing.expect(t, local.front_proximity > .8)
         set_weather_override(&a, .Clear)
         testing.expect(t, !sky_front_field(&a, center).active)

@@ -13,7 +13,7 @@ import vk "vendor:vulkan"
 import engine "zelda_engine:engine"
 import resources "zelda_engine:render_resources"
 
-world_wind_streaks :: proc(editor: ^Editor) {
+world_rain_streaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || !driving_aircraft(editor) do return
     wind_x, wind_z := editor.atmosphere.weather.wind[0], editor.atmosphere.weather.wind[1]
     wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
@@ -24,7 +24,7 @@ world_wind_streaks :: proc(editor: ^Editor) {
     direction_x, direction_z := wind_x / wind_speed, wind_z / wind_speed
     side_x, side_z := -direction_z, direction_x
     time := editor.map_time
-    streak_count := air_effects.world_wind_streak_count(wind_speed)
+    streak_count := air_effects.world_rain_streak_count(wind_speed)
     for index in 0 ..< streak_count {
         speed_variation := .72 + wind_streak_hash(index, 1) * .56
         gust_phase := time * .72 + wind_streak_hash(index, 6) * math.PI * 2
@@ -45,6 +45,9 @@ world_wind_streaks :: proc(editor: ^Editor) {
             body.position.y + vertical,
             body.position.z + direction_z * along + side_z * lateral,
         }
+        local_weather := atmosphere.sample_at(&editor.atmosphere, {center.x, center.y, center.z}, center.y)
+        rain_visibility := air_effects.rain_streak_visibility(local_weather.precipitation)
+        if rain_visibility <= .001 do continue
         streak_length := (1.4 + wind_speed * .58) * (.62 + wind_streak_hash(index, 5) * .58) * (.84 + gust * .18)
         center_camera_distance := linalg.length(
             editor.camera_pose.position - third_person.Vec3{center.x, center.y, center.z},
@@ -74,7 +77,7 @@ world_wind_streaks :: proc(editor: ^Editor) {
         near_fade := clamp((closest_camera_distance - 4) / 6, 0, 1)
         near_fade = near_fade * near_fade * (3 - 2 * near_fade)
         fade := math.sin(phase * math.PI)
-        alpha := u8(clamp((28 + strength * 104) * fade * (.70 + gust * .30) * near_fade, 0, 132))
+        alpha := u8(clamp((28 + strength * 104) * fade * (.70 + gust * .30) * near_fade * rain_visibility, 0, 132))
         tail_alpha := u8(clamp(f32(alpha) * .16, 0, 24))
         width := (.020 + strength * .042) * clamp(camera_distance / 24, .20, 1)
         line_direction := third_person.Vec3{direction_x, 0, direction_z}
@@ -106,7 +109,7 @@ world_wind_streaks :: proc(editor: ^Editor) {
         append(
             &world_renderer.late_transparent_vertices,
             ..vertices[:],
-            // Cool blue distinguishes wind moving through world space from
+            // Cool blue distinguishes rain moving through world space from
             // the warm radial speed lines drawn in the flight overlay.
         )
     }
