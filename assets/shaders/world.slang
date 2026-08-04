@@ -2093,7 +2093,7 @@ float2 rotate2(float2 p, float angle) {
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
 
-float3 shade_terrain_dunes(VertexOutput input, float3 color) {
+float3 shade_terrain_sand(VertexOutput input, float3 color) {
     if (input.material.x >= -.001) return color;
 
     float2 p = input.world_position.xz;
@@ -3330,7 +3330,7 @@ float4 fragment_main(VertexOutput input) : SV_Target {
             break;
         }
         case MATERIAL_TERRAIN:
-            base = shade_terrain_dunes(input, base);
+            base = shade_terrain_sand(input, base);
             base = shade_grass_wind_sheen(input, base);
             base = shade_terrain_limestone(input, base);
             base = shade_terrain_lighting(input, base);

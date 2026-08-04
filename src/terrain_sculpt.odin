@@ -37,6 +37,11 @@ Terrain_Elevation_Mode :: enum u8 {
     Sampled,
     Explicit,
 }
+Terrain_Authoring_Target :: enum u8 {
+    Terrain,
+    Land,
+    Bathymetry,
+}
 TERRAIN_SCULPT_PATH_CAPACITY :: 256
 
 Terrain_Authoring_Settings :: struct {
@@ -121,6 +126,20 @@ terrain_action_is_spline :: #force_inline proc(action: Terrain_Action) -> bool {
 
 terrain_action_is_area :: #force_inline proc(action: Terrain_Action) -> bool {
     return action == .Pad
+}
+
+terrain_action_target :: #force_inline proc(action: Terrain_Action) -> Terrain_Authoring_Target {
+    if action == .Coast do return .Land
+    if action == .Shelf do return .Bathymetry
+    return .Terrain
+}
+
+terrain_action_seabed_policy_editable :: #force_inline proc(action: Terrain_Action) -> bool {
+    return terrain_action_target(action) == .Terrain
+}
+
+terrain_action_affects_seabed :: #force_inline proc(action: Terrain_Action, configured: bool) -> bool {
+    return terrain_action_target(action) != .Terrain || configured
 }
 
 terrain_authoring_defaults :: proc(state: ^Terrain_Sculpt_State, sea_level: f32) {
@@ -238,6 +257,7 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
     if editor == nil || session == nil || !session.active || !session.valid do return false
     action := editor.terrain_sculpt.action
     settings := editor.terrain_sculpt.settings[int(action)]
+    affects_seabed := terrain_action_affects_seabed(action, settings.affect_seabed)
     if terrain_action_is_spline(action) {
         operation := terrain.Authoring_Spline_Operation.Ridge
         #partial switch action {
@@ -282,7 +302,7 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
                 end_height = session.end_height,
                 maximum_grade = settings.maximum_grade,
                 preserve_detail = settings.preserve_detail,
-                affect_seabed = settings.affect_seabed,
+                affect_seabed = affects_seabed,
                 profile = settings.profile,
                 seed = settings.seed,
             },
@@ -301,7 +321,7 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
                 feather = max(settings.edge_slope * settings.size, settings.feather),
                 flow = settings.flow,
                 corner_radius = settings.corner_radius,
-                affect_seabed = settings.affect_seabed,
+                affect_seabed = affects_seabed,
                 cut_limit = settings.cut_limit,
                 fill_limit = settings.fill_limit,
             },
@@ -353,7 +373,7 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
                     // value on every rendered frame.
                     flow = settings.flow * settings.brush_strength,
                     direction = settings.direction,
-                    affect_seabed = settings.affect_seabed,
+                    affect_seabed = affects_seabed,
                     target_height = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
                     beach_height = settings.beach_elevation,
                     shelf_depth = settings.shelf_depth,

@@ -322,11 +322,17 @@ bathymetry_append_default_chunk :: proc(project: ^Project, owner: Island_ID, chu
         for x in 0 ..< BATHYMETRY_CHUNK_RESOLUTION {
             source_x, source_z := origin_x + f32(x) * cell, origin_z + f32(z) * cell
             height, material, found := sample_authored_field_raw(project, 0, source_x, source_z)
-            if !found {
+            if !found || math.abs(height - project.sea_level) <= SHORELINE_EPSILON {
                 height, material = project.sea_level - DEEP_OCEAN_DEPTH, 0
+            } else if height > project.sea_level {
+                // Bathymetry beneath dry land is hidden by the land mesh, but
+                // retaining a shallow sentinel keeps later shoreline edits
+                // continuous. Do not apply this clamp to contained open ocean:
+                // that previously filled every chunk with exactly -1 m.
+                height = project.sea_level - 1
             }
             index := z * BATHYMETRY_CHUNK_RESOLUTION + x
-            chunk.heights[index] = f16(min(height, project.sea_level - 1))
+            chunk.heights[index] = f16(height)
             chunk.material[index] = i8(clamp(int(math.round(f64(material * 63))), -127, 127))
         }
     }
@@ -372,10 +378,12 @@ bathymetry_refresh_generated_bounds :: proc(project: ^Project, min_x, min_z, max
                 world_x := source_x + translation_x
                 if world_x < min_x || world_x > max_x do continue
                 height, material, found := sample_authored_field_raw(project, 0, source_x, source_z)
-                if !found {
+                if !found || math.abs(height - project.sea_level) <= SHORELINE_EPSILON {
                     height, material = project.sea_level - DEEP_OCEAN_DEPTH, 0
+                } else if height > project.sea_level {
+                    height = project.sea_level - 1
                 }
-                next_height := f16(min(height, project.sea_level - 1))
+                next_height := f16(height)
                 next_material := i8(clamp(int(math.round(f64(material * 63))), -127, 127))
                 index := z * BATHYMETRY_CHUNK_RESOLUTION + x
                 if chunk.heights[index] == next_height && chunk.material[index] == next_material do continue

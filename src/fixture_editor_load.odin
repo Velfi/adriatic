@@ -624,11 +624,9 @@ fixture_editor_load_decoded :: proc(
     if stage.car_physics_world == nil || stage.car_physics_vehicle == nil {
         return {kind = .Runtime_Stage, path = "car_physics"}, false
     }
-    if stage.lab.kind != .Dunes {
-        loaded_project_revision := stage.project.revision
-        seed_default_island_marinas(stage)
-        stage.project.revision = loaded_project_revision
-    }
+    loaded_project_revision := stage.project.revision
+    seed_default_island_marinas(stage)
+    stage.project.revision = loaded_project_revision
     fixture_notes_before_fixture_replace(editor)
     old_owner := editor.fixture_owner
     if editor.active_lab_scene != "" {
@@ -670,7 +668,6 @@ fixture_editor_load_decoded :: proc(
 
     fixture_migration_result_dispose(&old_owner)
     fixture_editor_reset_runtime(editor)
-    dunes_lab_rehydrate(editor)
     return {}, true
 }
 

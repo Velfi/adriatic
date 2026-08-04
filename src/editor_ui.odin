@@ -180,13 +180,18 @@ AUTHORING_TOOL_DISPLAY_ORDER := [AUTHORING_TOOL_DISPLAY_COUNT]Authoring_Tool {
     .Mice,
 }
 EDITOR_UI_TOP_HEIGHT :: f32(54)
-EDITOR_UI_RAIL_WIDTH :: f32(184)
 EDITOR_UI_INSPECTOR_WIDTH :: f32(292)
 EDITOR_UI_GUTTER :: f32(12)
-EDITOR_UI_BUTTON_TEXT_Y_OFFSET :: f32(3)
-EDITOR_UI_TOOL_COLUMNS :: 3
+// The UI font's measured line box includes more space below the visible caps.
+// Offset button labels to center the rendered glyphs, not the nominal box.
+EDITOR_UI_BUTTON_TEXT_Y_OFFSET :: f32(9)
+EDITOR_UI_TOOL_COLUMNS :: 2
 EDITOR_UI_TOOL_BUTTON_SIZE :: f32(48)
 EDITOR_UI_TOOL_BUTTON_GAP :: f32(6)
+EDITOR_UI_RAIL_PADDING :: f32(12)
+EDITOR_UI_RAIL_WIDTH :: f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
+                        f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP +
+                        EDITOR_UI_RAIL_PADDING * 2
 
 FIXTURE_FILE_PATH_CAPACITY :: 1024
 
@@ -265,7 +270,7 @@ authoring_tool_name :: #force_inline proc(tool: Authoring_Tool) -> cstring {
 
 terrain_family_name :: #force_inline proc(family: Terrain_Family) -> cstring {
     switch family {case .Landmass:
-        return "LANDMASS"; case .Primary_Forms:
+        return "LAND"; case .Primary_Forms:
         return "FORMS"; case .Surface:
         return "SURFACE"; case .Built_Terrain:
         return "BUILT"}
@@ -275,9 +280,9 @@ terrain_family_name :: #force_inline proc(family: Terrain_Family) -> cstring {
 terrain_action_name :: #force_inline proc(action: Terrain_Action) -> cstring {
     switch action {
     case .Coast:
-        return "COAST"
+        return "LAND"
     case .Shelf:
-        return "SHELF"
+        return "BATHYMETRY"
     case .Ridge:
         return "RIDGE"
     case .Valley:
@@ -611,9 +616,12 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
 editor_ui_tool_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
     column := index % EDITOR_UI_TOOL_COLUMNS
     row := index / EDITOR_UI_TOOL_COLUMNS
+    grid_width := f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
+                  f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP
+    grid_x := layout.left.x + (layout.left.width - grid_width) * .5
     return {
-        layout.left.x + 10 + f32(column) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
-        layout.left.y + 88 + f32(row) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
+        grid_x + f32(column) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
+        layout.left.y + 45 + f32(row) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
         EDITOR_UI_TOOL_BUTTON_SIZE,
         EDITOR_UI_TOOL_BUTTON_SIZE,
     }
@@ -641,18 +649,120 @@ editor_ui_draw_tool_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canv
     canvas2d.DrawTexturePro(editor.authoring_tool_atlas, source, destination, tint)
 }
 
-editor_ui_draw_sculpt_icon :: proc(editor: ^Editor, atlas_index: int, bounds: canvas2d.Rectangle) {
+Terrain_Editor_Icon :: enum {
+    Coast,
+    Shelf,
+    Ridge,
+    Valley,
+    Slope,
+    Grade,
+    Relax,
+    Erode,
+    Deposit,
+    Roughen,
+    Terrace,
+    Pad,
+    Cut_Fill,
+    Rocks,
+    Obstacles,
+    Mice,
+    Land,
+    Marine,
+    Natural,
+    Sand,
+    Soil,
+    Bare_Seabed,
+    Seagrass,
+    Macroalgae,
+    Reef,
+    Select,
+    Undo,
+    Redo,
+    Save,
+    Load,
+    Focus,
+    Enter_World,
+}
+
+editor_ui_draw_terrain_icon :: proc(
+    editor: ^Editor,
+    icon: Terrain_Editor_Icon,
+    bounds: canvas2d.Rectangle,
+    tint: canvas2d.Color = {255, 255, 255, 255},
+) {
     if editor == nil || !editor.sculpt_tool_atlas.ready do return
-    cell_width := f32(editor.sculpt_tool_atlas.width) / 5
-    source := canvas2d.Rectangle{f32(atlas_index) * cell_width, 0, cell_width, f32(editor.sculpt_tool_atlas.height)}
-    size := min(bounds.width - 8, bounds.height - 6)
+    atlas_columns := 8
+    atlas_rows := 4
+    atlas_index := int(icon)
+    cell_width := f32(editor.sculpt_tool_atlas.width) / f32(atlas_columns)
+    cell_height := f32(editor.sculpt_tool_atlas.height) / f32(atlas_rows)
+    source := canvas2d.Rectangle {
+        f32(atlas_index % atlas_columns) * cell_width,
+        f32(atlas_index / atlas_columns) * cell_height,
+        cell_width,
+        cell_height,
+    }
+    bounds_size := min(bounds.width, bounds.height)
+    size := bounds_size - min(f32(8), bounds_size * .18)
     destination := canvas2d.Rectangle {
         bounds.x + (bounds.width - size) * .5,
         bounds.y + (bounds.height - size) * .5,
         size,
         size,
     }
-    canvas2d.DrawTexturePro(editor.sculpt_tool_atlas, source, destination, {255, 255, 255, 255})
+    canvas2d.DrawTexturePro(editor.sculpt_tool_atlas, source, destination, tint)
+}
+
+terrain_action_icon :: #force_inline proc(action: Terrain_Action) -> Terrain_Editor_Icon {
+    return Terrain_Editor_Icon(int(action))
+}
+
+editor_ui_icon_button :: proc(
+    editor: ^Editor,
+    bounds: canvas2d.Rectangle,
+    label: cstring,
+    icon: Terrain_Editor_Icon,
+    selected: bool = false,
+    enabled: bool = true,
+) {
+    editor_ui_panel_button(bounds, "", selected, enabled)
+
+    text_scale := f32(.5)
+    text_size := ui_measure_text(.Label, label, text_scale)
+    icon_size := min(bounds.height - 8, f32(22))
+    gap := f32(4)
+    content_width := icon_size + gap + text_size.x
+    available_width := max(bounds.width - 16, f32(1))
+    if content_width > available_width {
+        scale := available_width / content_width
+        icon_size *= scale
+        gap *= scale
+        text_scale *= scale
+        text_size = ui_measure_text(.Label, label, text_scale)
+        content_width = icon_size + gap + text_size.x
+    }
+
+    content_x := bounds.x + (bounds.width - content_width) * .5
+    icon_bounds := canvas2d.Rectangle {
+        content_x,
+        bounds.y + (bounds.height - icon_size) * .5,
+        icon_size,
+        icon_size,
+    }
+    tint := canvas2d.Color{225, 231, 235, 255}
+    if selected do tint = {244, 255, 254, 255}
+    if !enabled do tint = {105, 112, 120, 255}
+    editor_ui_draw_terrain_icon(editor, icon, icon_bounds, tint)
+    ui_draw_text(
+        .Label,
+        label,
+        {
+            content_x + icon_size + gap,
+            bounds.y + (bounds.height - text_size.y) * .5 + EDITOR_UI_BUTTON_TEXT_Y_OFFSET,
+        },
+        text_scale,
+        tint,
+    )
 }
 
 editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool) {
@@ -667,20 +777,18 @@ editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool)
 }
 
 @(no_instrumentation)
-editor_ui_fixture_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
-    gap := f32(6)
-    width := (layout.left.width - 26 - gap) * .5
-    return {layout.left.x + 10 + f32(index) * (width + gap), layout.left.y + 45, width, 30}
-}
-
-@(no_instrumentation)
-editor_ui_focus_bounds :: #force_inline proc(layout: Editor_UI_Layout) -> canvas2d.Rectangle {
-    return {layout.left.x + 10, layout.left.y + layout.left.height - 88, layout.left.width - 20, 32}
-}
-
-@(no_instrumentation)
-editor_ui_spawn_bounds :: #force_inline proc(layout: Editor_UI_Layout) -> canvas2d.Rectangle {
-    return {layout.left.x + 10, layout.left.y + layout.left.height - 46, layout.left.width - 20, 36}
+editor_ui_header_action_bounds :: #force_inline proc(width: i32, index: int) -> canvas2d.Rectangle {
+    group_width := f32(300)
+    start_x := (f32(width) - group_width) * .5
+    switch index {
+    case 0:
+        return {start_x, 10, 78, 34}
+    case 1:
+        return {start_x + 84, 10, 78, 34}
+    case 2:
+        return {start_x + 168, 10, 132, 34}
+    }
+    return {}
 }
 
 editor_ui_panel_button :: proc(
@@ -711,7 +819,7 @@ editor_ui_panel_button :: proc(
     canvas2d.DrawRectangleRoundedLinesEx(bounds, .12, 6, selected ? 2 : 1, border)
     text_scale := f32(.5)
     size := ui_measure_text(.Label, label, text_scale)
-    available_text_width := max(bounds.width - 12, f32(1))
+    available_text_width := max(bounds.width - 18, f32(1))
     if size.x > available_text_width {
         text_scale *= available_text_width / size.x
         size = ui_measure_text(.Label, label, text_scale)
@@ -876,12 +984,12 @@ editor_ui_obstacle_slider_input :: proc(
 }
 
 @(no_instrumentation)
-editor_ui_small_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
+editor_ui_history_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
     gap := f32(6)
     width := (layout.inspector.width - 28 - gap) * .5
     return {
-        layout.inspector.x + 14 + f32(index % 2) * (width + gap),
-        layout.inspector.y + layout.inspector.height - 82 + f32(index / 2) * 35,
+        layout.inspector.x + 14 + f32(index) * (width + gap),
+        layout.inspector.y + layout.inspector.height - 41,
         width,
         29,
     }
@@ -965,9 +1073,9 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         }
         switch editor.terrain_sculpt.action {
         case .Coast:
-            return "Left pushes the coast out; right pulls it in."
+            return "Left marks land; right returns it to water."
         case .Shelf:
-            return "Brush a shallow coastal shelf."
+            return "Brush the seabed without marking land."
         case .Ridge:
             return "Draw a ridge spine; release to commit."
         case .Valley:
@@ -1053,8 +1161,6 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     canvas2d.DrawRectangleRoundedLinesEx(layout.left, .025, 6, 1, {62, 69, 78, 255})
     ui_draw_text(.Heading, "TOOLS", {layout.left.x + 12, layout.left.y + 14}, .5, {235, 239, 243, 255})
     editor_ui_panel_button({layout.left.x + layout.left.width - 39, layout.left.y + 10, 29, 28}, "<<")
-    editor_ui_panel_button(editor_ui_fixture_action_bounds(layout, 0), "SAVE", false, true)
-    editor_ui_panel_button(editor_ui_fixture_action_bounds(layout, 1), "LOAD", false, true)
     hovered_tool := -1
     for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
         bounds := editor_ui_tool_bounds(layout, index)
@@ -1072,13 +1178,15 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .10, 6, selected ? 2 : 1, border)
         icon_tint := selected ? canvas2d.Color{255, 255, 255, 255} : canvas2d.Color{225, 231, 235, 255}
         if select_tool {
-            // A compact pointer glyph keeps Select distinct from placement art.
-            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 10}, {bounds.x + 14, bounds.y + 37}, 3, icon_tint)
-            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 10}, {bounds.x + 34, bounds.y + 30}, 3, icon_tint)
-            canvas2d.DrawLineEx({bounds.x + 14, bounds.y + 37}, {bounds.x + 34, bounds.y + 30}, 3, icon_tint)
-            canvas2d.DrawLineEx({bounds.x + 24, bounds.y + 29}, {bounds.x + 34, bounds.y + 40}, 4, icon_tint)
+            editor_ui_draw_terrain_icon(editor, .Select, bounds, icon_tint)
+        } else if rock_tool {
+            editor_ui_draw_terrain_icon(editor, .Rocks, bounds, icon_tint)
+        } else if tool == .Obstacles {
+            editor_ui_draw_terrain_icon(editor, .Obstacles, bounds, icon_tint)
+        } else if tool == .Mice {
+            editor_ui_draw_terrain_icon(editor, .Mice, bounds, icon_tint)
         } else {
-            editor_ui_draw_tool_icon(editor, rock_tool ? int(Authoring_Tool.Formations) : int(tool), bounds, icon_tint)
+            editor_ui_draw_tool_icon(editor, int(tool), bounds, icon_tint)
         }
         if hovered do hovered_tool = index
     }
@@ -1104,8 +1212,6 @@ editor_ui_draw_left :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             )
         }
     }
-    editor_ui_panel_button(editor_ui_focus_bounds(layout), "FOCUS  [F]")
-    editor_ui_panel_button(editor_ui_spawn_bounds(layout), "ENTER WORLD")
 }
 
 editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
@@ -1216,9 +1322,17 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         action_width := (action_bounds.width - f32(action_count - 1) * 4) / f32(action_count)
         for action_index in 0 ..< action_count {
             action := actions[action_index]
-            editor_ui_panel_button(
-                {action_bounds.x + f32(action_index) * (action_width + 4), action_bounds.y + 20, action_width, 30},
+            button_bounds := canvas2d.Rectangle {
+                action_bounds.x + f32(action_index) * (action_width + 4),
+                action_bounds.y + 20,
+                action_width,
+                30,
+            }
+            editor_ui_icon_button(
+                editor,
+                button_bounds,
                 terrain_action_name(action),
+                terrain_action_icon(action),
                 editor.terrain_sculpt.action == action,
             )
         }
@@ -1343,6 +1457,8 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         )
         row += 1
         if editor.terrain_sculpt.advanced {
+            seabed_policy_editable := terrain_action_seabed_policy_editable(editor.terrain_sculpt.action)
+            if seabed_policy_editable {
             seabed_bounds := editor_ui_slider_bounds(layout, row)
             editor_ui_panel_button(
                 {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30},
@@ -1350,6 +1466,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 settings.affect_seabed,
             )
             row += 1
+            }
             editor_ui_slider_draw(
                 editor_ui_slider_bounds(layout, row),
                 "SPACING",
@@ -1494,10 +1611,14 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     case .Paint:
         mode_bounds := editor_ui_slider_bounds(layout, row)
         half := (mode_bounds.width - 6) * .5
-        editor_ui_panel_button({mode_bounds.x, mode_bounds.y + 20, half, 30}, "LAND", !editor.marine_ecology_paint)
-        editor_ui_panel_button(
-            {mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30},
+        land_bounds := canvas2d.Rectangle{mode_bounds.x, mode_bounds.y + 20, half, 30}
+        marine_bounds := canvas2d.Rectangle{mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}
+        editor_ui_icon_button(editor, land_bounds, "LAND", .Land, !editor.marine_ecology_paint)
+        editor_ui_icon_button(
+            editor,
+            marine_bounds,
             "MARINE",
+            .Marine,
             editor.marine_ecology_paint,
         )
         row += 1
@@ -1506,10 +1627,19 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             quarter := (kind_bounds.width - 9) * .25
             labels := [4]cstring{"BARE", "GRASS", "ALGAE", "REEF"}
             kinds := [4]terrain.Marine_Habitat_Kind{.Bare, .Seagrass, .Macroalgae, .Coralligenous}
+            icons := [4]Terrain_Editor_Icon{.Bare_Seabed, .Seagrass, .Macroalgae, .Reef}
             for kind, index in kinds {
-                editor_ui_panel_button(
-                    {kind_bounds.x + f32(index) * (quarter + 3), kind_bounds.y + 20, quarter, 30},
+                button_bounds := canvas2d.Rectangle {
+                    kind_bounds.x + f32(index) * (quarter + 3),
+                    kind_bounds.y + 20,
+                    quarter,
+                    30,
+                }
+                editor_ui_icon_button(
+                    editor,
+                    button_bounds,
                     labels[index],
+                    icons[index],
                     editor.marine_ecology_paint_kind == kind,
                 )
             }
@@ -1519,10 +1649,19 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             third := (kind_bounds.width - 6) / 3
             labels := [3]cstring{"NATURAL", "SAND", "SOIL"}
             kinds := [3]Land_Paint_Kind{.Natural, .Sand, .Soil}
+            icons := [3]Terrain_Editor_Icon{.Natural, .Sand, .Soil}
             for kind, index in kinds {
-                editor_ui_panel_button(
-                    {kind_bounds.x + f32(index) * (third + 3), kind_bounds.y + 20, third, 30},
+                button_bounds := canvas2d.Rectangle {
+                    kind_bounds.x + f32(index) * (third + 3),
+                    kind_bounds.y + 20,
+                    third,
+                    30,
+                }
+                editor_ui_icon_button(
+                    editor,
+                    button_bounds,
                     labels[index],
+                    icons[index],
                     editor.land_paint_kind == kind,
                 )
             }
@@ -2265,12 +2404,10 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
     }
     undo_enabled := editor.tool == .Structure ? editor.structure_undo_count > 0 : editor.terrain_undo_count > 0
     redo_enabled := editor.tool == .Structure ? editor.structure_redo_count > 0 : editor.terrain_redo_count > 0
-    project_dirty := editor.project.revision != editor.terrain_saved_revision
-    save_label: cstring = project_dirty ? "SAVE  •" : "SAVE"
-    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 0), save_label, project_dirty, true)
-    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 1), "LOAD", false, true)
-    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 2), "UNDO", false, undo_enabled)
-    editor_ui_panel_button(editor_ui_small_action_bounds(layout, 3), "REDO", false, redo_enabled)
+    undo_bounds := editor_ui_history_action_bounds(layout, 0)
+    redo_bounds := editor_ui_history_action_bounds(layout, 1)
+    editor_ui_icon_button(editor, undo_bounds, "UNDO", .Undo, false, undo_enabled)
+    editor_ui_icon_button(editor, redo_bounds, "REDO", .Redo, false, redo_enabled)
 }
 
 editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
@@ -2281,6 +2418,9 @@ editor_ui_draw :: proc(editor: ^Editor, width, height: i32) {
     fixture_path := fixture_editor_current_path(editor)
     fixture_label: cstring = fixture_path != "" ? fmt.ctprintf("FIXTURE  %s", fixture_path) : "FIXTURE  UNSAVED"
     ui_draw_text(.Data, fixture_label, {16, 18}, .4, {209, 215, 222, 255})
+    editor_ui_icon_button(editor, editor_ui_header_action_bounds(width, 0), "SAVE", .Save)
+    editor_ui_icon_button(editor, editor_ui_header_action_bounds(width, 1), "LOAD", .Load)
+    editor_ui_icon_button(editor, editor_ui_header_action_bounds(width, 2), "ENTER WORLD", .Enter_World)
     minutes := int(editor.atmosphere.world_minutes)
     header_status := fmt.ctprintf(
         "TIME  %02d:%02d  %s     OBJECTS  %d forms  %d roads",
@@ -2332,17 +2472,20 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     pressed := canvas2d.IsMouseButtonPressed(.LEFT)
 
     if pressed {
+        if canvas2d.CheckCollisionPointRec(mouse, editor_ui_header_action_bounds(width, 0)) {
+            fixture_editor_save(editor)
+            return
+        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_header_action_bounds(width, 1)) {
+            fixture_editor_restore(editor)
+            return
+        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_header_action_bounds(width, 2)) {
+            editor_spawn_into_world(editor)
+            return
+        }
         if layout.left_visible {
             collapse := canvas2d.Rectangle{layout.left.x + layout.left.width - 39, layout.left.y + 10, 29, 28}
             if canvas2d.CheckCollisionPointRec(mouse, collapse) {
                 editor.editor_ui.left_collapsed = true
-                return
-            }
-            if canvas2d.CheckCollisionPointRec(mouse, editor_ui_fixture_action_bounds(layout, 0)) {
-                fixture_editor_save(editor)
-                return
-            } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_fixture_action_bounds(layout, 1)) {
-                fixture_editor_restore(editor)
                 return
             }
             for index in 0 ..< AUTHORING_TOOL_PALETTE_COUNT {
@@ -2356,14 +2499,6 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
                     }
                     return
                 }
-            }
-            if canvas2d.CheckCollisionPointRec(mouse, editor_ui_focus_bounds(layout)) {
-                editor_focus_terrain(editor)
-                return
-            }
-            if canvas2d.CheckCollisionPointRec(mouse, editor_ui_spawn_bounds(layout)) {
-                editor_spawn_into_world(editor)
-                return
             }
         } else if canvas2d.CheckCollisionPointRec(mouse, layout.left_toggle) {
             editor.editor_ui.left_collapsed = false
@@ -2560,9 +2695,11 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         if pressed && canvas2d.CheckCollisionPointRec(mouse, {advanced_bounds.x, advanced_bounds.y + 20, advanced_bounds.width, 30}) do editor.terrain_sculpt.advanced = !editor.terrain_sculpt.advanced
         row += 1
         if editor.terrain_sculpt.advanced {
-            seabed_bounds := editor_ui_slider_bounds(layout, row)
-            if pressed && canvas2d.CheckCollisionPointRec(mouse, {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30}) do settings.affect_seabed = !settings.affect_seabed
-            row += 1
+            if terrain_action_seabed_policy_editable(editor.terrain_sculpt.action) {
+                seabed_bounds := editor_ui_slider_bounds(layout, row)
+                if pressed && canvas2d.CheckCollisionPointRec(mouse, {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30}) do settings.affect_seabed = !settings.affect_seabed
+                row += 1
+            }
             _ = editor_ui_slider_input(editor, layout, 316, row, &settings.spacing, .05, 1, .01); row += 1
             _ = editor_ui_slider_input(editor, layout, 317, row, &settings.inner_core, 0, 1, .01); row += 1
             #partial switch editor.terrain_sculpt.action {
@@ -3221,13 +3358,9 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
     }
 
     if pressed {
-        if canvas2d.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 0)) {
-            map_editor_save(editor)
-        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 1)) {
-            map_editor_load(editor)
-        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 2)) {
+        if canvas2d.CheckCollisionPointRec(mouse, editor_ui_history_action_bounds(layout, 0)) {
             terrain_panel_undo(editor)
-        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_small_action_bounds(layout, 3)) {
+        } else if canvas2d.CheckCollisionPointRec(mouse, editor_ui_history_action_bounds(layout, 1)) {
             terrain_panel_redo(editor)
         }
     }

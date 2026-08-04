@@ -219,10 +219,7 @@ when ODIN_TEST {
             available = true,
         }
         source.vehicle_showcase_target = "showcase-target-marker"
-        source.lab = {
-            kind = .Dunes,
-            dunes = {seed = 0x44554e45, wind_angle = .08, vegetation = .76},
-        }
+        source.lab = {}
 
         source.settlement_plan.valid = true
         source.settlement_plan.neighborhood_count = 1

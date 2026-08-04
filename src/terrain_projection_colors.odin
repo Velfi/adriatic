@@ -77,7 +77,7 @@ terrain_color_variation :: #force_inline proc(color: canvas2d.Color, x, z: f32) 
 }
 
 @(no_instrumentation)
-dune_color_field :: #force_inline proc(x, z: f32) -> f32 {
+sand_color_field :: #force_inline proc(x, z: f32) -> f32 {
     // Crossed, incommensurate waves produce soft sand mottling without the
     // long parallel color bands used by the broader inland landscape.
     broad := f32(math.sin(f64(x * .018 + z * .029 + .7))) * f32(math.sin(f64(x * -.027 + z * .014 + 2.1)))
@@ -87,8 +87,8 @@ dune_color_field :: #force_inline proc(x, z: f32) -> f32 {
 }
 
 @(no_instrumentation)
-dune_color_variation :: #force_inline proc(color: canvas2d.Color, x, z: f32) -> canvas2d.Color {
-    variation := dune_color_field(x, z)
+sand_color_variation :: #force_inline proc(color: canvas2d.Color, x, z: f32) -> canvas2d.Color {
+    variation := sand_color_field(x, z)
     warm := max(variation, f32(0))
     cool := max(-variation, f32(0))
     return {

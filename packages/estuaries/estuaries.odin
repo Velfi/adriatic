@@ -224,7 +224,7 @@ tidal_island_surface :: proc(config: Config, nx, nz: f32) -> (height: f32, prese
         radial := (local_x * local_x + local_z * local_z) / (outline * outline)
         if radial >= 1 do continue
         // Marsh islands are low platforms with a comparatively narrow tidal
-        // scarp, not smooth dunes. Reach the crown across the inner half of
+        // scarp, not a smooth beach rise. Reach the crown across the inner half of
         // the footprint so eye-level views show a bank and a broad reed bed.
         crown := smoothstep(clamp((1 - radial) / .45, 0, 1))
         crown *= .72 + .28 * f32(math.sin(f64(local_x * 2.7 + local_z * 1.9 + f32(salt & 63))))

@@ -192,47 +192,6 @@ when ODIN_TEST {
     }
 
     @(test)
-    map_artifact_committed_dunes_sidecar_remains_compatible :: proc(t: ^testing.T) {
-        fixture_bytes, fixture_read_error := os.read_entire_file("fixtures/labs/dunes.fixture", context.allocator)
-        testing.expect(t, fixture_read_error == nil)
-        if fixture_read_error != nil do return
-        defer delete(fixture_bytes)
-
-        decoded, decode_error, decoded_ok := fixture_codec_decode(fixture_bytes)
-        testing.expect(t, decoded_ok && decode_error.kind == .None)
-        fixture_codec_error_dispose(&decode_error)
-        if !decoded_ok do return
-        defer fixture_migration_result_dispose(&decoded)
-        sidecar := decoded.fixture.map_source.sidecar
-        testing.expect(
-            t,
-            decoded.fixture.map_source.kind == .Sidecar &&
-            fixture_map_sidecar_valid(sidecar) &&
-            sidecar.format_version == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
-            sidecar.generator_version == MAP_ARTIFACT_INITIAL_GENERATOR_VERSION,
-        )
-
-        sidecar_path, resolved := fixture_map_sidecar_resolve("fixtures/labs/dunes.fixture", sidecar)
-        testing.expect(t, resolved)
-        if !resolved do return
-        defer delete(sidecar_path)
-        sidecar_bytes, sidecar_read_error := os.read_entire_file(sidecar_path, context.allocator)
-        testing.expect(t, sidecar_read_error == nil)
-        if sidecar_read_error != nil do return
-        defer delete(sidecar_bytes)
-        derived, derived_ok := fixture_map_sidecar_derive(sidecar_bytes)
-        testing.expect(t, derived_ok && derived == sidecar)
-        testing.expect(t, fixture_map_sidecar_matches_encoded(sidecar, sidecar_bytes))
-
-        artifact, map_error, decoded_map := map_artifact_decode(sidecar_bytes)
-        testing.expect(t, decoded_map && map_error.kind == .None)
-        map_artifact_error_dispose(&map_error)
-        if !decoded_map do return
-        defer map_artifact_destroy(artifact)
-        testing.expect(t, artifact.generator_version == MAP_ARTIFACT_GENERATOR_VERSION)
-    }
-
-    @(test)
     map_artifact_sidecar_rejects_noncanonical_names_and_resolves_only_siblings :: proc(t: ^testing.T) {
         artifact := map_artifact_test_source()
         defer map_artifact_destroy(artifact)

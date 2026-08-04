@@ -89,7 +89,6 @@ Editor :: struct {
     ruin_stamp_complex:                 bool,
     active_lab_scene:                   string `fixture:"-"`,
     lab_flat_terrain:                   Lab_Flat_Terrain `fixture:"-"`,
-    dunes_lab_runtime:                  Dunes_Lab_Runtime `hs:"-" fixture:"-"`,
     ocean_traffic:                      boats.Ocean_Traffic,
     fixture_path:                       [FIXTURE_FILE_PATH_CAPACITY]u8 `fixture:"-"`,
     fixture_path_length:                int `fixture:"-"`,

@@ -285,6 +285,12 @@ fixture_migration_production_steps: [FIXTURE_SCHEMA_VERSION -
         wrapper = fixture_migration_step_v0022_to_v0023,
         change_id = "enum-add:adriatic:src.Authoring_Tool.Mice",
     },
+    {
+        from_version = FIXTURE_MIGRATION_V0023_TO_V0024_FROM_VERSION,
+        to_version = FIXTURE_MIGRATION_V0023_TO_V0024_TO_VERSION,
+        wrapper = fixture_migration_step_v0023_to_v0024,
+        change_id = "enum-remove:adriatic:src.Lab_Kind.Dunes",
+    },
 }
 
 fixture_migration_production_registry :: proc() -> Fixture_Migration_Registry {

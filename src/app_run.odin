@@ -486,13 +486,17 @@ adriatic_run_impl :: proc(
     map_path := requested_map_path != "" ? requested_map_path : DEFAULT_MAP_ARTIFACT_PATH
     map_source := "generated"
     map_load_started_at := time.tick_now()
-    use_baked_map := !capture_mode && !interactive_lab_mode && !benchmark_mode
     active_lab_definition := interactive_lab_request.definition
     if active_lab_definition == nil && capture_lab_mode {
         active_lab_definition = lab_scene_find(capture_lab_name)
     }
     // Replacement labs own their focused world and skip ordinary map startup.
     mapless_lab_mode := active_lab_definition != nil && active_lab_definition.replace_world
+    // Deterministic world captures inspect the shipped map and must not pay
+    // the full procedural generation cost on every short-lived process.
+    // Replacement labs remain mapless; benchmarks retain their authored setup
+    // path so their workload does not change.
+    use_baked_map := !interactive_lab_mode && !benchmark_mode && !mapless_lab_mode
     map_loaded := mapless_lab_mode
     if mapless_lab_mode {
         // Labs own any focused terrain they need through lab_terrain_load.
@@ -578,9 +582,9 @@ adriatic_run_impl :: proc(
     if !editor.authoring_tool_atlas.ready {
         fmt.eprintln("authoring tool icon atlas failed to load")
     }
-    editor.sculpt_tool_atlas = canvas2d.LoadTexture("assets/textures/ui/sculpt-tools-atlas.png")
+    editor.sculpt_tool_atlas = canvas2d.LoadTexture("assets/textures/ui/terrain-editor-icons-atlas.png")
     if !editor.sculpt_tool_atlas.ready {
-        fmt.eprintln("sculpt tool icon atlas failed to load")
+        fmt.eprintln("terrain editor icon atlas failed to load")
     }
     editor.tarot_atlas = canvas2d.LoadTexture("assets/textures/ui/tarot-atlas-v4.png")
     if !editor.tarot_atlas.ready {
@@ -674,7 +678,6 @@ adriatic_run_impl :: proc(
         }
     }
     if state_loaded &&
-       editor.lab.kind != .Dunes &&
        !capture_mode &&
        !interactive_lab_mode &&
        (!benchmark_mode ||

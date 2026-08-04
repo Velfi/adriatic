@@ -187,13 +187,13 @@ when ODIN_TEST {
     }
 
     @(test)
-    dune_vertex_color_is_smooth_while_fragment_field_remains_bounded :: proc(t: ^testing.T) {
+    beach_vertex_color_is_smooth_while_fragment_field_remains_bounded :: proc(t: ^testing.T) {
         previous_color := terrain_color(3.2, -.55, 0, 0, 18)
-        previous_field := dune_color_field(0, 18)
+        previous_field := sand_color_field(0, 18)
         minimum_field, maximum_field := previous_field, previous_field
         for x := f32(.5); x <= 80; x += .5 {
             current_color := terrain_color(3.2, -.55, 0, x, 18)
-            current_field := dune_color_field(x, 18)
+            current_field := sand_color_field(x, 18)
             testing.expect_value(t, current_color, previous_color)
             testing.expect(t, abs(current_field - previous_field) < .2)
             testing.expect(t, current_field >= -1 && current_field <= 1)

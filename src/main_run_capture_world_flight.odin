@@ -91,52 +91,6 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
         third_person.camera_set_active(&editor.cameras, .Inspection)
         editor.capture_world_only = true
     }
-    if capture_kind == .Map && capture_target_is_generated_dunes(capture_target) {
-        inward := configure_generated_dune_capture_camera(
-            editor,
-            capture_target == "dunes-west" ? f32(-1) : f32(1),
-            capture_target == "dunes-blowout",
-        )
-        focus := editor.editor_focus
-        blowout_view := capture_target == "dunes-blowout"
-        // Standard dune targets stand on the upper beach and look inland
-        // across the selected crest, so ridge asymmetry and grass-top
-        // stabilization are actually visible. The former fixed X/Z
-        // offset could look seaward on curved or mirrored coasts, leaving
-        // the audited dune behind the camera. Keep the elevated blowout
-        // target reversed to retain its shoreline/bathymetry overview.
-        eye_x := focus.x + inward[0] * (blowout_view ? f32(38) : f32(-46))
-        eye_z := focus.z + inward[1] * (blowout_view ? f32(38) : f32(-46))
-        target_x := focus.x + inward[0] * (blowout_view ? f32(-22) : f32(24))
-        target_z := focus.z + inward[1] * (blowout_view ? f32(-22) : f32(24))
-        eye_ground := terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z)
-        eye_clearance := blowout_view ? f32(18) : f32(2.35)
-        target_clearance := blowout_view ? f32(.45) : f32(1.05)
-        inspection_pose := third_person.camera_look_at(
-            {eye_x, eye_ground + eye_clearance, eye_z},
-            {
-                target_x,
-                terrain.sample_surface_height(&editor.project, 0, target_x, target_z) + target_clearance,
-                target_z,
-            },
-        )
-        // Keep the mouse behind the inspection camera while vegetation
-        // streaming follows the visible field around its target.
-        editor.player.position = {
-            eye_x,
-            terrain.sample_surface_height(&editor.project, 0, eye_x, eye_z + 18),
-            eye_z + 18,
-        }
-        editor.player.grounded = true
-        editor.pilot.position = editor.player.position
-        editor.postale_visible = false
-        editor.libellula_visible = false
-        editor.rondine_visible = false
-        third_person.camera_set_pose(&editor.cameras, .Inspection, inspection_pose)
-        third_person.camera_set_active(&editor.cameras, .Inspection)
-        editor.camera_pose = inspection_pose
-        editor.capture_world_only = true
-    }
     if capture_kind == .Map && capture_target == "airport" {
         airport := editor.attendant_position
         airport_sign := airport.x >= 0 ? f32(1) : f32(-1)

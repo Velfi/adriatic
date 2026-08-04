@@ -41,8 +41,6 @@ lab_mouse_control_keys :: proc(name: string) -> (keys: [LAB_MOUSE_KEY_CAPACITY]c
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .R, .SPACE, .Q, .E, .DOWN, .UP, .B, .ONE, .TWO, .THREE)
     case "dialogue-sound", "material":
         count = lab_mouse_keys(&keys, .ESCAPE)
-    case "dunes":
-        count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .R, .A, .D, .G, .H)
     case "flower-generator":
         count = lab_mouse_keys(&keys, .LEFT, .RIGHT, .A, .W, .ONE, .TWO, .G, .L, .F, .C)
     case "fountain-generator":
@@ -254,15 +252,6 @@ lab_mouse_action_label :: proc(name: string, key: canvas2d.KeyboardKey) -> cstri
             return "Low coast"}
     case "dialogue-sound", "material":
         return "Exit lab"
-    case "dunes":
-        #partial switch key {case .LEFT:
-            return "Previous seed"; case .RIGHT:
-            return "Next seed"; case .R:
-            return "New dunes"; case .A:
-            return "Turn wind left"; case .D:
-            return "Turn wind right"; case .G:
-            return "Less vegetation"; case .H:
-            return "More vegetation"}
     case "flower-generator":
         #partial switch key {case .LEFT:
             return "Previous petal"; case .RIGHT:
@@ -904,21 +893,6 @@ LAB_SCENES := [?]Lab_Scene_Definition {
         suppress_infrastructure = true,
         suppress_procedural_circulation = true,
         suppress_shadows = true,
-    },
-    {
-        name = "dunes",
-        configure = dunes_lab_configure,
-        world_overlay = world_dunes_lab,
-        process_input = dunes_lab_process_input,
-        draw_ui = dunes_lab_draw_ui,
-        exit = dunes_lab_exit,
-        isolate_content = true,
-        enter_gameplay = false,
-        replace_world = false,
-        suppress_hud = true,
-        suppress_infrastructure = true,
-        suppress_procedural_circulation = true,
-        suppress_shadows = false,
     },
     {
         name = "spring-river",

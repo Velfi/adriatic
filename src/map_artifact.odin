@@ -19,10 +19,10 @@ MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION :: u32(4)
 MAP_ARTIFACT_LEGACY_FORMAT_VERSION :: u32(1)
 // Bump whenever procedural output changes in a way that requires shipped maps
 // to be rebuilt. This is deliberately independent of Fixture schema versions.
-MAP_ARTIFACT_GENERATOR_VERSION :: u64(7)
-MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(6)
+MAP_ARTIFACT_GENERATOR_VERSION :: u64(10)
+MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION :: u64(8)
 MAP_ARTIFACT_LEGACY_GENERATOR_VERSION :: u64(3)
-// The committed Dunes fixture predates the initial generator bump.
+// The oldest committed lab fixture predates the initial generator bump.
 MAP_ARTIFACT_INITIAL_GENERATOR_VERSION :: u64(1)
 MAP_ARTIFACT_HEADER_SIZE :: 40
 MAP_ARTIFACT_MAX_PAYLOAD :: 64 * 1024 * 1024
@@ -69,7 +69,8 @@ Map_Artifact :: struct {
 
 map_artifact_version_is_legacy :: #force_inline proc(format: u32, generator: u64) -> bool {
     return(
-        (format == MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION && generator == MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION) ||
+        (format == MAP_ARTIFACT_FORMAT_VERSION && generator == MAP_ARTIFACT_PREVIOUS_GENERATOR_VERSION) ||
+        (format == MAP_ARTIFACT_PREVIOUS_FORMAT_VERSION && generator == u64(6)) ||
         (format == u32(2) && generator == u64(4)) ||
         (format == MAP_ARTIFACT_LEGACY_FORMAT_VERSION &&
                 (generator == MAP_ARTIFACT_LEGACY_GENERATOR_VERSION ||
@@ -398,7 +399,11 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
             map_artifact_destroy(artifact, alloc)
             return nil, {kind = .Invalid_State, message = "map generator version does not match container"}, false
         }
-        if !exact_schema do artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+        if !exact_schema {
+            seeds := artifact.seeds
+            map_artifact_destroy(artifact, alloc)
+            return map_artifact_generate(seeds, alloc)
+        }
         terrain.island_transforms_initialize(&artifact.project)
         if message, valid := map_artifact_valid(artifact); !valid {
             map_artifact_destroy(artifact, alloc)
@@ -451,7 +456,11 @@ map_artifact_decode :: proc(data: []byte, alloc := context.allocator) -> (^Map_A
         map_artifact_destroy(artifact, alloc)
         return nil, {kind = .Invalid_State, message = "map generator version does not match container"}, false
     }
-    if !exact_schema do artifact.generator_version = MAP_ARTIFACT_GENERATOR_VERSION
+    if !exact_schema {
+        seeds := artifact.seeds
+        map_artifact_destroy(artifact, alloc)
+        return map_artifact_generate(seeds, alloc)
+    }
     terrain.island_transforms_initialize(&artifact.project)
     if message, valid := map_artifact_valid(artifact); !valid {
         map_artifact_destroy(artifact, alloc)

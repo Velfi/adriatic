@@ -272,6 +272,5 @@ hot_state_load :: proc(editor: ^Editor, path: string) -> Hot_State_Load_Result {
     editor.attendant_dialogue_open = false
     editor.dialogue_session = {}
     editor.quit_requested = false
-    dunes_lab_rehydrate(editor)
     return .Loaded
 }

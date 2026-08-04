@@ -420,8 +420,8 @@ CAPTURE_HERO_BUILDING_TARGETS := [?]string {
     "clinic-compact",
     "clinic-grand",
 }
-CAPTURE_EDITOR_TARGETS := [?]string{"dunes", "dunes-west", "dunes-blowout", "rock-tool", "plant-stamp", "road-tool"}
-CAPTURE_MAP_TARGETS := [?]string{"world-map", "world-map-weather", "dunes", "dunes-west", "dunes-blowout"}
+CAPTURE_EDITOR_TARGETS := [?]string{"rock-tool", "plant-stamp", "road-tool"}
+CAPTURE_MAP_TARGETS := [?]string{"world-map", "world-map-weather"}
 CAPTURE_LIGHTHOUSE_TARGETS := [?]string {
     "adriatic",
     "aegean",

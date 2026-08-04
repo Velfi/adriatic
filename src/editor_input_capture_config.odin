@@ -684,10 +684,6 @@ seed_municipal_route_night_benchmark :: proc(editor: ^Editor) {
     editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
 }
 
-capture_target_is_generated_dunes :: #force_inline proc(target: string) -> bool {
-    return target == "dunes" || target == "dunes-west" || target == "dunes-blowout"
-}
-
 capture_weather_regime :: proc(target: string) -> (atmosphere.Climate_Regime, bool) {
     switch target {
     case "weather-maestral":

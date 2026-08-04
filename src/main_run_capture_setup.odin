@@ -148,13 +148,7 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
                 seed_city_capture(editor, capture_target)
             }
         } else {
-            // The dune QA target inspects untouched generated coastline.
-            // Procedural settlement seeding is both visually distracting and
-            // substantially more expensive under ASAN, and infrastructure
-            // integration remains covered by the normal editor capture.
-            if !(capture_editor_mode && capture_target_is_generated_dunes(capture_target)) {
-                seed_default_island_towns(editor)
-            }
+            seed_default_island_towns(editor)
             // Keep the flight capture exercising distant road depth precision
             // as the chase camera climbs away from the authored island.
             if capture_flight_mode do seed_road_capture(editor)
@@ -233,13 +227,6 @@ run_prepare_capture_world :: proc(editor: ^Editor, using config: ^Run_Config) ->
                 editor.editor_camera.distance = 68
                 editor.camera_pose = third_person.camera_pose(editor.editor_focus, editor.editor_camera)
             }
-        }
-        if capture_editor_mode && capture_target_is_generated_dunes(capture_target) {
-            _ = configure_generated_dune_capture_camera(
-                editor,
-                capture_target == "dunes-west" ? f32(-1) : f32(1),
-                capture_target == "dunes-blowout",
-            )
         }
         if capture_building_mode {
             _ = configure_building_capture_camera(editor, capture_target)

@@ -458,26 +458,30 @@ cleanup :: proc(source, result: []Cell) {
 }
 
 build_signed_distance :: proc(cells: []Cell, destination: []f32) {
-    boundary: [CELL_COUNT]bool
+    boundary_indices: [CELL_COUNT]int
+    boundary_count := 0
     for z in 0 ..< GRID_HEIGHT {
         for x in 0 ..< GRID_WIDTH {
             land := is_land(cells, x, z)
-            boundary[index_of(x, z)] =
+            index := index_of(x, z)
+            is_boundary :=
                 land != is_land(cells, x - 1, z) ||
                 land != is_land(cells, x + 1, z) ||
                 land != is_land(cells, x, z - 1) ||
                 land != is_land(cells, x, z + 1)
+            if is_boundary {
+                boundary_indices[boundary_count] = index
+                boundary_count += 1
+            }
         }
     }
     for z in 0 ..< GRID_HEIGHT {
         for x in 0 ..< GRID_WIDTH {
             best := f32(1e9)
-            for bz in 0 ..< GRID_HEIGHT {
-                for bx in 0 ..< GRID_WIDTH {
-                    if !boundary[index_of(bx, bz)] do continue
-                    dx, dz := f32(x - bx), f32(z - bz)
-                    best = min(best, dx * dx + dz * dz)
-                }
+            for boundary_index in boundary_indices[:boundary_count] {
+                bx, bz := boundary_index % GRID_WIDTH, boundary_index / GRID_WIDTH
+                dx, dz := f32(x - bx), f32(z - bz)
+                best = min(best, dx * dx + dz * dz)
             }
             distance := f32(math.sqrt(f64(best))) + .5
             destination[index_of(x, z)] = is_land(cells, x, z) ? -distance : distance

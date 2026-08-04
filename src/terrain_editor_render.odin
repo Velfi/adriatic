@@ -39,7 +39,7 @@ terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> ca
     if height <= sea_level do return water
     if painted < 0 {
         // Negative paint is a backward-compatible stabilized-sand mask used by
-        // generated coastal dunes. -1 is active pale sand at any elevation;
+        // generated coastal sand. -1 is active pale sand at any elevation;
         // values approaching zero reveal the ordinary elevation-driven cover.
         natural: canvas2d.Color
         elevation := height - sea_level
@@ -55,7 +55,7 @@ terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> ca
         wet_sand := canvas2d.Color{151, 139, 103, 255}
         // Fine mottling is evaluated per fragment, but broad ecological
         // recovery stays in vertex colors so it meets ordinary terrain
-        // continuously where the signed dune mask ends.
+        // continuously where the signed beach mask ends.
         return color_lerp(base, wet_sand, wetness * .72)
     }
     if painted > .5 do return terrain_color_variation(soil, x, z)

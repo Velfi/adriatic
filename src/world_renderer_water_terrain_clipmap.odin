@@ -334,7 +334,6 @@ world_ocean_cache_build :: proc(
     world_renderer.ocean_cache_sea_level = editor.project.sea_level
     world_renderer.ocean_cache_in_map = editor.in_map
     world_renderer.ocean_cache_markov_island = lab_scene_is_active(editor, "markov-island")
-    world_renderer.ocean_cache_dunes = lab_scene_is_active(editor, "dunes")
     world_renderer.ocean_cache_valid = true
 }
 
@@ -349,7 +348,6 @@ world_ocean :: proc(editor: ^Editor) {
     local_center_x := f32(math.floor(f64(editor.camera_pose.target.x / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
     local_center_z := f32(math.floor(f64(editor.camera_pose.target.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
     markov_island := lab_scene_is_active(editor, "markov-island")
-    dunes := lab_scene_is_active(editor, "dunes")
     dirty := world_renderer.ocean_sample_grid_dirty
     localized_terrain_change :=
         dirty.valid &&
@@ -363,8 +361,7 @@ world_ocean :: proc(editor: ^Editor) {
         (revisions_match || localized_terrain_change) &&
         world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
         world_renderer.ocean_cache_in_map == editor.in_map &&
-        world_renderer.ocean_cache_markov_island == markov_island &&
-        world_renderer.ocean_cache_dunes == dunes
+        world_renderer.ocean_cache_markov_island == markov_island
     local_center := [2]f32{local_center_x, local_center_z}
     if cache_state_matches &&
        world_renderer.ocean_cache_center == local_center &&
@@ -577,12 +574,11 @@ marine_bed_base_color :: #force_inline proc(material: i8) -> canvas2d.Color {
 
 world_bathymetry :: proc(editor: ^Editor) {
     if editor == nil || editor.in_map || editor.selection_tool_active || editor.authoring_tool != .Sculpt do return
-    settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
     // Bathymetry is an authoring diagnostic, not part of the finished marine
     // presentation. Only expose its finite chunk mesh while the active sculpt
     // action can actually edit the seabed; otherwise its outer edge reads as
     // a giant sand shelf through the water.
-    if !settings.affect_seabed do return
+    if terrain_action_target(editor.terrain_sculpt.action) != .Bathymetry do return
     world_bathymetry_geometry_cache_ensure(len(editor.project.bathymetry_chunks))
     normal := third_person.Vec3{0, 1, 0}
     for &chunk, chunk_index in editor.project.bathymetry_chunks {
@@ -629,6 +625,13 @@ world_bathymetry :: proc(editor: ^Editor) {
                 i1 := i + 1
                 i2 := i + terrain.BATHYMETRY_CHUNK_RESOLUTION
                 i3 := i2 + 1
+                deep_ocean := editor.project.sea_level - terrain.DEEP_OCEAN_DEPTH
+                if f32(chunk.heights[i]) <= deep_ocean + .01 &&
+                   f32(chunk.heights[i1]) <= deep_ocean + .01 &&
+                   f32(chunk.heights[i2]) <= deep_ocean + .01 &&
+                   f32(chunk.heights[i3]) <= deep_ocean + .01 {
+                    continue
+                }
                 cell := terrain.BATHYMETRY_CHUNK_SIZE / f32(terrain.BATHYMETRY_CHUNK_RESOLUTION - 1)
                 a := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i]), origin_z + f32(z) * cell}
                 b := third_person.Vec3{origin_x + f32(x) * cell, f32(chunk.heights[i2]), origin_z + f32(z + 1) * cell}
@@ -716,12 +719,15 @@ clipmap_vertex_color_with_material :: #force_inline proc(
     // Expose pale Adriatic limestone only where the grade is genuinely
     // cliff-like. The broad transition avoids drawing a contour around the
     // threshold and leaves ordinary hills under their ground cover. Generated
-    // coastal sand owns its faces at every grade: dune slip faces and blowouts
-    // must remain sand rather than exposing the island's limestone treatment.
+    // Coastal sand owns its faces at every grade rather than exposing the
+    // island's limestone treatment.
     cliff_weight := clamp((.91 - normal.y) / .24, 0, 1)
     cliff_weight = cliff_weight * cliff_weight * (3 - 2 * cliff_weight)
     if painted < 0 do cliff_weight = 0
-    base := terrain_color(max(height, editor.project.sea_level + .12), painted, editor.project.sea_level, x, z)
+    // Preserve water classification for submerged and exactly sea-level
+    // samples. Promoting them above the datum exposes pale rectangular
+    // clipmap domains where coarse rings extend beyond resident land.
+    base := terrain_color(height, painted, editor.project.sea_level, x, z)
     limestone := terrain_color_variation(canvas2d.Color{222, 216, 188, 255}, x * .73, z * .73)
     // Lighting belongs in the fragment shader, where terrain shares the
     // current atmospheric sun and dynamic-shadow visibility with the rest of
@@ -759,7 +765,7 @@ clipmap_grid_cell :: #force_inline proc(editor: ^Editor, level: int) -> f32 {
     // The dedicated 513×513 innermost mesh samples at half a metre while
     // retaining the former 256 m footprint. The first outer ring samples its
     // native two-metre terrain level, avoiding an abrupt 8× jump across the
-    // player-visible dune belt. Successive rings retain their established
+    // player-visible beach belt. Successive rings retain their established
     // doubled spacing and broad world coverage.
     if level == 0 do return cell * .5
     if level == 1 do return cell
@@ -869,6 +875,11 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     if !editor.lab_flat_terrain.enabled {
         transition_weight := clipmap_transition_weight(level, x, z)
         height = terrain.sample_clipmap_transition_height(&editor.project, level, world_x, world_z, transition_weight)
+        _, _, land := terrain.sample_land(&editor.project, level, world_x, world_z)
+        // Keep non-land clipmap vertices below the water surface. Rendering a
+        // sea-level terrain sheet causes depth competition with the ocean and
+        // exposes rectangular center/ring domains in overhead views.
+        if !land do height = editor.project.sea_level - .05
         terrain_material = terrain.sample_render_material_with_shoreline_coverage(
             &editor.project,
             level,
@@ -896,7 +907,7 @@ clipmap_update_vertex :: proc(editor: ^Editor, vertices: []World_Vertex, level: 
     // Interpolation naturally softens the effect at painted material edges.
     vertex.material[0] = grass_weight * (1 - cliff_weight)
     // Negative material values identify the generated coastal sand continuum.
-    // Carry that broad mask to fragments so fine dune mottling no longer has
+    // Carry that broad mask to fragments so fine sand mottling does not have
     // to be quantized into vertex colors.
     if terrain_material < 0 && cliff_weight < .08 do vertex.material[0] = terrain_material
     // The fragment shader uses the same interpolated slope mask for stable

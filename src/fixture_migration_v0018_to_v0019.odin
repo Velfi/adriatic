@@ -233,15 +233,5 @@ fixture_v0019_apply_map_source :: proc(
     tentative.sdf_obstacle_count = 0
     tentative.sdf_obstacle_selected = -1
     tentative.lab = {}
-    if active_lab_scene == "dunes" {
-        tentative.lab = {
-            kind = .Dunes,
-            dunes = {
-                seed = DUNES_LAB_DEFAULT_SEED,
-                wind_angle = DUNES_LAB_DEFAULT_WIND_ANGLE,
-                vegetation = DUNES_LAB_DEFAULT_VEGETATION,
-            },
-        }
-    }
     return {}
 }

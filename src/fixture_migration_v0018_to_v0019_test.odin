@@ -118,7 +118,7 @@ when ODIN_TEST {
         testing.expect(t, fixture_codec_test_bytes_equal(payload, payload_snapshot))
         if !migrated do return
         fixture_migration_v0018_to_v0019_expect_inline(t, result.fixture, 0x300, 0x10203040)
-        testing.expect(t, result.fixture.lab.kind == .Dunes && result.fixture.sdf_obstacle_count == 0)
+        testing.expect(t, result.fixture.lab.kind == .None && result.fixture.sdf_obstacle_count == 0)
 
         alternate_payload := fixture_migration_v0018_to_v0019_payload(t, 0x3c)
         testing.expect(t, alternate_payload != nil)

@@ -203,7 +203,7 @@ coastal_grass_card_density :: #force_inline proc(material, x, z: f32) -> f32 {
     stabilization := clamp(material + 1, f32(0), f32(1))
     // Marram establishes in colonies rather than filling every eligible
     // square. Two crossed low-frequency fields leave readable sand windows
-    // between tufts and avoid the uniform green carpet that hid dune relief.
+    // between tufts and avoid a uniform green carpet over coastal relief.
     crossed := f32(math.sin(f64(x * .067 + z * .021 + 1.7))) * f32(math.sin(f64(x * -.019 + z * .083 - .6)))
     broad := f32(math.sin(f64(x * .026 - z * .014 + 2.4)))
     patch := clamp(.42 + crossed * .34 + broad * .16, f32(.10), f32(.88))
@@ -256,14 +256,14 @@ ground_grass_chunk_build :: proc(
         architecture_height_scale := world_architecture_grass_height_scale(building_footprints, x, z)
         if architecture_height_scale <= 0 do continue
         terrain_material := terrain.sample_material(&editor.project, 0, x, z)
-        dune_stabilization := f32(1)
+        sand_stabilization := f32(1)
         inland_colony_strength := f32(1)
         if terrain_material < 0 {
             // Negative terrain material is the coastal sand/stabilization
             // mask. Keep active sand and wet shore bare while allowing the
             // deterministic card field to fill back in across stabilized
-            // dune shoulders.
-            dune_stabilization = clamp(terrain_material + 1, f32(0), f32(1))
+            // dry beach shoulders.
+            sand_stabilization = clamp(terrain_material + 1, f32(0), f32(1))
             density := coastal_grass_card_density(terrain_material, x, z)
             if wind_streak_hash(seed_index, 11) > density do continue
         } else {
@@ -306,8 +306,8 @@ ground_grass_chunk_build :: proc(
             // saturated, and warmer than the lush inland card field. A muted
             // straw-olive target avoids neon green cards against pale sand
             // while stabilized crests retain some living green.
-            dune_dryness := 1 - dune_stabilization
-            color = color_lerp(color, {132, 127, 73, 255}, .52 + dune_dryness * .34)
+            sand_dryness := 1 - sand_stabilization
+            color = color_lerp(color, {132, 127, 73, 255}, .52 + sand_dryness * .34)
         }
         color = color_lerp(color, {170, 166, 87, 255}, variation * .08)
         grass_value := f32(color.r) * .2126 + f32(color.g) * .7152 + f32(color.b) * .0722
@@ -325,7 +325,7 @@ ground_grass_chunk_build :: proc(
             height *= 1.28
         }
         if terrain_material >= 0 do height *= .70 + inland_colony_strength * .38
-        if terrain_material < 0 do height *= .52 + dune_stabilization * .22
+        if terrain_material < 0 do height *= .52 + sand_stabilization * .22
         height *= architecture_height_scale
         width := height * (.56 + width_noise * .48)
         flower_density := wildflower_density_at(x, z)

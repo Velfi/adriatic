@@ -240,7 +240,6 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                     authoring_select_tool(editor, .GreekAssets)
                 }
             }
-            if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
             if !imgui_captures_keyboard() && editor.authoring_tool == .Sculpt {
                 settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
                 if canvas2d.IsKeyPressed(.LEFT_BRACKET) do settings.size = max(settings.size - max(settings.size * .1, f32(1)), f32(4))
@@ -424,7 +423,10 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         )
         terrain_seabed_target :=
             editor.authoring_tool == .Sculpt &&
-            editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].affect_seabed
+            terrain_action_affects_seabed(
+                editor.terrain_sculpt.action,
+                editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)].affect_seabed,
+            )
         paint_target := editor.tool == .Paint && bathymetry_found
         if !land_found && !terrain_seabed_target && !paint_target {
             editor.cursor_hit = false

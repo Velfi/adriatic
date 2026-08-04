@@ -560,7 +560,6 @@ World_Renderer :: struct {
     ocean_cache_sea_level:                        f32,
     ocean_cache_in_map:                           bool,
     ocean_cache_markov_island:                    bool,
-    ocean_cache_dunes:                            bool,
     ocean_cache_valid:                            bool,
     ocean_sample_grid:                            [dynamic]World_Vertex,
     ocean_sample_grid_scratch:                    [dynamic]World_Vertex,
