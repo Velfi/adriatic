@@ -513,13 +513,20 @@ tweak_save_editor :: proc(editor: ^Editor) {
     }
 }
 
-tweak_load_editor :: proc(editor: ^Editor) {
+tweak_load_editor :: proc(editor: ^Editor, quiet_missing := false) {
     if editor == nil do return
     state := tweak_default_state()
     path, path_ok := tweak_file_path(context.temp_allocator)
     if !path_ok {
         editor.tweak_status = .Defaults
         return
+    }
+    if quiet_missing {
+        _, read_err := os.read_entire_file(path, context.temp_allocator)
+        if read_err != nil {
+            editor.tweak_status = .Defaults
+            return
+        }
     }
     result := tweak_package.load(path, TWEAK_FILE_VERSION, &state, "Adriatic tweaks")
     editor.tweak = state

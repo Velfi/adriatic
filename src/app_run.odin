@@ -594,6 +594,12 @@ adriatic_run_impl :: proc(
     control_hints_load(editor)
     _ = vehicle_paint_load(editor)
     island_center := run_initialize_gameplay_actors(editor)
+    if !capture_mode {
+        // Developer tweaks live beside player settings and must be restored
+        // before the first simulation frame.  Keep capture runs deterministic.
+        tweak_load_editor(editor, true)
+        defer tweak_save_editor(editor)
+    }
     car_physics_create(editor)
     startup_timings.physics_ms = startup_checkpoint(&startup_timings)
     if show_loading_screen {
