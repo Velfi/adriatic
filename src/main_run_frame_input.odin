@@ -215,6 +215,39 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         }
         if !fixture_editor_file_dialog_is_open(editor) {
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
+            if !imgui_captures_keyboard() {
+                if canvas2d.IsKeyPressed(.S) &&
+                   !control_key_down() &&
+                   !(editor.authoring_tool == .Obstacles && sdf_obstacle_selected_ptr(editor) != nil) {
+                    authoring_select_selection_tool(editor)
+                }
+                if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
+                if canvas2d.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
+                if canvas2d.IsKeyPressed(.H) {
+                    editor.plant_stamp_mode = .Ground
+                    authoring_select_tool(editor, .Foliage)
+                }
+                if !control_key_down() && canvas2d.IsKeyPressed(.Z) {
+                    authoring_select_tool(editor, .Ridge)
+                }
+                if !control_key_down() && canvas2d.IsKeyPressed(.C) {
+                    authoring_select_tool(editor, .Cliff)
+                }
+                if !control_key_down() && canvas2d.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
+                if !control_key_down() && canvas2d.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
+                if !control_key_down() && !editor.road_mode && canvas2d.IsKeyPressed(.K) {
+                    authoring_select_tool(editor, .Farm)
+                }
+                if !control_key_down() && canvas2d.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
+                if !control_key_down() && canvas2d.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
+                if canvas2d.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
+                if !control_key_down() &&
+                   canvas2d.IsKeyPressed(.G) &&
+                   !(editor.authoring_tool == .Obstacles && sdf_obstacle_selected_ptr(editor) != nil) {
+                    authoring_select_tool(editor, .GreekAssets)
+                }
+            }
+            if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.F) do editor_focus_terrain(editor)
             if !imgui_captures_keyboard() && editor.authoring_tool == .Sculpt {
                 settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
                 if canvas2d.IsKeyPressed(.LEFT_BRACKET) do settings.size = max(settings.size - max(settings.size * .1, f32(1)), f32(4))
@@ -288,11 +321,11 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             }
         }
         viewport_ui_hit := editor_ui_hit(editor, canvas2d.GetMousePosition(), width, height)
-        starting_obstacle_translate :=
+        starting_obstacle_transform :=
             editor.authoring_tool == .Obstacles &&
             sdf_obstacle_selected_ptr(editor) != nil &&
-            (canvas2d.IsKeyPressed(.G) || canvas2d.IsKeyPressed(.R))
-        if !sdf_obstacle_modal_active(editor) && !starting_obstacle_translate {
+            (canvas2d.IsKeyPressed(.G) || canvas2d.IsKeyPressed(.R) || canvas2d.IsKeyPressed(.S))
+        if !sdf_obstacle_modal_active(editor) && !starting_obstacle_transform {
             update_editor_camera(editor, min(frame_delta, f32(.05)))
         }
         viewport_wheel := viewport_ui_hit ? f32(0) : canvas2d.GetMouseWheelMove()
@@ -327,7 +360,11 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
             if shift_key_down() {
                 editor.building_generator_height = clamp(editor.building_generator_height + wheel, f32(4), f32(48))
             } else if alt_key_down() {
-                editor.building_generator_variation = clamp(editor.building_generator_variation + wheel, f32(1), f32(256))
+                editor.building_generator_variation = clamp(
+                    editor.building_generator_variation + wheel,
+                    f32(1),
+                    f32(256),
+                )
             }
         } else if editor.tool == .Structure && editor.climbing_leaf_paint_mode {
             wheel := viewport_wheel

@@ -124,6 +124,19 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     near_size := sdf_obstacle_gizmo_size(projection_camera, near, 1280, 720)
     far_size := sdf_obstacle_gizmo_size(projection_camera, far, 1280, 720)
     near_ring_radius := sdf_obstacle_rotation_ring_radius(projection_camera, near, 1280, 720)
+    near_scale_radius := sdf_obstacle_scale_handle_radius(projection_camera, near, 1280, 720)
+    near_obstacle := sdf_obstacle_default(near, 0)
+    far_obstacle := sdf_obstacle_default(far, 0)
+    near_zoom_factor := sdf_obstacle_scale_zoom_factor(projection_camera, near_obstacle, 720)
+    far_zoom_factor := sdf_obstacle_scale_zoom_factor(projection_camera, far_obstacle, 720)
+    near_initial_scale := sdf_obstacle_initial_scale(projection_camera, near, 1280, 720)
+    far_initial_scale := sdf_obstacle_initial_scale(projection_camera, far, 1280, 720)
+    testing.expect(t, far_zoom_factor > near_zoom_factor)
+    testing.expect(t, far_initial_scale > near_initial_scale)
+    near_obstacle.scale = {near_initial_scale, near_initial_scale, near_initial_scale}
+    far_obstacle.scale = {far_initial_scale, far_initial_scale, far_initial_scale}
+    testing.expect(t, math.abs(sdf_obstacle_projected_outer_radius_pixels(projection_camera, near_obstacle, 720) - SDF_OBSTACLE_INITIAL_RADIUS_PIXELS) < .001)
+    testing.expect(t, math.abs(sdf_obstacle_projected_outer_radius_pixels(projection_camera, far_obstacle, 720) - SDF_OBSTACLE_INITIAL_RADIUS_PIXELS) < .001)
     near_center := project_3d(projection_camera, near, 1280, 720)
     near_endpoint := project_3d(projection_camera, near + flight.Vec3{near_size, 0, 0}, 1280, 720)
     far_center := project_3d(projection_camera, far, 1280, 720)
@@ -145,6 +158,9 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     ring_axis, ring_hit := sdf_obstacle_rotation_ring_hit(projection_camera, ring_point.position, ring_obstacle, near_ring_radius, 1280, 720)
     testing.expect(t, ring_hit && ring_axis == .X)
     testing.expect(t, !arrow_hit_at_ring && arrow_axis_at_ring == .None)
+    scale_point := project_3d(projection_camera, near + flight.Vec3{near_scale_radius, 0, 0}, 1280, 720)
+    scale_axis, scale_hit := sdf_obstacle_scale_gizmo_hit(projection_camera, scale_point.position, ring_obstacle, near_scale_radius, 1280, 720)
+    testing.expect(t, scale_hit && scale_axis == .X)
     oblique_camera := Perspective_Camera{position = {0, 5, 0}, right = {1, 0, 0}, up = {0, .9701425, .2425356}, forward = {0, -.2425356, .9701425}, focal_length = 1.35}
     oblique_size := sdf_obstacle_gizmo_size(oblique_camera, near, 1280, 720)
     oblique_ring_radius := sdf_obstacle_rotation_ring_radius(oblique_camera, near, 1280, 720)
@@ -254,4 +270,48 @@ sdf_obstacle_translation_math_and_modal_lifecycle :: proc(t: ^testing.T) {
     testing.expect(t, sdf_obstacle_gizmo_center_active(.Rotate, .None))
     testing.expect(t, !sdf_obstacle_gizmo_center_active(.Translate, .X))
     testing.expect(t, !sdf_obstacle_gizmo_center_active(.Rotate, .Z))
+
+    testing.expect_value(t, sdf_obstacle_scale_with_axis({2, 3, 4}, .Y, 2), flight.Vec3{2, 6, 4})
+    testing.expect_value(t, sdf_obstacle_scale_handle_color(.Scale, .X, .X), SDF_OBSTACLE_GIZMO_ACTIVE_COLOR)
+    testing.expect_value(t, sdf_obstacle_scale_handle_color(.Scale, .X, .Y), sdf_obstacle_gizmo_axis_color(.Y))
+    testing.expect(t, sdf_obstacle_set_rotation(editor, flight.identity_orientation()))
+    testing.expect(t, sdf_obstacle_set_scale(editor, {2, 3, 4}))
+    scale_before := editor.sdf_obstacles[0].scale
+    scale_camera := Perspective_Camera{position = {3, 8, -10}, forward = {0, 0, 1}, focal_length = 1.35}
+    scale_radius := sdf_obstacle_scale_handle_radius(scale_camera, before.position, 1280, 720)
+    scale_zoom_factor := sdf_obstacle_scale_zoom_factor(scale_camera, editor.sdf_obstacles[0], 720)
+    expected_scale_multiplier := clamp(1 + scale_zoom_factor, f32(.001), f32(128))
+    testing.expect(t, scale_radius > 0)
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Scale, .X))
+    testing.expect(t, sdf_obstacle_scale_axis_update(editor, scale_camera, {0, 0, 1}, 1280, 720))
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, scale_before)
+    scale_camera_moved := scale_camera
+    scale_camera_moved.position.x += scale_radius
+    testing.expect(t, sdf_obstacle_scale_axis_update(editor, scale_camera_moved, {0, 0, 1}, 1280, 720))
+    testing.expect(t, math.abs(editor.sdf_obstacles[0].scale.x - scale_before.x * expected_scale_multiplier) < .001)
+    testing.expect_value(t, editor.sdf_obstacles[0].scale.y, scale_before.y)
+    testing.expect_value(t, editor.sdf_obstacles[0].scale.z, scale_before.z)
+    axis_switch_scale := editor.sdf_obstacles[0].scale
+    testing.expect(t, sdf_obstacle_scale_set_axis(editor, .Y))
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, axis_switch_scale)
+    testing.expect(t, sdf_obstacle_scale_axis_update(editor, scale_camera_moved, {0, 0, 1}, 1280, 720))
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, axis_switch_scale)
+    scale_camera_y := scale_camera_moved
+    scale_camera_y.position.y += scale_radius
+    testing.expect(t, sdf_obstacle_scale_axis_update(editor, scale_camera_y, {0, 0, 1}, 1280, 720))
+    testing.expect(t, math.abs(editor.sdf_obstacles[0].scale.x - axis_switch_scale.x) < .001)
+    testing.expect(t, math.abs(editor.sdf_obstacles[0].scale.y - axis_switch_scale.y * expected_scale_multiplier) < .001)
+    testing.expect_value(t, editor.sdf_obstacles[0].scale.z, axis_switch_scale.z)
+    sdf_obstacle_modal_finish(editor, true)
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, scale_before)
+
+    testing.expect(t, sdf_obstacle_modal_begin(editor, .Scale, .None))
+    free_zoom_factor := sdf_obstacle_scale_zoom_factor(scale_camera, editor.sdf_obstacles[0], 720)
+    expected_free_multiplier := clamp(1 + f32(160) / SDF_OBSTACLE_FREE_SCALE_PIXELS * free_zoom_factor, f32(.001), f32(128))
+    testing.expect(t, sdf_obstacle_scale_free_update(editor, scale_camera, {100, 100}, 1280, 720))
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, scale_before)
+    testing.expect(t, sdf_obstacle_scale_free_update(editor, scale_camera, {260, 100}, 1280, 720))
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, scale_before * expected_free_multiplier)
+    sdf_obstacle_modal_finish(editor, true)
+    testing.expect_value(t, editor.sdf_obstacles[0].scale, scale_before)
 }
