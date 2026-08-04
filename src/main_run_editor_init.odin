@@ -64,6 +64,11 @@ run_initialize_editor_defaults :: proc(
     editor.architecture_brush_preset = .Small
     editor.architecture_brush_strength = .55
     editor.architecture_brush_hardness = .45
+    editor.building_generator_width = 12
+    editor.building_generator_depth = 16
+    editor.building_generator_height = 10
+    editor.building_generator_density = .55
+    editor.building_generator_variation = 1
     editor.marina_brush_radius = 60
     editor.farm_brush_radius = 64
     editor.wreck_brush_size = 330

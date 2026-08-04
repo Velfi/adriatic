@@ -14,6 +14,8 @@ import canvas2d "zelda_engine:canvas2d"
 
 GENERATED_PLANT_CACHE_CAPACITY :: (SETTLEMENT_PATIO_CAPACITY * 2 + MARINA_GEOMETRY_CACHE_CAPACITY * 3) * 3
 GENERATED_PLANT_MATURITY_STEPS :: 5
+GENERATED_PLANT_RUNTIME_IMPOSTOR_LIMIT :: 24
+GENERATED_PLANT_RUNTIME_CACHE_BYTES_MAX :: 128 * 1024 * 1024
 
 Generated_Plant_Cache_Entry :: struct {
     species:             plants.Species,
@@ -29,9 +31,14 @@ Generated_Plant_Cache_Entry :: struct {
     compiled_asset:      bool,
     compiled_vertices:   [dynamic]plant_assets.Plant_Asset_Vertex,
     compiled_indices:    [dynamic]u32,
+    impostor_color:      [dynamic]byte,
+    impostor_normal:     [dynamic]byte,
+    impostor_views:      [plant_assets.PLANT_IMPOSTOR_VIEW_COUNT]plant_assets.Plant_Impostor_View,
+    impostor_meshes:     [plant_assets.PLANT_IMPOSTOR_VIEW_COUNT]int,
     recycled_mesh_index: int,
     last_used:           u64,
     permanent:           bool,
+    occupied:            bool,
 }
 
 Generated_Bark_Segment_Topology :: struct {
@@ -49,6 +56,40 @@ Generated_Plant_Transform :: struct {
 generated_plant_cache: [GENERATED_PLANT_CACHE_CAPACITY]Generated_Plant_Cache_Entry
 generated_plant_cache_count: int
 generated_plant_cache_access: u64
+
+generated_plant_cache_entry_bytes :: proc(entry: ^Generated_Plant_Cache_Entry) -> int {
+    if entry == nil || !entry.occupied do return 0
+    plant := &entry.result.plant
+    total :=
+        cap(plant.segments) * size_of(plant_structure.Segment) +
+        cap(plant.segment_parents) * size_of(int) +
+        cap(plant.segment_axes) * size_of(int) +
+        cap(plant.segment_ids) * size_of(u64) +
+        cap(plant.axis_parents) * size_of(int) +
+        cap(plant.axis_roles) * size_of(plants.Axis_Role) +
+        cap(plant.axis_orientations) * size_of(plants.Axis_Orientation) +
+        cap(plant.attachments) * size_of(plants.Attachment) +
+        cap(plant.attachment_ids) * size_of(u64) +
+        cap(plant.graph.axes) * size_of(plants.Axis) +
+        cap(plant.graph.growth_units) * size_of(plants.Growth_Unit) +
+        cap(plant.graph.internodes) * size_of(plants.Internode) +
+        cap(plant.graph.buds) * size_of(plants.Bud) +
+        cap(plant.graph.organs) * size_of(plants.Organ_Site) +
+        cap(entry.compiled_vertices) * size_of(plant_assets.Plant_Asset_Vertex) +
+        cap(entry.compiled_indices) * size_of(u32) +
+        cap(entry.impostor_color) + cap(entry.impostor_normal) +
+        len(entry.bark_topology) * size_of(Generated_Bark_Segment_Topology)
+    return total
+}
+
+generated_plant_runtime_cache_bytes :: proc() -> int {
+    total := 0
+    for index in 0 ..< generated_plant_cache_count {
+        entry := &generated_plant_cache[index]
+        if entry.occupied && !entry.permanent do total += generated_plant_cache_entry_bytes(entry)
+    }
+    return total
+}
 
 Generated_Plant_Render_LOD :: enum u8 {
     Hero,
@@ -222,6 +263,7 @@ generated_plant_cached :: proc(
     maturity_step := generated_plant_maturity_step(maturity)
     for index in 0 ..< generated_plant_cache_count {
         entry := &generated_plant_cache[index]
+        if !entry.occupied do continue
         if entry.species == species &&
            entry.seed == seed &&
            entry.detail == detail &&
@@ -233,14 +275,21 @@ generated_plant_cached :: proc(
             return entry
         }
     }
-    entry_index := generated_plant_cache_count
+    entry_index := -1
+    for index in 0 ..< generated_plant_cache_count {
+        if !generated_plant_cache[index].occupied {
+            entry_index = index
+            break
+        }
+    }
+    if entry_index < 0 do entry_index = generated_plant_cache_count
     recycled_mesh_index := -1
-    if generated_plant_cache_count >= len(generated_plant_cache) {
+    if entry_index >= len(generated_plant_cache) {
         entry_index = -1
         oldest := ~u64(0)
         for index in 0 ..< generated_plant_cache_count {
             entry := &generated_plant_cache[index]
-            if entry.permanent || entry.last_used >= oldest do continue
+            if !entry.occupied || entry.permanent || entry.last_used >= oldest do continue
             oldest = entry.last_used
             entry_index = index
         }
@@ -261,7 +310,7 @@ generated_plant_cached :: proc(
                 seed = seed,
                 maturity_step = maturity_step,
                 habit = habit,
-                site_signature = site_signature,
+                site = site,
             },
             detail,
         )
@@ -297,10 +346,15 @@ generated_plant_cached :: proc(
         compiled_asset      = loaded_compiled,
         compiled_vertices   = compiled_mesh.vertices,
         compiled_indices    = compiled_mesh.indices,
+        impostor_color      = compiled_mesh.impostor_color,
+        impostor_normal     = compiled_mesh.impostor_normal,
+        impostor_views      = compiled_mesh.impostor_views,
         recycled_mesh_index = recycled_mesh_index,
         last_used           = generated_plant_cache_access,
         permanent           = loaded_compiled,
+        occupied            = true,
     }
+    for &mesh_index in entry.impostor_meshes do mesh_index = -1
     entry.bark_topology = make([]Generated_Bark_Segment_Topology, len(result.plant.segments))
     for segment, segment_index in result.plant.segments {
         parent_index := result.plant.segment_parents[segment_index]
@@ -314,18 +368,43 @@ generated_plant_cached :: proc(
         }
     }
     if entry_index == generated_plant_cache_count do generated_plant_cache_count += 1
+    generated_plant_cache_evict_runtime_to_budget(entry_index)
     return entry
 }
 
 generated_plant_cache_entry_destroy :: proc(entry: ^Generated_Plant_Cache_Entry) {
     if entry == nil do return
+    if entry.branch_mesh_index >= 0 do world_plant_mesh_release(entry.branch_mesh_index)
+    for mesh_index in entry.impostor_meshes {
+        if mesh_index >= 0 && mesh_index != entry.branch_mesh_index do world_plant_mesh_release(mesh_index)
+    }
     plants.destroy(&entry.result)
     delete(entry.bark_topology)
     delete(entry.compiled_vertices)
     delete(entry.compiled_indices)
+    delete(entry.impostor_color)
+    delete(entry.impostor_normal)
     entry^ = {}
     entry.branch_mesh_index = -1
     entry.recycled_mesh_index = -1
+}
+
+generated_plant_cache_evict_runtime_to_budget :: proc(
+    protected_index: int = -1,
+    byte_limit: int = GENERATED_PLANT_RUNTIME_CACHE_BYTES_MAX,
+) {
+    for generated_plant_runtime_cache_bytes() > max(byte_limit, 0) {
+        victim := -1
+        oldest := ~u64(0)
+        for index in 0 ..< generated_plant_cache_count {
+            entry := &generated_plant_cache[index]
+            if index == protected_index || !entry.occupied || entry.permanent || entry.last_used >= oldest do continue
+            oldest = entry.last_used
+            victim = index
+        }
+        if victim < 0 do break
+        generated_plant_cache_entry_destroy(&generated_plant_cache[victim])
+    }
 }
 
 generated_plant_cache_destroy :: proc() {
@@ -335,20 +414,6 @@ generated_plant_cache_destroy :: proc() {
     generated_plant_cache = {}
     generated_plant_cache_count = 0
     generated_plant_cache_access = 0
-    plants.generation_workspace_destroy_thread()
-}
-
-generated_plant_world_cache_clear :: proc() {
-}
-
-generated_plant_world_cache_destroy :: proc() {
-}
-
-generated_plant_world_cache_invalidate_bounds :: proc(min_x, min_z, max_x, max_z: f32) {
-    _ = min_x
-    _ = min_z
-    _ = max_x
-    _ = max_z
 }
 
 @(no_instrumentation)
@@ -400,10 +465,13 @@ generated_plant_lod_key :: #force_inline proc(
     species: plants.Species,
     seed: u64,
     plant_position: third_person.Vec3,
+    camera_key: u64 = 0,
 ) -> u64 {
     x := u64(i64(math.round(f64(plant_position.x * 100))))
     z := u64(i64(math.round(f64(plant_position.z * 100))))
-    key := seed ~ (u64(species) * 0x9e3779b97f4a7c15) ~ (x * 0xbf58476d1ce4e5b9) ~ (z * 0x94d049bb133111eb)
+    key :=
+        seed ~ (u64(species) * 0x9e3779b97f4a7c15) ~ (x * 0xbf58476d1ce4e5b9) ~
+        (z * 0x94d049bb133111eb) ~ (camera_key * 0xd6e8feb86659fd93)
     key = key ~ (key >> 30)
     key *= 0xbf58476d1ce4e5b9
     key = key ~ (key >> 27)
@@ -419,13 +487,27 @@ generated_plant_lod_selection :: proc(
     species: plants.Species,
     seed: u64,
     camera_position, plant_position: third_person.Vec3,
+    camera_key: u64 = 0,
 ) -> Generated_Plant_LOD_Selection {
     dx := camera_position.x - plant_position.x
     dz := camera_position.z - plant_position.z
     distance := f32(math.sqrt(f64(dx * dx + dz * dz)))
-    key := generated_plant_lod_key(species, seed, plant_position)
-    slot := &generated_plant_lod_states[int(key % GENERATED_PLANT_LOD_STATE_CAPACITY)]
-    if !slot.occupied || slot.key != key {
+    key := generated_plant_lod_key(species, seed, plant_position, camera_key)
+    slot_index := int(key % GENERATED_PLANT_LOD_STATE_CAPACITY)
+    found := false
+    for probe in 0 ..< GENERATED_PLANT_LOD_STATE_CAPACITY {
+        candidate_index := (slot_index + probe) % GENERATED_PLANT_LOD_STATE_CAPACITY
+        candidate := &generated_plant_lod_states[candidate_index]
+        if !candidate.occupied || candidate.key == key {
+            slot_index = candidate_index
+            found = true
+            break
+        }
+    }
+    // A completely full table is exceptionally unlikely, but replacing the
+    // home slot remains deterministic and cannot access outside fixed storage.
+    slot := &generated_plant_lod_states[slot_index]
+    if !found || !slot.occupied || slot.key != key {
         slot^ = {
             key      = key,
             lod      = generated_plant_render_lod(camera_position, plant_position),
@@ -572,10 +654,30 @@ generated_plant_optimized_instance_mesh :: proc(
     indices := make([dynamic]u32, len(optimized))
     defer delete(indices)
     for index in 0 ..< len(optimized) do indices[index] = u32(optimized[index])
-    // This representation begins beyond the close tree band. Expanding every
-    // instance back into CPU shadow triangles defeats instancing and adds no
-    // useful contact shadow at this range.
-    return world_instance_mesh_add(vertices, indices[:], casts_shadow)
+    plant_vertices := make([dynamic]Plant_Vertex, len(vertices))
+    defer delete(plant_vertices)
+    for source, index in vertices {
+        flutter := f32(0)
+        if source.kind == .Leaf || source.kind == .Petal do flutter = 1
+        if source.kind == .Foliage do flutter = .20
+        plant_vertices[index] = {
+            position = source.position,
+            color = source.color,
+            kind = source.kind,
+            normal = source.normal,
+            material = source.material,
+            uv = source.uv,
+            primary_anchor = {},
+            secondary_anchor = {},
+            axis_position = 0,
+            stiffness = .20,
+            leaf_pivot = {},
+            flutter = flutter,
+            hierarchy_depth = source.kind == .Bark ? 1 : 2,
+            phase = f32(index & 7) * .37,
+        }
+    }
+    return world_plant_mesh_add(plant_vertices[:], indices[:], casts_shadow)
 }
 
 generated_plant_middle_meshes_ensure :: proc() {
@@ -604,7 +706,7 @@ generated_plant_middle_meshes_ensure :: proc() {
         branch_indices[first + 4] = u16(next + BRANCH_SIDES)
         branch_indices[first + 5] = u16(side + BRANCH_SIDES)
     }
-    generated_plant_middle_branch_mesh = generated_plant_optimized_instance_mesh(branch_vertices[:], branch_indices[:])
+    generated_plant_middle_branch_mesh = generated_plant_optimized_instance_mesh(branch_vertices[:], branch_indices[:], true)
 
     CLUMP_SIDES :: 8
     CLUMP_VERTICES :: CLUMP_SIDES * 2 + 2
@@ -647,7 +749,7 @@ generated_plant_middle_meshes_ensure :: proc() {
         clump_indices[first + 10] = u16(lower_next)
         clump_indices[first + 11] = u16(lower)
     }
-    generated_plant_middle_clump_mesh = generated_plant_optimized_instance_mesh(clump_vertices[:], clump_indices[:])
+    generated_plant_middle_clump_mesh = generated_plant_optimized_instance_mesh(clump_vertices[:], clump_indices[:], true)
 }
 
 generated_plant_leaf_mesh_ensure :: proc(shape: leaf_mesh.Shape, hero: bool) -> int {
@@ -711,7 +813,7 @@ generated_plant_leaf_emit :: proc(
 ) -> bool {
     mesh_index := generated_plant_leaf_mesh_ensure(shape, hero)
     if mesh_index < 0 do return false
-    world_instance_mesh_emit(
+    world_plant_mesh_emit(
         mesh_index,
         generated_plant_instance(
             right * width,
@@ -801,7 +903,7 @@ generated_plant_fleshy_emit :: proc(
 ) -> bool {
     mesh_index := generated_plant_fleshy_mesh_ensure()
     if mesh_index < 0 do return false
-    world_instance_mesh_emit(
+    world_plant_mesh_emit(
         mesh_index,
         generated_plant_instance(
             right * width,
@@ -840,7 +942,7 @@ generated_plant_middle_branch_emit :: proc(
     right := linalg.normalize0(linalg.cross(reference, direction))
     forward := linalg.normalize0(linalg.cross(direction, right))
     radius := max(segment.radius_start * transform.scale, f32(.006))
-    world_instance_mesh_emit(
+    world_plant_mesh_emit(
         generated_plant_middle_branch_mesh,
         generated_plant_instance(
             right * radius,
@@ -874,21 +976,33 @@ generated_plant_branch_mesh_ensure :: proc(entry: ^Generated_Plant_Cache_Entry) 
     }
     bark := plant_bark.profile(entry.species)
     if len(entry.compiled_vertices) > 0 && len(entry.compiled_indices) > 0 {
-        vertices := make([dynamic]World_Vertex, len(entry.compiled_vertices))
+        vertices := make([dynamic]Plant_Vertex, len(entry.compiled_vertices))
         defer delete(vertices)
-        bark_color := canvas2d.Color{bark.base_color[0], bark.base_color[1], bark.base_color[2], 255}
         for source, index in entry.compiled_vertices {
-            vertex := world_vertex(source.position, bark_color)
-            vertex.kind = .Bark
-            vertex.normal = source.normal
-            vertex.uv = {source.uv[0] * bark.scale, source.uv[1] * bark.scale}
-            vertex.material = {f32(int(bark.pattern)) + detail_strength * .01, clamp(bark.roughness, f32(.04), f32(1))}
-            vertices[index] = vertex
+            vertices[index] = {
+                position         = source.position,
+                color            = {1, 1, 1, 1},
+                kind             = .Bark,
+                normal           = source.normal,
+                material         = {
+                    f32(int(bark.pattern)) + detail_strength * .01,
+                    clamp(bark.roughness, f32(.04), f32(1)),
+                },
+                uv               = {source.uv[0] * bark.scale, source.uv[1] * bark.scale},
+                primary_anchor   = source.primary_anchor,
+                secondary_anchor = source.secondary_anchor,
+                axis_position    = source.axis_position,
+                stiffness        = source.stiffness,
+                leaf_pivot       = source.leaf_pivot,
+                flutter          = source.flutter,
+                hierarchy_depth  = u32(source.hierarchy_depth),
+                phase            = source.phase,
+            }
         }
-        if world_instance_mesh_replace(entry.recycled_mesh_index, vertices[:], entry.compiled_indices[:], true) {
+        if world_plant_mesh_replace(entry.recycled_mesh_index, vertices[:], entry.compiled_indices[:], true) {
             entry.branch_mesh_index = entry.recycled_mesh_index
         } else {
-            entry.branch_mesh_index = world_instance_mesh_add(vertices[:], entry.compiled_indices[:], true)
+        entry.branch_mesh_index = world_plant_mesh_reuse_or_add(vertices[:], entry.compiled_indices[:], true)
         }
         entry.recycled_mesh_index = -1
         delete(entry.compiled_vertices)
@@ -907,28 +1021,250 @@ generated_plant_branch_mesh_ensure :: proc(entry: ^Generated_Plant_Cache_Entry) 
             twist = generated.wood.twist,
             seed = entry.seed,
             axis_ids = generated.segment_axes[:],
+            parent_ids = generated.segment_parents[:],
         },
     )
     defer branch_mesh.destroy(&mesh)
     if len(mesh.vertices) == 0 || len(mesh.indices) == 0 do return -1
-    vertices := make([dynamic]World_Vertex, len(mesh.vertices))
+    vertices := make([dynamic]Plant_Vertex, len(mesh.vertices))
     defer delete(vertices)
-    bark_color := canvas2d.Color{bark.base_color[0], bark.base_color[1], bark.base_color[2], 255}
     for source, index in mesh.vertices {
-        vertex := world_vertex(source.position, bark_color)
-        vertex.kind = .Bark
-        vertex.normal = source.normal
-        vertex.uv = {source.bark_uv[0] * bark.scale, source.bark_uv[1] * bark.scale}
-        vertex.material = {f32(int(bark.pattern)) + detail_strength * .01, clamp(bark.roughness, f32(.04), f32(1))}
-        vertices[index] = vertex
+        nearest := 0
+        nearest_distance := f32(math.F32_MAX)
+        nearest_fraction := f32(0)
+        for segment, segment_index in generated.segments {
+            direction := segment.end - segment.start
+            length_squared := linalg.dot(direction, direction)
+            fraction :=
+                length_squared > 1e-10 ? clamp(linalg.dot(source.position - segment.start, direction) / length_squared, f32(0), f32(1)) : f32(0)
+            delta := source.position - (segment.start + direction * fraction)
+            distance := linalg.dot(delta, delta)
+            if distance < nearest_distance {
+                nearest, nearest_distance, nearest_fraction = segment_index, distance, fraction
+            }
+        }
+        axis := generated.segment_axes[nearest]
+        primary_axis := axis
+        hierarchy_depth := 0
+        for generated.axis_parents[primary_axis] >= 0 {
+            primary_axis = generated.axis_parents[primary_axis]
+            hierarchy_depth += 1
+        }
+        secondary_anchor := generated.segments[nearest].start
+        primary_anchor := secondary_anchor
+        for candidate, candidate_index in generated.segments {
+            candidate_axis := generated.segment_axes[candidate_index]
+            parent := generated.segment_parents[candidate_index]
+            if candidate_axis == axis && (parent < 0 || generated.segment_axes[parent] != axis) do secondary_anchor = candidate.start
+            if candidate_axis == primary_axis && parent < 0 do primary_anchor = candidate.start
+        }
+        segment_length := f32(
+            math.sqrt(
+                f64(
+                    linalg.dot(
+                        generated.segments[nearest].end - generated.segments[nearest].start,
+                        generated.segments[nearest].end - generated.segments[nearest].start,
+                    ),
+                ),
+            ),
+        )
+        vertices[index] = {
+            position         = source.position,
+            color            = {1, 1, 1, 1},
+            kind             = .Bark,
+            normal           = source.normal,
+            material         = {
+                f32(int(bark.pattern)) + detail_strength * .01,
+                clamp(bark.roughness, f32(.04), f32(1)),
+            },
+            uv               = {source.bark_uv[0] * bark.scale, source.bark_uv[1] * bark.scale},
+            primary_anchor   = primary_anchor,
+            secondary_anchor = secondary_anchor,
+            axis_position    = segment_length * nearest_fraction,
+            stiffness        = 1 / (1 + f32(hierarchy_depth) * .42 + segment_length * nearest_fraction * .18),
+            hierarchy_depth  = u32(hierarchy_depth),
+            phase            = f32((entry.seed ~ u64(axis + 1) * 0x9e3779b97f4a7c15) & 0xffff) / 65535 * math.TAU,
+        }
     }
-    if world_instance_mesh_replace(entry.recycled_mesh_index, vertices[:], mesh.indices[:], true) {
+    if world_plant_mesh_replace(entry.recycled_mesh_index, vertices[:], mesh.indices[:], true) {
         entry.branch_mesh_index = entry.recycled_mesh_index
     } else {
-        entry.branch_mesh_index = world_instance_mesh_add(vertices[:], mesh.indices[:], true)
+        entry.branch_mesh_index = world_plant_mesh_reuse_or_add(vertices[:], mesh.indices[:], true)
     }
     entry.recycled_mesh_index = -1
     return entry.branch_mesh_index
+}
+
+generated_plant_impostor_mesh_ensure :: proc(entry: ^Generated_Plant_Cache_Entry, view: int) -> int {
+    if entry == nil || view < 0 || view >= plant_assets.PLANT_IMPOSTOR_VIEW_COUNT do return -1
+    if entry.impostor_meshes[view] >= 0 do return entry.impostor_meshes[view]
+    if len(entry.impostor_color) != plant_assets.PLANT_IMPOSTOR_ATLAS_WIDTH * plant_assets.PLANT_IMPOSTOR_ATLAS_HEIGHT * 4 do return -1
+    if len(entry.impostor_normal) != len(entry.impostor_color) do return -1
+    BLOCK :: 4
+    vertices := make([dynamic]Plant_Vertex)
+    defer delete(vertices)
+    indices := make([dynamic]u32)
+    defer delete(indices)
+    tile_x, tile_y :=
+        view % plant_assets.PLANT_IMPOSTOR_AZIMUTH_COUNT, view / plant_assets.PLANT_IMPOSTOR_AZIMUTH_COUNT
+    bounds := entry.result.plant.bounds
+    width := max(bounds.maximum[0] - bounds.minimum[0], bounds.maximum[2] - bounds.minimum[2]) / .82
+    height := (bounds.maximum[1] - bounds.minimum[1]) / .82
+    for block_y := 0; block_y < plant_assets.PLANT_IMPOSTOR_TILE_SIZE; block_y += BLOCK {
+        for block_x := 0; block_x < plant_assets.PLANT_IMPOSTOR_TILE_SIZE; block_x += BLOCK {
+            best_alpha := byte(0)
+            color := [4]byte{}
+            encoded_normal := [3]byte{128, 128, 255}
+            for y in block_y ..< min(block_y + BLOCK, plant_assets.PLANT_IMPOSTOR_TILE_SIZE) {
+                for x in block_x ..< min(block_x + BLOCK, plant_assets.PLANT_IMPOSTOR_TILE_SIZE) {
+                    atlas_x := tile_x * plant_assets.PLANT_IMPOSTOR_TILE_SIZE + x
+                    atlas_y := tile_y * plant_assets.PLANT_IMPOSTOR_TILE_SIZE + y
+                    offset := (atlas_y * plant_assets.PLANT_IMPOSTOR_ATLAS_WIDTH + atlas_x) * 4
+                    if entry.impostor_color[offset + 3] <= best_alpha do continue
+                    best_alpha = entry.impostor_color[offset + 3]
+                    color = {
+                        entry.impostor_color[offset],
+                        entry.impostor_color[offset + 1],
+                        entry.impostor_color[offset + 2],
+                        entry.impostor_color[offset + 3],
+                    }
+                    encoded_normal = {
+                        entry.impostor_normal[offset],
+                        entry.impostor_normal[offset + 1],
+                        entry.impostor_normal[offset + 2],
+                    }
+                }
+            }
+            if best_alpha < 32 do continue
+            left := (f32(block_x) / plant_assets.PLANT_IMPOSTOR_TILE_SIZE - .5) * width
+            right :=
+                (f32(min(block_x + BLOCK, plant_assets.PLANT_IMPOSTOR_TILE_SIZE)) /
+                        plant_assets.PLANT_IMPOSTOR_TILE_SIZE -
+                    .5) *
+                width
+            bottom :=
+                (1 -
+                    f32(min(block_y + BLOCK, plant_assets.PLANT_IMPOSTOR_TILE_SIZE)) /
+                        plant_assets.PLANT_IMPOSTOR_TILE_SIZE) *
+                height
+            top := (1 - f32(block_y) / plant_assets.PLANT_IMPOSTOR_TILE_SIZE) * height
+            first := u32(len(vertices))
+            normal := linalg.normalize0(
+                third_person.Vec3 {
+                    f32(encoded_normal[0]) / 127.5 - 1,
+                    f32(encoded_normal[1]) / 127.5 - 1,
+                    f32(encoded_normal[2]) / 127.5 - 1,
+                },
+            )
+            if linalg.dot(normal, normal) < .5 do normal = {0, 0, 1}
+            corners: [4]third_person.Vec3
+            corners[0] = {left, bottom, 0}
+            corners[1] = {right, bottom, 0}
+            corners[2] = {right, top, 0}
+            corners[3] = {left, top, 0}
+            for position in corners {
+                vertex := Plant_Vertex {
+                    position = position,
+                    color = world_color({color[0], color[1], color[2], color[3]}),
+                    kind = .Leaf,
+                    normal = normal,
+                    primary_anchor = {},
+                    secondary_anchor = {},
+                    stiffness = .65,
+                    leaf_pivot = {},
+                    hierarchy_depth = 1,
+                    phase = f32(view) * .31,
+                }
+                append(&vertices, vertex)
+            }
+            append(&indices, first, first + 1, first + 2, first, first + 2, first + 3)
+        }
+    }
+    if len(vertices) == 0 do return -1
+    entry.impostor_meshes[view] = world_plant_mesh_reuse_or_add(vertices[:], indices[:], true)
+    return entry.impostor_meshes[view]
+}
+
+generated_plant_runtime_impostor_ensure :: proc(entry: ^Generated_Plant_Cache_Entry) -> bool {
+    if entry == nil do return false
+    if len(entry.impostor_color) > 0 do return true
+    retained := 0
+    victim := -1
+    oldest := ~u64(0)
+    for index in 0 ..< generated_plant_cache_count {
+        candidate := &generated_plant_cache[index]
+        if candidate.compiled_asset || len(candidate.impostor_color) == 0 do continue
+        retained += 1
+        if candidate != entry && candidate.last_used < oldest {
+            oldest = candidate.last_used
+            victim = index
+        }
+    }
+    if retained >= GENERATED_PLANT_RUNTIME_IMPOSTOR_LIMIT && victim >= 0 {
+        delete(generated_plant_cache[victim].impostor_color)
+        delete(generated_plant_cache[victim].impostor_normal)
+        generated_plant_cache[victim].impostor_color = nil
+        generated_plant_cache[victim].impostor_normal = nil
+        for &mesh_index in generated_plant_cache[victim].impostor_meshes {
+            if mesh_index >= 0 do world_plant_mesh_release(mesh_index)
+            mesh_index = -1
+        }
+    }
+    generated := &entry.result.plant
+    if len(generated.segments) == 0 do return false
+    asset: plant_assets.Plant_Asset
+    defer plant_assets.plant_asset_destroy(&asset)
+    asset.header.bounds_min = generated.bounds.minimum
+    asset.header.bounds_max = generated.bounds.maximum
+    asset.header.impostor_pivot = {
+        (generated.bounds.minimum[0] + generated.bounds.maximum[0]) * .5,
+        generated.bounds.minimum[1],
+        (generated.bounds.minimum[2] + generated.bounds.maximum[2]) * .5,
+    }
+    elevations := [plant_assets.PLANT_IMPOSTOR_ELEVATION_COUNT]f32{-15, 15, 45}
+    for elevation in 0 ..< plant_assets.PLANT_IMPOSTOR_ELEVATION_COUNT {
+        for azimuth in 0 ..< plant_assets.PLANT_IMPOSTOR_AZIMUTH_COUNT {
+            index := elevation * plant_assets.PLANT_IMPOSTOR_AZIMUTH_COUNT + azimuth
+            asset.header.impostor_views[index] = {
+                azimuth    = f32(azimuth) * math.TAU / plant_assets.PLANT_IMPOSTOR_AZIMUTH_COUNT,
+                elevation  = elevations[elevation] * math.PI / 180,
+                pivot      = asset.header.impostor_pivot,
+                bounds_min = generated.bounds.minimum,
+                bounds_max = generated.bounds.maximum,
+            }
+        }
+    }
+    lod := &asset.lods[3]
+    for segment in generated.segments {
+        append(
+            &lod.segments,
+            plant_assets.Plant_Asset_Segment {
+                start = segment.start,
+                end = segment.end,
+                radius_start = segment.radius_start,
+                radius_end = segment.radius_end,
+            },
+        )
+    }
+    for attachment in generated.attachments {
+        append(
+            &lod.organs,
+            plant_assets.Plant_Asset_Organ {
+                position = attachment.position,
+                kind = attachment.kind,
+                leaf_length = attachment.leaf.length,
+                leaf_width = attachment.leaf.width,
+            },
+        )
+    }
+    plant_assets.plant_asset_generate_impostors(&asset)
+    if len(asset.impostor_color) == 0 do return false
+    entry.impostor_color = asset.impostor_color
+    entry.impostor_normal = asset.impostor_normal
+    entry.impostor_views = asset.header.impostor_views
+    asset.impostor_color = nil
+    asset.impostor_normal = nil
+    return true
 }
 
 generated_plant_middle_clump_emit :: proc(
@@ -944,7 +1280,7 @@ generated_plant_middle_clump_emit :: proc(
     cosine, sine := math.cos(rotation), math.sin(rotation)
     x_axis := third_person.Vec3{cosine * radius_x, 0, sine * radius_x}
     z_axis := third_person.Vec3{-sine * radius_z, 0, cosine * radius_z}
-    world_instance_mesh_emit(
+    world_plant_mesh_emit(
         generated_plant_middle_clump_mesh,
         generated_plant_instance(
             x_axis,
@@ -1525,12 +1861,13 @@ world_generated_plant :: proc(
     cache_geometry: bool = false,
     site: plants.Site_Context = {},
     foliage_mode: Generated_Plant_Foliage_Mode = .Leaves,
+    camera_key: u64 = 0,
 ) -> bool {
     selection := Generated_Plant_LOD_Selection {
         primary = .Hero,
     }
     if world_renderer.editor != nil {
-        selection = generated_plant_lod_selection(species, seed, world_renderer.editor.camera_pose.position, base)
+        selection = generated_plant_lod_selection(species, seed, world_renderer.editor.camera_pose.position, base, camera_key)
     }
     success := world_generated_plant_render_lod(
         species,
@@ -1616,6 +1953,41 @@ world_generated_plant_render_lod :: proc(
     plant_compliance := clamp(generated.plant.wind_compliance / .18, f32(.25), f32(2.4))
     plant_stiffness := habit == .Free_Standing ? f32(1) : f32(.28)
 
+    if render_lod == .Distant && generated_plant_runtime_impostor_ensure(generated_entry) {
+        camera := perspective_camera(world_renderer.editor.camera_pose)
+        relative := camera.position - base
+        horizontal := f32(math.sqrt(f64(relative.x * relative.x + relative.z * relative.z)))
+        azimuth := math.atan2(relative.z, relative.x) - yaw
+        elevation := math.atan2(relative.y, max(horizontal, f32(.001)))
+        selection := plant_assets.plant_impostor_select(azimuth, elevation)
+        views := [2]int{selection.first, selection.second}
+        weights := [2]f32{1 - selection.blend, selection.blend}
+        emitted := false
+        for view, view_index in views {
+            if weights[view_index] <= .001 do continue
+            mesh_index := generated_plant_impostor_mesh_ensure(generated_entry, view)
+            if mesh_index < 0 do continue
+            world_plant_mesh_emit(
+                mesh_index,
+                generated_plant_instance(
+                    camera.right * scale,
+                    camera.up * scale,
+                    camera.forward * scale,
+                    base,
+                    {255, 255, 255, 255},
+                    base,
+                    plant_compliance * .18,
+                    plant_phase,
+                    .18,
+                    0,
+                    lod_opacity * weights[view_index],
+                ),
+            )
+            emitted = true
+        }
+        if emitted do return true
+    }
+
     _, leaf_color, accent := plant_generator_colors(species)
     bark := plant_bark.profile(species)
     fleshy :=
@@ -1637,7 +2009,7 @@ world_generated_plant_render_lod :: proc(
             }
             y_axis := third_person.Vec3{0, transform.scale, 0}
             z_axis := third_person.Vec3{-transform.sine * transform.scale, 0, transform.cosine * transform.scale}
-            world_instance_mesh_emit(
+            world_plant_mesh_emit(
                 branch_mesh_index,
                 generated_plant_instance(
                     x_axis,

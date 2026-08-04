@@ -100,7 +100,6 @@ world_brush :: proc(editor: ^Editor) {
     }
     if canvas2d.IsMouseButtonDown(.RIGHT) do color = {245, 126, 112, 108}
     if editor.architecture_paint_mode {
-        world_settlement_brush_outline(editor)
         return
     }
     world_brush_disc(editor, x, z, radius, .09, color)

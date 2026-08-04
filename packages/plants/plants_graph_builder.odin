@@ -12,7 +12,12 @@ Graph_Builder :: struct {
 }
 
 graph_builder_make :: proc(species: Species, seed: u64, maturity: f32) -> Graph_Builder {
-    return {seed = seed, maturity = clamp(maturity, f32(0), f32(1)), profile = garden_profile(species)}
+    return {
+        graph = generation_workspace_graph_take(),
+        seed = seed,
+        maturity = clamp(maturity, f32(0), f32(1)),
+        profile = garden_profile(species),
+    }
 }
 
 graph_builder_destroy :: proc(builder: ^Graph_Builder) {

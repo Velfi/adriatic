@@ -81,6 +81,16 @@ foliage_transition_target :: proc(target: string) -> (Foliage_Transition_Example
         foliage_transition_forest_depth = 180
         return .Oak_Forest, true
     }
+    if strings.equal_fold(target, "pine-benchmark") {
+        foliage_transition_forest_sample_limit = 36
+        foliage_transition_forest_half_width = 18
+        return .Pine_Forest, true
+    }
+    if strings.equal_fold(target, "oak-benchmark") {
+        foliage_transition_forest_sample_limit = 36
+        foliage_transition_forest_half_width = 18
+        return .Oak_Forest, true
+    }
     if strings.equal_fold(target, "pine-middle-bounded") {
         foliage_transition_forest_sample_limit = 96
         foliage_transition_forest_half_width = 18

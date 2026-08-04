@@ -98,7 +98,7 @@ SPIKE_DIR := $(BUILD_DIR)/spike
 DEBUG_TEST_DIR := $(BUILD_DIR)/debug
 DEV_APP := $(DEV_DIR)/$(APP)
 PLANT_COMPILER := $(BUILD_DIR)/tools/plant-compile
-PLANT_ASSET_STAMP := assets/generated/plants/.compiled-v4
+PLANT_ASSET_STAMP := assets/generated/plants/.compiled-v7
 RELEASE_APP := $(RELEASE_DIR)/$(APP)
 VALIDATION_APP := $(VALIDATION_DIR)/$(APP)
 INSTRUMENT_APP := $(INSTRUMENT_DIR)/$(APP)
@@ -140,6 +140,7 @@ HOT_ODIN_SOURCES := $(shell find src packages -type f -name '*.odin' 2>/dev/null
 HOT_SHADER_OUTPUTS := \
 	$(HOT_SHADER_DIR)/world.vert.spv \
 	$(HOT_SHADER_DIR)/world-instance.vert.spv \
+	$(HOT_SHADER_DIR)/plant.vert.spv \
 	$(HOT_SHADER_DIR)/world.frag.spv \
 	$(HOT_SHADER_DIR)/player-shadow.vert.spv \
 	$(HOT_SHADER_DIR)/player-shadow.frag.spv \
@@ -228,7 +229,7 @@ $(PLANT_ASSET_STAMP): $(PLANT_COMPILER)
 
 plant-compile: $(PLANT_ASSET_STAMP)
 
-shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/bougainvillea.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
+shaders: build/generated/shaders/world.vert.spv build/generated/shaders/world-instance.vert.spv build/generated/shaders/plant.vert.spv build/generated/shaders/world.frag.spv build/generated/shaders/player-shadow.vert.spv build/generated/shaders/player-shadow.frag.spv build/generated/shaders/dynamic-shadow.vert.spv build/generated/shaders/world-sky.vert.spv build/generated/shaders/world-sky.frag.spv build/generated/shaders/wireframe.vert.spv build/generated/shaders/wireframe.frag.spv build/generated/shaders/canvas.vert.spv build/generated/shaders/canvas.frag.spv build/generated/shaders/canvas-post.vert.spv build/generated/shaders/canvas-post.frag.spv build/generated/shaders/particles.vert.spv build/generated/shaders/particles.frag.spv build/generated/shaders/foliage.vert.spv build/generated/shaders/bougainvillea.vert.spv build/generated/shaders/grass.vert.spv build/generated/shaders/foliage.frag.spv
 
 build/generated/shaders/foliage.vert.spv: assets/shaders/foliage.slang
 	@mkdir -p $(@D)
@@ -261,6 +262,10 @@ build/generated/shaders/world.vert.spv: assets/shaders/world.slang
 build/generated/shaders/world-instance.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry instance_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+build/generated/shaders/plant.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry plant_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 build/generated/shaders/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
@@ -319,6 +324,10 @@ $(DEV_DIR)/shaders/world.vert.spv: build/generated/shaders/world.vert.spv
 	cp $< $@
 
 $(DEV_DIR)/shaders/world-instance.vert.spv: build/generated/shaders/world-instance.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
+$(DEV_DIR)/shaders/plant.vert.spv: build/generated/shaders/plant.vert.spv
 	@mkdir -p $(@D)
 	cp $< $@
 
@@ -402,6 +411,10 @@ $(RELEASE_DIR)/shaders/world-instance.vert.spv: build/generated/shaders/world-in
 	@mkdir -p $(@D)
 	cp $< $@
 
+$(RELEASE_DIR)/shaders/plant.vert.spv: build/generated/shaders/plant.vert.spv
+	@mkdir -p $(@D)
+	cp $< $@
+
 $(RELEASE_DIR)/shaders/world.frag.spv: build/generated/shaders/world.frag.spv
 	@mkdir -p $(@D)
 	cp $< $@
@@ -422,6 +435,8 @@ $(DEV_APP): $(DEV_DIR)/shaders/dynamic-shadow.vert.spv
 $(RELEASE_APP): $(RELEASE_DIR)/shaders/dynamic-shadow.vert.spv
 $(DEV_APP): $(DEV_DIR)/shaders/world-instance.vert.spv
 $(RELEASE_APP): $(RELEASE_DIR)/shaders/world-instance.vert.spv
+$(DEV_APP): $(DEV_DIR)/shaders/plant.vert.spv
+$(RELEASE_APP): $(RELEASE_DIR)/shaders/plant.vert.spv
 
 $(RELEASE_DIR)/shaders/world-sky.vert.spv: build/generated/shaders/world-sky.vert.spv
 	@mkdir -p $(@D)
@@ -495,6 +510,10 @@ $(HOT_SHADER_DIR)/world.vert.spv: assets/shaders/world.slang
 $(HOT_SHADER_DIR)/world-instance.vert.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)
 	$(SLANGC) $< -entry instance_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
+
+$(HOT_SHADER_DIR)/plant.vert.spv: assets/shaders/world.slang
+	@mkdir -p $(@D)
+	$(SLANGC) $< -entry plant_vertex_main -stage vertex -target spirv -profile spirv_1_5 -o $@
 
 $(HOT_SHADER_DIR)/world.frag.spv: assets/shaders/world.slang
 	@mkdir -p $(@D)

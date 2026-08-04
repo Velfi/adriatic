@@ -226,6 +226,7 @@ Generated_Plant :: struct {
     root_kind:         Root_Kind,
     wind_compliance:   f32,
     support_signature: u64,
+    generation_workspace: ^Generation_Workspace,
 }
 
 Wood_Traits :: struct {
@@ -250,6 +251,10 @@ Generate_Result :: struct {
 
 destroy :: proc(result: ^Generate_Result) {
     if result == nil do return
+    if generation_workspace_recycle_result(&result.plant) {
+        result^ = {}
+        return
+    }
     delete(result.plant.segments)
     delete(result.plant.segment_parents)
     delete(result.plant.segment_axes)
@@ -520,151 +525,11 @@ climbing_density_limits :: proc(detail: Detail_Level, support: ^Support_Surface)
 }
 
 leaf_cluster_size :: proc(species: Species, detail: Detail_Level, maturity: f32) -> int {
-    if species == .Italian_Cypress {
-        if detail == .Far do return 1
-        if detail == .Medium do return 2
-        // Establish scale-leaf density gradually. Switching directly from
-        // one spray to six at juvenile maturity caused a sevenfold geometry
-        // pop even after tier growth itself had been made continuous.
-        return 6
-    }
-    if species == .Lemon && detail == .Far {
-        // Three crossed broad spray surrogates preserve a rounded citrus mass
-        // from oblique views without restoring reproductive or fine twig
-        // geometry at this tier.
-        return 3
-    }
-    if (species == .Hydrangea_Bush || species == .Hydrangea_Tree) && detail == .Far {
-        // Broad opposite pairs are the hydrangea canopy silhouette. Dropping
-        // them to the generic single-card Far surrogate halves projected leaf
-        // area and turns the shrub back into a visible radial scaffold.
-        return maturity < .28 ? 1 : 2
-    }
-    if detail == .Far {
-        // Far cypress keeps many more silhouette-critical whorls than the
-        // generic LOD path, so one broad spray per anchor spends the fixed
-        // budget on vertical continuity rather than duplicate cards.
-        return 1
-    }
-    if maturity < .28 do return 1
-    base := detail == .Medium ? 2 : 3
-    switch species {
-    case .Olive:
-        // Olive leaves occur in opposite pairs along the newest shoots.
-        // Three-way radial clusters read as palmate leaf stars.
-        return 1
-    case .Lemon:
-        // Citrus leaves alternate along young shoots. Two staggered blades
-        // read as a short leafy run; the generic three-way cluster makes
-        // every anchor a palmate star and overpacks the mature crown.
-        return 1
-    case .Pomegranate:
-        // Narrow leaves sit in opposite pairs on young pomegranate shoots.
-        // The generic three-card whorl turns the dense multi-stem vase into
-        // an opaque mound and hides its fruit.
-        return 1
-    case .Hydrangea_Bush, .Hydrangea_Tree:
-        // Broad hydrangea leaves occur in opposite pairs. A generic
-        // three-card whorl makes every node an opaque palmate fan and buries
-        // the terminal inflorescences inside foliage.
-        return 1
-    case .Oleander:
-        // The native graph authors opposite and three-leaf whorls explicitly.
-        return 1
-    case .Carob:
-        // Each card stands in for part of a compound evergreen leaf. A
-        // four-way near cluster closes the mature crown without increasing
-        // architecture complexity or affecting the distance budgets.
-        return 1
-    case .Holm_Oak:
-        // Small evergreen oak leaves overlap densely into a heavy crown.
-        return 1
-    case .Rosemary:
-        // Dense opposite needles overlap into continuous aromatic sprays.
-        // Five near-detail directions keep a mature shrub from reading as a
-        // bare woody fan while medium detail retains a triangular whorl.
-        return 2
-    case .Lavender:
-        // Lavender's narrow leaves form opposite pairs along fine shoots.
-        // Five cards at every station made the plant an opaque bottlebrush.
-        return 1
-    case .Thyme:
-        // The dedicated thyme architecture emits both members of every opposite
-        // pair explicitly. Expanding each authored blade again displaces
-        // synthetic copies from the node and forces budget thinning that
-        // removes otherwise valid pairs and terminal flower shoots.
-        return 1
-    case .Pelargonium:
-        // Each authored node represents one alternate round leaf.
-        return 1
-    case .Agapanthus:
-        // Its dedicated rosette emits every strap leaf explicitly.
-        return 1
-    case .Almond:
-        // Almond leaves alternate along current shoots. Each architecture marker
-        // is already a distinct longitudinal station, so a three-card whorl
-        // turns the airy flowering crown into repeated palmate stars.
-        return 1
-    case .Strawberry_Tree:
-        // Arbutus leaves alternate along red-barked shoots; one authored
-        // station represents a short evergreen run at game scale. Two
-        // crossed blades retain crown mass without restoring three-card stars.
-        return 1
-    case .Sage:
-        // Broad sage leaves occur in opposite pairs along soft shoots.
-        return 1
-    case .Fig:
-        // One broad lobed blade already supplies a strong silhouette. Paired
-        // copies turn each shoot into an opaque paddle and hide the vase.
-        return 1
-    case .Oriental_Plane:
-        // Plane leaves alternate along current shoots. One large lobed blade
-        // is already silhouette-dominant; three copies make the crown opaque.
-        return 1
-    case .European_Hackberry:
-        // Hackberry leaves also alternate; repeated three-card stars conceal
-        // the species' light irregular branching. Two crossed surrogates keep
-        // its smaller foliage continuous without restoring dense starbursts.
-        return 1
-    case .White_Poplar:
-        // Small alternate deltoid leaves need paired game-scale coverage, but
-        // the generic three-card whorl creates opaque vertical clumps.
-        return 1
-    case .Prickly_Pear:
-        // Each grammar marker is already one complete cladode. Expanding it
-        // through the generic three-leaf cluster stacks multiple metre-scale
-        // pads at every joint and collapses the plant into an upright wall.
-        return 1
-    case .Golden_Barrel,
-         .Agave,
-         .Aloe,
-         .Aeonium,
-         .Echeveria,
-         .Jade_Plant,
-         .Stonecrop,
-         .Blue_Chalk_Sticks,
-         .Golden_Torch_Cactus:
-        // Dedicated architectures emit one complete fleshy rib or rosette blade
-        // per marker; generic clusters would stack duplicate geometry.
-        return 1
-    case .Stone_Pine:
-        return 1
-    case .Myrtle:
-        // Myrtle carries small opposite leaves; three-way whorls read as
-        // palmate stars on the now-legible fine cane scaffold.
-        return 1
-    case .Mastic:
-        return 1
-    case .Bay_Laurel:
-        return 1
-    case .Grapevine:
-        // One marker represents one full palmate grape leaf. The generic
-        // near-detail cluster stacks three broad cards at identical wire
-        // stations, merging each cordon tier into a clipped green cylinder.
-        return 1
-    case .Italian_Cypress:
-        return 1
-    case .Bougainvillea, .Wisteria, .Climbing_Rose, .Star_Jasmine:
-    }
-    return base
+    // Native graphs author every organ site explicitly. Expanding an authored
+    // site into a renderer-side cluster would destroy the one-to-one stable-ID
+    // contract between graph organs and attachment instances.
+    _ = species
+    _ = detail
+    _ = maturity
+    return 1
 }

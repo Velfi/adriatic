@@ -135,7 +135,11 @@
     },
     "plant_transition": {
       "enabled": false,
-      "description": "Bounded oak and pine rows crossing every semantic plant LOD boundary."
+      "description": "Bounded Stone Pine corridor crossing every semantic plant LOD boundary."
+    },
+    "plant_transition_oak": {
+      "enabled": false,
+      "description": "Bounded Holm Oak corridor crossing every semantic plant LOD boundary."
     },
     "olive_orchard": {
       "enabled": false,

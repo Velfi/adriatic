@@ -202,7 +202,9 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
     case "plant_gallery":
         _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "gallery"})
     case "plant_transition":
-        _ = lab_scene_load(editor, {definition = lab_scene_find("foliage-transition")})
+        _ = lab_scene_load(editor, {definition = lab_scene_find("foliage-transition"), target = "pine-benchmark"})
+    case "plant_transition_oak":
+        _ = lab_scene_load(editor, {definition = lab_scene_find("foliage-transition"), target = "oak-benchmark"})
     case "olive_orchard":
         _ = lab_scene_load(editor, {definition = lab_scene_find("plant-generator"), target = "olive"})
     case "plant_climbers":
@@ -239,6 +241,7 @@ benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {
        scenario != "garden" &&
        scenario != "plant_gallery" &&
        scenario != "plant_transition" &&
+       scenario != "plant_transition_oak" &&
        scenario != "olive_orchard" &&
        scenario != "plant_climbers" &&
        scenario != "plant_runtime_max" &&
@@ -470,9 +473,15 @@ benchmark_report :: proc(
     for mesh in world_renderer.instance_meshes {
         instance_index_count += int(mesh.index_count) * len(mesh.instances)
     }
+    for mesh in world_renderer.plant_meshes {
+        instance_index_count += int(mesh.index_count) * len(mesh.instances)
+    }
     world_vertex_count := len(world_renderer.vertices) + len(world_renderer.static_indices) + instance_index_count
     world_unique_vertex_count :=
-        len(world_renderer.vertices) + len(world_renderer.static_vertices) + len(world_renderer.instance_vertices)
+        len(world_renderer.vertices) +
+        len(world_renderer.static_vertices) +
+        len(world_renderer.instance_vertices) +
+        len(world_renderer.plant_vertices)
     road_vertex_count := len(world_renderer.road_geometry_cache)
     foliage_vertex_count :=
         len(world_renderer.foliage_vertices) +

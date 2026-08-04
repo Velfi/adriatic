@@ -18,10 +18,10 @@ packages/plants/plants_attachments.odin
 packages/plants/plants_catalog.odin
 packages/plants/plants_generate.odin
 packages/plants/plants_profiles.odin
-packages/plants/plants_skeleton_generation.odin
-packages/plants/plants_skeletons_climbers.odin
-packages/plants/plants_skeletons_fruit_succulents.odin
-packages/plants/plants_skeletons_shrubs.odin
+packages/plants/plants_architecture_generation.odin
+packages/plants/plants_architecture_climbers.odin
+packages/plants/plants_architecture_fruit_succulents.odin
+packages/plants/plants_architecture_shrubs.odin
 src/aircraft_hud.odin
 src/aircraft_hud_primitives.odin
 src/aircraft_runtime.odin

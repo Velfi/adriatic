@@ -22,8 +22,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     }
     world_renderer.dynamic_shadow.frame_prepared = false
     focal_length := world_camera_focal_length(editor)
-    if !editor.vehicle_showcase_scene &&
-       (!lab_scene_replaces_world(editor) || editor.lab_flat_terrain.enabled) {
+    if !editor.vehicle_showcase_scene && (!lab_scene_replaces_world(editor) || editor.lab_flat_terrain.enabled) {
         clipmap_update(editor, int(pass.frame.frame_index), i32(pass.framebuffer_extent.height), focal_length)
     }
     frame_index := int(pass.frame.frame_index)
@@ -40,6 +39,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
     bougainvillea_buffer := &world_renderer.bougainvillea_instance[frame_index]
     grass_instance_buffer := &world_renderer.grass_instance[frame_index]
     instance_vertex_buffer := &world_renderer.instance_vertex[frame_index]
+    plant_vertex_buffer := &world_renderer.plant_vertex[frame_index]
     instance_index_buffer := &world_renderer.instance_index[frame_index]
     instance_data_buffer := &world_renderer.instance_data[frame_index]
     wing_trail_vertex_buffer := &world_renderer.wing_trail_vertex[frame_index]
@@ -160,6 +160,13 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
             len(world_renderer.instance_vertices) * size_of(World_Vertex),
         )
     }
+    if len(world_renderer.plant_vertices) > 0 {
+        mem.copy_non_overlapping(
+            plant_vertex_buffer.mapped,
+            raw_data(world_renderer.plant_vertices[:]),
+            len(world_renderer.plant_vertices) * size_of(Plant_Vertex),
+        )
+    }
     if len(world_renderer.instance_indices) > 0 {
         mem.copy_non_overlapping(
             instance_index_buffer.mapped,
@@ -273,6 +280,7 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         bougainvillea_buffer     = bougainvillea_buffer,
         grass_instance_buffer    = grass_instance_buffer,
         instance_vertex_buffer   = instance_vertex_buffer,
+        plant_vertex_buffer      = plant_vertex_buffer,
         instance_index_buffer    = instance_index_buffer,
         instance_data_buffer     = instance_data_buffer,
         wing_trail_vertex_buffer = wing_trail_vertex_buffer,
@@ -360,7 +368,6 @@ world_renderer_attach :: proc(editor: ^Editor) {
 world_renderer_destroy :: proc() {
     if !world_renderer.initialized do return
     _ = vk.DeviceWaitIdle(world_renderer.ctx.device)
-    generated_plant_world_cache_destroy()
     generated_plant_cache_destroy()
     world_spatial_index_destroy(&world_renderer.spatial_index)
     imgui_destroy()
@@ -374,6 +381,7 @@ world_renderer_destroy :: proc() {
     for &buffer in world_renderer.bougainvillea_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.grass_instance do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.instance_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
+    for &buffer in world_renderer.plant_vertex do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.instance_index do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.instance_data do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     for &buffer in world_renderer.vehicle_paint_staging do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
@@ -405,6 +413,7 @@ world_renderer_destroy :: proc() {
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.bougainvillea_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.grass_pipelines)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.instance_pipelines)
+    render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.plant_pipelines)
     resources.image_destroy(&world_renderer.foliage_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.bougainvillea_atlas, world_renderer.ctx)
     resources.image_destroy(&world_renderer.grass_atlas, world_renderer.ctx)
@@ -472,6 +481,8 @@ world_renderer_destroy :: proc() {
     delete(world_renderer.instance_indices)
     delete(world_renderer.instance_flattened)
     delete(world_renderer.instance_meshes)
+    delete(world_renderer.plant_vertices)
+    delete(world_renderer.plant_meshes)
     delete(world_renderer.middle_tree_shadow_proxies)
     ground_grass_cache_clear()
     delete(world_renderer.grass_chunk_cache)

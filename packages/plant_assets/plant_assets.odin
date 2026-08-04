@@ -6,23 +6,27 @@ import plant_structure "../plant_structure"
 import plants "../plants"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:os"
 
 PLANT_ASSET_MAGIC :: u64(0x544e414c50524441) // "ADRPLANT" little-endian
-PLANT_ASSET_FORMAT_VERSION :: u32(4)
-PLANT_GENERATOR_VERSION :: u32(1)
+PLANT_ASSET_FORMAT_VERSION :: u32(7)
+PLANT_GENERATOR_VERSION :: u32(6)
 PLANT_ASSET_LOD_COUNT :: 5
 PLANT_IMPOSTOR_AZIMUTH_COUNT :: 8
 PLANT_IMPOSTOR_ELEVATION_COUNT :: 3
 PLANT_IMPOSTOR_VIEW_COUNT :: PLANT_IMPOSTOR_AZIMUTH_COUNT * PLANT_IMPOSTOR_ELEVATION_COUNT
+PLANT_IMPOSTOR_TILE_SIZE :: 64
+PLANT_IMPOSTOR_ATLAS_WIDTH :: PLANT_IMPOSTOR_TILE_SIZE * PLANT_IMPOSTOR_AZIMUTH_COUNT
+PLANT_IMPOSTOR_ATLAS_HEIGHT :: PLANT_IMPOSTOR_TILE_SIZE * PLANT_IMPOSTOR_ELEVATION_COUNT
 PLANT_MATURITY_STEPS :: 5
 
 Plant_Asset_Request :: struct {
-    species:        plants.Species,
-    seed:           u64,
-    maturity_step:  u8,
-    habit:          plants.Growth_Habit,
-    site_signature: u64,
+    species:       plants.Species,
+    seed:          u64,
+    maturity_step: u8,
+    habit:         plants.Growth_Habit,
+    site:          plants.Site_Context,
 }
 
 Plant_Asset_LOD_Header :: struct {
@@ -37,24 +41,34 @@ Plant_Asset_LOD_Header :: struct {
 }
 
 Plant_Asset_Header :: struct {
-    magic:               u64,
-    format_version:      u32,
-    generator_version:   u32,
-    source_key:          u64,
-    request:             Plant_Asset_Request,
-    bounds_min:          [3]f32,
-    bounds_max:          [3]f32,
-    radial_irregularity: f32,
-    bark_twist:          f32,
-    wind_compliance:     f32,
-    root_kind:           plants.Root_Kind,
-    support_signature:   u64,
-    lods:                [PLANT_ASSET_LOD_COUNT]Plant_Asset_LOD_Header,
-    impostor_azimuths:   u8,
-    impostor_elevations: u8,
-    impostor_pivot:      [3]f32,
-    impostor_views:      [PLANT_IMPOSTOR_VIEW_COUNT]Plant_Impostor_View,
-    payload_checksum:    u64,
+    magic:                  u64,
+    format_version:         u32,
+    generator_version:      u32,
+    source_key:             u64,
+    request:                Plant_Asset_Request,
+    bounds_min:             [3]f32,
+    bounds_max:             [3]f32,
+    radial_irregularity:    f32,
+    bark_twist:             f32,
+    wind_compliance:        f32,
+    root_kind:              plants.Root_Kind,
+    support_signature:      u64,
+    bark_material_ref:      u32,
+    organ_material_ref:     u32,
+    collision_radius:       f32,
+    collision_height:       f32,
+    lods:                   [PLANT_ASSET_LOD_COUNT]Plant_Asset_LOD_Header,
+    impostor_azimuths:      u8,
+    impostor_elevations:    u8,
+    impostor_pivot:         [3]f32,
+    impostor_views:         [PLANT_IMPOSTOR_VIEW_COUNT]Plant_Impostor_View,
+    impostor_width:         u16,
+    impostor_height:        u16,
+    impostor_color_offset:  u64,
+    impostor_color_size:    u64,
+    impostor_normal_offset: u64,
+    impostor_normal_size:   u64,
+    payload_checksum:       u64,
 }
 
 Plant_Impostor_View :: struct {
@@ -132,19 +146,28 @@ Plant_Asset_LOD :: struct {
 }
 
 Plant_Asset :: struct {
-    header: Plant_Asset_Header,
-    lods:   [PLANT_ASSET_LOD_COUNT]Plant_Asset_LOD,
+    header:          Plant_Asset_Header,
+    lods:            [PLANT_ASSET_LOD_COUNT]Plant_Asset_LOD,
+    impostor_color:  [dynamic]byte,
+    impostor_normal: [dynamic]byte,
 }
 
 Plant_Asset_Mesh :: struct {
-    vertices: [dynamic]Plant_Asset_Vertex,
-    indices:  [dynamic]u32,
+    vertices:        [dynamic]Plant_Asset_Vertex,
+    indices:         [dynamic]u32,
+    impostor_color:  [dynamic]byte,
+    impostor_normal: [dynamic]byte,
+    impostor_views:  [PLANT_IMPOSTOR_VIEW_COUNT]Plant_Impostor_View,
+    impostor_width:  int,
+    impostor_height: int,
 }
 
 plant_asset_mesh_destroy :: proc(mesh: ^Plant_Asset_Mesh) {
     if mesh == nil do return
     delete(mesh.vertices)
     delete(mesh.indices)
+    delete(mesh.impostor_color)
+    delete(mesh.impostor_normal)
     mesh^ = {}
 }
 
@@ -156,6 +179,8 @@ plant_asset_destroy :: proc(asset: ^Plant_Asset) {
         delete(lod.indices)
         delete(lod.organs)
     }
+    delete(asset.impostor_color)
+    delete(asset.impostor_normal)
     asset^ = {}
 }
 
@@ -174,7 +199,7 @@ plant_asset_source_key :: proc(request: Plant_Asset_Request) -> u64 {
     hash = plant_asset_hash_u64(hash, request.seed)
     hash = plant_asset_hash_u64(hash, u64(request.maturity_step))
     hash = plant_asset_hash_u64(hash, u64(request.habit))
-    return plant_asset_hash_u64(hash, request.site_signature)
+    return plant_asset_hash_u64(hash, plants.site_context_signature(request.site))
 }
 
 plant_asset_detail :: #force_inline proc(lod: int) -> plants.Detail_Level {
@@ -183,8 +208,124 @@ plant_asset_detail :: #force_inline proc(lod: int) -> plants.Detail_Level {
     return .Far
 }
 
+plant_impostor_stamp :: proc(color, normal: []byte, center_x, center_y, radius: f32, rgba, encoded_normal: [4]byte) {
+    minimum_x := clamp(int(math.floor(center_x - radius)), 0, PLANT_IMPOSTOR_ATLAS_WIDTH - 1)
+    maximum_x := clamp(int(math.ceil(center_x + radius)), 0, PLANT_IMPOSTOR_ATLAS_WIDTH - 1)
+    minimum_y := clamp(int(math.floor(center_y - radius)), 0, PLANT_IMPOSTOR_ATLAS_HEIGHT - 1)
+    maximum_y := clamp(int(math.ceil(center_y + radius)), 0, PLANT_IMPOSTOR_ATLAS_HEIGHT - 1)
+    radius_squared := radius * radius
+    for y in minimum_y ..= maximum_y {
+        for x in minimum_x ..= maximum_x {
+            dx, dy := f32(x) + .5 - center_x, f32(y) + .5 - center_y
+            if dx * dx + dy * dy > radius_squared do continue
+            offset := (y * PLANT_IMPOSTOR_ATLAS_WIDTH + x) * 4
+            if color[offset + 3] > rgba[3] do continue
+            color[offset + 0] = rgba[0]
+            color[offset + 1] = rgba[1]
+            color[offset + 2] = rgba[2]
+            color[offset + 3] = rgba[3]
+            normal[offset + 0] = encoded_normal[0]
+            normal[offset + 1] = encoded_normal[1]
+            normal[offset + 2] = encoded_normal[2]
+            normal[offset + 3] = encoded_normal[3]
+        }
+    }
+}
+
+plant_asset_generate_impostors :: proc(asset: ^Plant_Asset) {
+    if asset == nil do return
+    pixel_count := PLANT_IMPOSTOR_ATLAS_WIDTH * PLANT_IMPOSTOR_ATLAS_HEIGHT
+    asset.impostor_color = make([dynamic]byte, pixel_count * 4)
+    asset.impostor_normal = make([dynamic]byte, pixel_count * 4)
+    resize(&asset.impostor_color, pixel_count * 4)
+    resize(&asset.impostor_normal, pixel_count * 4)
+    pivot := asset.header.impostor_pivot
+    extent_x := asset.header.bounds_max[0] - asset.header.bounds_min[0]
+    extent_y := asset.header.bounds_max[1] - asset.header.bounds_min[1]
+    extent_z := asset.header.bounds_max[2] - asset.header.bounds_min[2]
+    projection_scale := f32(PLANT_IMPOSTOR_TILE_SIZE) * .82 / max(max(extent_x, extent_z), max(extent_y, f32(.01)))
+    source := &asset.lods[3]
+    for view in asset.header.impostor_views {
+        tile_x :=
+            int(math.round(f64(view.azimuth / math.TAU * PLANT_IMPOSTOR_AZIMUTH_COUNT))) % PLANT_IMPOSTOR_AZIMUTH_COUNT
+        elevation_degrees := view.elevation * 180 / math.PI
+        tile_y := elevation_degrees < 0 ? 0 : elevation_degrees < 30 ? 1 : 2
+        right := plant_structure.Vec3{math.cos(view.azimuth), 0, -math.sin(view.azimuth)}
+        up := plant_structure.Vec3 {
+            -math.sin(view.azimuth) * math.sin(view.elevation),
+            math.cos(view.elevation),
+            -math.cos(view.azimuth) * math.sin(view.elevation),
+        }
+        project := proc(
+            point: [3]f32,
+            pivot: [3]f32,
+            right, up: plant_structure.Vec3,
+            tile_x, tile_y: int,
+            scale, height: f32,
+        ) -> (
+            f32,
+            f32,
+        ) {
+            relative := plant_structure.Vec3 {
+                point[0] - pivot[0],
+                point[1] - pivot[1] - height * .5,
+                point[2] - pivot[2],
+            }
+            return f32(tile_x * PLANT_IMPOSTOR_TILE_SIZE) +
+                PLANT_IMPOSTOR_TILE_SIZE * .5 +
+                linalg.dot(relative, right) * scale,
+                f32(tile_y * PLANT_IMPOSTOR_TILE_SIZE) +
+                PLANT_IMPOSTOR_TILE_SIZE * .5 -
+                linalg.dot(relative, up) * scale
+        }
+        for segment in source.segments {
+            start_x, start_y := project(segment.start, pivot, right, up, tile_x, tile_y, projection_scale, extent_y)
+            end_x, end_y := project(segment.end, pivot, right, up, tile_x, tile_y, projection_scale, extent_y)
+            dx, dy := end_x - start_x, end_y - start_y
+            steps := max(int(math.ceil(math.sqrt(dx * dx + dy * dy))), 1)
+            for step in 0 ..= steps {
+                t := f32(step) / f32(steps)
+                radius := linalg.lerp(segment.radius_start, segment.radius_end, t) * projection_scale
+                plant_impostor_stamp(
+                    asset.impostor_color[:],
+                    asset.impostor_normal[:],
+                    start_x + dx * t,
+                    start_y + dy * t,
+                    max(radius, f32(.75)),
+                    {104, 76, 48, 255},
+                    {128, 196, 232, 255},
+                )
+            }
+        }
+        for organ in source.organs {
+            x, y := project(organ.position, pivot, right, up, tile_x, tile_y, projection_scale, extent_y)
+            radius := max(max(organ.leaf_width, organ.leaf_length * .24) * projection_scale, f32(1.1))
+            color := [4]byte{73, 111, 57, 255}
+            if organ.kind == .Flower do color = {214, 190, 174, 255}
+            if organ.kind == .Fruit do color = {126, 65, 50, 255}
+            plant_impostor_stamp(
+                asset.impostor_color[:],
+                asset.impostor_normal[:],
+                x,
+                y,
+                radius,
+                color,
+                {128, 170, 242, 255},
+            )
+        }
+    }
+    asset.header.impostor_width = PLANT_IMPOSTOR_ATLAS_WIDTH
+    asset.header.impostor_height = PLANT_IMPOSTOR_ATLAS_HEIGHT
+}
+
 plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool) {
     asset: Plant_Asset
+    workspace: plants.Generation_Workspace
+    if !plants.generation_workspace_begin(&workspace) do return {}, false
+    defer {
+        plants.generation_workspace_end(&workspace)
+        plants.generation_workspace_destroy(&workspace)
+    }
     asset.header.magic = PLANT_ASSET_MAGIC
     asset.header.format_version = PLANT_ASSET_FORMAT_VERSION
     asset.header.generator_version = PLANT_GENERATOR_VERSION
@@ -204,12 +345,20 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
                 maturity = maturity,
                 habit = request.habit,
                 detail = plant_asset_detail(lod_index),
+                site = request.site,
             },
         )
         if result.error != .None {
             plants.destroy(&result)
             plant_asset_destroy(&asset)
             return {}, false
+        }
+        if lod_index == 4 {
+            // Distant is atlas-only. Keeping a redundant Far mesh here would
+            // waste disk and upload memory and could accidentally restore
+            // geometry at the final tier.
+            plants.destroy(&result)
+            continue
         }
         mesh := branch_mesh.generate(
             result.plant.segments[:],
@@ -219,6 +368,7 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
                 minimum_radius = .0005,
                 seed = request.seed,
                 axis_ids = result.plant.segment_axes[:],
+                parent_ids = result.plant.segment_parents[:],
             },
         )
         lod := &asset.lods[lod_index]
@@ -259,16 +409,59 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
         resize(&lod.vertices, len(mesh.vertices))
         for source, vertex_index in mesh.vertices {
             position := source.position
+            nearest_segment := 0
+            nearest_fraction := f32(0)
+            nearest_distance := f32(math.F32_MAX)
+            for segment, segment_index in result.plant.segments {
+                direction := segment.end - segment.start
+                length_squared := linalg.dot(direction, direction)
+                fraction := f32(0)
+                if length_squared > 1e-10 {
+                    fraction = clamp(linalg.dot(position - segment.start, direction) / length_squared, f32(0), f32(1))
+                }
+                delta := position - (segment.start + direction * fraction)
+                distance := linalg.dot(delta, delta)
+                if distance < nearest_distance {
+                    nearest_distance = distance
+                    nearest_segment = segment_index
+                    nearest_fraction = fraction
+                }
+            }
+            axis := result.plant.segment_axes[nearest_segment]
+            hierarchy_depth := 0
+            primary_axis := axis
+            for result.plant.axis_parents[primary_axis] >= 0 {
+                primary_axis = result.plant.axis_parents[primary_axis]
+                hierarchy_depth += 1
+            }
+            secondary_anchor := result.plant.segments[nearest_segment].start
+            primary_anchor := secondary_anchor
+            for candidate, candidate_index in result.plant.segments {
+                candidate_axis := result.plant.segment_axes[candidate_index]
+                if candidate_axis == axis && result.plant.segment_parents[candidate_index] < 0 ||
+                   candidate_axis == axis &&
+                       result.plant.segment_axes[result.plant.segment_parents[candidate_index]] != axis {
+                    secondary_anchor = candidate.start
+                }
+                if candidate_axis == primary_axis && result.plant.segment_parents[candidate_index] < 0 {
+                    primary_anchor = candidate.start
+                }
+            }
+            segment := result.plant.segments[nearest_segment]
+            axis_distance :=
+                math.sqrt(linalg.dot(segment.end - segment.start, segment.end - segment.start)) * nearest_fraction
             lod.vertices[vertex_index] = {
                 position         = position,
                 normal           = source.normal,
                 uv               = source.bark_uv,
-                primary_anchor   = {position[0], 0, position[2]},
-                secondary_anchor = position,
-                axis_position    = position[1],
-                stiffness        = 1 / (1 + max(position[1], f32(0)) * .18),
-                hierarchy_depth  = 0,
-                phase            = f32((request.seed + u64(vertex_index) * 17) & 0xffff) / 65535 * math.TAU,
+                primary_anchor   = primary_anchor,
+                secondary_anchor = secondary_anchor,
+                axis_position    = axis_distance,
+                stiffness        = 1 / (1 + f32(hierarchy_depth) * .42 + axis_distance * .18),
+                hierarchy_depth  = u8(min(hierarchy_depth, 255)),
+                phase            = f32(
+                    (request.seed ~ u64(axis + 1) * 0x9e3779b97f4a7c15) & 0xffff,
+                ) / 65535 * math.TAU,
             }
             asset.header.bounds_min[0] = min(asset.header.bounds_min[0], position[0])
             asset.header.bounds_min[1] = min(asset.header.bounds_min[1], position[1])
@@ -320,6 +513,13 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
         asset.header.bounds_min[1],
         (asset.header.bounds_min[2] + asset.header.bounds_max[2]) * .5,
     }
+    asset.header.bark_material_ref = u32(request.species) * 2 + 1
+    asset.header.organ_material_ref = u32(request.species) * 2 + 2
+    asset.header.collision_radius = max(
+        max(math.abs(asset.header.bounds_min[0]), math.abs(asset.header.bounds_max[0])),
+        max(math.abs(asset.header.bounds_min[2]), math.abs(asset.header.bounds_max[2])),
+    )
+    asset.header.collision_height = max(asset.header.bounds_max[1] - asset.header.bounds_min[1], f32(0))
     elevation_angles := [PLANT_IMPOSTOR_ELEVATION_COUNT]f32{-15, 15, 45}
     for elevation in 0 ..< PLANT_IMPOSTOR_ELEVATION_COUNT {
         for azimuth in 0 ..< PLANT_IMPOSTOR_AZIMUTH_COUNT {
@@ -341,6 +541,7 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
             }
         }
     }
+    plant_asset_generate_impostors(&asset)
     return asset, true
 }
 
@@ -383,6 +584,11 @@ plant_asset_serialize :: proc(asset: ^Plant_Asset) -> [dynamic]byte {
         lod.organ_offset = offset
         offset += u64(len(payload.organs) * size_of(Plant_Asset_Organ))
     }
+    header.impostor_color_offset = offset
+    header.impostor_color_size = u64(len(asset.impostor_color))
+    offset += header.impostor_color_size
+    header.impostor_normal_offset = offset
+    header.impostor_normal_size = u64(len(asset.impostor_normal))
     plant_asset_append_bytes(&output, &header, size_of(header))
     for &payload in asset.lods {
         if len(payload.segments) > 0 do plant_asset_append_bytes(&output, raw_data(payload.segments), len(payload.segments) * size_of(Plant_Asset_Segment))
@@ -390,6 +596,8 @@ plant_asset_serialize :: proc(asset: ^Plant_Asset) -> [dynamic]byte {
         if len(payload.indices) > 0 do plant_asset_append_bytes(&output, raw_data(payload.indices), len(payload.indices) * size_of(u32))
         if len(payload.organs) > 0 do plant_asset_append_bytes(&output, raw_data(payload.organs), len(payload.organs) * size_of(Plant_Asset_Organ))
     }
+    if len(asset.impostor_color) > 0 do plant_asset_append_bytes(&output, raw_data(asset.impostor_color), len(asset.impostor_color))
+    if len(asset.impostor_normal) > 0 do plant_asset_append_bytes(&output, raw_data(asset.impostor_normal), len(asset.impostor_normal))
     checksum := u64(1469598103934665603)
     for value in output[size_of(Plant_Asset_Header):] do checksum = (checksum ~ u64(value)) * 1099511628211
     header.payload_checksum = checksum
@@ -405,7 +613,13 @@ plant_asset_validate_bytes :: proc(data: []byte) -> bool {
        header.format_version != PLANT_ASSET_FORMAT_VERSION ||
        header.generator_version != PLANT_GENERATOR_VERSION ||
        header.impostor_azimuths != PLANT_IMPOSTOR_AZIMUTH_COUNT ||
-       header.impostor_elevations != PLANT_IMPOSTOR_ELEVATION_COUNT {
+       header.impostor_elevations != PLANT_IMPOSTOR_ELEVATION_COUNT ||
+       header.impostor_width != PLANT_IMPOSTOR_ATLAS_WIDTH ||
+       header.impostor_height != PLANT_IMPOSTOR_ATLAS_HEIGHT ||
+       header.bark_material_ref == 0 ||
+       header.organ_material_ref == 0 ||
+       header.collision_radius <= 0 ||
+       header.collision_height <= 0 {
         return false
     }
     if header.source_key != plant_asset_source_key(header.request) do return false
@@ -425,6 +639,15 @@ plant_asset_validate_bytes :: proc(data: []byte) -> bool {
            lod.organ_offset + organ_bytes > data_size {
             return false
         }
+    }
+    expected_atlas_size := u64(PLANT_IMPOSTOR_ATLAS_WIDTH * PLANT_IMPOSTOR_ATLAS_HEIGHT * 4)
+    if header.impostor_color_size != expected_atlas_size ||
+       header.impostor_normal_size != expected_atlas_size ||
+       header.impostor_color_offset < size_of(Plant_Asset_Header) ||
+       header.impostor_color_offset + header.impostor_color_size > data_size ||
+       header.impostor_normal_offset != header.impostor_color_offset + header.impostor_color_size ||
+       header.impostor_normal_offset + header.impostor_normal_size > data_size {
+        return false
     }
     checksum := u64(1469598103934665603)
     for value in data[size_of(Plant_Asset_Header):] do checksum = (checksum ~ u64(value)) * 1099511628211
@@ -560,6 +783,15 @@ plant_asset_mesh_from_bytes :: proc(data: []byte, detail: plants.Detail_Level) -
     mesh.indices = make([dynamic]u32, len(indices))
     copy(mesh.vertices[:], vertices)
     copy(mesh.indices[:], indices)
+    color := ([^]byte)(byte_base + uintptr(header.impostor_color_offset))[:header.impostor_color_size]
+    normal := ([^]byte)(byte_base + uintptr(header.impostor_normal_offset))[:header.impostor_normal_size]
+    mesh.impostor_color = make([dynamic]byte, len(color))
+    mesh.impostor_normal = make([dynamic]byte, len(normal))
+    copy(mesh.impostor_color[:], color)
+    copy(mesh.impostor_normal[:], normal)
+    mesh.impostor_views = header.impostor_views
+    mesh.impostor_width = int(header.impostor_width)
+    mesh.impostor_height = int(header.impostor_height)
     return mesh, true
 }
 
@@ -606,8 +838,9 @@ plant_asset_compile_cli :: proc(args: []string) -> bool {
         fmt.eprintln("plant-compile: source manifest is invalid")
         return false
     }
+    manifest := plant_asset_manifest_requests(context.temp_allocator)
     compiled := 0
-    for request in PLANT_ASSET_MANIFEST {
+    for request in manifest {
         species := request.species
         asset, ok := plant_asset_compile(request)
         if !ok {
@@ -625,6 +858,29 @@ plant_asset_compile_cli :: proc(args: []string) -> bool {
         }
         compiled += 1
     }
-    fmt.printf("plant-compile: wrote %d assets to %s\n", compiled, output_directory)
+    pattern := fmt.tprintf("%s/*.plant", output_directory)
+    existing, glob_error := os.glob(pattern, context.temp_allocator)
+    if glob_error != nil {
+        fmt.eprintf("plant-compile: cannot audit %s: %v\n", output_directory, glob_error)
+        return false
+    }
+    removed := 0
+    for path in existing {
+        retained := false
+        for request in manifest {
+            expected := fmt.tprintf("%s/%016x.plant", output_directory, plant_asset_source_key(request))
+            if path == expected {
+                retained = true
+                break
+            }
+        }
+        if retained do continue
+        if remove_error := os.remove(path); remove_error != nil {
+            fmt.eprintf("plant-compile: cannot remove stale asset %s: %v\n", path, remove_error)
+            return false
+        }
+        removed += 1
+    }
+    fmt.printf("plant-compile: wrote %d assets to %s (%d stale removed)\n", compiled, output_directory, removed)
     return true
 }

@@ -84,6 +84,7 @@ Config :: struct {
     // chains are grouped by botanical axis instead of inferred from renderer
     // depth and storage adjacency.
     axis_ids:            []int,
+    parent_ids:          []int,
 }
 
 destroy :: proc(mesh: ^Mesh) {
@@ -149,7 +150,7 @@ append_ring :: proc(
     return first
 }
 
-append_chain :: proc(mesh: ^Mesh, chain: []plant_structure.Segment, config: Config) {
+append_chain :: proc(mesh: ^Mesh, chain: []plant_structure.Segment, config: Config, parent_overlap: f32) {
     if mesh == nil || len(chain) == 0 do return
     radial := clamp(config.radial_segments, 3, 16)
     samples_per_segment := clamp(config.samples_per_segment, 1, 6)
@@ -162,6 +163,11 @@ append_chain :: proc(mesh: ^Mesh, chain: []plant_structure.Segment, config: Conf
     for segment in chain {
         append(&points, segment.end)
         append(&radii, max(segment.radius_end, config.minimum_radius))
+    }
+    has_parent := parent_overlap > 0
+    if has_parent && len(points) > 1 {
+        direction := linalg.normalize0(points[1] - points[0])
+        points[0] -= direction * max(parent_overlap, config.minimum_radius * 2)
     }
 
     previous_right: plant_structure.Vec3
@@ -239,17 +245,16 @@ append_chain :: proc(mesh: ^Mesh, chain: []plant_structure.Segment, config: Conf
         }
     }
 
-    start_center := u32(len(mesh.vertices))
-    start_tangent := linalg.normalize0(points[1] - points[0])
-    append(&mesh.vertices, Vertex{position = points[0], normal = -start_tangent, bark_uv = {.5, 0}})
-    first_ring := start_center - u32(radial)
-    // The first ring is at vertex zero only for the first chain; recover it
-    // from the number of rings appended by this chain.
-    chain_ring_vertices := u32((ring_count + 1) * radial)
-    first_ring = start_center - chain_ring_vertices
-    for side in 0 ..< radial {
-        next := (side + 1) % radial
-        append(&mesh.indices, start_center, first_ring + u32(next), first_ring + u32(side))
+    if !has_parent {
+        start_center := u32(len(mesh.vertices))
+        start_tangent := linalg.normalize0(points[1] - points[0])
+        append(&mesh.vertices, Vertex{position = points[0], normal = -start_tangent, bark_uv = {.5, 0}})
+        chain_ring_vertices := u32((ring_count + 1) * radial)
+        first_ring := start_center - chain_ring_vertices
+        for side in 0 ..< radial {
+            next := (side + 1) % radial
+            append(&mesh.indices, start_center, first_ring + u32(next), first_ring + u32(side))
+        }
     }
     finish_center := u32(len(mesh.vertices))
     append(
@@ -292,7 +297,14 @@ generate :: proc(segments: []plant_structure.Segment, config: Config) -> Mesh {
             if next_index < 0 do break
             current = next_index
         }
-        append_chain(&mesh, chain[:], config)
+        parent_overlap := f32(0)
+        if len(config.parent_ids) == len(segments) {
+            parent := config.parent_ids[start_index]
+            if parent >= 0 && parent < len(segments) {
+                parent_overlap = max(segments[parent].radius_end * 1.15, segments[start_index].radius_start * 1.35)
+            }
+        }
+        append_chain(&mesh, chain[:], config, parent_overlap)
     }
     // Rebuild normals from the final spline topology. This keeps shading
     // consistent through tight bends where independently transported radial

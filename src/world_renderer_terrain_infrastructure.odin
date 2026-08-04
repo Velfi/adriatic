@@ -46,7 +46,6 @@ world_terrain_changed :: proc(editor: ^Editor, x, z, radius: f32) {
         }
     }
     ground_grass_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
-    generated_plant_world_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     world_bathymetry_geometry_cache_invalidate_bounds(changed.min_x, changed.min_z, changed.max_x, changed.max_z)
     world_ocean_sample_grid_invalidate_bounds(changed)
     // Terrain strokes also advance Project.revision. Record that revision here
@@ -99,7 +98,6 @@ world_terrain_invalidate_all :: proc(editor: ^Editor) {
     _ = terrain.bathymetry_refresh_all_generated(&editor.project)
     editor.terrain_revision += 1
     ground_grass_cache_clear()
-    generated_plant_world_cache_clear()
     world_renderer.ocean_cache_valid = false
     world_renderer.ocean_sample_grid_valid = false
     world_renderer.ocean_sample_grid_dirty = {}

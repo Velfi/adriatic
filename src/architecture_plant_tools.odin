@@ -8,130 +8,85 @@ import marina "../packages/marina"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import third_person "../packages/third_person"
-import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
-architecture_paint_commit :: proc(editor: ^Editor) {
-    if editor == nil || !editor.architecture_painting do return
-    structure_history_push_undo(editor)
-    piece := architecture_brush_current_piece(editor, canvas2d.IsMouseButtonReleased(.RIGHT))
-    editor.project.city_density = editor.architecture_density_preview
-    if piece.erased {
-        for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
-            structure := editor.project.structures[index]
-            if structure.kind != .Architecture || settlement_structure_is_landmark(structure) do continue
-            if settlement_brush_weight(piece, {structure.center_x, structure.center_z}) > .01 {
-                _ = terrain.remove_structure(&editor.project, index)
-            }
-        }
-    } else {
-        owner_piece_id := u32(editor.settlement_plan.brush_piece_count + 1)
-        _ = settlement_brush_ensure_primary_route(&editor.settlement_plan, &editor.project, piece, owner_piece_id)
-        rebuild_bounds := architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48)
-        refreshed := architecture.city_plan_density(
-            &editor.project,
-            &editor.architecture_density_preview,
-            rebuild_bounds,
-        )
-        architecture.city_plan_replace(&editor.architecture_preview_plan, refreshed)
-        for candidate, candidate_index in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
-            if settlement_brush_weight(piece, {candidate.center_x, candidate.center_z}) <= .01 do continue
-            overlaps := false
-            for existing in editor.project.structures[:editor.project.structure_count] {
-                if existing.kind == .Architecture && architecture.city_structure_overlaps(candidate, existing) {
-                    overlaps = true
-                    break
-                }
-            }
-            if overlaps do continue
-            structure_seed := candidate.seed
-            added := terrain.add_structure(&editor.project, candidate)
-            if added < 0 do break
-            editor.project.structures[added].seed = structure_seed
-            append(&editor.architecture_city_plan.structures, candidate)
-            editor.architecture_city_plan.count += 1
-            if candidate_index < editor.architecture_preview_plan.parcel_count {
-                parcel := editor.architecture_preview_plan.parcels[candidate_index]
-                append(&editor.architecture_city_plan.parcels, parcel)
-                editor.architecture_city_plan.parcel_count += 1
-                if editor.settlement_plan.site_count < len(editor.settlement_plan.sites) {
-                    site_index := editor.settlement_plan.site_count
-                    editor.settlement_plan.sites[site_index] = {
-                        structure = candidate,
-                        parcel    = parcel,
-                        kind      = .Ordinary,
-                        tissue    = settlement_nearest_tissue(
-                            &editor.settlement_plan,
-                            candidate.center_x,
-                            candidate.center_z,
-                        ),
-                        density   = parcel.density,
-                        attached  = parcel.attached,
-                        accepted  = true,
-                        purpose   = Settlement_Building_Purpose(candidate.building.purpose),
-                    }
-                    editor.settlement_plan.site_piece_ids[site_index] = owner_piece_id
-                    editor.settlement_plan.site_count += 1
-                }
-            }
-        }
-        for alley in editor.architecture_preview_plan.alleys[:editor.architecture_preview_plan.alley_count] {
-            midpoint := [2]f32{(alley.start_x + alley.end_x) * .5, (alley.start_z + alley.end_z) * .5}
-            if settlement_brush_weight(piece, midpoint) <= .01 do continue
-            append(&editor.architecture_city_plan.alleys, alley)
-            editor.architecture_city_plan.alley_count += 1
-        }
-    }
-    editor.project.revision += 1
-    editor.architecture_painting = false
-    architecture.city_plan_destroy(&editor.architecture_preview_plan)
-    editor.architecture_dirty_bounds = {}
-}
-
-architecture_paint_refresh_preview :: proc(editor: ^Editor) {
-    if editor == nil do return
-    rebuild_bounds := architecture.city_bounds_expand(editor.architecture_dirty_bounds, 48)
-    plan := architecture.city_plan_density(&editor.project, &editor.architecture_density_preview, rebuild_bounds)
-    architecture.city_plan_replace(&editor.architecture_preview_plan, plan)
-}
-
-architecture_brush_current_piece :: proc(editor: ^Editor, erase: bool) -> Settlement_Brush_Piece {
+building_generator_structure :: proc(editor: ^Editor, x, z, rotation: f32) -> terrain.Structure {
     if editor == nil do return {}
-    return {
-        shape = editor.architecture_brush_shape,
-        preset = editor.architecture_brush_preset,
-        center = {editor.architecture_last_x, editor.architecture_last_z},
-        rotation = editor.architecture_brush_rotation,
-        density = editor.architecture_brush_strength,
-        hardness = editor.architecture_brush_hardness,
-        seed = u32(editor.settlement_plan.brush_piece_count + 1) * 0x9e3779b9,
-        erased = erase,
-    }
+    seed := u32(max(editor.building_generator_variation, f32(1)) + .5)
+    height := terrain.sample_surface_height(&editor.project, 0, x, z)
+    result := terrain.structure_make(
+        x, z,
+        editor.building_generator_width,
+        editor.building_generator_depth,
+        height,
+        editor.building_generator_height,
+    )
+    result.kind = .Architecture
+    result.rotation = rotation
+    result.seed = seed
+    result.building = architecture.architecture_identity(
+        {
+            density = editor.building_generator_density,
+            frontage = editor.building_generator_width,
+            depth = editor.building_generator_depth,
+            purpose_explicit = false,
+        },
+        seed,
+    )
+    result.color = architecture.architecture_color(seed)
+    _, foundation_high := architecture.architecture_foundation_height_range(&editor.project, result)
+    result.base_y = foundation_high
+    return result
 }
 
-architecture_paint_stamp :: proc(editor: ^Editor, piece: Settlement_Brush_Piece, refresh: bool = true) {
+building_generator_site_valid :: proc(editor: ^Editor, candidate: terrain.Structure) -> bool {
+    checked := candidate
+    if editor == nil || !architecture.city_structure_site_valid(&editor.project, &checked) do return false
+    for existing in editor.project.structures[:editor.project.structure_count] {
+        if architecture.city_structure_overlaps(candidate, existing) do return false
+    }
+    return true
+}
+
+building_generator_refresh_preview :: proc(editor: ^Editor, x, z: f32) {
     if editor == nil do return
-    maximum_slope := SETTLEMENT_TOWN.max_slope
-    bounds := settlement_brush_apply_piece(&editor.architecture_density_preview, &editor.project, piece, maximum_slope)
-    editor.architecture_dirty_bounds = architecture.city_bounds_union(editor.architecture_dirty_bounds, bounds)
-    if refresh do architecture_paint_refresh_preview(editor)
+    candidate := building_generator_structure(editor, x, z, editor.architecture_brush_rotation)
+    editor.building_generator_preview_valid = building_generator_site_valid(editor, candidate)
+    architecture.city_plan_destroy(&editor.architecture_preview_plan)
+    editor.architecture_preview_plan.structures = make([dynamic]terrain.Structure, 0, 1)
+    append(&editor.architecture_preview_plan.structures, candidate)
+    editor.architecture_preview_plan.count = 1
+}
+
+building_generator_commit :: proc(editor: ^Editor) {
+    if editor == nil || !editor.building_generator_preview_valid || editor.architecture_preview_plan.count != 1 do return
+    candidate := editor.architecture_preview_plan.structures[0]
+    structure_history_push_undo(editor)
+    added := terrain.add_structure(&editor.project, candidate)
+    if added < 0 do return
+    editor.project.structures[added].seed = candidate.seed
+    append(&editor.architecture_city_plan.structures, candidate)
+    editor.architecture_city_plan.count += 1
+    editor.project.revision += 1
+    editor.building_generator_variation = min(editor.building_generator_variation + 1, f32(256))
 }
 
 architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || !editor.architecture_paint_mode || editor.airport_stamp_mode do return
-    pressed := canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT)
-    down := canvas2d.IsMouseButtonDown(.LEFT) || canvas2d.IsMouseButtonDown(.RIGHT)
-    released := canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT)
+    pressed := canvas2d.IsMouseButtonPressed(.LEFT)
+    down := canvas2d.IsMouseButtonDown(.LEFT)
+    released := canvas2d.IsMouseButtonReleased(.LEFT)
+    if cursor_hit && !editor.architecture_painting {
+        editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
+        building_generator_refresh_preview(editor, world_x, world_z)
+    }
     if pressed && cursor_hit {
         editor.architecture_painting = true
-        editor.architecture_density_preview = editor.project.city_density
-        architecture.city_plan_destroy(&editor.architecture_preview_plan)
-        editor.architecture_dirty_bounds = {}
         editor.architecture_last_x, editor.architecture_last_z = world_x, world_z
         editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
         editor.architecture_brush_rotation = 0
-        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, canvas2d.IsMouseButtonDown(.RIGHT)))
+        building_generator_refresh_preview(editor, world_x, world_z)
     }
     if editor.architecture_painting && down && cursor_hit && !pressed {
         editor.architecture_drag_x, editor.architecture_drag_z = world_x, world_z
@@ -139,34 +94,12 @@ architecture_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32,
         if dx * dx + dz * dz > 1 {
             editor.architecture_brush_rotation = f32(math.atan2(f64(dz), f64(dx)))
         }
-        editor.architecture_density_preview = editor.project.city_density
-        editor.architecture_dirty_bounds = {}
-        architecture_paint_stamp(editor, architecture_brush_current_piece(editor, canvas2d.IsMouseButtonDown(.RIGHT)))
+        building_generator_refresh_preview(editor, editor.architecture_last_x, editor.architecture_last_z)
     }
     if editor.architecture_painting && released {
-        piece := architecture_brush_current_piece(editor, canvas2d.IsMouseButtonReleased(.RIGHT))
-        architecture_paint_commit(editor)
-        if editor.settlement_plan.brush_piece_count < len(editor.settlement_plan.brush_pieces) {
-            settlement_brush_assign_component(&editor.settlement_plan, &piece)
-            editor.settlement_plan.brush_pieces[editor.settlement_plan.brush_piece_count] = piece
-            editor.settlement_plan.brush_piece_count += 1
-            editor.settlement_plan.program = settlement_program_compile(
-                &editor.settlement_plan,
-                &editor.project,
-                piece.component_id,
-            )
-            settlement_brush_ensure_anchors(&editor.settlement_plan, &editor.project, piece)
-            settlement_program_assign_new_purposes(
-                &editor.settlement_plan,
-                &editor.project,
-                piece.component_id,
-                u32(editor.settlement_plan.brush_piece_count),
-            )
-            settlement_program_measure_placed(&editor.settlement_plan, &editor.project, piece.component_id)
-            settlement_population_allocate(&editor.settlement_plan, &editor.project)
-            settlement_brush_generate_vegetation(&editor.settlement_plan, &editor.project, piece)
-            fmt.println("settlement brush:", settlement_program_report(&editor.settlement_plan))
-        }
+        building_generator_commit(editor)
+        editor.architecture_painting = false
+        building_generator_refresh_preview(editor, world_x, world_z)
     }
 }
 

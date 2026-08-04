@@ -514,6 +514,96 @@ shadow_instance_position :: proc(
     return {position.x, position.y, position.z}
 }
 
+shadow_plant_position :: proc(
+    vertex: Plant_Vertex,
+    instance: World_Mesh_Instance,
+    wind_time, severity, wind_x, wind_z: f32,
+) -> [3]f32 {
+    transform := proc(value: [3]f32, instance: World_Mesh_Instance) -> third_person.Vec3 {
+        return {
+            instance.basis_x_translation_x[0] * value[0] +
+            instance.basis_y_translation_y[0] * value[1] +
+            instance.basis_z_translation_z[0] * value[2] +
+            instance.basis_x_translation_x[3],
+            instance.basis_x_translation_x[1] * value[0] +
+            instance.basis_y_translation_y[1] * value[1] +
+            instance.basis_z_translation_z[1] * value[2] +
+            instance.basis_y_translation_y[3],
+            instance.basis_x_translation_x[2] * value[0] +
+            instance.basis_y_translation_y[2] * value[1] +
+            instance.basis_z_translation_z[2] * value[2] +
+            instance.basis_z_translation_z[3],
+        }
+    }
+    position := transform(vertex.position, instance)
+    root := third_person.Vec3 {
+        instance.plant_root_compliance[0],
+        instance.plant_root_compliance[1],
+        instance.plant_root_compliance[2],
+    }
+    compliance := instance.plant_root_compliance[3]
+    if compliance <= 0 do return position
+    primary := transform(vertex.primary_anchor, instance)
+    secondary := transform(vertex.secondary_anchor, instance)
+    wind_speed := f32(math.sqrt(f64(wind_x * wind_x + wind_z * wind_z)))
+    direction :=
+        wind_speed > .001 ? third_person.Vec3{wind_x / wind_speed, 0, wind_z / wind_speed} : third_person.Vec3{1, 0, 0}
+    across := third_person.Vec3{-direction.z, 0, direction.x}
+    phase := wind_time * (.34 + wind_speed * .012) + instance.plant_motion[0]
+    phase += (root.x * direction.x + root.z * direction.z) * .018
+    amplitude := linalg.lerp(f32(.08), f32(.48), clamp(wind_speed / 14 + severity * .24, f32(0), f32(1)))
+    amplitude *= compliance * max(instance.plant_motion[1], f32(.05))
+    rooted, primary_offset, secondary_offset := position - root, position - primary, position - secondary
+    root_weight := 1 - f32(math.exp(f64(-f32(math.sqrt(f64(linalg.dot(rooted, rooted)))) * .72)))
+    primary_weight := 1 - f32(math.exp(f64(-f32(math.sqrt(f64(linalg.dot(primary_offset, primary_offset)))) * .92)))
+    depth_weight := clamp(f32(vertex.hierarchy_depth) / 4, f32(0), f32(1))
+    secondary_weight :=
+        (1 - f32(math.exp(f64(-f32(math.sqrt(f64(linalg.dot(secondary_offset, secondary_offset)))) * 1.35)))) *
+        depth_weight
+    structural_compliance := linalg.lerp(f32(.35), f32(1.15), clamp(1 - vertex.stiffness, f32(0), f32(1)))
+    broad := math.sin(phase) + math.sin(phase * .47 + 1.9) * .34
+    position +=
+        direction * broad * amplitude * structural_compliance *
+        (root_weight * .55 + primary_weight * .32 + secondary_weight * .18)
+    position +=
+        across * math.sin(phase * 1.31 + vertex.phase + 4.2) * amplitude * structural_compliance * .07 *
+        (primary_weight + secondary_weight)
+    position.y -= amplitude * structural_compliance * .018 * root_weight
+    if vertex.flutter > 0 && instance.plant_motion[2] > 0 {
+        pivot := transform(vertex.leaf_pivot, instance)
+        axis := linalg.normalize0(
+            third_person.Vec3 {
+                instance.basis_x_translation_x[0],
+                instance.basis_x_translation_x[1],
+                instance.basis_x_translation_x[2],
+            },
+        )
+        angle :=
+            math.sin(phase * 3.1 + vertex.phase * 2.7) * amplitude * vertex.flutter * instance.plant_motion[2] * .12
+        from_pivot := position - pivot
+        cosine, sine := math.cos(angle), math.sin(angle)
+        position =
+            pivot +
+            from_pivot * cosine +
+            linalg.cross(axis, from_pivot) * sine +
+            axis * linalg.dot(axis, from_pivot) * (1 - cosine)
+    }
+    return position
+}
+
+shadow_plant_transition_visible :: proc(a, b, c: third_person.Vec3, opacity: f32) -> bool {
+    if opacity >= .999 do return true
+    if opacity <= .001 do return false
+    x := f32(math.floor(f64((a.x + b.x + c.x) / 3 * 3.5))) + 17.3
+    y := f32(math.floor(f64((a.z + b.z + c.z) / 3 * 3.5))) + 41.7
+    fract := proc(value: f32) -> f32 {return value - f32(math.floor(f64(value)))}
+    p3 := third_person.Vec3{fract(x * .1031), fract(y * .1031), fract(x * .1031)}
+    dot_value := p3.x * (p3.y + 33.33) + p3.y * (p3.z + 33.33) + p3.z * (p3.x + 33.33)
+    p3 += third_person.Vec3{dot_value, dot_value, dot_value}
+    threshold := fract((p3.x + p3.y) * p3.z)
+    return threshold <= clamp(opacity, f32(0), f32(1))
+}
+
 shadow_append_instances :: proc() {
     sky := atmosphere_sky(world_renderer.editor)
     for &mesh in world_renderer.instance_meshes {
@@ -565,6 +655,45 @@ shadow_append_instances :: proc() {
                     sky.weather.wind[1],
                 )
                 shadow_append_triangle({pa[0], pa[1], pa[2]}, {pb[0], pb[1], pb[2]}, {pc[0], pc[1], pc[2]})
+            }
+        }
+    }
+    for &mesh in world_renderer.plant_meshes {
+        if !mesh.casts_shadow do continue
+        vertex_first, index_first, index_count := int(mesh.first_vertex), int(mesh.first_index), int(mesh.index_count)
+        if index_count < 3 || index_first < 0 || index_first + index_count > len(world_renderer.instance_indices) do continue
+        for instance in mesh.instances {
+            for triangle := index_first; triangle + 2 < index_first + index_count; triangle += 3 {
+                a := vertex_first + int(world_renderer.instance_indices[triangle])
+                b := vertex_first + int(world_renderer.instance_indices[triangle + 1])
+                c := vertex_first + int(world_renderer.instance_indices[triangle + 2])
+                if a < vertex_first || b < vertex_first || c < vertex_first || a >= len(world_renderer.plant_vertices) || b >= len(world_renderer.plant_vertices) || c >= len(world_renderer.plant_vertices) do continue
+                pa := shadow_plant_position(
+                    world_renderer.plant_vertices[a],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
+                pb := shadow_plant_position(
+                    world_renderer.plant_vertices[b],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
+                pc := shadow_plant_position(
+                    world_renderer.plant_vertices[c],
+                    instance,
+                    sky.cloud_time_seconds,
+                    sky.weather.severity,
+                    sky.weather.wind[0],
+                    sky.weather.wind[1],
+                )
+                if !shadow_plant_transition_visible(pa, pb, pc, instance.plant_motion[3]) do continue
+                shadow_append_triangle(pa, pb, pc)
             }
         }
     }

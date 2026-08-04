@@ -2,23 +2,38 @@ package plants
 
 import plant_structure "../plant_structure"
 import "core:math"
-import "core:math/linalg"
+
+generated_organ_attachment_kind :: #force_inline proc(kind: Architecture_Organ) -> Attachment_Kind {
+    switch kind {
+    case .Flower:
+        return .Flower
+    case .Fruit:
+        return .Fruit
+    case .Thorn:
+        return .Thorn
+    case .Tendril:
+        return .Tendril
+    case .Leaf, .Cladode, .Rosette_Leaf, .Cactus_Rib:
+        return .Leaf
+    }
+    return .Leaf
+}
 
 generate :: proc(config: Generate_Config) -> Generate_Result {
-    workspace_started := generation_workspace_begin()
-    defer generation_workspace_end(workspace_started)
     result: Generate_Result
+    workspace := generation_active_workspace
     if int(config.species) < 0 || int(config.species) >= SPECIES_COUNT {
         result.error = .Invalid_Species
         return result
     }
+
     habit := config.habit
     if habit == .Free_Standing &&
        (config.species == .Bougainvillea ||
-               config.species == .Grapevine ||
-               config.species == .Wisteria ||
-               config.species == .Climbing_Rose ||
-               config.species == .Star_Jasmine) {
+        config.species == .Grapevine ||
+        config.species == .Wisteria ||
+        config.species == .Climbing_Rose ||
+        config.species == .Star_Jasmine) {
         habit = default_habit(config.species)
     }
     climbing := habit != .Free_Standing
@@ -26,159 +41,62 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         result.error = .Invalid_Support
         return result
     }
-    maturity := clamp(config.maturity, 0, 1)
+
+    maturity := clamp(config.maturity, f32(0), f32(1))
     profile := profile_for(config.species)
-    detail_reduction := config.detail == .Near ? 0 : config.detail == .Medium ? 1 : 2
-    raw_iterations := maturity * f32(profile.base_iterations)
-    growth_iterations := int(math.ceil(raw_iterations))
-    iterations := clamp(growth_iterations - detail_reduction, 0, profile.base_iterations)
-    generation_progress := raw_iterations - math.floor(raw_iterations)
-    if raw_iterations > 0 && generation_progress < .0001 do generation_progress = 1
     segment_limit, attachment_limit := limits(config.detail)
-    if climbing {
-        segment_limit, attachment_limit = climbing_density_limits(config.detail, config.support)
+    if climbing do segment_limit, attachment_limit = climbing_density_limits(config.detail, config.support)
+
+    graph, architecture_error := generate_architecture_stage(config, maturity)
+    defer {
+        generation_workspace_recycle_unadopted_graph(workspace, &graph)
+        destroy_graph(&graph)
     }
-    expansion_segment_limit := segment_limit
-    if climbing {
-        catalog_segment_limit, _ := limits(config.detail)
-        expansion_segment_limit = max(expansion_segment_limit, catalog_segment_limit)
-    }
-    interpreted, native_graph, architecture_error := generate_architecture_stage(
-        config,
-        profile,
-        maturity,
-        iterations,
-        detail_reduction,
-        expansion_segment_limit,
-    )
-    defer destroy_graph(&native_graph)
     if architecture_error != .None {
         result.error = architecture_error
         return result
     }
-    if interpreted.error != .None {
-        generation_workspace_dispose_interpreted(&interpreted.plant)
-        result.error = .Interpretation_Failed
-        return result
-    }
-    if len(native_graph.internodes) == 0 &&
-       iterations > 0 &&
-       config.species != .Prickly_Pear &&
-       config.species != .Golden_Barrel &&
-       config.species != .Agave &&
-       config.species != .Aloe &&
-       config.species != .Aeonium &&
-       config.species != .Echeveria &&
-       config.species != .Jade_Plant &&
-       config.species != .Stonecrop &&
-       config.species != .Blue_Chalk_Sticks &&
-       config.species != .Golden_Torch_Cactus &&
-       config.species != .Agapanthus &&
-       config.species != .Strawberry_Tree &&
-       config.species != .Rosemary &&
-       config.species != .Pelargonium &&
-       config.species != .Hydrangea_Bush &&
-       config.species != .Hydrangea_Tree &&
-       config.species != .Star_Jasmine &&
-       config.species != .Wisteria &&
-       config.species != .Climbing_Rose &&
-       config.species != .Lavender &&
-       config.species != .Thyme &&
-       config.species != .Sage {
-        sprout_newest_generation(&interpreted.plant, generation_progress)
-    }
-    source_segment_limit := climbing && len(native_graph.internodes) == 0 ? max(segment_limit / 6, 1) : segment_limit
-    if climbing && len(interpreted.plant.segments) > source_segment_limit {
-        source_segments := interpreted.plant.segments
-        thinned_segments := make([dynamic]plant_structure.Segment, 0, source_segment_limit)
-        for retained_index in 0 ..< source_segment_limit {
-            source_index := retained_index * len(source_segments) / source_segment_limit
-            append(&thinned_segments, source_segments[source_index])
-        }
-        delete(source_segments)
-        interpreted.plant.segments = thinned_segments
-    } else if len(interpreted.plant.segments) > source_segment_limit {
-        generation_workspace_dispose_interpreted(&interpreted.plant)
+    if len(graph.internodes) > segment_limit {
         result.error = .Segment_Limit
         return result
     }
-    attachment_count := 0
-    cluster_size := leaf_cluster_size(config.species, config.detail, maturity)
-    if len(interpreted.plant.leaves) * max(cluster_size, 1) > attachment_limit {
-        source_leaves := interpreted.plant.leaves
-        leaf_limit := max(attachment_limit / max(cluster_size, 1), 1)
-        thinned_leaves := make([dynamic]plant_structure.Leaf, 0, leaf_limit)
-        // Stratified pruning retains the full plant envelope and axis-depth
-        // distribution instead of truncating the newest or highest shoots.
-        offset := int(config.seed % u64(max(len(source_leaves) / max(leaf_limit, 1), 1)))
-        for retained_index in 0 ..< leaf_limit {
-            source_index := min((retained_index * len(source_leaves) + offset) / leaf_limit, len(source_leaves) - 1)
-            append(&thinned_leaves, source_leaves[source_index])
-        }
-        delete(source_leaves)
-        interpreted.plant.leaves = thinned_leaves
-    }
-    for leaf, index in interpreted.plant.leaves {
-        kind := generated_attachment_kind(config.species, config.seed, index, maturity, config.detail, leaf.depth)
-        leaf_cluster_size := cluster_size
-        if config.species == .Italian_Cypress {
-            leaf_cluster_size = cypress_generated_cluster_size(config.detail, maturity, config.seed, index, leaf.depth)
-        } else if config.species == .Lemon && leaf.depth >= 2 {
-            leaf_cluster_size = 1
-        }
-        if (config.species == .Grapevine || config.species == .Bougainvillea) && kind != .Leaf {
-            // Reproductive and defensive attachments are borne by leafy
-            // shoots; they do not replace the subtending foliage.
-            attachment_count += 2
-        } else {
-            attachment_count += kind == .Leaf ? leaf_cluster_size : 1
-        }
-    }
-    if attachment_count > attachment_limit {
-        generation_workspace_dispose_interpreted(&interpreted.plant)
+    if len(graph.organs) > attachment_limit {
         result.error = .Attachment_Limit
         return result
     }
-    result.plant.species = config.species
-    result.plant.habit = habit
-    result.plant.maturity = maturity
-    if config.species == .Olive {
-        result.plant.wood = {
-            radial_irregularity = .20,
-            twist               = 1.50,
-        }
-    } else if config.species == .Italian_Cypress {
-        result.plant.wood = {
-            radial_irregularity = .075,
-            twist               = .42,
-        }
-    } else if config.species == .Lemon {
-        result.plant.wood = {
-            radial_irregularity = .055,
-            twist               = .28,
-        }
+
+    plant := &result.plant
+    plant.species = config.species
+    plant.habit = habit
+    plant.maturity = maturity
+    plant.root_kind = climbing && config.support.planter ? .Planter : .Soil
+    plant.wind_compliance = woody_wind_compliance(config.species, maturity)
+    if climbing do plant.support_signature = support_hash(config.support^)
+    #partial switch config.species {
+    case .Olive:
+        plant.wood = {radial_irregularity = .20, twist = 1.50}
+    case .Italian_Cypress:
+        plant.wood = {radial_irregularity = .075, twist = .42}
+    case .Lemon:
+        plant.wood = {radial_irregularity = .055, twist = .28}
     }
-    result.plant.root_kind = climbing && config.support.planter ? .Planter : .Soil
-    result.plant.wind_compliance = woody_wind_compliance(config.species, maturity)
-    if climbing do result.plant.support_signature = support_hash(config.support^)
-    climbing_route_samples := climbing && len(native_graph.internodes) == 0 ? 6 : 1
-    if config.species == .Grapevine do climbing_route_samples = 1
-    routed_segment_capacity := len(interpreted.plant.segments) * climbing_route_samples
-    result.plant.segments = make([dynamic]plant_structure.Segment, 0, routed_segment_capacity)
-    result.plant.attachments = make([dynamic]Attachment, 0, attachment_count)
-    climbing_height, climbing_half_width := f32(1), f32(.001)
+
+    generation_workspace_output_take(plant)
+    _ = non_zero_reserve(&plant.segments, len(graph.internodes))
+    _ = non_zero_reserve(&plant.attachments, len(graph.organs))
+
+    climbing_height, climbing_half_width := f32(.001), f32(.001)
     if climbing {
-        climbing_height = .001
-        for segment in interpreted.plant.segments {
+        for internode in graph.internodes {
             start := plant_structure.Vec3 {
-                segment.start[0] * profile.width_scale,
-                segment.start[1] * profile.height_scale,
-                segment.start[2] * profile.width_scale,
+                internode.start[0] * profile.width_scale,
+                internode.start[1] * profile.height_scale,
+                internode.start[2] * profile.width_scale,
             }
             end := plant_structure.Vec3 {
-                segment.end[0] * profile.width_scale,
-                segment.end[1] * profile.height_scale,
-                segment.end[2] * profile.width_scale,
+                internode.end[0] * profile.width_scale,
+                internode.end[1] * profile.height_scale,
+                internode.end[2] * profile.width_scale,
             }
             climbing_height = max(climbing_height, max(start[1], end[1]))
             climbing_half_width = max(
@@ -187,376 +105,98 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             )
         }
     }
-    extra_route_demand := 0
-    maximum_route_samples :=
-        len(native_graph.internodes) > 0 ? 1 : config.detail == .Near ? 12 : config.detail == .Medium ? 9 : 6
-    if config.species == .Grapevine do maximum_route_samples = 1
-    if climbing && maximum_route_samples > climbing_route_samples {
-        for source in interpreted.plant.segments {
-            start := plant_structure.Vec3 {
-                source.start[0] * profile.width_scale,
-                source.start[1] * profile.height_scale,
-                source.start[2] * profile.width_scale,
-            }
-            end := plant_structure.Vec3 {
-                source.end[0] * profile.width_scale,
-                source.end[1] * profile.height_scale,
-                source.end[2] * profile.width_scale,
-            }
-            routed_start := route_species_point(
-                start,
-                config.support,
-                climbing_height,
-                climbing_half_width,
-                habit,
-                source.depth,
-                config.species,
-            )
-            routed_end := route_species_point(
-                end,
-                config.support,
-                climbing_height,
-                climbing_half_width,
-                habit,
-                source.depth,
-                config.species,
-            )
-            delta := routed_end - routed_start
-            projected_length := math.sqrt(linalg.dot(delta, delta))
-            desired_samples := clamp(
-                int(math.ceil(projected_length / .32)),
-                climbing_route_samples,
-                maximum_route_samples,
-            )
-            extra_route_demand += desired_samples - climbing_route_samples
-        }
-    }
-    base_routed_count := len(interpreted.plant.segments) * climbing_route_samples
-    extra_route_budget := min(extra_route_demand, max(segment_limit - base_routed_count, 0))
-    extra_demand_seen, extra_samples_awarded := 0, 0
+
     first := true
-    for source in interpreted.plant.segments {
-        segment := source
-        segment.start[0] *= profile.width_scale
-        segment.start[1] *= profile.height_scale
-        segment.start[2] *= profile.width_scale
-        segment.end[0] *= profile.width_scale
-        segment.end[1] *= profile.height_scale
-        segment.end[2] *= profile.width_scale
+    for internode in graph.internodes {
+        segment := plant_structure.Segment {
+            start = {
+                internode.start[0] * profile.width_scale,
+                internode.start[1] * profile.height_scale,
+                internode.start[2] * profile.width_scale,
+            },
+            end = {
+                internode.end[0] * profile.width_scale,
+                internode.end[1] * profile.height_scale,
+                internode.end[2] * profile.width_scale,
+            },
+            radius_start = internode.radius_start,
+            radius_end = internode.radius_end,
+            depth = internode.render_depth,
+        }
         if climbing {
-            route_samples := climbing_route_samples
-            if extra_route_demand > 0 && extra_route_budget > 0 {
-                routed_start := route_species_point(
-                    segment.start,
-                    config.support,
-                    climbing_height,
-                    climbing_half_width,
-                    habit,
-                    segment.depth,
-                    config.species,
-                )
-                routed_end := route_species_point(
-                    segment.end,
-                    config.support,
-                    climbing_height,
-                    climbing_half_width,
-                    habit,
-                    segment.depth,
-                    config.species,
-                )
-                delta := routed_end - routed_start
-                projected_length := math.sqrt(linalg.dot(delta, delta))
-                desired_samples := clamp(
-                    int(math.ceil(projected_length / .32)),
-                    climbing_route_samples,
-                    maximum_route_samples,
-                )
-                extra_demand_seen += desired_samples - climbing_route_samples
-                target_awarded := extra_demand_seen * extra_route_budget / extra_route_demand
-                route_samples += target_awarded - extra_samples_awarded
-                extra_samples_awarded = target_awarded
-            }
-            previous := route_species_point(
-                segment.start,
-                config.support,
-                climbing_height,
-                climbing_half_width,
-                habit,
-                segment.depth,
-                config.species,
+            segment.start = route_species_point(
+                segment.start, config.support, climbing_height, climbing_half_width, habit, segment.depth, config.species,
             )
-            for sample in 1 ..= route_samples {
-                t := f32(sample) / f32(route_samples)
-                source_point := segment.start + (segment.end - segment.start) * t
-                current := route_species_point(
-                    source_point,
-                    config.support,
-                    climbing_height,
-                    climbing_half_width,
-                    habit,
-                    segment.depth,
-                    config.species,
-                )
-                routed := segment
-                routed.start = previous
-                routed.end = current
-                previous_t := f32(sample - 1) / f32(route_samples)
-                routed.radius_start = segment.radius_start + (segment.radius_end - segment.radius_start) * previous_t
-                routed.radius_end = segment.radius_start + (segment.radius_end - segment.radius_start) * t
-                append(&result.plant.segments, routed)
-                update_bounds(&result.plant.bounds, routed.start, &first)
-                update_bounds(&result.plant.bounds, routed.end, &first)
-                previous = current
-            }
-            continue
+            segment.end = route_species_point(
+                segment.end, config.support, climbing_height, climbing_half_width, habit, segment.depth, config.species,
+            )
         }
-        append(&result.plant.segments, segment)
-        update_bounds(&result.plant.bounds, segment.start, &first)
-        update_bounds(&result.plant.bounds, segment.end, &first)
+        append(&plant.segments, segment)
+        update_bounds(&plant.bounds, segment.start, &first)
+        update_bounds(&plant.bounds, segment.end, &first)
     }
-    for leaf, index in interpreted.plant.leaves {
-        position := leaf.position
-        position[0] *= profile.width_scale
-        position[1] *= profile.height_scale
-        position[2] *= profile.width_scale
-        if climbing do position = route_species_point(position, config.support, climbing_height, climbing_half_width, habit, leaf.depth, config.species)
-        if config.species == .Grapevine && habit == .Trellised {
-            hash := (config.seed + 1) * 0x9e3779b97f4a7c15 ~ u64(index + 61) * 0xbf58476d1ce4e5b9
-            hash = (hash ~ (hash >> 30)) * 0x94d049bb133111eb
-            signed_offset := f32(hash % 10_001) / 5_000 - 1
-            position[1] = clamp(position[1] + signed_offset * .11, f32(.03), config.support.height * .98)
+
+    for organ, organ_index in graph.organs {
+        if organ.internode < 0 || organ.internode >= len(graph.internodes) {
+            destroy(&result)
+            result.error = .Interpretation_Failed
+            return result
         }
-        variant := u8((u64(index) + config.seed) % 4)
-        generated_kind := generated_attachment_kind(
-            config.species,
-            config.seed,
-            index,
-            maturity,
-            config.detail,
-            leaf.depth,
-        )
-        kind := generated_kind
-        attachment_cluster_size := cluster_size
-        if config.species == .Italian_Cypress {
-            attachment_cluster_size = cypress_generated_cluster_size(
-                config.detail,
-                maturity,
-                config.seed,
-                index,
-                leaf.depth,
+        internode := graph.internodes[organ.internode]
+        fraction := clamp(organ.fraction, f32(0), f32(1))
+        source_position := internode.start + (internode.end - internode.start) * fraction
+        position := plant_structure.Vec3 {
+            source_position[0] * profile.width_scale,
+            source_position[1] * profile.height_scale,
+            source_position[2] * profile.width_scale,
+        }
+        if climbing {
+            position = route_species_point(
+                position, config.support, climbing_height, climbing_half_width, habit, organ.render_depth, config.species,
             )
-        } else if config.species == .Lemon && leaf.depth >= 2 {
-            attachment_cluster_size = 1
         }
-        forward, up := attachment_frame(leaf.forward, leaf.up, profile, climbing)
+        kind := generated_organ_attachment_kind(organ.kind)
+        forward, up := attachment_frame(organ.forward, organ.up, profile, climbing)
         if climbing do fold_source_attachment_frame(&forward, &up, position, config.support)
-        traits :=
-            kind == .Leaf ? generated_leaf_traits(config.species, variant, maturity, config.detail) : Leaf_Traits{}
-        // Rosette species reuse one leaf profile, but successive inner whorls
-        // are botanically shorter. Preserve the architecture depth as a size
-        // gradient so centers tighten instead of stacking full-sized leaves.
+        traits := kind == .Leaf ? generated_leaf_traits(config.species, organ.variant, maturity, config.detail) : Leaf_Traits{}
         if kind == .Leaf {
             depth_scale := f32(1)
             #partial switch config.species {
             case .Agave:
-                if leaf.depth == 1 do depth_scale = .68
+                if organ.render_depth == 1 do depth_scale = .68
             case .Aloe:
-                if leaf.depth == 1 do depth_scale = .70
-                if leaf.depth >= 2 do depth_scale = .74
+                if organ.render_depth == 1 do depth_scale = .70
+                if organ.render_depth >= 2 do depth_scale = .74
             case .Echeveria:
-                if leaf.depth == 1 do depth_scale = .66
-                if leaf.depth >= 2 do depth_scale = .72
+                if organ.render_depth == 1 do depth_scale = .66
+                if organ.render_depth >= 2 do depth_scale = .72
             case .Golden_Barrel, .Aeonium, .Jade_Plant, .Stonecrop, .Blue_Chalk_Sticks, .Golden_Torch_Cactus:
             }
             traits.length *= depth_scale
             traits.width *= .84 + depth_scale * .16
         }
         append(
-            &result.plant.attachments,
+            &plant.attachments,
             Attachment {
                 kind = kind,
-                stage = attachment_stage(kind, config.seed, index, maturity),
+                stage = attachment_stage(kind, config.seed, organ_index, maturity),
                 position = position,
                 forward = forward,
                 up = up,
-                depth = leaf.depth,
-                variant = variant,
+                depth = organ.render_depth,
+                variant = organ.variant,
                 leaf = traits,
             },
         )
-        update_bounds(&result.plant.bounds, position, &first)
-        if kind == .Leaf do update_leaf_bounds(&result.plant.bounds, position, forward, up, traits, &first)
-        if (config.species == .Grapevine || config.species == .Bougainvillea) && generated_kind != .Leaf {
-            companion_traits := generated_leaf_traits(config.species, variant, maturity, config.detail)
-            append(
-                &result.plant.attachments,
-                Attachment {
-                    kind = .Leaf,
-                    stage = .None,
-                    position = position,
-                    forward = forward,
-                    up = up,
-                    depth = leaf.depth,
-                    variant = variant,
-                    leaf = companion_traits,
-                },
-            )
-            update_leaf_bounds(&result.plant.bounds, position, forward, up, companion_traits, &first)
-        }
-        if kind == .Leaf {
-            right := linalg.normalize0(linalg.cross(forward, up))
-            for cluster_index in 1 ..< attachment_cluster_size {
-                angle :=
-                    f32(cluster_index) * math.PI * 2 / f32(attachment_cluster_size) +
-                    f32((config.seed + u64(index * 17)) % 29) / 29 * .38
-                clustered_variant := u8((int(variant) + cluster_index) % 4)
-                clustered_traits := generated_leaf_traits(config.species, clustered_variant, maturity, config.detail)
-                clustered_forward: plant_structure.Vec3
-                clustered_up: plant_structure.Vec3
-                clustered_position: plant_structure.Vec3
-                if config.species == .Italian_Cypress {
-                    plane_up := linalg.normalize0(up * math.cos(angle) + right * math.sin(angle))
-                    plane_right := linalg.normalize0(linalg.cross(forward, plane_up))
-                    divergence := f32(.055 + .018 * f32(cluster_index % 2))
-                    clustered_forward = linalg.normalize0(
-                        forward + plane_right * divergence + plane_up * divergence * .35,
-                    )
-                    clustered_up = linalg.normalize0(
-                        plane_up - clustered_forward * linalg.dot(plane_up, clustered_forward),
-                    )
-                    clustered_position =
-                        position -
-                        forward * clustered_traits.length * (.55 + f32(cluster_index - 1) * .62) +
-                        plane_up * clustered_traits.width * .10
-                    clustered_position[1] = max(clustered_position[1], 0)
-                } else if config.species == .Lemon {
-                    shoot := -right
-                    alternate_random := config.seed ~ (u64(index + 1) * 0xbf58476d1ce4e5b9)
-                    if alternate_random == 0 do alternate_random = 1
-                    alternate_angle := f32(cluster_index) * 2.39996323 + olive_random_signed(&alternate_random) * .08
-                    clustered_forward = linalg.normalize0(
-                        forward * math.cos(alternate_angle) + up * math.sin(alternate_angle),
-                    )
-                    clustered_up = linalg.normalize0(linalg.cross(clustered_forward, shoot))
-                    clustered_position =
-                        position - shoot * clustered_traits.length * (.24 + f32(cluster_index - 1) * .22)
-                    clustered_position[1] = max(clustered_position[1], 0)
-                } else {
-                    clustered_forward = linalg.normalize0(
-                        forward * math.cos(angle) + right * math.sin(angle) + up * f32(cluster_index % 2) * .08,
-                    )
-                    clustered_up = linalg.normalize0(up - clustered_forward * linalg.dot(up, clustered_forward))
-                    clustered_position = position + clustered_forward * clustered_traits.length * .08
-                }
-                if config.species == .Rosemary {
-                    clustered_position -= forward * clustered_traits.length * (.72 + f32(cluster_index - 1) * .58)
-                    clustered_position[1] = max(clustered_position[1], 0)
-                } else if config.species == .Stone_Pine {
-                    clustered_position -= forward * clustered_traits.length * (.16 + f32(cluster_index - 1) * .14)
-                    clustered_position[1] = max(clustered_position[1], 0)
-                }
-                if climbing {
-                    clustered_position[0] = clamp(
-                        clustered_position[0],
-                        -config.support.width * .48,
-                        config.support.width * .48,
-                    )
-                    clustered_position[1] = clamp(clustered_position[1], f32(0), config.support.height * .96)
-                }
-                append(
-                    &result.plant.attachments,
-                    Attachment {
-                        kind = .Leaf,
-                        position = clustered_position,
-                        forward = clustered_forward,
-                        up = clustered_up,
-                        depth = leaf.depth,
-                        variant = clustered_variant,
-                        leaf = clustered_traits,
-                    },
-                )
-                update_bounds(&result.plant.bounds, clustered_position, &first)
-                update_leaf_bounds(
-                    &result.plant.bounds,
-                    clustered_position,
-                    clustered_forward,
-                    clustered_up,
-                    clustered_traits,
-                    &first,
-                )
-            }
-        }
+        update_bounds(&plant.bounds, position, &first)
+        if kind == .Leaf do update_leaf_bounds(&plant.bounds, position, forward, up, traits, &first)
     }
-    if habit == .Wall_Trained && len(native_graph.internodes) == 0 && len(result.plant.segments) > 0 {
-        cadence_density := config.detail == .Near ? f32(16) : config.detail == .Medium ? f32(8) : f32(4)
-        cadence_ceiling := int(math.ceil(config.support.width * config.support.height * cadence_density))
-        eligible_count := 0
-        minimum_height := config.support.height * .10
-        primary_canopy_height := config.support.height * .42
-        for segment in result.plant.segments {
-            midpoint := (segment.start + segment.end) * .5
-            midpoint_y := midpoint[1]
-            eligible := (segment.depth >= 1 && midpoint_y >= minimum_height) || midpoint_y >= primary_canopy_height
-            for exclusion in config.support.exclusions {
-                if midpoint[0] >= exclusion.minimum_x &&
-                   midpoint[0] <= exclusion.maximum_x &&
-                   midpoint[1] >= exclusion.minimum_y &&
-                   midpoint[1] <= exclusion.maximum_y {
-                    eligible = false
-                    break
-                }
-            }
-            if eligible do eligible_count += 1
-        }
-        needed := min(min(cadence_ceiling, (eligible_count + 1) / 2), attachment_limit - len(result.plant.attachments))
-        if needed > 0 {
-            accumulator := 0
-            added := 0
-            for segment, segment_index in result.plant.segments {
-                position := (segment.start + segment.end) * .5
-                midpoint_y := position[1]
-                eligible := (segment.depth >= 1 && midpoint_y >= minimum_height) || midpoint_y >= primary_canopy_height
-                for exclusion in config.support.exclusions {
-                    if position[0] >= exclusion.minimum_x &&
-                       position[0] <= exclusion.maximum_x &&
-                       position[1] >= exclusion.minimum_y &&
-                       position[1] <= exclusion.maximum_y {
-                        eligible = false
-                        break
-                    }
-                }
-                if !eligible do continue
-                accumulator += needed
-                if accumulator < eligible_count do continue
-                accumulator -= eligible_count
-                direction := linalg.normalize0(segment.end - segment.start)
-                if linalg.dot(direction, direction) < .001 do continue
-                variant := u8((config.seed + u64(segment_index * 13 + added * 7)) % 4)
-                traits := generated_leaf_traits(config.species, variant, maturity, config.detail)
-                forward, up := routed_attachment_frame(direction, position, config.support)
-                append(
-                    &result.plant.attachments,
-                    Attachment {
-                        kind = .Leaf,
-                        position = position,
-                        forward = forward,
-                        up = up,
-                        depth = segment.depth,
-                        variant = variant,
-                        leaf = traits,
-                    },
-                )
-                update_bounds(&result.plant.bounds, position, &first)
-                update_leaf_bounds(&result.plant.bounds, position, forward, up, traits, &first)
-                added += 1
-                if added == needed do break
-            }
-        }
+
+    if !generated_graph_adopt_native(plant, &graph, profile) {
+        destroy(&result)
+        result.error = .Interpretation_Failed
+        return result
     }
-    finalize_segment_topology(&result.plant, config.seed, config.species)
-    if len(native_graph.internodes) > 0 {
-        generated_graph_adopt_native(&result.plant, &native_graph, profile)
-    }
-    generation_workspace_dispose_interpreted(&interpreted.plant)
+    generation_workspace_commit(workspace, plant)
     return result
 }

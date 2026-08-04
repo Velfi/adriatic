@@ -4,6 +4,26 @@ import plant_structure "../plant_structure"
 import "core:math"
 import "core:math/linalg"
 
+update_bounds :: proc(bounds: ^Bounds, point: plant_structure.Vec3, first: ^bool) {
+    if first^ {
+        bounds.minimum = point
+        bounds.maximum = point
+        first^ = false
+        return
+    }
+    bounds.minimum = linalg.min(bounds.minimum, point)
+    bounds.maximum = linalg.max(bounds.maximum, point)
+}
+
+generated_stable_id :: #force_inline proc(seed: u64, domain: u64, index: int) -> u64 {
+    state := seed ~ domain ~ (u64(index) + 1) * 0x9e3779b97f4a7c15
+    return plant_structure.random_next(&state)
+}
+
+olive_random_signed :: proc(random: ^u64) -> f32 {
+    return f32(plant_structure.random_next(random) >> 40) / f32(1 << 24) * 2 - 1
+}
+
 generated_graph_organ_kind :: #force_inline proc(kind: Attachment_Kind) -> Architecture_Organ {
     switch kind {
     case .Leaf:
@@ -138,18 +158,18 @@ generated_graph_adopt_native :: proc(plant: ^Generated_Plant, graph: ^Plant_Grap
     if plant == nil || graph == nil do return false
     if len(graph.internodes) != len(plant.segments) || len(graph.organs) != len(plant.attachments) do return false
 
-    delete(plant.segment_parents)
-    delete(plant.segment_axes)
-    delete(plant.segment_ids)
-    delete(plant.axis_parents)
-    delete(plant.axis_roles)
-    delete(plant.axis_orientations)
-    delete(plant.attachment_ids)
+    clear(&plant.segment_parents)
+    clear(&plant.segment_axes)
+    clear(&plant.segment_ids)
+    clear(&plant.axis_parents)
+    clear(&plant.axis_roles)
+    clear(&plant.axis_orientations)
+    clear(&plant.attachment_ids)
     destroy_graph(&plant.graph)
 
-    plant.segment_parents = make([dynamic]int, 0, len(graph.internodes))
-    plant.segment_axes = make([dynamic]int, 0, len(graph.internodes))
-    plant.segment_ids = make([dynamic]u64, 0, len(graph.internodes))
+    _ = non_zero_reserve(&plant.segment_parents, len(graph.internodes))
+    _ = non_zero_reserve(&plant.segment_axes, len(graph.internodes))
+    _ = non_zero_reserve(&plant.segment_ids, len(graph.internodes))
     for &internode, index in graph.internodes {
         internode.start[0] *= profile.width_scale
         internode.start[1] *= profile.height_scale
@@ -169,9 +189,9 @@ generated_graph_adopt_native :: proc(plant: ^Generated_Plant, graph: ^Plant_Grap
         internode.radius_end = plant.segments[index].radius_end
     }
 
-    plant.axis_parents = make([dynamic]int, 0, len(graph.axes))
-    plant.axis_roles = make([dynamic]Axis_Role, 0, len(graph.axes))
-    plant.axis_orientations = make([dynamic]Axis_Orientation, 0, len(graph.axes))
+    _ = non_zero_reserve(&plant.axis_parents, len(graph.axes))
+    _ = non_zero_reserve(&plant.axis_roles, len(graph.axes))
+    _ = non_zero_reserve(&plant.axis_orientations, len(graph.axes))
     for &axis in graph.axes {
         axis.age = plant.maturity
         append(&plant.axis_parents, axis.parent_axis)
@@ -179,7 +199,7 @@ generated_graph_adopt_native :: proc(plant: ^Generated_Plant, graph: ^Plant_Grap
         append(&plant.axis_orientations, axis.orientation)
     }
 
-    plant.attachment_ids = make([dynamic]u64, 0, len(graph.organs))
+    _ = non_zero_reserve(&plant.attachment_ids, len(graph.organs))
     for &organ, index in graph.organs {
         attachment := plant.attachments[index]
         if attachment.kind != .Leaf {

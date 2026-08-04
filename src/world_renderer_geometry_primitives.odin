@@ -140,6 +140,15 @@ world_frame_geometry_buffers_ensure :: proc(frame: int) -> bool {
     }
     if !world_host_buffer_ensure(
         ctx,
+        &world_renderer.plant_vertex[frame],
+        vk.DeviceSize(len(world_renderer.plant_vertices) * size_of(Plant_Vertex)),
+        {.VERTEX_BUFFER},
+        "plant vertex buffer",
+    ) {
+        return false
+    }
+    if !world_host_buffer_ensure(
+        ctx,
         &world_renderer.instance_index[frame],
         vk.DeviceSize(len(world_renderer.instance_indices) * size_of(u32)),
         {.INDEX_BUFFER},
@@ -178,6 +187,9 @@ world_instance_meshes_clear :: proc() {
     clear(&world_renderer.instance_vertices)
     clear(&world_renderer.instance_indices)
     clear(&world_renderer.instance_flattened)
+    for &mesh in world_renderer.plant_meshes do delete(mesh.instances)
+    clear(&world_renderer.plant_meshes)
+    clear(&world_renderer.plant_vertices)
     generated_plant_middle_branch_mesh = -1
     generated_plant_middle_clump_mesh = -1
     generated_plant_leaf_meshes = {}
@@ -185,6 +197,7 @@ world_instance_meshes_clear :: proc() {
 
 world_instance_mesh_instances_clear :: proc() {
     for &mesh in world_renderer.instance_meshes do clear(&mesh.instances)
+    for &mesh in world_renderer.plant_meshes do clear(&mesh.instances)
     clear(&world_renderer.instance_flattened)
 }
 
@@ -234,6 +247,10 @@ world_instance_mesh_emit :: proc(mesh_index: int, instance: World_Mesh_Instance)
 world_instances_flatten :: proc() {
     clear(&world_renderer.instance_flattened)
     for &mesh in world_renderer.instance_meshes {
+        mesh.first_instance = u32(len(world_renderer.instance_flattened))
+        append(&world_renderer.instance_flattened, ..mesh.instances[:])
+    }
+    for &mesh in world_renderer.plant_meshes {
         mesh.first_instance = u32(len(world_renderer.instance_flattened))
         append(&world_renderer.instance_flattened, ..mesh.instances[:])
     }

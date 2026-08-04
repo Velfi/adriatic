@@ -1,8 +1,6 @@
 package plants
 
 import plant_structure "../plant_structure"
-import "core:math"
-import "core:math/linalg"
 
 Axis_Role :: enum u8 {
     Leader,
@@ -157,32 +155,4 @@ graph_add_organ :: proc(
     render_depth: int = 0,
 ) {
     append(&graph.organs, Organ_Site{internode, fraction, kind, forward, up, variant, render_depth, 0})
-}
-
-graph_compile :: proc(graph: ^Plant_Graph) -> plant_structure.Interpret_Result {
-    result: plant_structure.Interpret_Result
-    architecture_result_begin(&result)
-    if graph == nil do return result
-    for internode in graph.internodes {
-        append(
-            &result.plant.segments,
-            plant_structure.Segment {
-                internode.start,
-                internode.end,
-                internode.radius_start,
-                internode.radius_end,
-                internode.render_depth,
-            },
-        )
-    }
-    for organ in graph.organs {
-        if organ.internode < 0 || organ.internode >= len(graph.internodes) do continue
-        internode := graph.internodes[organ.internode]
-        position := internode.start + (internode.end - internode.start) * clamp(organ.fraction, f32(0), f32(1))
-        append(
-            &result.plant.leaves,
-            plant_structure.Attachment_Anchor{position, organ.forward, organ.up, organ.render_depth},
-        )
-    }
-    return result
 }

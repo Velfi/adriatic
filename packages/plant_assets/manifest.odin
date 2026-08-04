@@ -43,8 +43,44 @@ PLANT_ASSET_MANIFEST :: [?]Plant_Asset_Request {
     {species = .Golden_Torch_Cactus, seed = 1039, maturity_step = PLANT_MATURITY_STEPS, habit = .Free_Standing},
 }
 
+// Returns every support-independent request whose topology is selected from a
+// bounded production set. The catalog references above are reviewed visual
+// anchors. Residence pots and airport planters are the two production call
+// sites whose generation keys are finite; settlement plans, patios, farms,
+// cemeteries, and groves derive seeds from world data and intentionally use the
+// runtime compiler.
+plant_asset_manifest_requests :: proc(allocator := context.allocator) -> [dynamic]Plant_Asset_Request {
+    result := make([dynamic]Plant_Asset_Request, 0, len(PLANT_ASSET_MANIFEST) + 72, allocator)
+    for request in PLANT_ASSET_MANIFEST do append(&result, request)
+
+    for bounded_seed in 0 ..< 32 {
+        species := bounded_seed & 3 == 0 ? plants.Species.Agapanthus : .Pelargonium
+        for side in ([2]int{-1, 1}) {
+            seed := u64(bounded_seed) ~ u64(side + 1) << 8 ~ 0x5245535f504f54
+            append(&result, Plant_Asset_Request {
+                species = species,
+                seed = seed,
+                maturity_step = 4, // world_renderer_architecture_entry_props: .86
+                habit = .Free_Standing,
+            })
+        }
+    }
+
+    for sign_key in ([2]u64{0x100, 0x200}) {
+        for planter_index in 0 ..< 4 {
+            append(&result, Plant_Asset_Request {
+                species = planter_index & 1 == 0 ? .Oleander : .Lavender,
+                seed = u64(0xa17c_ade0) ~ u64(planter_index) ~ sign_key,
+                maturity_step = 4, // world_renderer_characters_signs: .82
+                habit = .Free_Standing,
+            })
+        }
+    }
+    return result
+}
+
 plant_asset_manifest_valid :: proc() -> bool {
-    manifest := PLANT_ASSET_MANIFEST
+    manifest := plant_asset_manifest_requests(context.temp_allocator)
     for request, index in manifest {
         if request.habit != .Free_Standing || plants.default_habit(request.species) != .Free_Standing do return false
         for previous in 0 ..< index {

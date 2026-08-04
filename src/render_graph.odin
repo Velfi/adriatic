@@ -19,6 +19,7 @@ Render_Graph_Context :: struct {
     bougainvillea_buffer:     ^engine.Vk_Buffer,
     grass_instance_buffer:    ^engine.Vk_Buffer,
     instance_vertex_buffer:   ^engine.Vk_Buffer,
+    plant_vertex_buffer:      ^engine.Vk_Buffer,
     instance_index_buffer:    ^engine.Vk_Buffer,
     instance_data_buffer:     ^engine.Vk_Buffer,
     wing_trail_vertex_buffer: ^engine.Vk_Buffer,
@@ -108,13 +109,46 @@ render_graph_geometry :: proc(user_data: rawptr) {
             )
         }
     }
-    if len(world_renderer.instance_flattened) > 0 {
+    has_world_instances := false
+    for mesh in world_renderer.instance_meshes {
+        if len(mesh.instances) > 0 {
+            has_world_instances = true
+            break
+        }
+    }
+    if has_world_instances {
         vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.instance_pipelines[ctx.pipeline_index])
         buffers := [2]vk.Buffer{ctx.instance_vertex_buffer.handle, ctx.instance_data_buffer.handle}
         offsets := [2]vk.DeviceSize{0, 0}
         vk.CmdBindVertexBuffers(cmd, 0, 2, raw_data(buffers[:]), raw_data(offsets[:]))
         vk.CmdBindIndexBuffer(cmd, ctx.instance_index_buffer.handle, 0, .UINT32)
         for mesh in world_renderer.instance_meshes {
+            if len(mesh.instances) == 0 do continue
+            vk.CmdDrawIndexed(
+                cmd,
+                mesh.index_count,
+                u32(len(mesh.instances)),
+                mesh.first_index,
+                i32(mesh.first_vertex),
+                mesh.first_instance,
+            )
+        }
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.pipelines[ctx.pipeline_index])
+    }
+    has_plant_instances := false
+    for mesh in world_renderer.plant_meshes {
+        if len(mesh.instances) > 0 {
+            has_plant_instances = true
+            break
+        }
+    }
+    if has_plant_instances {
+        vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.plant_pipelines[ctx.pipeline_index])
+        buffers := [2]vk.Buffer{ctx.plant_vertex_buffer.handle, ctx.instance_data_buffer.handle}
+        offsets := [2]vk.DeviceSize{0, 0}
+        vk.CmdBindVertexBuffers(cmd, 0, 2, raw_data(buffers[:]), raw_data(offsets[:]))
+        vk.CmdBindIndexBuffer(cmd, ctx.instance_index_buffer.handle, 0, .UINT32)
+        for mesh in world_renderer.plant_meshes {
             if len(mesh.instances) == 0 do continue
             vk.CmdDrawIndexed(
                 cmd,
@@ -289,8 +323,7 @@ render_graph_terrain :: proc(user_data: rawptr) {
        (menu_scene_current(world_renderer.editor) == .Customization ||
                world_renderer.editor.vehicle_showcase_scene ||
                world_renderer.editor.wildflower_lab_scene ||
-               (lab_scene_replaces_world(world_renderer.editor) &&
-                !world_renderer.editor.lab_flat_terrain.enabled)) {
+               (lab_scene_replaces_world(world_renderer.editor) && !world_renderer.editor.lab_flat_terrain.enabled)) {
         return
     }
     cmd := ctx.pass.frame.command_buffer

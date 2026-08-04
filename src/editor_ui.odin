@@ -819,7 +819,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         }
         return "Click terrain to place the first road node; K cycles road surfaces."
     }
-    if editor.architecture_paint_mode do return "Drag to orient one settlement piece; release to stamp. Right-drag erases."
+    if editor.architecture_paint_mode do return "Drag to rotate the building; release to place."
     if editor.curve_drawing do return editor.curve_cliff_mode ? "Draw the cliff path; release to commit." : "Draw the ridge path; release to commit."
     if editor.formation_brush_painting do return "Release to commit the brush stroke."
     if editor.structure_placing do return "Drag the footprint; wheel zooms; Shift changes size; Alt changes height."
@@ -1639,7 +1639,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds := editor_ui_slider_bounds(layout, row)
         half := (bounds.width - 6) * .5
         ui_draw_text(.Label, "MODE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "CITY BRUSH", !editor.airport_stamp_mode)
+        editor_ui_panel_button({bounds.x, bounds.y + 24, half, 30}, "BUILDING", !editor.airport_stamp_mode)
         editor_ui_panel_button({bounds.x + half + 6, bounds.y + 24, half, 30}, "AIRPORT", editor.airport_stamp_mode)
         row += 1
         if editor.airport_stamp_mode {
@@ -1652,66 +1652,19 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             ui_draw_text(.Data, label, {bounds.x, bounds.y + 38}, .4, color)
             break
         }
-        bounds = editor_ui_slider_bounds(layout, row)
-        half = (bounds.width - 6) * .5
-        ui_draw_text(.Label, "SHAPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button(
-            {bounds.x, bounds.y + 24, half, 30},
-            "SQUARE",
-            editor.architecture_brush_shape == .Square,
-        )
-        editor_ui_panel_button(
-            {bounds.x + half + 6, bounds.y + 24, half, 30},
-            "RECTANGLE",
-            editor.architecture_brush_shape == .Rectangle,
-        )
-        editor_ui_panel_button(
-            {bounds.x, bounds.y + 58, half, 30},
-            "CIRCLE",
-            editor.architecture_brush_shape == .Circle,
-        )
-        editor_ui_panel_button(
-            {bounds.x + half + 6, bounds.y + 58, half, 30},
-            "MACARONI",
-            editor.architecture_brush_shape == .Macaroni,
-        )
-        row += 2
-        bounds = editor_ui_slider_bounds(layout, row)
-        third := (bounds.width - 12) / 3
-        ui_draw_text(.Label, "PRESET", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button(
-            {bounds.x, bounds.y + 24, third, 30},
-            "SMALL",
-            editor.architecture_brush_preset == .Small,
-        )
-        editor_ui_panel_button(
-            {bounds.x + third + 6, bounds.y + 24, third, 30},
-            "MEDIUM",
-            editor.architecture_brush_preset == .Medium,
-        )
-        editor_ui_panel_button(
-            {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30},
-            "LARGE",
-            editor.architecture_brush_preset == .Large,
-        )
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", editor.building_generator_width, 6, 36, 1)
         row += 1
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "DENSITY",
-            editor.architecture_brush_strength,
-            .02,
-            1,
-            2,
-        )
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", editor.building_generator_depth, 6, 40, 1)
         row += 1
-        editor_ui_slider_draw(
-            editor_ui_slider_bounds(layout, row),
-            "HARDNESS",
-            editor.architecture_brush_hardness,
-            0,
-            1,
-            2,
-        )
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.building_generator_height, 4, 48, 1)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CHARACTER", editor.building_generator_density, 0, 1, 2)
+        row += 1
+        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "VARIATION", editor.building_generator_variation, 1, 256, 0)
+        row += 1
+        status: cstring = editor.building_generator_preview_valid ? "CLICK TO PLACE BUILDING" : "BUILDING DOES NOT FIT"
+        color := editor.building_generator_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+        ui_draw_text(.Data, status, {editor_ui_slider_bounds(layout, row).x, editor_ui_slider_bounds(layout, row).y}, .4, color)
         row += 1
     case .Marina:
         bounds := editor_ui_slider_bounds(layout, row)
@@ -2638,33 +2591,16 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         }
         row += 1
         if editor.airport_stamp_mode do break
-        bounds = editor_ui_slider_bounds(layout, row)
-        half = (bounds.width - 6) * .5
-        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, half, 30}) {
-            editor.architecture_brush_shape = .Square
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 24, half, 30}) {
-            editor.architecture_brush_shape = .Rectangle
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 58, half, 30}) {
-            editor.architecture_brush_shape = .Circle
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y + 58, half, 30}) {
-            editor.architecture_brush_shape = .Macaroni
-        }
+        _ = editor_ui_slider_input(editor, layout, 7, row, &editor.building_generator_width, 6, 36, 1)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 10, row, &editor.building_generator_depth, 6, 40, 1)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 17, row, &editor.building_generator_height, 4, 48, 1)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 18, row, &editor.building_generator_density, 0, 1, .01)
+        row += 1
+        _ = editor_ui_slider_input(editor, layout, 19, row, &editor.building_generator_variation, 1, 256, 1)
         row += 2
-        bounds = editor_ui_slider_bounds(layout, row)
-        third := (bounds.width - 12) / 3
-        if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y + 24, third, 30}) {
-            editor.architecture_brush_preset = .Small
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
-            editor.architecture_brush_preset = .Medium
-        } else if pressed &&
-           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
-            editor.architecture_brush_preset = .Large
-        }
-        row += 1
-        _ = editor_ui_slider_input(editor, layout, 7, row, &editor.architecture_brush_strength, .02, 1, .01)
-        row += 1
-        _ = editor_ui_slider_input(editor, layout, 10, row, &editor.architecture_brush_hardness, 0, 1, .01)
-        row += 1
     case .Marina:
         // The footprint is fixed by the real-size marina design.
         row += 0

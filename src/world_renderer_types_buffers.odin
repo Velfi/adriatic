@@ -63,6 +63,23 @@ World_Vertex :: struct {
     uv:       [2]f32,
 }
 
+Plant_Vertex :: struct {
+    position:         [3]f32,
+    color:            [4]f32,
+    kind:             World_Material_Kind,
+    normal:           [3]f32,
+    material:         [2]f32,
+    uv:               [2]f32,
+    primary_anchor:   [3]f32,
+    secondary_anchor: [3]f32,
+    axis_position:    f32,
+    stiffness:        f32,
+    leaf_pivot:       [3]f32,
+    flutter:          f32,
+    hierarchy_depth:  u32,
+    phase:            f32,
+}
+
 World_Land_Surface_Sample :: struct {
     x, z, height: f32,
 }
@@ -164,6 +181,18 @@ World_Instance_Mesh :: struct {
     index_capacity:  u32,
     first_instance:  u32,
     casts_shadow:    bool,
+    instances:       [dynamic]World_Mesh_Instance,
+}
+
+Plant_Instance_Mesh :: struct {
+    first_vertex:    u32,
+    vertex_capacity: u32,
+    first_index:     u32,
+    index_count:     u32,
+    index_capacity:  u32,
+    first_instance:  u32,
+    casts_shadow:    bool,
+    available:       bool,
     instances:       [dynamic]World_Mesh_Instance,
 }
 
@@ -382,6 +411,7 @@ World_Renderer :: struct {
     bougainvillea_pipelines:                      [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     grass_pipelines:                              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     instance_pipelines:                           [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
+    plant_pipelines:                              [render3d.COLOR_PIPELINE_VARIANT_COUNT]vk.Pipeline,
     layout:                                       vk.PipelineLayout,
     sky_layout:                                   vk.PipelineLayout,
     foliage_layout:                               vk.PipelineLayout,
@@ -420,6 +450,7 @@ World_Renderer :: struct {
     bougainvillea_instance:                       [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     grass_instance:                               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     instance_vertex:                              [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+    plant_vertex:                                 [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     instance_index:                               [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     instance_data:                                [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
     wing_trail_vertex:                            [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -455,9 +486,11 @@ World_Renderer :: struct {
     marsh_instances:                              [dynamic]Grass_Instance,
     terrain_particle_vertices:                    [dynamic]Foliage_Vertex,
     instance_vertices:                            [dynamic]World_Vertex,
+    plant_vertices:                               [dynamic]Plant_Vertex,
     instance_indices:                             [dynamic]u32,
     instance_flattened:                           [dynamic]World_Mesh_Instance,
     instance_meshes:                              [dynamic]World_Instance_Mesh,
+    plant_meshes:                                 [dynamic]Plant_Instance_Mesh,
     middle_tree_shadow_proxies:                   [dynamic]Middle_Tree_Shadow_Proxy,
     wing_trail_vertices:                          [dynamic]World_Vertex,
     wing_trail_indices:                           [dynamic]u16,

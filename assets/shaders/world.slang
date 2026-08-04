@@ -84,6 +84,29 @@ struct InstanceVertexInput {
     float4 plant_motion : TEXCOORD12;
 };
 
+struct PlantVertexInput {
+    float3 position : POSITION;
+    float4 color : COLOR0;
+    uint kind : TEXCOORD0;
+    float3 normal : NORMAL0;
+    float2 material : TEXCOORD1;
+    float2 uv : TEXCOORD5;
+    float3 primary_anchor : TEXCOORD6;
+    float3 secondary_anchor : TEXCOORD7;
+    float2 axis_position_stiffness : TEXCOORD8;
+    float3 leaf_pivot : TEXCOORD9;
+    float flutter : TEXCOORD10;
+    uint hierarchy_depth : TEXCOORD11;
+    float structural_phase : TEXCOORD12;
+    float4 basis_x_translation_x : TEXCOORD13;
+    float4 basis_y_translation_y : TEXCOORD14;
+    float4 basis_z_translation_z : TEXCOORD15;
+    float4 instance_color : TEXCOORD16;
+    float4 normal_override : TEXCOORD17;
+    float4 plant_root_compliance : TEXCOORD18;
+    float4 plant_motion : TEXCOORD19;
+};
+
 struct VertexOutput {
     float4 position : SV_Position;
     float4 color : COLOR0;
@@ -386,9 +409,76 @@ VertexOutput instance_vertex_main(InstanceVertexInput input) {
                    far_plane * near_plane / (far_plane - near_plane);
     output.position = float4(x, -y, clip_z, depth);
     output.color = float4(
-        srgb_to_linear(input.instance_color.rgb),
+        srgb_to_linear(input.instance_color.rgb * input.color.rgb),
         input.instance_color.a * saturate(input.plant_motion.w)
     );
+    output.depth = depth;
+    output.world_position = world_position;
+    output.kind = input.kind;
+    output.normal = world_normal;
+    output.material = input.material;
+    output.uv = input.uv;
+    return output;
+}
+
+[shader("vertex")]
+VertexOutput plant_vertex_main(PlantVertexInput input) {
+    VertexOutput output;
+    float3 basis_x = input.basis_x_translation_x.xyz;
+    float3 basis_y = input.basis_y_translation_y.xyz;
+    float3 basis_z = input.basis_z_translation_z.xyz;
+    float3 translation = float3(
+        input.basis_x_translation_x.w,
+        input.basis_y_translation_y.w,
+        input.basis_z_translation_z.w
+    );
+    float3 world_position = basis_x * input.position.x + basis_y * input.position.y + basis_z * input.position.z + translation;
+    float3 world_normal = normalize(basis_x * input.normal.x + basis_y * input.normal.y + basis_z * input.normal.z);
+    float3 primary_anchor = basis_x * input.primary_anchor.x + basis_y * input.primary_anchor.y + basis_z * input.primary_anchor.z + translation;
+    float3 secondary_anchor = basis_x * input.secondary_anchor.x + basis_y * input.secondary_anchor.y + basis_z * input.secondary_anchor.z + translation;
+
+    float2 wind = push.water.zw;
+    float wind_speed = length(wind);
+    float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+    float2 wind_across = float2(-wind_direction.y, wind_direction.x);
+    float phase = push.water.x * (.34 + wind_speed * .012) + input.plant_motion.x;
+    phase += dot(input.plant_root_compliance.xz, wind_direction) * .018;
+    float amplitude = lerp(.08, .48, saturate(wind_speed / 14.0 + push.water.y * .24));
+    amplitude *= input.plant_root_compliance.w * max(input.plant_motion.y, .05);
+    float broad = sin(phase) + sin(phase * .47 + 1.9) * .34;
+
+    float3 rooted = world_position - input.plant_root_compliance.xyz;
+    float root_weight = 1.0 - exp(-length(rooted) * .72);
+    float3 primary_offset = world_position - primary_anchor;
+    float primary_weight = 1.0 - exp(-length(primary_offset) * .92);
+    float3 secondary_offset = world_position - secondary_anchor;
+    float depth_weight = saturate(float(input.hierarchy_depth) / 4.0);
+    float secondary_weight = (1.0 - exp(-length(secondary_offset) * 1.35)) * depth_weight;
+    float structural_compliance = lerp(.35, 1.15, saturate(1.0 - input.axis_position_stiffness.y));
+    float2 displacement =
+        wind_direction * broad * amplitude * structural_compliance * (root_weight * .55 + primary_weight * .32 + secondary_weight * .18) +
+        wind_across * sin(phase * 1.31 + input.structural_phase + 4.2) * amplitude * structural_compliance * .07 * (primary_weight + secondary_weight);
+    world_position += float3(displacement.x, -amplitude * structural_compliance * .018 * root_weight, displacement.y);
+
+    if (input.flutter > 0.0) {
+        float3 pivot = basis_x * input.leaf_pivot.x + basis_y * input.leaf_pivot.y + basis_z * input.leaf_pivot.z + translation;
+        float3 axis = normalize(basis_x);
+        float angle =
+            sin(phase * 3.1 + input.structural_phase * 2.7) *
+            amplitude * input.flutter * input.plant_motion.z * .12;
+        float3 from_pivot = world_position - pivot;
+        world_position = pivot + from_pivot * cos(angle) + cross(axis, from_pivot) * sin(angle) + axis * dot(axis, from_pivot) * (1.0 - cos(angle));
+    }
+
+    float3 view = world_position - push.camera_position.xyz;
+    float depth = dot(view, push.camera_forward.xyz);
+    float x = dot(view, push.camera_right.xyz) * push.projection.x / push.projection.y;
+    float y = dot(view, push.camera_up.xyz) * push.projection.x;
+    float near_plane = push.camera_position.w;
+    float far_plane = push.camera_right.w;
+    float clip_z = far_plane / (far_plane - near_plane) * depth - far_plane * near_plane / (far_plane - near_plane);
+    output.position = float4(x, -y, clip_z, depth);
+    output.color = float4(srgb_to_linear(input.instance_color.rgb * input.color.rgb), input.instance_color.a * saturate(input.plant_motion.w));
     output.depth = depth;
     output.world_position = world_position;
     output.kind = input.kind;

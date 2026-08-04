@@ -203,6 +203,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
     if !render3d.create_color_pipeline_variants(ctx, &instance_info, .D32_SFLOAT, &world_renderer.instance_pipelines) {
         return false
     }
+    if !world_renderer_create_plant_pipeline(ctx, stages, info) {
+        return false
+    }
     transparent_depth := depth
     transparent_depth.depthWriteEnable = false
     transparent_info := info

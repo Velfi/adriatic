@@ -24,10 +24,11 @@ with capacity utilization. These counters make geometry-heavy changes auditable:
 a passing frame time is not sufficient if the scene silently reaches a mesh
 capacity and drops later geometry.
 
-The built-in scene registry currently supports `editor`, `foliage`,
-`foliage_forest`, `foliage_understory`, `foliage_stress`, `formations`, `roads`,
-and `architecture`. Add a deterministic scene seed in `benchmark_seed_scene`
-and a configuration entry to extend the suite.
+The built-in scene registry includes the general renderer scenarios plus the
+plant-specific `plant_gallery`, `plant_transition`, `plant_transition_oak`,
+`olive_orchard`, `plant_climbers`, and `plant_runtime_max` workloads. Add a
+deterministic scene seed in `benchmark_seed_scene` and a configuration entry to
+extend the suite.
 
 The 60 FPS contract is expressed primarily through the 16.667 ms median and
 p95 budgets. The looser p99 and maximum limits retain evidence of isolated

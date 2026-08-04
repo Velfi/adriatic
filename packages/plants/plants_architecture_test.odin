@@ -40,48 +40,44 @@ site_context_signature_is_stable_and_environment_sensitive :: proc(t: ^testing.T
 }
 
 @(test)
-architecture_compile_preserves_renderer_depths :: proc(t: ^testing.T) {
+architecture_graph_preserves_renderer_depths :: proc(t: ^testing.T) {
     graph: Plant_Graph
     axis := graph_add_axis(&graph, -1, -1, .Leader, .Orthotropic, 0, 1, 1)
     unit := graph_begin_growth_unit(&graph, axis, 0, 1)
     internode := graph_add_internode(&graph, axis, unit, -1, {0, 0, 0}, {0, 1, 0}, .1, .05, 1, -23)
     graph_add_organ(&graph, internode, 1, .Leaf, {0, 1, 0}, {0, 0, 1}, 0, -23)
-    compiled := graph_compile(&graph)
     defer destroy_graph(&graph)
-    defer plant_structure.destroy_plant(&compiled.plant)
-    testing.expect_value(t, compiled.plant.segments[0].depth, -23)
-    testing.expect_value(t, compiled.plant.leaves[0].depth, -23)
+    testing.expect_value(t, graph.internodes[0].render_depth, -23)
+    testing.expect_value(t, graph.organs[0].render_depth, -23)
 }
 
 @(test)
 reproductive_organs_use_explicit_species_sites :: proc(t: ^testing.T) {
     cases := []struct {
         species: Species,
-        marker:  int,
-        source:  plant_structure.Interpret_Result,
+        kind:    Architecture_Organ,
     } {
-        {.Oleander, -9, oleander_architecture(73, 1, .Near)},
-        {.Wisteria, -10, wisteria_architecture(73, 1, .Near)},
-        {.Climbing_Rose, -11, climbing_rose_architecture(73, 1, .Near)},
-        {.Strawberry_Tree, -12, strawberry_tree_architecture(73, 1, 3)},
-        {.Carob, -13, carob_architecture(73, 1, 3)},
+        {.Oleander, .Flower},
+        {.Wisteria, .Flower},
+        {.Climbing_Rose, .Flower},
+        {.Strawberry_Tree, .Flower},
+        {.Carob, .Fruit},
     }
-    for &item in cases {
+    support := Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+    }
+    for item in cases {
+        habit := default_habit(item.species)
+        support_pointer: ^Support_Surface
+        if habit != .Free_Standing do support_pointer = &support
+        generated := generate({item.species, 73, 1, .Near, habit, support_pointer, {}})
+        testing.expect_value(t, generated.error, Generate_Error.None)
         found := false
-        for leaf, index in item.source.plant.leaves {
-            if leaf.depth != item.marker do continue
-            kind := generated_attachment_kind(item.species, 73, index, 1, .Near, leaf.depth)
-            testing.expectf(
-                t,
-                kind == .Flower || kind == .Fruit,
-                "%s marker routed to %v",
-                species_name(item.species),
-                kind,
-            )
-            found = true
-        }
+        for organ in generated.plant.graph.organs do found = found || organ.kind == item.kind
         testing.expectf(t, found, "%s has no explicit reproductive site", species_name(item.species))
-        plant_structure.destroy_plant(&item.source.plant)
+        destroy(&generated)
     }
 }
 
@@ -167,35 +163,51 @@ generated_plants_own_stable_botanical_graphs_across_maturity :: proc(t: ^testing
 }
 
 @(test)
-generation_workspace_reuses_capacity_without_stale_topology :: proc(t: ^testing.T) {
-    generation_workspace_destroy_thread()
-    defer generation_workspace_destroy_thread()
-    generation_workspace_enabled_for_test = true
+generation_emits_authored_organs_without_flat_policy_reclassification :: proc(t: ^testing.T) {
+    support := Support_Surface{width = 3, height = 2}
+    generated := generate({species = .Grapevine, seed = 551, maturity = 1, detail = .Near, habit = .Trellised, support = &support})
+    defer destroy(&generated)
+    testing.expect(t, generated.error == .None)
+    testing.expect_value(t, len(generated.plant.graph.organs), len(generated.plant.attachments))
+    for organ, index in generated.plant.graph.organs {
+        testing.expect_value(t, generated_graph_organ_kind(generated.plant.attachments[index].kind), organ.kind)
+        testing.expect_value(t, generated.plant.attachment_ids[index], organ.stable_id)
+    }
+}
 
-    warm := generate({species = .Olive, seed = 551, maturity = 1, detail = .Near})
-    testing.expect(t, warm.error == .None)
-    warm_segments := len(warm.plant.segments)
-    warm_organs := len(warm.plant.attachments)
-    destroy(&warm)
-    segment_capacity := cap(generation_thread_workspace.segments)
-    leaf_capacity := cap(generation_thread_workspace.leaves)
-    testing.expect(t, segment_capacity >= GENERATION_WORKSPACE_INITIAL_SEGMENTS)
-    testing.expect(t, leaf_capacity >= GENERATION_WORKSPACE_INITIAL_LEAVES)
+@(test)
+generation_workspace_reuses_graph_and_compiled_output_capacity :: proc(t: ^testing.T) {
+    workspace: Generation_Workspace
+    defer generation_workspace_destroy(&workspace)
+    config := Generate_Config{species = .Olive, seed = 808, maturity = 1, detail = .Near}
+    testing.expect(t, generation_workspace_begin(&workspace))
+    first := generate(config)
+    generation_workspace_end(&workspace)
+    testing.expect(t, first.error == .None)
+    segment_count, organ_count := len(first.plant.segments), len(first.plant.attachments)
+    testing.expect(t, workspace.borrowed)
+    destroy(&first)
+    testing.expect(t, !workspace.borrowed)
+    capacities := [4]int {
+        cap(workspace.graph.internodes),
+        cap(workspace.graph.organs),
+        cap(workspace.segments),
+        cap(workspace.attachments),
+    }
+    testing.expect(t, capacities[0] >= segment_count && capacities[1] >= organ_count)
+    testing.expect(t, capacities[2] >= segment_count && capacities[3] >= organ_count)
 
-    repeated := generate({species = .Olive, seed = 551, maturity = 1, detail = .Near})
-    testing.expect(t, repeated.error == .None)
-    testing.expect_value(t, len(repeated.plant.segments), warm_segments)
-    testing.expect_value(t, len(repeated.plant.attachments), warm_organs)
-    destroy(&repeated)
-    testing.expect_value(t, cap(generation_thread_workspace.segments), segment_capacity)
-    testing.expect_value(t, cap(generation_thread_workspace.leaves), leaf_capacity)
-
-    small := generate({species = .Echeveria, seed = 17, maturity = .35, detail = .Far})
-    testing.expect(t, small.error == .None)
-    testing.expect(t, len(small.plant.segments) < warm_segments)
-    destroy(&small)
-    testing.expect_value(t, cap(generation_thread_workspace.segments), segment_capacity)
-    testing.expect_value(t, cap(generation_thread_workspace.leaves), leaf_capacity)
+    testing.expect(t, generation_workspace_begin(&workspace))
+    second := generate(config)
+    generation_workspace_end(&workspace)
+    testing.expect(t, second.error == .None)
+    testing.expect_value(t, len(second.plant.segments), segment_count)
+    testing.expect_value(t, len(second.plant.attachments), organ_count)
+    destroy(&second)
+    testing.expect_value(t, cap(workspace.graph.internodes), capacities[0])
+    testing.expect_value(t, cap(workspace.graph.organs), capacities[1])
+    testing.expect_value(t, cap(workspace.segments), capacities[2])
+    testing.expect_value(t, cap(workspace.attachments), capacities[3])
 }
 
 @(test)
@@ -319,6 +331,85 @@ native_shrub_graph_keeps_renewal_and_flowering_axes :: proc(t: ^testing.T) {
     testing.expect(t, has_flowering)
     testing.expect(t, has_flower)
     testing.expect_value(t, len(generated.plant.graph.organs), len(generated.plant.attachments))
+}
+
+@(test)
+catalog_generation_retains_authored_graph_identity :: proc(t: ^testing.T) {
+    support := Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = -2.7,
+    }
+    for species_index in 0 ..< SPECIES_COUNT {
+        species := Species(species_index)
+        habit := default_habit(species)
+        support_pointer: ^Support_Surface
+        if habit != .Free_Standing do support_pointer = &support
+        younger := generate({species, 73, .55, .Near, habit, support_pointer, {}})
+        older := generate({species, 73, 1, .Near, habit, support_pointer, {}})
+        testing.expectf(
+            t,
+            younger.error == .None && older.error == .None,
+            "%s graph generation failed",
+            species_name(species),
+        )
+        if younger.error == .None && older.error == .None {
+            testing.expect_value(t, len(younger.plant.graph.internodes), len(younger.plant.segments))
+            testing.expect_value(t, len(younger.plant.graph.organs), len(younger.plant.attachments))
+            testing.expect(t, len(younger.plant.graph.axes) > 0)
+            testing.expect(t, len(older.plant.graph.axes) >= len(younger.plant.graph.axes))
+            if len(younger.plant.graph.axes) > 0 {
+                testing.expect(t, younger.plant.graph.axes[0].stable_id != 0)
+                testing.expect_value(t, younger.plant.graph.axes[0].stable_id, older.plant.graph.axes[0].stable_id)
+            }
+            if habit != .Free_Standing {
+                for axis in younger.plant.graph.axes {
+                    testing.expectf(t, axis.role == .Climber, "%s emitted non-climber axis", species_name(species))
+                }
+            }
+        }
+        destroy(&younger)
+        destroy(&older)
+    }
+}
+
+@(test)
+reduced_lods_retain_only_near_graph_identities :: proc(t: ^testing.T) {
+    support := Support_Surface {
+        width   = 8,
+        height  = 7,
+        plane_z = .1,
+        root_x  = -2.7,
+    }
+    for species_index in 0 ..< SPECIES_COUNT {
+        species := Species(species_index)
+        habit := default_habit(species)
+        support_pointer: ^Support_Surface
+        if habit != .Free_Standing do support_pointer = &support
+        near := generate({species, 73, 1, .Near, habit, support_pointer, {}})
+        medium := generate({species, 73, 1, .Medium, habit, support_pointer, {}})
+        far := generate({species, 73, 1, .Far, habit, support_pointer, {}})
+        testing.expect(t, near.error == .None && medium.error == .None && far.error == .None)
+        reduced_results: [2]^Generate_Result
+        reduced_results[0] = &medium
+        reduced_results[1] = &far
+        for reduced in reduced_results {
+            for stable_id in reduced.plant.segment_ids {
+                retained := false
+                for near_id in near.plant.segment_ids do retained = retained || near_id == stable_id
+                testing.expectf(t, retained, "%s LOD invented segment id %d", species_name(species), stable_id)
+            }
+            for stable_id in reduced.plant.attachment_ids {
+                retained := false
+                for near_id in near.plant.attachment_ids do retained = retained || near_id == stable_id
+                testing.expectf(t, retained, "%s LOD invented organ id %d", species_name(species), stable_id)
+            }
+        }
+        destroy(&near)
+        destroy(&medium)
+        destroy(&far)
+    }
 }
 
 @(test)

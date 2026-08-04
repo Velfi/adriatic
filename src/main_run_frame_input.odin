@@ -351,9 +351,9 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         } else if editor.tool == .Structure && editor.architecture_paint_mode {
             wheel := viewport_wheel
             if shift_key_down() {
-                editor.architecture_brush_strength = clamp(editor.architecture_brush_strength + wheel * .04, .02, 1)
+                editor.building_generator_height = clamp(editor.building_generator_height + wheel, f32(4), f32(48))
             } else if alt_key_down() {
-                editor.architecture_brush_hardness = clamp(editor.architecture_brush_hardness + wheel * .04, 0, 1)
+                editor.building_generator_variation = clamp(editor.building_generator_variation + wheel, f32(1), f32(256))
             }
         } else if editor.tool == .Structure && editor.climbing_leaf_paint_mode {
             wheel := viewport_wheel
