@@ -14,7 +14,7 @@ PROFILE_ODIN_FLAGS_release := -o:speed -debug
 PROFILE_DEFINE_FLAGS_release := -define:SHOW_STARTUP_MENU=true -define:MAP_DEVELOPMENT_FALLBACK=false
 
 PROFILE_ODIN_FLAGS_validation := -dynamic-map-calls -debug -o:none -sanitize:address
-PROFILE_DEFINE_FLAGS_validation :=
+PROFILE_DEFINE_FLAGS_validation := -define:TOP_ALLOC=-1
 
 PROFILE_ODIN_FLAGS_instrument := -o:minimal -debug
 PROFILE_ODIN_FLAGS_spike := -o:minimal -debug
