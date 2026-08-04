@@ -128,25 +128,61 @@ world_roads_transient :: proc(editor: ^Editor) {
     }
 }
 
-OCEAN_LOCAL_CELL :: f32(24)
-OCEAN_LOCAL_EXTENT :: f32(1800)
-OCEAN_LOCAL_DIVISIONS :: int(OCEAN_LOCAL_EXTENT * 2 / OCEAN_LOCAL_CELL)
-OCEAN_LOCAL_GRID_RESOLUTION :: OCEAN_LOCAL_DIVISIONS + 1
+OCEAN_NEAR_CELL :: f32(24)
+OCEAN_NEAR_EXTENT :: f32(1800)
+// The overview grid keeps the same vertex count as the close shoreline grid,
+// but spans the complete 8 km authored world plus its underwater margin.
+// At this zoom a roughly 58 m cell is still several pixels wide at most, while
+// the old 3.6 km grid visibly ended across an island in the lower viewport.
+OCEAN_OVERVIEW_EXTENT :: f32(4320)
+OCEAN_OVERVIEW_DISTANCE :: f32(2200)
+OCEAN_GRID_DIVISIONS :: int(OCEAN_NEAR_EXTENT * 2 / OCEAN_NEAR_CELL)
+OCEAN_GRID_RESOLUTION :: OCEAN_GRID_DIVISIONS + 1
+
+Ocean_Grid_Config :: struct {
+    center:       [2]f32,
+    cell, extent: f32,
+}
+
+@(no_instrumentation)
+world_ocean_grid_config :: #force_inline proc(editor: ^Editor) -> Ocean_Grid_Config {
+    if editor != nil && !editor.in_map && editor.editor_camera.distance >= OCEAN_OVERVIEW_DISTANCE {
+        return {
+            center = {},
+            cell   = OCEAN_OVERVIEW_EXTENT * 2 / f32(OCEAN_GRID_DIVISIONS),
+            extent = OCEAN_OVERVIEW_EXTENT,
+        }
+    }
+    target := editor.camera_pose.target
+    return {
+        center = {
+            f32(math.floor(f64(target.x / OCEAN_NEAR_CELL))) * OCEAN_NEAR_CELL,
+            f32(math.floor(f64(target.z / OCEAN_NEAR_CELL))) * OCEAN_NEAR_CELL,
+        },
+        cell   = OCEAN_NEAR_CELL,
+        extent = OCEAN_NEAR_EXTENT,
+    }
+}
 
 @(no_instrumentation)
 world_ocean_sample_grid_index :: #force_inline proc(x, z: int) -> int {
-    return z * OCEAN_LOCAL_GRID_RESOLUTION + x
+    return z * OCEAN_GRID_RESOLUTION + x
 }
 
-world_ocean_sample_grid_rebuild :: proc(editor: ^Editor, center: [2]f32, ocean_y: f32, color: canvas2d.Color) {
-    sample_count := OCEAN_LOCAL_GRID_RESOLUTION * OCEAN_LOCAL_GRID_RESOLUTION
+world_ocean_sample_grid_rebuild :: proc(
+    editor: ^Editor,
+    center: [2]f32,
+    cell, extent, ocean_y: f32,
+    color: canvas2d.Color,
+) {
+    sample_count := OCEAN_GRID_RESOLUTION * OCEAN_GRID_RESOLUTION
     if len(world_renderer.ocean_sample_grid) != sample_count {
         resize(&world_renderer.ocean_sample_grid, sample_count)
     }
-    for z in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
-        world_z := center[1] - OCEAN_LOCAL_EXTENT + f32(z) * OCEAN_LOCAL_CELL
-        for x in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
-            world_x := center[0] - OCEAN_LOCAL_EXTENT + f32(x) * OCEAN_LOCAL_CELL
+    for z in 0 ..< OCEAN_GRID_RESOLUTION {
+        world_z := center[1] - extent + f32(z) * cell
+        for x in 0 ..< OCEAN_GRID_RESOLUTION {
+            world_x := center[0] - extent + f32(x) * cell
             world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)] = world_ocean_vertex(
                 editor,
                 {world_x, ocean_y, world_z},
@@ -155,6 +191,7 @@ world_ocean_sample_grid_rebuild :: proc(editor: ^Editor, center: [2]f32, ocean_y
         }
     }
     world_renderer.ocean_sample_grid_center = center
+    world_renderer.ocean_sample_grid_cell = cell
     world_renderer.ocean_sample_grid_valid = true
 }
 
@@ -175,26 +212,27 @@ world_ocean_sample_grid_invalidate_bounds :: proc(changed: Terrain_Dirty_Bounds)
 world_ocean_sample_grid_refresh_bounds :: proc(
     editor: ^Editor,
     dirty: Terrain_Dirty_Bounds,
+    cell, extent: f32,
     ocean_y: f32,
     color: canvas2d.Color,
 ) {
     if !dirty.valid do return
-    grid_min_x := world_renderer.ocean_sample_grid_center[0] - OCEAN_LOCAL_EXTENT
-    grid_min_z := world_renderer.ocean_sample_grid_center[1] - OCEAN_LOCAL_EXTENT
-    grid_max_x := grid_min_x + OCEAN_LOCAL_CELL * f32(OCEAN_LOCAL_DIVISIONS)
-    grid_max_z := grid_min_z + OCEAN_LOCAL_CELL * f32(OCEAN_LOCAL_DIVISIONS)
+    grid_min_x := world_renderer.ocean_sample_grid_center[0] - extent
+    grid_min_z := world_renderer.ocean_sample_grid_center[1] - extent
+    grid_max_x := grid_min_x + cell * f32(OCEAN_GRID_DIVISIONS)
+    grid_max_z := grid_min_z + cell * f32(OCEAN_GRID_DIVISIONS)
     if dirty.max_x < grid_min_x || dirty.min_x > grid_max_x ||
        dirty.max_z < grid_min_z || dirty.min_z > grid_max_z {
         return
     }
-    first_x := clamp(int(math.floor(f64((dirty.min_x - OCEAN_LOCAL_CELL - grid_min_x) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
-    last_x := clamp(int(math.ceil(f64((dirty.max_x + OCEAN_LOCAL_CELL - grid_min_x) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
-    first_z := clamp(int(math.floor(f64((dirty.min_z - OCEAN_LOCAL_CELL - grid_min_z) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
-    last_z := clamp(int(math.ceil(f64((dirty.max_z + OCEAN_LOCAL_CELL - grid_min_z) / OCEAN_LOCAL_CELL))), 0, OCEAN_LOCAL_GRID_RESOLUTION - 1)
+    first_x := clamp(int(math.floor(f64((dirty.min_x - cell - grid_min_x) / cell))), 0, OCEAN_GRID_RESOLUTION - 1)
+    last_x := clamp(int(math.ceil(f64((dirty.max_x + cell - grid_min_x) / cell))), 0, OCEAN_GRID_RESOLUTION - 1)
+    first_z := clamp(int(math.floor(f64((dirty.min_z - cell - grid_min_z) / cell))), 0, OCEAN_GRID_RESOLUTION - 1)
+    last_z := clamp(int(math.ceil(f64((dirty.max_z + cell - grid_min_z) / cell))), 0, OCEAN_GRID_RESOLUTION - 1)
     for z in first_z ..< last_z + 1 {
-        world_z := grid_min_z + f32(z) * OCEAN_LOCAL_CELL
+        world_z := grid_min_z + f32(z) * cell
         for x in first_x ..< last_x + 1 {
-            world_x := grid_min_x + f32(x) * OCEAN_LOCAL_CELL
+            world_x := grid_min_x + f32(x) * cell
             world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)] = world_ocean_vertex(
                 editor,
                 {world_x, ocean_y, world_z},
@@ -207,35 +245,36 @@ world_ocean_sample_grid_refresh_bounds :: proc(
 world_ocean_sample_grid_shift :: proc(
     editor: ^Editor,
     center: [2]f32,
+    cell, extent: f32,
     ocean_y: f32,
     color: canvas2d.Color,
 ) -> bool {
     old_center := world_renderer.ocean_sample_grid_center
-    raw_x := (center[0] - old_center[0]) / OCEAN_LOCAL_CELL
-    raw_z := (center[1] - old_center[1]) / OCEAN_LOCAL_CELL
+    raw_x := (center[0] - old_center[0]) / cell
+    raw_z := (center[1] - old_center[1]) / cell
     offset := [2]int{int(math.round(f64(raw_x))), int(math.round(f64(raw_z)))}
     aligned := abs(raw_x - f32(offset[0])) <= .001 && abs(raw_z - f32(offset[1])) <= .001
-    within_grid := abs(offset[0]) < OCEAN_LOCAL_GRID_RESOLUTION && abs(offset[1]) < OCEAN_LOCAL_GRID_RESOLUTION
+    within_grid := abs(offset[0]) < OCEAN_GRID_RESOLUTION && abs(offset[1]) < OCEAN_GRID_RESOLUTION
     if !aligned || !within_grid do return false
 
-    sample_count := OCEAN_LOCAL_GRID_RESOLUTION * OCEAN_LOCAL_GRID_RESOLUTION
+    sample_count := OCEAN_GRID_RESOLUTION * OCEAN_GRID_RESOLUTION
     if len(world_renderer.ocean_sample_grid_scratch) != sample_count {
         resize(&world_renderer.ocean_sample_grid_scratch, sample_count)
     }
-    for z in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
-        world_z := center[1] - OCEAN_LOCAL_EXTENT + f32(z) * OCEAN_LOCAL_CELL
-        for x in 0 ..< OCEAN_LOCAL_GRID_RESOLUTION {
+    for z in 0 ..< OCEAN_GRID_RESOLUTION {
+        world_z := center[1] - extent + f32(z) * cell
+        for x in 0 ..< OCEAN_GRID_RESOLUTION {
             source_x, source_z := x + offset[0], z + offset[1]
             destination := world_ocean_sample_grid_index(x, z)
             if source_x >= 0 &&
-               source_x < OCEAN_LOCAL_GRID_RESOLUTION &&
+               source_x < OCEAN_GRID_RESOLUTION &&
                source_z >= 0 &&
-               source_z < OCEAN_LOCAL_GRID_RESOLUTION {
+               source_z < OCEAN_GRID_RESOLUTION {
                 world_renderer.ocean_sample_grid_scratch[destination] =
                     world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(source_x, source_z)]
                 continue
             }
-            world_x := center[0] - OCEAN_LOCAL_EXTENT + f32(x) * OCEAN_LOCAL_CELL
+            world_x := center[0] - extent + f32(x) * cell
             world_renderer.ocean_sample_grid_scratch[destination] = world_ocean_vertex(
                 editor,
                 {world_x, ocean_y, world_z},
@@ -246,6 +285,7 @@ world_ocean_sample_grid_shift :: proc(
     world_renderer.ocean_sample_grid, world_renderer.ocean_sample_grid_scratch =
         world_renderer.ocean_sample_grid_scratch, world_renderer.ocean_sample_grid
     world_renderer.ocean_sample_grid_center = center
+    world_renderer.ocean_sample_grid_cell = cell
     return true
 }
 
@@ -253,6 +293,8 @@ world_ocean_cache_build :: proc(
     editor: ^Editor,
     local_center: [2]f32,
     local_min_x, local_max_x, local_min_z, local_max_z, ocean_y: f32,
+    grid_cell: f32,
+    sampled_grid_visible: bool,
     color: canvas2d.Color,
 ) {
     first_vertex := len(world_renderer.vertices)
@@ -271,10 +313,11 @@ world_ocean_cache_build :: proc(
         for x_index in 0 ..< divisions {
             x0 := center_x - extent + f32(x_index) * cell
             x1 := x0 + cell
-            // A high authoring overview can see the finite edge of the
-            // terrain-sampled water. Keep its ocean uniform; gameplay clips
-            // this coarse field around the detailed grid below.
-            if !editor.in_map || x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
+            // Keep the coarse field beneath every view unless the sampled
+            // grid is actually emitted. That avoids both z-fighting and a
+            // missing rectangle when close editor views hide local detail.
+            if !sampled_grid_visible ||
+               x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
                 world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
                 continue
             }
@@ -320,11 +363,9 @@ world_ocean_cache_build :: proc(
             }
         }
     }
-    // Terrain-sampled ocean belongs to the closer gameplay presentation. Its
-    // finite support reads as a giant square plot from the authoring camera.
-    if editor.in_map {
-        for z in 0 ..< OCEAN_LOCAL_DIVISIONS {
-            for x in 0 ..< OCEAN_LOCAL_DIVISIONS {
+    if sampled_grid_visible {
+        for z in 0 ..< OCEAN_GRID_DIVISIONS {
+            for x in 0 ..< OCEAN_GRID_DIVISIONS {
                 a := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)]
                 b := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z + 1)]
                 c := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z + 1)]
@@ -336,6 +377,7 @@ world_ocean_cache_build :: proc(
     clear(&world_renderer.ocean_geometry_cache)
     append(&world_renderer.ocean_geometry_cache, ..world_renderer.vertices[first_vertex:])
     world_renderer.ocean_cache_center = local_center
+    world_renderer.ocean_cache_grid_cell = grid_cell
     world_renderer.ocean_cache_project_revision = editor.project.revision
     world_renderer.ocean_cache_terrain_revision = editor.terrain_revision
     world_renderer.ocean_cache_sea_level = editor.project.sea_level
@@ -345,15 +387,11 @@ world_ocean_cache_build :: proc(
 }
 
 world_ocean :: proc(editor: ^Editor) {
-    // Bathymetry owns this exact view-target rectangle. An orbit camera may
-    // sit far behind its target, so centering the detailed grid on camera
-    // position lets the island's back shore fall into the coarse far ocean.
-    // The far ocean is
-    // clipped around it below, so the two water meshes never overlap and
-    // therefore cannot z-fight regardless of camera distance or depth-buffer
-    // precision.
-    local_center_x := f32(math.floor(f64(editor.camera_pose.target.x / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
-    local_center_z := f32(math.floor(f64(editor.camera_pose.target.z / OCEAN_LOCAL_CELL))) * OCEAN_LOCAL_CELL
+    // Close views need dense shoreline samples around the target. Overviews
+    // need the same number of samples distributed across the archipelago, or
+    // the detailed water field ends through an island at the screen edge.
+    grid := world_ocean_grid_config(editor)
+    sampled_grid_visible := editor.in_map || grid.extent >= OCEAN_OVERVIEW_EXTENT
     markov_island := lab_scene_is_active(editor, "markov-island")
     dirty := world_renderer.ocean_sample_grid_dirty
     localized_terrain_change :=
@@ -369,11 +407,14 @@ world_ocean :: proc(editor: ^Editor) {
         world_renderer.ocean_cache_sea_level == editor.project.sea_level &&
         world_renderer.ocean_cache_in_map == editor.in_map &&
         world_renderer.ocean_cache_markov_island == markov_island
-    local_center := [2]f32{local_center_x, local_center_z}
+    local_center := grid.center
     if cache_state_matches &&
        world_renderer.ocean_cache_center == local_center &&
-       world_renderer.ocean_sample_grid_valid &&
-       world_renderer.ocean_sample_grid_center == local_center &&
+       world_renderer.ocean_cache_grid_cell == grid.cell &&
+       (!sampled_grid_visible ||
+        (world_renderer.ocean_sample_grid_valid &&
+         world_renderer.ocean_sample_grid_center == local_center &&
+         world_renderer.ocean_sample_grid_cell == grid.cell)) &&
        !localized_terrain_change {
         append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
         return
@@ -393,23 +434,26 @@ world_ocean :: proc(editor: ^Editor) {
     // Only the newly exposed row or column asks terrain again; rebuilding the
     // old 150x150 field did 135,000 identical terrain queries per pan step.
     local_ocean_y := ocean_y + f32(.004)
-    if editor.in_map {
+    if sampled_grid_visible {
         if !cache_state_matches ||
            !world_renderer.ocean_sample_grid_valid ||
-           !world_ocean_sample_grid_shift(editor, local_center, local_ocean_y, color) {
-            world_ocean_sample_grid_rebuild(editor, local_center, local_ocean_y, color)
+           world_renderer.ocean_sample_grid_cell != grid.cell ||
+           !world_ocean_sample_grid_shift(editor, local_center, grid.cell, grid.extent, local_ocean_y, color) {
+            world_ocean_sample_grid_rebuild(editor, local_center, grid.cell, grid.extent, local_ocean_y, color)
         } else if localized_terrain_change {
-            world_ocean_sample_grid_refresh_bounds(editor, dirty, local_ocean_y, color)
+            world_ocean_sample_grid_refresh_bounds(editor, dirty, grid.cell, grid.extent, local_ocean_y, color)
         }
     }
     world_ocean_cache_build(
         editor,
         local_center,
-        local_center_x - OCEAN_LOCAL_EXTENT,
-        local_center_x + OCEAN_LOCAL_EXTENT,
-        local_center_z - OCEAN_LOCAL_EXTENT,
-        local_center_z + OCEAN_LOCAL_EXTENT,
+        local_center[0] - grid.extent,
+        local_center[0] + grid.extent,
+        local_center[1] - grid.extent,
+        local_center[1] + grid.extent,
         ocean_y,
+        grid.cell,
+        sampled_grid_visible,
         color,
     )
     world_renderer.ocean_sample_grid_dirty = {}
