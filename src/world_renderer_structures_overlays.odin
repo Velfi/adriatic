@@ -144,6 +144,29 @@ world_settlement_gardens :: proc(editor: ^Editor) {
     }
 }
 
+world_structure_selection_box_overlay :: proc(editor: ^Editor) {
+    if editor == nil || !editor.structure_selection_box_active do return
+
+    x0 := min(editor.structure_selection_box_start_x, editor.structure_selection_box_end_x)
+    x1 := max(editor.structure_selection_box_start_x, editor.structure_selection_box_end_x)
+    z0 := min(editor.structure_selection_box_start_z, editor.structure_selection_box_end_z)
+    z1 := max(editor.structure_selection_box_start_z, editor.structure_selection_box_end_z)
+    lift := f32(.16)
+    a := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z0) + lift, z0}
+    b := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z0) + lift, z0}
+    c := third_person.Vec3{x1, terrain.sample_surface_height(&editor.project, 0, x1, z1) + lift, z1}
+    d := third_person.Vec3{x0, terrain.sample_surface_height(&editor.project, 0, x0, z1) + lift, z1}
+
+    world_quad(a, b, c, d, {244, 226, 122, 42})
+    extent := max(x1 - x0, z1 - z0)
+    thickness := clamp(extent * .008, f32(.10), f32(.28))
+    border := canvas2d.Color{255, 239, 145, 255}
+    world_box_between(a, b, {0, 1, 0}, thickness, thickness, border)
+    world_box_between(b, c, {0, 1, 0}, thickness, thickness, border)
+    world_box_between(c, d, {0, 1, 0}, thickness, thickness, border)
+    world_box_between(d, a, {0, 1, 0}, thickness, thickness, border)
+}
+
 world_structure_selection_overlay :: proc(editor: ^Editor) {
     bounds, ok := structure_selection_bounds(editor)
     if !ok do return
@@ -303,6 +326,9 @@ world_structures :: proc(editor: ^Editor) {
     }
     if editor.selection_tool_active && editor.structure_selected >= 0 && !editor.in_map && !editor.road_mode {
         world_structure_selection_overlay(editor)
+    }
+    if editor.selection_tool_active && editor.structure_selection_box_active && !editor.in_map && !editor.road_mode {
+        world_structure_selection_box_overlay(editor)
     }
     if stats.opaque_cost > 0 do stats.emitted_draws += 1
     if stats.foliage_cost > 0 do stats.emitted_draws += 1
