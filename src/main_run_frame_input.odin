@@ -212,34 +212,6 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         }
         if !fixture_editor_file_dialog_is_open(editor) {
             if !imgui_captures_keyboard() && canvas2d.IsKeyPressed(.ESCAPE) do editor_cancel_interaction(editor)
-            if !imgui_captures_keyboard() {
-                if canvas2d.IsKeyPressed(.S) && !control_key_down() do authoring_select_selection_tool(editor)
-                if canvas2d.IsKeyPressed(.T) do authoring_select_tool(editor, .Paint)
-                if canvas2d.IsKeyPressed(.B) do authoring_select_tool(editor, .Formations)
-                if canvas2d.IsKeyPressed(.H) {
-                    editor.plant_stamp_mode = .Ground
-                    authoring_select_tool(editor, .Foliage)
-                }
-                if !control_key_down() && canvas2d.IsKeyPressed(.Z) {
-                    authoring_select_tool(editor, .Ridge)
-                }
-                if !control_key_down() && canvas2d.IsKeyPressed(.C) {
-                    authoring_select_tool(editor, .Cliff)
-                }
-                if !control_key_down() && canvas2d.IsKeyPressed(.N) do authoring_select_tool(editor, .Building)
-                if !control_key_down() && canvas2d.IsKeyPressed(.J) do authoring_select_tool(editor, .Marina)
-                if !control_key_down() && !editor.road_mode && canvas2d.IsKeyPressed(.K) {
-                    authoring_select_tool(editor, .Farm)
-                }
-                if !control_key_down() && canvas2d.IsKeyPressed(.V) do authoring_select_tool(editor, .Wreck)
-                if !control_key_down() && canvas2d.IsKeyPressed(.L) do authoring_select_tool(editor, .ClimbingLeaves)
-                if canvas2d.IsKeyPressed(.M) do authoring_select_tool(editor, .Roads)
-                if !control_key_down() &&
-                   canvas2d.IsKeyPressed(.G) &&
-                   !(editor.authoring_tool == .Obstacles && sdf_obstacle_selected_ptr(editor) != nil) {
-                    authoring_select_tool(editor, .GreekAssets)
-                }
-            }
             if !imgui_captures_keyboard() && editor.authoring_tool == .Sculpt {
                 settings := &editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
                 if canvas2d.IsKeyPressed(.LEFT_BRACKET) do settings.size = max(settings.size - max(settings.size * .1, f32(1)), f32(4))

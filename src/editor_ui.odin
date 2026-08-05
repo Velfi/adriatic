@@ -323,50 +323,11 @@ terrain_family_actions :: proc(family: Terrain_Family) -> ([4]Terrain_Action, in
     return {}, 0
 }
 
-@(no_instrumentation)
-authoring_tool_shortcut :: #force_inline proc(tool: Authoring_Tool) -> cstring {
-    switch tool {
-    case .Sculpt:
-        return ""
-    case .Smooth:
-        return ""
-    case .Paint:
-        return "T"
-    case .Formations:
-        return "B"
-    case .Foliage:
-        return "H"
-    case .Ridge:
-        return "Z"
-    case .Cliff:
-        return "C"
-    case .Building:
-        return "N"
-    case .Marina:
-        return "J"
-    case .Farm:
-        return "K"
-    case .Wreck:
-        return "V"
-    case .ClimbingLeaves:
-        return "L"
-    case .Roads:
-        return "M"
-    case .GreekAssets:
-        return "G"
-    case .Obstacles:
-        return ""
-    case .Mice:
-        return ""
-    }
-    return ""
-}
-
 authoring_select_tool :: proc(editor: ^Editor, selected: Authoring_Tool) {
     if editor == nil do return
     if editor.terrain_sculpt.session.active do terrain_sculpt_cancel(editor)
     // ClimbingLeaves is retained only as a frozen Fixture enum value. Route
-    // legacy selection and the old L shortcut into the unified plant stamp.
+    // legacy selection into the unified plant stamp.
     resolved := selected
     if selected == .ClimbingLeaves {
         resolved = .Foliage
@@ -769,9 +730,7 @@ editor_ui_icon_button :: proc(
 }
 
 editor_ui_draw_tooltip :: proc(bounds: canvas2d.Rectangle, tool: Authoring_Tool) {
-    name := authoring_tool_name(tool)
-    shortcut := authoring_tool_shortcut(tool)
-    label: cstring = shortcut == "" ? name : fmt.ctprintf("%s  [%s]", name, shortcut)
+    label := authoring_tool_name(tool)
     size := ui_measure_text(.Label, label, .5)
     tooltip := canvas2d.Rectangle{bounds.x + bounds.width + 8, bounds.y + 7, size.x + 20, 30}
     canvas2d.DrawRectangleRounded(tooltip, .14, 5, {17, 20, 24, 252})
