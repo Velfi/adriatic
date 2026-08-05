@@ -772,13 +772,10 @@ clipmap_grid_cell :: #force_inline proc(editor: ^Editor, level: int) -> f32 {
     if editor == nil || level < 0 || level >= terrain.CLIPMAP_LEVELS do return 1
     cell := editor.project.levels[level].cell_size
     // The dedicated 513×513 innermost mesh samples at half a metre while
-    // retaining the former 256 m footprint. The first outer ring samples its
-    // native two-metre terrain level, avoiding an abrupt 8× jump across the
-    // player-visible beach belt. Successive rings retain their established
-    // doubled spacing and broad world coverage.
+    // retaining the former 256 m footprint. Outer rings sample their native
+    // terrain levels so no authored LOD is skipped: 2, 4, 8, 16, then 32 m.
     if level == 0 do return cell * .5
-    if level == 1 do return cell
-    return cell * 2
+    return cell
 }
 
 @(no_instrumentation)

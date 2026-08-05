@@ -124,37 +124,26 @@ when ODIN_TEST {
     }
 
     @(test)
-    sparse_clipmap_transition_uses_a_quarter_width_coarse_hole :: proc(t: ^testing.T) {
-        expected_width := CLIPMAP_GRID_RESOLUTION / 4 - 1
-        for offset_z in -1 ..= 1 {
-            for offset_x in -1 ..= 1 {
-                hole := clipmap_ring_hole_bounds({offset_x, offset_z}, 4)
-                testing.expect_value(t, hole[2] - hole[0], expected_width)
-                testing.expect_value(t, hole[3] - hole[1], expected_width)
-                testing.expect_value(t, hole[0], CLIPMAP_GRID_RESOLUTION * 3 / 8 + (offset_x > 0 ? 1 : 0))
-                testing.expect_value(t, hole[1], CLIPMAP_GRID_RESOLUTION * 3 / 8 + (offset_z > 0 ? 1 : 0))
-            }
-        }
-    }
-
-    @(test)
-    clipmap_inner_grid_doubles_resolution_without_reducing_coverage :: proc(t: ^testing.T) {
+    clipmap_levels_preserve_detail_and_double_world_coverage :: proc(t: ^testing.T) {
         editor := new(Editor)
         defer free(editor)
         terrain.init_project(&editor.project)
         defer terrain.destroy_project(&editor.project)
-        testing.expect_value(t, clipmap_grid_cell(editor, 0), f32(.5))
-        testing.expect_value(t, clipmap_grid_cell(editor, 1), f32(2))
-        testing.expect_value(t, clipmap_grid_cell(editor, 2), f32(8))
+        expected_cells := [terrain.CLIPMAP_LEVELS]f32{.5, 2, 4, 8, 16, 32}
+        for level in 0 ..< terrain.CLIPMAP_LEVELS {
+            testing.expect_value(t, clipmap_grid_cell(editor, level), expected_cells[level])
+        }
         testing.expect_value(t, clipmap_grid_resolution(0), CLIPMAP_INNER_GRID_RESOLUTION)
         testing.expect_value(t, clipmap_grid_resolution(1), CLIPMAP_GRID_RESOLUTION)
         inner_coverage := f32(clipmap_grid_resolution(0) - 1) * clipmap_grid_cell(editor, 0)
         former_coverage := f32(CLIPMAP_GRID_RESOLUTION - 1)
         testing.expect_value(t, inner_coverage, former_coverage)
-        level_one_coverage := f32(clipmap_grid_resolution(1) - 1) * clipmap_grid_cell(editor, 1)
-        level_two_coverage := f32(clipmap_grid_resolution(2) - 1) * clipmap_grid_cell(editor, 2)
-        testing.expect_value(t, level_one_coverage, inner_coverage * 2)
-        testing.expect_value(t, level_two_coverage, level_one_coverage * 4)
+        previous_coverage := inner_coverage
+        for level in 1 ..< terrain.CLIPMAP_LEVELS {
+            coverage := f32(clipmap_grid_resolution(level) - 1) * clipmap_grid_cell(editor, level)
+            testing.expect_value(t, coverage, previous_coverage * 2)
+            previous_coverage = coverage
+        }
     }
 
     @(test)
@@ -166,7 +155,7 @@ when ODIN_TEST {
         editor.camera_pose = third_person.camera_look_at({0, 900, 0}, {0, 0, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 1)
         editor.camera_pose = third_person.camera_look_at({0, 3000, 0}, {0, 0, 0})
-        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 3)
         editor.in_map = true
         editor.camera_pose = third_person.camera_look_at({0, 8, 12}, {0, 1, 0})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
@@ -174,7 +163,7 @@ when ODIN_TEST {
         editor.camera_pose = third_person.camera_look_at({0, 21, 0}, {0, 0, 500})
         testing.expect_value(t, clipmap_first_render_level(editor, 1080), 0)
         editor.camera_pose = third_person.camera_look_at({0, 3008, 12}, {0, 3000, 0})
-        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 2)
+        testing.expect_value(t, clipmap_first_render_level(editor, 1080), 3)
     }
 
     @(test)

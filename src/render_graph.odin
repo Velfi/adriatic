@@ -415,14 +415,6 @@ render_graph_terrain :: proc(user_data: rawptr) {
             variant := clipmap_ring_variant(int(ctx.pass.frame.frame_index), level)
             ring := &world_renderer.clipmap_ring_index[variant[1]][variant[0]]
             index_count := world_renderer.clipmap_ring_indices
-            // Level 1 now uses its native two-metre grid and therefore the
-            // ordinary 2× hole beneath the half-metre inner patch. The 4×
-            // coverage jump occurs between levels 1 and 2, safely farther
-            // from the camera, and uses the narrower sparse-ring hole.
-            if level == 2 {
-                ring = &world_renderer.clipmap_inner_ring_index[variant[1]][variant[0]]
-                index_count = world_renderer.clipmap_inner_ring_indices
-            }
             vk.CmdBindIndexBuffer(cmd, ring.handle, 0, .UINT32)
             vk.CmdDrawIndexed(cmd, index_count, 1, 0, 0, 0)
         }

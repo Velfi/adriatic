@@ -509,12 +509,11 @@ clipmap_ring_variant :: proc(frame_index, level: int) -> [2]int {
 }
 
 @(no_instrumentation)
-clipmap_ring_hole_bounds :: proc(offset: [2]int, fine_to_coarse_ratio: int = 2) -> [4]int {
-    ratio := max(fine_to_coarse_ratio, 2)
-    hole_min := CLIPMAP_GRID_RESOLUTION * (ratio - 1) / (ratio * 2)
+clipmap_ring_hole_bounds :: proc(offset: [2]int) -> [4]int {
+    hole_min := CLIPMAP_GRID_RESOLUTION / 4
     hole_min_x := hole_min + (offset[0] > 0 ? 1 : 0)
     hole_min_z := hole_min + (offset[1] > 0 ? 1 : 0)
-    hole_width := CLIPMAP_GRID_RESOLUTION / ratio - 1
+    hole_width := CLIPMAP_GRID_RESOLUTION / 2 - 1
     return {hole_min_x, hole_min_z, hole_min_x + hole_width, hole_min_z + hole_width}
 }
 
@@ -603,34 +602,6 @@ clipmap_create_indices :: proc(ctx: ^engine.Vk_Context) -> bool {
             }
             mem.copy_non_overlapping(
                 world_renderer.clipmap_ring_index[variant_z][variant_x].mapped,
-                raw_data(indices[:]),
-                len(indices) * size_of(u32),
-            )
-
-            clear(&indices)
-            sparse_hole := clipmap_ring_hole_bounds({offset_x, offset_z}, 4)
-            for z in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-                for x in 0 ..< CLIPMAP_GRID_RESOLUTION - 1 {
-                    if x >= sparse_hole[0] && x < sparse_hole[2] && z >= sparse_hole[1] && z < sparse_hole[3] {
-                        continue
-                    }
-                    clipmap_append_cell(&indices, x, z, CLIPMAP_GRID_RESOLUTION)
-                }
-            }
-            if world_renderer.clipmap_inner_ring_indices == 0 {
-                world_renderer.clipmap_inner_ring_indices = u32(len(indices))
-            }
-            if !world_host_buffer_create(
-                ctx,
-                vk.DeviceSize(len(indices) * size_of(u32)),
-                {.INDEX_BUFFER},
-                &world_renderer.clipmap_inner_ring_index[variant_z][variant_x],
-                "world clipmap sparse transition ring index buffer",
-            ) {
-                return false
-            }
-            mem.copy_non_overlapping(
-                world_renderer.clipmap_inner_ring_index[variant_z][variant_x].mapped,
                 raw_data(indices[:]),
                 len(indices) * size_of(u32),
             )

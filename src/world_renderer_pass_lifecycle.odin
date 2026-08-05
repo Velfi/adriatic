@@ -405,9 +405,6 @@ world_renderer_destroy :: proc() {
     for &row in world_renderer.clipmap_ring_index {
         for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
     }
-    for &row in world_renderer.clipmap_inner_ring_index {
-        for &buffer in row do engine.vk_destroy_buffer(world_renderer.ctx, &buffer)
-    }
     roads.mesh_destroy(&world_renderer.road_mesh)
     render3d.destroy_color_pipeline_variants(world_renderer.ctx, &world_renderer.pipelines)
     for &pipeline in world_renderer.player_outline_mask_pipelines {
