@@ -524,6 +524,8 @@ structure_history_capture :: proc(editor: ^Editor, state: ^Structure_History_Sta
     state.default_marinas = editor.default_marinas
     state.default_harbors = editor.default_harbors
     state.default_harbor_interventions = editor.default_harbor_interventions
+    state.default_marina_islands = editor.default_marina_islands
+    state.default_marina_count = editor.default_marina_count
     resize(&state.structures, state.count)
     copy(state.structures[:], editor.project.structures[:state.count])
 }
@@ -566,6 +568,8 @@ structure_history_restore :: proc(editor: ^Editor, state: ^Structure_History_Sta
     editor.default_marinas = state.default_marinas
     editor.default_harbors = state.default_harbors
     editor.default_harbor_interventions = state.default_harbor_interventions
+    editor.default_marina_islands = state.default_marina_islands
+    editor.default_marina_count = state.default_marina_count
     editor.project.revision += 1
     if editor.structure_selected >= editor.project.structure_count do editor.structure_selected = -1
     if editor.road_selected_node >= editor.project.road_graph.node_count do editor.road_selected_node = -1

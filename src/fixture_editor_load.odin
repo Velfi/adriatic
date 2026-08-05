@@ -478,6 +478,7 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     editor.selection_tool_active = false
     editor.structure_selection_group_count = 0
     editor.structure_selection_box_active = false
+    editor.marina_selected = -1
     editor.structure_placing = false
     editor.structure_moving = false
     editor.structure_move_armed = false

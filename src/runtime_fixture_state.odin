@@ -124,6 +124,8 @@ Structure_History_State :: struct {
     default_marinas:              [terrain.ISLAND_COUNT]marina.Plan,
     default_harbors:              [terrain.ISLAND_COUNT]harbor.Harbor_Plan,
     default_harbor_interventions: [terrain.ISLAND_COUNT]harbor.Harbor_Intervention,
+    default_marina_islands:       [terrain.ISLAND_COUNT]story.Island,
+    default_marina_count:         int,
 }
 
 Terrain_History_State :: struct {
@@ -296,6 +298,7 @@ Fixture :: struct {
     structure_selection_box_start_z:                f32 `fixture:"-"`,
     structure_selection_box_end_x:                  f32 `fixture:"-"`,
     structure_selection_box_end_z:                  f32 `fixture:"-"`,
+    marina_selected:                                int `fixture:"-"`,
     island_selected:                                terrain.Island_ID `fixture:"-"`,
     island_moving:                                  bool `fixture:"-"`,
     island_drag_start_x, island_drag_start_z:       f32 `fixture:"-"`,

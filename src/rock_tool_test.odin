@@ -1,6 +1,7 @@
 package main
 
 import terrain "../packages/terrain"
+import harbor "../packages/harbor"
 import "core:testing"
 
 @(test)
@@ -90,6 +91,78 @@ selection_move_gizmo_uses_the_group_bounds_and_axes :: proc(t: ^testing.T) {
     axis, hit = structure_move_gizmo_hit(editor, center_x, center_z + size * .7)
     testing.expect(t, hit)
     testing.expect_value(t, axis, u8(2))
+}
+
+@(test)
+selection_click_on_non_structure_world_feature_selects_its_island :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    terrain.init_project(&editor.project)
+    defer terrain.destroy_project(&editor.project)
+    east_x, east_z, east_ok := terrain.island_center(&editor.project, .East)
+    testing.expect(t, east_ok)
+    editor.selection_tool_active = true
+    editor.structure_selection_box_start_x = east_x
+    editor.structure_selection_box_start_z = east_z
+    editor.structure_selection_box_end_x = east_x
+    editor.structure_selection_box_end_z = east_z
+
+    structure_selection_finish_box(editor)
+
+    testing.expect_value(t, editor.island_selected, terrain.Island_ID.East)
+    testing.expect_value(t, editor.structure_selected, -1)
+}
+
+@(test)
+authored_marina_can_be_selected_and_deleted :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    terrain.init_project(&editor.project)
+    defer terrain.destroy_project(&editor.project)
+    editor.harbor_authored_plan = {
+        valid = true,
+        bounds = {{-20, -5}, {20, 5}},
+        office = {0, 0},
+        structure_count = 1,
+    }
+    editor.harbor_authored_plan.structures[0] = {
+        width = 4,
+        count = 2,
+    }
+    editor.harbor_authored_plan.structures[0].points[0] = {-20, 0}
+    editor.harbor_authored_plan.structures[0].points[1] = {20, 0}
+    editor.marina_authored = true
+
+    testing.expect_value(t, marina_selection_hit(editor, 15, 0), MARINA_SELECTION_AUTHORED)
+    editor.marina_selected = MARINA_SELECTION_AUTHORED
+    testing.expect(t, marina_selection_delete(editor))
+    testing.expect(t, !editor.marina_authored)
+    testing.expect_value(t, editor.marina_selected, -1)
+    testing.expect(t, !editor.harbor_authored_plan.valid)
+}
+
+@(test)
+generated_marina_selection_and_deletion_compact_undoable_state :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    terrain.init_project(&editor.project)
+    defer structure_history_storage_destroy(editor)
+    editor.default_marina_count = 2
+    editor.default_harbors[0] = {valid = true, bounds = {{-15, -5}, {15, 5}}, office = {0, 0}}
+    editor.default_harbors[1] = {valid = true, bounds = {{85, -5}, {115, 5}}, office = {100, 0}}
+    editor.default_marinas[1].seed = 42
+
+    testing.expect_value(t, marina_selection_hit(editor, 100, 0), 1)
+    editor.marina_selected = 0
+    structure_history_push_undo(editor)
+    testing.expect(t, marina_selection_delete(editor))
+    testing.expect_value(t, editor.default_marina_count, 1)
+    testing.expect_value(t, editor.default_marinas[0].seed, u32(42))
+
+    structure_undo(editor)
+
+    testing.expect_value(t, editor.default_marina_count, 2)
+    testing.expect_value(t, editor.default_marinas[1].seed, u32(42))
 }
 
 @(test)

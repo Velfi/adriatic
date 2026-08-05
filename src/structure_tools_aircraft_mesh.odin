@@ -3,6 +3,7 @@ package main
 import architecture "../packages/architecture"
 import flight "../packages/flight"
 import game_input "../packages/game_input"
+import harbor "../packages/harbor"
 import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
 import rondine_game "../packages/rondine"
@@ -118,6 +119,76 @@ structure_selection_clear :: proc(editor: ^Editor) {
     if editor == nil do return
     editor.structure_selection_group_count = 0
     editor.structure_selected = -1
+    editor.marina_selected = -1
+}
+
+MARINA_SELECTION_AUTHORED :: -2
+
+marina_selection_plan_hit :: proc(plan: ^harbor.Harbor_Plan, world_x, world_z, tolerance: f32) -> bool {
+    if plan == nil || !plan.valid do return false
+    if world_x >= plan.bounds.minimum.x - tolerance &&
+       world_x <= plan.bounds.maximum.x + tolerance &&
+       world_z >= plan.bounds.minimum.z - tolerance &&
+       world_z <= plan.bounds.maximum.z + tolerance {
+        for path in plan.structures[:plan.structure_count] {
+            for point_index in 0 ..< path.count - 1 {
+                a, b := path.points[point_index], path.points[point_index + 1]
+                axis_x, axis_z := b.x - a.x, b.z - a.z
+                length_squared := axis_x * axis_x + axis_z * axis_z
+                t := f32(0)
+                if length_squared > .000001 {
+                    t = clamp(((world_x - a.x) * axis_x + (world_z - a.z) * axis_z) / length_squared, 0, 1)
+                }
+                dx := world_x - (a.x + axis_x * t)
+                dz := world_z - (a.z + axis_z * t)
+                radius := path.width * .5 + tolerance
+                if dx * dx + dz * dz <= radius * radius do return true
+            }
+        }
+    }
+    dx, dz := world_x - plan.office.x, world_z - plan.office.z
+    return dx * dx + dz * dz <= (tolerance + 5) * (tolerance + 5)
+}
+
+marina_selection_hit :: proc(editor: ^Editor, world_x, world_z: f32) -> int {
+    if editor == nil do return -1
+    tolerance := max(editor.project.levels[0].cell_size * .25, f32(1.5))
+    if editor.marina_authored &&
+       marina_selection_plan_hit(&editor.harbor_authored_plan, world_x, world_z, tolerance) {
+        return MARINA_SELECTION_AUTHORED
+    }
+    for index in 0 ..< editor.default_marina_count {
+        if marina_selection_plan_hit(&editor.default_harbors[index], world_x, world_z, tolerance) do return index
+    }
+    return -1
+}
+
+marina_selection_delete :: proc(editor: ^Editor) -> bool {
+    if editor == nil || editor.marina_selected == -1 do return false
+    if editor.marina_selected == MARINA_SELECTION_AUTHORED {
+        if !editor.marina_authored do return false
+        editor.marina_authored = false
+        editor.marina_authored_plan = {}
+        editor.harbor_authored_plan = {}
+        editor.harbor_authored_intervention = {}
+    } else {
+        removed := editor.marina_selected
+        if removed < 0 || removed >= editor.default_marina_count do return false
+        for index in removed + 1 ..< editor.default_marina_count {
+            editor.default_marinas[index - 1] = editor.default_marinas[index]
+            editor.default_harbors[index - 1] = editor.default_harbors[index]
+            editor.default_harbor_interventions[index - 1] = editor.default_harbor_interventions[index]
+            editor.default_marina_islands[index - 1] = editor.default_marina_islands[index]
+        }
+        editor.default_marina_count -= 1
+        editor.default_marinas[editor.default_marina_count] = {}
+        editor.default_harbors[editor.default_marina_count] = {}
+        editor.default_harbor_interventions[editor.default_marina_count] = {}
+        editor.default_marina_islands[editor.default_marina_count] = {}
+    }
+    structure_selection_clear(editor)
+    editor.project.revision += 1
+    return true
 }
 
 structure_group_selected :: proc(editor: ^Editor, group_id: u64) -> bool {
@@ -165,6 +236,25 @@ structure_selection_finish_box :: proc(editor: ^Editor) {
         }
         structure_selection_add_group(editor, structure.group_id)
         if editor.structure_selected < 0 do editor.structure_selected = index
+    }
+    if editor.structure_selected >= 0 {
+        editor.island_selected = .World
+        return
+    }
+    // A click is represented by a zero-area selection box. Preserve island
+    // picking for non-Structure world features (including authored marinas),
+    // while a real empty drag simply clears the selection.
+    cell := editor.project.levels[0].cell_size
+    dx := editor.structure_selection_box_end_x - editor.structure_selection_box_start_x
+    dz := editor.structure_selection_box_end_z - editor.structure_selection_box_start_z
+    if dx * dx + dz * dz <= cell * cell * .04 {
+        editor.island_selected = terrain.island_at(
+            &editor.project,
+            editor.structure_selection_box_end_x,
+            editor.structure_selection_box_end_z,
+        )
+    } else {
+        editor.island_selected = .World
     }
 }
 
@@ -240,12 +330,17 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         editor.structure_moving = false
         return
     }
-    if canvas2d.IsKeyPressed(.BACKSPACE) && editor.structure_selected >= 0 && !editor.structure_placing {
-        structure_history_push_undo(editor)
-        for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
-            if structure_index_selected(editor, index) do terrain.remove_structure(&editor.project, index)
+    if canvas2d.IsKeyPressed(.BACKSPACE) && !editor.structure_placing {
+        if editor.marina_selected != -1 {
+            structure_history_push_undo(editor)
+            _ = marina_selection_delete(editor)
+        } else if editor.structure_selected >= 0 {
+            structure_history_push_undo(editor)
+            for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
+                if structure_index_selected(editor, index) do terrain.remove_structure(&editor.project, index)
+            }
+            structure_selection_clear(editor)
         }
-        structure_selection_clear(editor)
     }
     if control_key_down() && canvas2d.IsKeyPressed(.D) && editor.structure_selected >= 0 {
         structure_history_push_undo(editor)
@@ -301,6 +396,13 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         } else {
             if editor.selection_tool_active {
                 if canvas2d.IsMouseButtonPressed(.LEFT) {
+                    marina_index := marina_selection_hit(editor, world_x, world_z)
+                    if marina_index != -1 {
+                        structure_selection_clear(editor)
+                        editor.marina_selected = marina_index
+                        editor.island_selected = .World
+                        return
+                    }
                     editor.structure_selection_box_active = true
                     editor.structure_selection_box_start_x, editor.structure_selection_box_start_z = world_x, world_z
                     editor.structure_selection_box_end_x, editor.structure_selection_box_end_z = world_x, world_z

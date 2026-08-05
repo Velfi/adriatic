@@ -965,6 +965,7 @@ editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
         if editor.road_selected_node >= 0 do return "Drag the road node or a curve handle to reshape the road."
         if editor.structure_selection_box_active do return "Drag over items to select them."
         if editor.structure_moving do return "Move the selection; release to commit."
+        if editor.marina_selected != -1 do return "Backspace deletes the marina."
         if editor.structure_selected >= 0 do return "Drag the move gizmo. R rotates; Backspace deletes."
         return "Click an item or drag over several to select."
     }
@@ -1249,6 +1250,9 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
                 .4,
                 {139, 149, 160, 255},
             )
+        } else if editor.marina_selected != -1 {
+            ui_draw_text(.Label, "MARINA", {panel.x + 14, panel.y + 88}, .5, {209, 215, 222, 255})
+            ui_draw_text(.Data, "BACKSPACE  DELETE", {panel.x + 14, panel.y + 128}, .4, {139, 149, 160, 255})
         } else if editor.island_selected != .World {
             center_x, center_z, center_ok := terrain.island_center(&editor.project, editor.island_selected)
             if center_ok {
