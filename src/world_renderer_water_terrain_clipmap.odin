@@ -16,7 +16,7 @@ world_roads_transient :: proc(editor: ^Editor) {
     if editor == nil do return
     graph := &editor.project.road_graph
     world_spline_steps(editor, graph)
-    if editor.in_map || !editor.road_mode || editor.capture_world_only do return
+    if editor.in_map || (!editor.road_mode && !editor.selection_tool_active) || editor.capture_world_only do return
     if editor.cursor_hit {
         cursor := roads.Vec3 {
             editor.cursor_world_x,

@@ -960,6 +960,9 @@ editor_ui_history_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
     if editor.selection_tool_active {
+        if editor.road_drag_node >= 0 && editor.road_drag_node_moved do return "Drag the road node into place; connected curves follow it."
+        if editor.road_drag_edge >= 0 do return "Drag the control handle to shape the road; release to commit."
+        if editor.road_selected_node >= 0 do return "Drag the road node or a curve handle to reshape the road."
         if editor.structure_selection_box_active do return "Drag over items to select them."
         if editor.structure_moving do return "Move the selection; release to commit."
         if editor.structure_selected >= 0 do return "Drag the move gizmo. R rotates; Backspace deletes."

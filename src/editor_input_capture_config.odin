@@ -12,9 +12,10 @@ import vehicles "../packages/vehicles"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 
-road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
-    if editor == nil || editor.in_map || !editor.road_mode do return
-    if editor.road_design_redesign_active {
+road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) -> bool {
+    if editor == nil || editor.in_map || (!editor.road_mode && !editor.selection_tool_active) do return false
+    selection_only := editor.selection_tool_active
+    if !selection_only && editor.road_design_redesign_active {
         _ = road_design_preview_step(editor)
         if canvas2d.IsMouseButtonPressed(.RIGHT) {
             road_preview_clear(editor)
@@ -22,17 +23,18 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         } else if canvas2d.IsMouseButtonReleased(.LEFT) {
             _ = road_preview_commit(editor)
         }
-        return
+        return true
     }
     graph := &editor.project.road_graph
     editor.road_hover_edge, editor.road_hover_handle = -1, -1
     if cursor_hit &&
        editor.road_drag_edge < 0 &&
-       editor.road_construction_phase != .Drag_Start_Tangent &&
-       editor.road_construction_phase != .Drag_End_Tangent {
+       (selection_only ||
+        (editor.road_construction_phase != .Drag_Start_Tangent &&
+         editor.road_construction_phase != .Drag_End_Tangent)) {
         editor.road_hover_edge, editor.road_hover_handle = road_handle_at(editor, world_x, world_z)
     }
-    if editor.road_construction_phase == .Drag_Start_Tangent {
+    if !selection_only && editor.road_construction_phase == .Drag_Start_Tangent {
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             editor.road_preview_control_from = {
                 world_x,
@@ -44,9 +46,9 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             editor.road_construction_phase = .Choose_End
             editor.road_preview_cell_valid = false
         }
-        return
+        return true
     }
-    if editor.road_construction_phase == .Drag_End_Tangent {
+    if !selection_only && editor.road_construction_phase == .Drag_End_Tangent {
         if canvas2d.IsMouseButtonDown(.LEFT) && cursor_hit {
             editor.road_preview_control_to = {
                 world_x,
@@ -56,7 +58,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             road_preview_rebuild(editor, editor.road_preview_snap)
         }
         if canvas2d.IsMouseButtonReleased(.LEFT) do _ = road_preview_commit(editor)
-        return
+        return true
     }
     if editor.road_drag_node >= 0 {
         road_preview_clear(editor)
@@ -99,7 +101,8 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         }
         if canvas2d.IsMouseButtonReleased(.LEFT) {
             dragged_node := editor.road_drag_node
-            if !editor.road_drag_node_moved &&
+            if !selection_only &&
+               !editor.road_drag_node_moved &&
                editor.road_drag_node_previous_selection >= 0 &&
                editor.road_drag_node_previous_selection != dragged_node {
                 if roads.edge_between(graph, editor.road_drag_node_previous_selection, dragged_node) < 0 {
@@ -113,7 +116,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             editor.road_drag_node_previous_selection = -1
             editor.road_drag_node_moved = false
         }
-        return
+        return true
     }
     if editor.road_drag_edge >= 0 {
         road_preview_clear(editor)
@@ -149,30 +152,51 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             editor.road_drag_handle = -1
             editor.road_drag_handle_moved = false
         }
-        return
+        return true
     }
     if canvas2d.IsMouseButtonPressed(.RIGHT) {
         if editor.road_construction_phase == .Drag_Start_Tangent ||
            editor.road_construction_phase == .Drag_End_Tangent {
             editor.road_construction_phase = .Choose_End
             road_preview_clear(editor)
-            return
+            return true
         }
         editor.road_selected_node = -1
         editor.road_construction_phase = .Idle
         road_preview_clear(editor)
-        return
+        return true
+    }
+    if selection_only {
+        if !cursor_hit || !canvas2d.IsMouseButtonPressed(.LEFT) do return false
+        edge_index, handle_index := editor.road_hover_edge, editor.road_hover_handle
+        if edge_index >= 0 {
+            editor.road_drag_edge = edge_index
+            editor.road_drag_handle = handle_index
+            editor.road_drag_handle_moved = false
+            return true
+        }
+        clicked_node := road_node_at(editor, world_x, world_z)
+        if clicked_node < 0 {
+            editor.road_selected_node = -1
+            return false
+        }
+        structure_selection_clear(editor)
+        editor.road_drag_node = clicked_node
+        editor.road_drag_node_previous_selection = -1
+        editor.road_drag_node_moved = false
+        editor.road_selected_node = clicked_node
+        return true
     }
     if editor.road_construction_mode != .Authored_Curve || editor.road_construction_phase == .Choose_End {
         road_preview_update(editor, world_x, world_z, cursor_hit)
     }
-    if !cursor_hit || !canvas2d.IsMouseButtonPressed(.LEFT) do return
+    if !cursor_hit || !canvas2d.IsMouseButtonPressed(.LEFT) do return false
     edge_index, handle_index := editor.road_hover_edge, editor.road_hover_handle
     if edge_index >= 0 {
         editor.road_drag_edge = edge_index
         editor.road_drag_handle = handle_index
         editor.road_drag_handle_moved = false
-        return
+        return true
     }
     clicked_node := road_node_at(editor, world_x, world_z)
     if clicked_node >= 0 {
@@ -181,7 +205,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             editor.road_preview_start = graph.nodes[clicked_node].position
             editor.road_preview_control_from = editor.road_preview_start
             road_preview_clear(editor)
-            return
+            return true
         }
         if editor.road_selected_node >= 0 &&
            editor.road_selected_node != clicked_node &&
@@ -192,23 +216,23 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
             } else {
                 _ = road_preview_commit(editor)
             }
-            return
+            return true
         }
         editor.road_drag_node = clicked_node
         editor.road_drag_node_previous_selection = editor.road_selected_node
         editor.road_drag_node_moved = false
         editor.road_selected_node = clicked_node
-        return
+        return true
     }
     if editor.road_selected_node >= 0 {
-        if editor.road_preview_status != .Valid do return
+        if editor.road_preview_status != .Valid do return true
         if editor.road_construction_mode == .Authored_Curve {
             editor.road_construction_phase = .Drag_End_Tangent
             editor.road_preview_control_to = editor.road_preview_endpoint
         } else {
             _ = road_preview_commit(editor)
         }
-        return
+        return true
     }
     structure_history_push_undo(editor)
     new_node := road_add_node(editor, world_x, world_z)
@@ -218,6 +242,7 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
         editor.project.revision += 1
     }
     road_preview_clear(editor)
+    return true
 }
 
 editor_cancel_interaction :: proc(editor: ^Editor) {

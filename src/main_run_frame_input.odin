@@ -448,6 +448,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
                 world_mouse_inside && !ui_hit,
             )
     }
+    road_consumes_input := false
     if !editor.in_map &&
        !teleport_consumes_input &&
        !note_placement_consumes_input &&
@@ -474,7 +475,7 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
         ruin_stamp_process_input(editor, cursor_hit && !ui_hit)
         mouse_placement_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
         curve_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
-        road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
+        road_consumes_input = road_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
     if !editor.in_map &&
        !note_placement_consumes_input &&
@@ -497,7 +498,8 @@ run_frame_prepare_input :: proc(using run: ^Run_State, using frame_state: ^Run_F
     if !editor.in_map &&
        !note_placement_consumes_input &&
        !sdf_obstacle_consumes_input &&
-       editor.selection_tool_active {
+       editor.selection_tool_active &&
+       !road_consumes_input {
         structure_process_input(editor, world_x, world_z, cursor_hit && !ui_hit)
     }
 }
