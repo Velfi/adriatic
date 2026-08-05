@@ -239,8 +239,20 @@ update_editor_camera :: proc(editor: ^Editor, delta_seconds: f32) {
     right := third_person.Vec3{math.cos(yaw), 0, -math.sin(yaw)}
     speed := clamp(editor.editor_camera.distance * .8, 80, 1600)
     if shift_key_down() do speed *= 2
-    editor.editor_focus.x += (forward.x * move_z + right.x * move_x) * speed * delta_seconds
-    editor.editor_focus.z += (forward.z * move_z + right.z * move_x) * speed * delta_seconds
+    target_velocity := third_person.Vec3 {
+        (forward.x * move_z + right.x * move_x) * speed,
+        0,
+        (forward.z * move_z + right.z * move_x) * speed,
+    }
+    // Ease into and out of keyboard panning so taps remain precise while held
+    // movement no longer starts or stops with a visible camera jolt.
+    response := f32(1 - math.exp(f64(-10 * delta_seconds)))
+    editor.editor_pan_velocity += (target_velocity - editor.editor_pan_velocity) * response
+    if move_x == 0 && move_z == 0 && linalg.dot(editor.editor_pan_velocity, editor.editor_pan_velocity) < .01 {
+        editor.editor_pan_velocity = {}
+    }
+    editor.editor_focus.x += editor.editor_pan_velocity.x * delta_seconds
+    editor.editor_focus.z += editor.editor_pan_velocity.z * delta_seconds
     half := f32(terrain.WORLD_SIZE_METERS * .5)
     editor.editor_focus.x = clamp(editor.editor_focus.x, -half, half)
     editor.editor_focus.z = clamp(editor.editor_focus.z, -half, half)

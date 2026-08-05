@@ -32,6 +32,7 @@ import physics "zelda_engine:physics"
 
 Editor :: struct {
     using fixture:                      Fixture,
+    editor_pan_velocity:                third_person.Vec3 `fixture:"-"`,
     menu_scene_stack:                   scene_stack.Stack `fixture:"-"`,
     road_construction_mode:             Road_Construction_Mode,
     road_construction_phase:            Road_Construction_Phase,
