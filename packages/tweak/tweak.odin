@@ -354,7 +354,14 @@ encode_struct_fields :: proc(table: ^toml.Table, value: any, alloc := context.al
         field_value := reflect.struct_field_value(value, field)
         encoded, encoded_ok := encode_value(field_value, alloc, field_meta(field))
         if !encoded_ok do return false
-        table[strings.clone(name, alloc)] = encoded
+        if previous, present := table[name]; present {
+            table[name] = encoded
+            if toml.deep_delete(previous, alloc) != .None {
+                return false
+            }
+        } else {
+            table[strings.clone(name, alloc)] = encoded
+        }
     }
     return true
 }
