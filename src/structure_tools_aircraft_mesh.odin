@@ -114,26 +114,138 @@ climbing_leaf_paint_process_input :: proc(editor: ^Editor, world_x, world_z: f32
     }
 }
 
+structure_selection_clear :: proc(editor: ^Editor) {
+    if editor == nil do return
+    editor.structure_selection_group_count = 0
+    editor.structure_selected = -1
+}
+
+structure_group_selected :: proc(editor: ^Editor, group_id: u64) -> bool {
+    if editor == nil || group_id == 0 do return false
+    for selected in editor.structure_selection_groups[:editor.structure_selection_group_count] {
+        if selected == group_id do return true
+    }
+    return false
+}
+
+structure_index_selected :: proc(editor: ^Editor, index: int) -> bool {
+    if editor == nil || index < 0 || index >= editor.project.structure_count do return false
+    if !editor.selection_tool_active || editor.structure_selection_group_count == 0 {
+        return index == editor.structure_selected
+    }
+    return structure_group_selected(editor, editor.project.structures[index].group_id)
+}
+
+structure_selection_add_group :: proc(editor: ^Editor, group_id: u64) {
+    if editor == nil || group_id == 0 || structure_group_selected(editor, group_id) do return
+    if editor.structure_selection_group_count >= STRUCTURE_SELECTION_GROUP_CAPACITY do return
+    editor.structure_selection_groups[editor.structure_selection_group_count] = group_id
+    editor.structure_selection_group_count += 1
+}
+
+structure_selection_set_index :: proc(editor: ^Editor, index: int) {
+    structure_selection_clear(editor)
+    if editor == nil || index < 0 || index >= editor.project.structure_count do return
+    editor.structure_selected = index
+    structure_selection_add_group(editor, editor.project.structures[index].group_id)
+}
+
+structure_selection_finish_box :: proc(editor: ^Editor) {
+    minimum_x := min(editor.structure_selection_box_start_x, editor.structure_selection_box_end_x)
+    maximum_x := max(editor.structure_selection_box_start_x, editor.structure_selection_box_end_x)
+    minimum_z := min(editor.structure_selection_box_start_z, editor.structure_selection_box_end_z)
+    maximum_z := max(editor.structure_selection_box_start_z, editor.structure_selection_box_end_z)
+    structure_selection_clear(editor)
+    for structure, index in editor.project.structures[:editor.project.structure_count] {
+        radius_x := (math.abs(math.cos(structure.rotation)) * structure.width + math.abs(math.sin(structure.rotation)) * structure.depth) * .5
+        radius_z := (math.abs(math.sin(structure.rotation)) * structure.width + math.abs(math.cos(structure.rotation)) * structure.depth) * .5
+        if structure.center_x + radius_x < minimum_x || structure.center_x - radius_x > maximum_x ||
+           structure.center_z + radius_z < minimum_z || structure.center_z - radius_z > maximum_z {
+            continue
+        }
+        structure_selection_add_group(editor, structure.group_id)
+        if editor.structure_selected < 0 do editor.structure_selected = index
+    }
+}
+
+Structure_Selection_Bounds :: struct {
+    minimum_x, minimum_y, minimum_z: f32,
+    maximum_x, maximum_y, maximum_z: f32,
+}
+
+structure_selection_bounds :: proc(editor: ^Editor) -> (Structure_Selection_Bounds, bool) {
+    bounds: Structure_Selection_Bounds
+    found := false
+    for structure, index in editor.project.structures[:editor.project.structure_count] {
+        if !structure_index_selected(editor, index) do continue
+        radius_x := (math.abs(math.cos(structure.rotation)) * structure.width + math.abs(math.sin(structure.rotation)) * structure.depth) * .5
+        radius_z := (math.abs(math.sin(structure.rotation)) * structure.width + math.abs(math.cos(structure.rotation)) * structure.depth) * .5
+        if !found {
+            bounds = {
+                structure.center_x - radius_x,
+                structure.base_y,
+                structure.center_z - radius_z,
+                structure.center_x + radius_x,
+                structure.base_y + structure.height,
+                structure.center_z + radius_z,
+            }
+            found = true
+        } else {
+            bounds.minimum_x = min(bounds.minimum_x, structure.center_x - radius_x)
+            bounds.minimum_y = min(bounds.minimum_y, structure.base_y)
+            bounds.minimum_z = min(bounds.minimum_z, structure.center_z - radius_z)
+            bounds.maximum_x = max(bounds.maximum_x, structure.center_x + radius_x)
+            bounds.maximum_y = max(bounds.maximum_y, structure.base_y + structure.height)
+            bounds.maximum_z = max(bounds.maximum_z, structure.center_z + radius_z)
+        }
+    }
+    return bounds, found
+}
+
+structure_move_gizmo_size :: proc(editor: ^Editor, bounds: Structure_Selection_Bounds) -> f32 {
+    cell := editor.project.levels[0].cell_size
+    extent := max(bounds.maximum_x - bounds.minimum_x, bounds.maximum_z - bounds.minimum_z)
+    return clamp(extent * .28, cell * 2.5, cell * 8)
+}
+
+structure_move_gizmo_hit :: proc(editor: ^Editor, world_x, world_z: f32) -> (u8, bool) {
+    bounds, ok := structure_selection_bounds(editor)
+    if !ok do return 0, false
+    center_x := (bounds.minimum_x + bounds.maximum_x) * .5
+    center_z := (bounds.minimum_z + bounds.maximum_z) * .5
+    size := structure_move_gizmo_size(editor, bounds)
+    radius := max(editor.project.levels[0].cell_size * .65, size * .10)
+    dx, dz := world_x - center_x, world_z - center_z
+    if dx * dx + dz * dz <= radius * radius do return 0, true
+    if dx >= radius && dx <= size * 1.1 && math.abs(dz) <= radius do return 1, true
+    if dz >= radius && dz <= size * 1.1 && math.abs(dx) <= radius do return 2, true
+    return 0, false
+}
+
 structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) {
     if editor == nil || editor.in_map || editor.tool != .Structure do return
     if imgui_captures_keyboard() do return
     cell := editor.project.levels[0].cell_size
     if control_key_down() && canvas2d.IsKeyPressed(.Z) {
         structure_undo(editor)
+        structure_selection_clear(editor)
         editor.structure_placing = false
         editor.structure_moving = false
         return
     }
     if control_key_down() && canvas2d.IsKeyPressed(.Y) {
         structure_redo(editor)
+        structure_selection_clear(editor)
         editor.structure_placing = false
         editor.structure_moving = false
         return
     }
     if canvas2d.IsKeyPressed(.BACKSPACE) && editor.structure_selected >= 0 && !editor.structure_placing {
         structure_history_push_undo(editor)
-        terrain.remove_structure(&editor.project, editor.structure_selected)
-        editor.structure_selected = -1
+        for index := editor.project.structure_count - 1; index >= 0; index -= 1 {
+            if structure_index_selected(editor, index) do terrain.remove_structure(&editor.project, index)
+        }
+        structure_selection_clear(editor)
     }
     if control_key_down() && canvas2d.IsKeyPressed(.D) && editor.structure_selected >= 0 {
         structure_history_push_undo(editor)
@@ -145,7 +257,9 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
             editor.structure_preview.rotation += math.PI / 12
         } else if editor.structure_selected >= 0 {
             structure_history_push_undo(editor)
-            editor.project.structures[editor.structure_selected].rotation += math.PI / 12
+            for index in 0 ..< editor.project.structure_count {
+                if structure_index_selected(editor, index) do editor.project.structures[index].rotation += math.PI / 12
+            }
             editor.project.revision += 1
         }
     }
@@ -153,36 +267,47 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         if canvas2d.IsMouseButtonReleased(.LEFT) || canvas2d.IsMouseButtonReleased(.RIGHT) {
             editor.structure_placing = false
             editor.structure_moving = false
+            editor.structure_move_armed = false
+            editor.structure_selection_box_active = false
             editor.island_moving = false
         }
         return
     }
     if canvas2d.IsMouseButtonPressed(.LEFT) || canvas2d.IsMouseButtonPressed(.RIGHT) {
+        if editor.selection_tool_active && canvas2d.IsMouseButtonPressed(.LEFT) && editor.structure_selected >= 0 {
+            axis, gizmo_hit := structure_move_gizmo_hit(editor, world_x, world_z)
+            if gizmo_hit {
+                editor.structure_move_armed = true
+                editor.structure_move_axis = axis
+                editor.structure_move_start_x, editor.structure_move_start_z = world_x, world_z
+                return
+            }
+        }
         index :=
             canvas2d.IsMouseButtonPressed(.LEFT) ? terrain.structure_index_at(&editor.project, world_x, world_z) : -1
         if index >= 0 {
-            editor.structure_selected = index
             editor.island_selected = .World
-            editor.structure_moving = true
-            structure_history_push_undo(editor)
-            editor.structure_grab_offset_x = editor.project.structures[index].center_x - world_x
-            editor.structure_grab_offset_z = editor.project.structures[index].center_z - world_z
-        } else {
-            editor.structure_selected = -1
             if editor.selection_tool_active {
-                selected_island := terrain.island_at(&editor.project, world_x, world_z)
-                editor.island_selected = selected_island
-                if selected_island != .World && canvas2d.IsMouseButtonPressed(.LEFT) {
-                    center_x, center_z, center_ok := terrain.island_center(&editor.project, selected_island)
-                    if center_ok {
-                        structure_history_push_undo(editor)
-                        editor.island_moving = true
-                        editor.island_drag_start_x, editor.island_drag_start_z = world_x, world_z
-                        editor.island_drag_center_x, editor.island_drag_center_z = center_x, center_z
-                    }
+                if !structure_index_selected(editor, index) {
+                    structure_selection_set_index(editor, index)
+                }
+            } else {
+                editor.structure_selected = index
+                editor.structure_moving = true
+                structure_history_push_undo(editor)
+                editor.structure_grab_offset_x = editor.project.structures[index].center_x - world_x
+                editor.structure_grab_offset_z = editor.project.structures[index].center_z - world_z
+            }
+        } else {
+            if editor.selection_tool_active {
+                if canvas2d.IsMouseButtonPressed(.LEFT) {
+                    editor.structure_selection_box_active = true
+                    editor.structure_selection_box_start_x, editor.structure_selection_box_start_z = world_x, world_z
+                    editor.structure_selection_box_end_x, editor.structure_selection_box_end_z = world_x, world_z
                 }
                 return
             }
+            editor.structure_selected = -1
             editor.structure_placing = true
             editor.structure_anchor_x = structure_editor_snap(world_x, editor)
             editor.structure_anchor_z = structure_editor_snap(world_z, editor)
@@ -239,12 +364,44 @@ structure_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_h
         next_z := editor.island_drag_center_z + world_z - editor.island_drag_start_z
         _ = editor_island_set_center(editor, editor.island_selected, next_x, next_z)
         if canvas2d.IsMouseButtonReleased(.LEFT) do editor.island_moving = false
+    } else if editor.structure_selection_box_active {
+        editor.structure_selection_box_end_x, editor.structure_selection_box_end_z = world_x, world_z
+        if canvas2d.IsMouseButtonReleased(.LEFT) {
+            structure_selection_finish_box(editor)
+            editor.structure_selection_box_active = false
+        }
+    } else if editor.structure_move_armed && editor.structure_selected >= 0 {
+        dx, dz := world_x - editor.structure_move_start_x, world_z - editor.structure_move_start_z
+        if editor.structure_move_axis == 1 do dz = 0
+        if editor.structure_move_axis == 2 do dx = 0
+        if dx * dx + dz * dz > cell * cell * .04 {
+            structure_history_push_undo(editor)
+            editor.structure_moving = true
+            editor.structure_move_armed = false
+            editor.structure_grab_offset_x = editor.project.structures[editor.structure_selected].center_x - world_x
+            editor.structure_grab_offset_z = editor.project.structures[editor.structure_selected].center_z - world_z
+        } else if canvas2d.IsMouseButtonReleased(.LEFT) {
+            editor.structure_move_armed = false
+        }
     } else if editor.structure_moving && editor.structure_selected >= 0 {
         structure := &editor.project.structures[editor.structure_selected]
-        structure.center_x = structure_editor_snap(world_x + editor.structure_grab_offset_x, editor)
-        structure.center_z = structure_editor_snap(world_z + editor.structure_grab_offset_z, editor)
-        structure_update_base(editor, structure)
-        if canvas2d.IsMouseButtonReleased(.LEFT) do editor.structure_moving = false
+        next_x := structure_editor_snap(world_x + editor.structure_grab_offset_x, editor)
+        next_z := structure_editor_snap(world_z + editor.structure_grab_offset_z, editor)
+        dx, dz := next_x - structure.center_x, next_z - structure.center_z
+        if editor.structure_move_axis == 1 do dz = 0
+        if editor.structure_move_axis == 2 do dx = 0
+        for index in 0 ..< editor.project.structure_count {
+            if !structure_index_selected(editor, index) do continue
+            selected := &editor.project.structures[index]
+            selected.center_x += dx
+            selected.center_z += dz
+            structure_update_base(editor, selected)
+        }
+        if dx != 0 || dz != 0 do editor.project.revision += 1
+        if canvas2d.IsMouseButtonReleased(.LEFT) {
+            editor.structure_moving = false
+            editor.structure_move_axis = 0
+        }
     }
 }
 
@@ -269,18 +426,17 @@ structure_adjust_with_wheel :: proc(editor: ^Editor, wheel: f32) {
         }
     } else if editor.structure_selected >= 0 {
         structure_history_push_undo(editor)
-        selected_group := editor.project.structures[editor.structure_selected].group_id
         if shift_key_down() {
             for index in 0 ..< editor.project.structure_count {
                 structure := &editor.project.structures[index]
-                if structure.group_id != selected_group do continue
+                if !structure_index_selected(editor, index) do continue
                 structure.width = max(cell, structure.width + wheel * cell * 2)
                 structure.depth = max(cell, structure.depth + wheel * cell * 2)
             }
         } else {
             for index in 0 ..< editor.project.structure_count {
                 structure := &editor.project.structures[index]
-                if structure.group_id != selected_group do continue
+                if !structure_index_selected(editor, index) do continue
                 if structure.kind == .Architecture {
                     structure.height = architecture.facade_step_height(structure.height, wheel > 0 ? 1 : -1)
                 } else {

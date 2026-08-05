@@ -39,6 +39,7 @@ startup_failed: bool
 ADRIATIC_WORLD_WIDTH :: 854
 ADRIATIC_WORLD_HEIGHT :: 480
 STRUCTURE_HISTORY_CAPACITY :: 24
+STRUCTURE_SELECTION_GROUP_CAPACITY :: 256
 TERRAIN_HISTORY_CAPACITY :: 12
 FORMATION_EDIT_BENCHMARK_STRUCTURES :: terrain.LEGACY_STRUCTURE_CAPACITY + 144
 TERRAIN_PROJECT_PATH :: "adriatic.terrain"
@@ -288,12 +289,23 @@ Fixture :: struct {
     strength:                                       f32,
     hardness:                                       f32,
     structure_selected:                             int,
+    structure_selection_groups:                     [STRUCTURE_SELECTION_GROUP_CAPACITY]u64 `fixture:"-"`,
+    structure_selection_group_count:                int `fixture:"-"`,
+    structure_selection_box_active:                 bool `fixture:"-"`,
+    structure_selection_box_start_x:                f32 `fixture:"-"`,
+    structure_selection_box_start_z:                f32 `fixture:"-"`,
+    structure_selection_box_end_x:                  f32 `fixture:"-"`,
+    structure_selection_box_end_z:                  f32 `fixture:"-"`,
     island_selected:                                terrain.Island_ID `fixture:"-"`,
     island_moving:                                  bool `fixture:"-"`,
     island_drag_start_x, island_drag_start_z:       f32 `fixture:"-"`,
     island_drag_center_x, island_drag_center_z:     f32 `fixture:"-"`,
     structure_placing:                              bool `fixture:"-"`,
     structure_moving:                               bool `fixture:"-"`,
+    structure_move_armed:                           bool `fixture:"-"`,
+    structure_move_start_x:                         f32 `fixture:"-"`,
+    structure_move_start_z:                         f32 `fixture:"-"`,
+    structure_move_axis:                            u8 `fixture:"-"`,
     structure_anchor_x:                             f32 `fixture:"-"`,
     structure_anchor_z:                             f32 `fixture:"-"`,
     structure_preview_end_x:                        f32 `fixture:"-"`,

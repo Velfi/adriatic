@@ -63,6 +63,36 @@ selection_tool_is_selection_only_session_state :: proc(t: ^testing.T) {
 }
 
 @(test)
+selection_move_gizmo_uses_the_group_bounds_and_axes :: proc(t: ^testing.T) {
+    editor := new(Editor)
+    defer free(editor)
+    terrain.init_project(&editor.project)
+    defer terrain.destroy_project(&editor.project)
+    editor.selection_tool_active = true
+    first := terrain.add_structure(&editor.project, terrain.Structure{center_x = 10, center_z = 20, width = 8, depth = 6, height = 4})
+    second := terrain.add_structure(&editor.project, terrain.Structure{center_x = 30, center_z = 40, width = 10, depth = 12, height = 7})
+    structure_selection_set_index(editor, first)
+    structure_selection_add_group(editor, editor.project.structures[second].group_id)
+
+    bounds, ok := structure_selection_bounds(editor)
+    testing.expect(t, ok)
+    testing.expect_value(t, bounds.minimum_x, f32(6))
+    testing.expect_value(t, bounds.maximum_x, f32(35))
+    testing.expect_value(t, bounds.minimum_z, f32(17))
+    testing.expect_value(t, bounds.maximum_z, f32(46))
+
+    center_x := (bounds.minimum_x + bounds.maximum_x) * .5
+    center_z := (bounds.minimum_z + bounds.maximum_z) * .5
+    size := structure_move_gizmo_size(editor, bounds)
+    axis, hit := structure_move_gizmo_hit(editor, center_x + size * .7, center_z)
+    testing.expect(t, hit)
+    testing.expect_value(t, axis, u8(1))
+    axis, hit = structure_move_gizmo_hit(editor, center_x, center_z + size * .7)
+    testing.expect(t, hit)
+    testing.expect_value(t, axis, u8(2))
+}
+
+@(test)
 rock_tool_uses_the_authored_mesh_marker_and_complete_catalog :: proc(t: ^testing.T) {
     editor := new(Editor)
     defer free(editor)

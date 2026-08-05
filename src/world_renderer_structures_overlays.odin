@@ -144,6 +144,41 @@ world_settlement_gardens :: proc(editor: ^Editor) {
     }
 }
 
+world_structure_selection_overlay :: proc(editor: ^Editor) {
+    bounds, ok := structure_selection_bounds(editor)
+    if !ok do return
+    color := canvas2d.Color{244, 226, 122, 255}
+    minimum := third_person.Vec3{bounds.minimum_x, bounds.minimum_y, bounds.minimum_z}
+    maximum := third_person.Vec3{bounds.maximum_x, bounds.maximum_y, bounds.maximum_z}
+    corners := [8]third_person.Vec3{
+        {minimum.x, minimum.y, minimum.z}, {maximum.x, minimum.y, minimum.z},
+        {maximum.x, minimum.y, maximum.z}, {minimum.x, minimum.y, maximum.z},
+        {minimum.x, maximum.y, minimum.z}, {maximum.x, maximum.y, minimum.z},
+        {maximum.x, maximum.y, maximum.z}, {minimum.x, maximum.y, maximum.z},
+    }
+    extent := max(maximum.x - minimum.x, maximum.z - minimum.z)
+    thickness := clamp(extent * .006, f32(.08), f32(.32))
+    edges := [12][2]int{
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},
+        {0, 4}, {1, 5}, {2, 6}, {3, 7},
+    }
+    for edge in edges {
+        world_box_between(corners[edge[0]], corners[edge[1]], {0, 1, 0}, thickness, thickness, color)
+    }
+
+    center := third_person.Vec3{(minimum.x + maximum.x) * .5, minimum.y + thickness * 2, (minimum.z + maximum.z) * .5}
+    size := structure_move_gizmo_size(editor, bounds)
+    shaft_radius := size * .045
+    x_color := editor.structure_move_axis == 1 ? canvas2d.Color{255, 142, 126, 255} : canvas2d.Color{224, 80, 72, 255}
+    z_color := editor.structure_move_axis == 2 ? canvas2d.Color{126, 176, 255, 255} : canvas2d.Color{76, 132, 224, 255}
+    world_box(center + third_person.Vec3{size * .5, 0, 0}, {size, shaft_radius, shaft_radius}, x_color)
+    world_box(center + third_person.Vec3{0, 0, size * .5}, {shaft_radius, shaft_radius, size}, z_color)
+    sdf_obstacle_gizmo_arrow(center, .X, size, x_color)
+    sdf_obstacle_gizmo_arrow(center, .Z, size, z_color)
+    world_box(center, {size * .18, size * .10, size * .18}, color)
+}
+
 world_structures :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_structures")
     defer dio.flame_graph_end(dio.flame_graph_current(), profile)
@@ -174,7 +209,7 @@ world_structures :: proc(editor: ^Editor) {
     clear(&world_renderer.structure_visibility_order)
     for structure, index in editor.project.structures[:editor.project.structure_count] {
         stats.candidates += 1
-        force_visible := index == selected_index || index == hovered_index
+        force_visible := structure_index_selected(editor, index) || index == hovered_index
         center, radius := structure_visibility_sphere(structure)
         if !force_visible &&
            !static_sphere_in_frustum(view_camera, center, radius, aspect, near_plane, WORLD_FAR_CLIP) {
@@ -202,7 +237,7 @@ world_structures :: proc(editor: ^Editor) {
         index := ordered.index
         structure := editor.project.structures[index]
         if settlement_cemetery_structure_is_reservation(structure) do continue
-        force_visible := index == selected_index || index == hovered_index
+        force_visible := structure_index_selected(editor, index) || index == hovered_index
         if editor.architecture_painting &&
            structure.kind == .Architecture &&
            architecture.city_bounds_contains(
@@ -219,7 +254,7 @@ world_structures :: proc(editor: ^Editor) {
             stats.empty += 1
             continue
         }
-        force_near := index == editor.structure_selected && !editor.in_map
+        force_near := structure_index_selected(editor, index) && !editor.in_map
         world_before := len(world_renderer.vertices)
         foliage_vertices_before := len(world_renderer.foliage_vertices)
         bougainvillea_vertices_before := len(world_renderer.bougainvillea_vertices)
@@ -262,11 +297,12 @@ world_structures :: proc(editor: ^Editor) {
             world_renderer.static_visibility_classification[index] = .Empty
             stats.empty += 1
         }
-        if index == editor.structure_selected && !editor.in_map && !editor.road_mode {
-            world_structure_frame(structure, structure.base_y + structure.height, {244, 226, 122, 255})
-        } else if index == hovered_index && !editor.in_map {
+        if index == hovered_index && !structure_index_selected(editor, index) && !editor.in_map {
             world_structure_frame(structure, structure.base_y + structure.height + .02, {168, 239, 220, 255})
         }
+    }
+    if editor.selection_tool_active && editor.structure_selected >= 0 && !editor.in_map && !editor.road_mode {
+        world_structure_selection_overlay(editor)
     }
     if stats.opaque_cost > 0 do stats.emitted_draws += 1
     if stats.foliage_cost > 0 do stats.emitted_draws += 1

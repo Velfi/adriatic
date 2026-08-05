@@ -476,8 +476,12 @@ fixture_editor_reset_runtime :: proc(editor: ^Editor) {
     terrain_authoring_normalize_legacy_selection(editor)
     surface_weather.initialize(&editor.surface_weather, terrain.WORLD_SIZE_METERS * .5)
     editor.selection_tool_active = false
+    editor.structure_selection_group_count = 0
+    editor.structure_selection_box_active = false
     editor.structure_placing = false
     editor.structure_moving = false
+    editor.structure_move_armed = false
+    editor.structure_move_axis = 0
     editor.formation_brush_painting = false
     editor.architecture_painting = false
     editor.climbing_leaf_painting = false

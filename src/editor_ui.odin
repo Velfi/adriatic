@@ -465,6 +465,9 @@ authoring_select_selection_tool :: proc(editor: ^Editor) {
     // Reuse the common cancellation path, then turn the structure interaction
     // into selection-only behavior. This mode is session state, not map data.
     authoring_select_tool(editor, .Formations)
+    selected := editor.structure_selected
+    structure_selection_clear(editor)
+    if selected >= 0 && selected < editor.project.structure_count do structure_selection_set_index(editor, selected)
     editor.selection_tool_active = true
     editor.tool = .Structure
     editor.tweak.terrain.tool = editor.tool
@@ -998,9 +1001,10 @@ editor_ui_history_action_bounds :: #force_inline proc(layout: Editor_UI_Layout, 
 editor_ui_context_message :: proc(editor: ^Editor) -> cstring {
     if editor == nil do return ""
     if editor.selection_tool_active {
-        if editor.structure_moving do return "Move the selected item; release to commit."
-        if editor.structure_selected >= 0 do return "Drag to move. R rotates; Alt-wheel edits height; Shift-wheel edits size; Backspace deletes."
-        return "Click an item to select it."
+        if editor.structure_selection_box_active do return "Drag over items to select them."
+        if editor.structure_moving do return "Move the selection; release to commit."
+        if editor.structure_selected >= 0 do return "Drag the move gizmo. R rotates; Backspace deletes."
+        return "Click an item or drag over several to select."
     }
     if fixture_note_placement_active() do return "Place note: left-click terrain to commit; right-click or Escape cancels."
     if editor.rock_placement_mode do return "Left spawns rocks; right erases rocks. Drag to build clusters; adjust density in the inspector."
