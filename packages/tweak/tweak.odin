@@ -119,7 +119,7 @@ load :: proc(path: string, version: i64, root: ^$T, label: string, after_load: p
 
 save :: proc(path: string, version: i64, root: ^$T) -> (err: Err) {
     table := new(toml.Table, context.temp_allocator)
-    table["version"] = version
+    table[strings.clone("version", context.temp_allocator)] = version
 
     root_any := reflect.deref(any(root))
     if !encode_struct_fields(table, root_any, context.temp_allocator) {

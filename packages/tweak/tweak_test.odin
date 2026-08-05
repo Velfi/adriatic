@@ -32,6 +32,10 @@ Versioned :: struct {
     version: i64,
 }
 
+No_Version :: struct {
+    enabled: bool,
+}
+
 @(test)
 encode_struct_fields_reuses_existing_key :: proc(t: ^testing.T) {
     table := new(toml.Table, context.allocator)
@@ -42,6 +46,16 @@ encode_struct_fields_reuses_existing_key :: proc(t: ^testing.T) {
     testing.expect(t, encode_struct_fields(table, reflect.deref(any(&value)), context.allocator))
     testing.expect_value(t, len(table), 1)
     testing.expect_value(t, table["version"], toml.Type(i64(2)))
+}
+
+@(test)
+generated_table_owns_seeded_version_key :: proc(t: ^testing.T) {
+    table := new(toml.Table, context.allocator)
+    table[strings.clone("version", context.allocator)] = i64(1)
+
+    value := No_Version{enabled = true}
+    testing.expect(t, encode_struct_fields(table, reflect.deref(any(&value)), context.allocator))
+    testing.expect(t, toml.deep_delete(table, context.allocator) == .None)
 }
 
 Meta_Parse_Spec :: struct {
