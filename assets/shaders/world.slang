@@ -1,8 +1,8 @@
 struct Push {
     float4 camera_position;
     float4 camera_right;
-    float4 camera_up;
-    float4 camera_forward;
+    float4 camera_up;      // w: stable terrain-grass wind direction x
+    float4 camera_forward; // w: stable terrain-grass wind direction z
     float4 projection;
     float4 fog_color; // rgb horizon fog, a moonlight strength
     float4 water; // time, sea state, wind x, wind z
@@ -195,7 +195,11 @@ float3 shade_grass_wind_sheen(VertexOutput input, float3 color) {
     float grass = smoothstep(.18, .82, input.material.x);
     float2 wind = push.water.zw;
     float wind_speed = length(wind);
-    float2 wind_direction = wind_speed > .001 ? wind / wind_speed : float2(1, 0);
+    float2 grass_wind = float2(push.camera_up.w, push.camera_forward.w);
+    float grass_wind_length = length(grass_wind);
+    float2 wind_direction = grass_wind_length > .001
+        ? grass_wind / grass_wind_length
+        : (wind_speed > .001 ? wind / wind_speed : float2(1, 0));
     float2 wind_across = float2(-wind_direction.y, wind_direction.x);
     float grass_time = push.water.x * (.62 + wind_speed * .018);
     float downwind_coordinate = dot(input.world_position.xz, wind_direction);

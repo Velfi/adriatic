@@ -214,11 +214,23 @@ world_pass :: proc(pass: ^canvas2d.World_Pass_Context, _: rawptr) {
         {camera.position.x, camera.position.y, camera.position.z},
     )
     fog := world_sky_horizon_color(sky)
+    grass_wind := sky.weather.wind
+    grass_wind_speed := f32(math.sqrt(f64(grass_wind[0] * grass_wind[0] + grass_wind[1] * grass_wind[1])))
+    if sky_front.active {
+        // Local front sampling can turn the wind as the observer moves. The
+        // terrain shader applies one wind heading to the whole visible field,
+        // so anchor its grass sheen to the front's geographic direction.
+        grass_wind = sky_front.direction
+    } else if grass_wind_speed > .001 {
+        grass_wind /= grass_wind_speed
+    } else {
+        grass_wind = {1, 0}
+    }
     world_push := World_Push {
         camera_position = {camera.position.x, camera.position.y, camera.position.z, world_camera_near_clip(editor)},
         camera_right    = {camera.right.x, camera.right.y, camera.right.z, WORLD_FAR_CLIP},
-        camera_up       = {camera.up.x, camera.up.y, camera.up.z, 0},
-        camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, 0},
+        camera_up       = {camera.up.x, camera.up.y, camera.up.z, grass_wind[0]},
+        camera_forward  = {camera.forward.x, camera.forward.y, camera.forward.z, grass_wind[1]},
         projection      = {
             camera.focal_length,
             f32(pass.framebuffer_extent.width) / f32(max(pass.framebuffer_extent.height, 1)),
