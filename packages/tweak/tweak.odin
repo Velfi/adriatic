@@ -118,15 +118,20 @@ load :: proc(path: string, version: i64, root: ^$T, label: string, after_load: p
 }
 
 save :: proc(path: string, version: i64, root: ^$T) -> (err: Err) {
-    table := new(toml.Table, context.temp_allocator)
-    table[strings.clone("version", context.temp_allocator)] = version
+    // Saving also runs from an app-scope defer, after the final frame has
+    // cleared its temporary arena. Use the ordinary allocator so deep_delete
+    // releases the complete encoded tree instead of retaining its map storage
+    // until a temporary-arena reset that will never happen.
+    alloc := context.allocator
+    table := new(toml.Table, alloc)
+    table[strings.clone("version", alloc)] = version
 
     root_any := reflect.deref(any(root))
-    if !encode_struct_fields(table, root_any, context.temp_allocator) {
-        defer toml.deep_delete(table, context.temp_allocator)
+    if !encode_struct_fields(table, root_any, alloc) {
+        defer toml.deep_delete(table, alloc)
         return fmt.tprintf("encode %s failed", path)
     }
-    defer toml.deep_delete(table, context.temp_allocator)
+    defer toml.deep_delete(table, alloc)
 
     encoded := toml.emit(table)
     defer delete_string(encoded)
