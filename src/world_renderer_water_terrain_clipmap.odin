@@ -271,7 +271,10 @@ world_ocean_cache_build :: proc(
         for x_index in 0 ..< divisions {
             x0 := center_x - extent + f32(x_index) * cell
             x1 := x0 + cell
-            if x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
+            // A high authoring overview can see the finite edge of the
+            // terrain-sampled water. Keep its ocean uniform; gameplay clips
+            // this coarse field around the detailed grid below.
+            if !editor.in_map || x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
                 world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
                 continue
             }
@@ -317,13 +320,17 @@ world_ocean_cache_build :: proc(
             }
         }
     }
-    for z in 0 ..< OCEAN_LOCAL_DIVISIONS {
-        for x in 0 ..< OCEAN_LOCAL_DIVISIONS {
-            a := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)]
-            b := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z + 1)]
-            c := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z + 1)]
-            d := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z)]
-            append(&world_renderer.vertices, a, b, c, a, c, d)
+    // Terrain-sampled ocean belongs to the closer gameplay presentation. Its
+    // finite support reads as a giant square plot from the authoring camera.
+    if editor.in_map {
+        for z in 0 ..< OCEAN_LOCAL_DIVISIONS {
+            for x in 0 ..< OCEAN_LOCAL_DIVISIONS {
+                a := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z)]
+                b := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x, z + 1)]
+                c := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z + 1)]
+                d := world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(x + 1, z)]
+                append(&world_renderer.vertices, a, b, c, a, c, d)
+            }
         }
     }
     clear(&world_renderer.ocean_geometry_cache)
@@ -386,12 +393,14 @@ world_ocean :: proc(editor: ^Editor) {
     // Only the newly exposed row or column asks terrain again; rebuilding the
     // old 150x150 field did 135,000 identical terrain queries per pan step.
     local_ocean_y := ocean_y + f32(.004)
-    if !cache_state_matches ||
-       !world_renderer.ocean_sample_grid_valid ||
-       !world_ocean_sample_grid_shift(editor, local_center, local_ocean_y, color) {
-        world_ocean_sample_grid_rebuild(editor, local_center, local_ocean_y, color)
-    } else if localized_terrain_change {
-        world_ocean_sample_grid_refresh_bounds(editor, dirty, local_ocean_y, color)
+    if editor.in_map {
+        if !cache_state_matches ||
+           !world_renderer.ocean_sample_grid_valid ||
+           !world_ocean_sample_grid_shift(editor, local_center, local_ocean_y, color) {
+            world_ocean_sample_grid_rebuild(editor, local_center, local_ocean_y, color)
+        } else if localized_terrain_change {
+            world_ocean_sample_grid_refresh_bounds(editor, dirty, local_ocean_y, color)
+        }
     }
     world_ocean_cache_build(
         editor,
