@@ -3,10 +3,10 @@ import "core:math"
 import "core:slice"
 
 import architecture "../packages/architecture"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import fountains "../packages/fountains"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
 
 world_settlement_gardens :: proc(editor: ^Editor) {

@@ -1,10 +1,10 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import fog_field "../packages/fog_field"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"

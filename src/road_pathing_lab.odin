@@ -3,7 +3,7 @@ package main
 import road_planner "../packages/road_planner"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"

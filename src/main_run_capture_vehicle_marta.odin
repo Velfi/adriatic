@@ -4,7 +4,7 @@ package main
 import dialogue "../packages/dialogue"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
 
 run_prepare_vehicle_and_marta_capture :: proc(editor: ^Editor, using config: ^Run_Config) {

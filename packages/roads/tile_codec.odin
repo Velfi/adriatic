@@ -1,6 +1,6 @@
 package roads
 
-import hs "../hs"
+import hs "zelda_engine:hs"
 import "core:math"
 import "core:mem"
 import "core:testing"

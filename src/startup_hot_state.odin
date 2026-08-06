@@ -1,6 +1,6 @@
 package main
 
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"

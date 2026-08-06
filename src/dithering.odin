@@ -1,8 +1,8 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import dither "../packages/dither"
-import third_person "../packages/third_person"
+import dither "zelda_engine:dither"
+import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"

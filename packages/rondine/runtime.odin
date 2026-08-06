@@ -1,7 +1,7 @@
 package rondine
 
 import flight "../flight"
-import third_person "../third_person"
+import third_person "zelda_engine:third_person"
 import vehicles "../vehicles"
 import "core:math"
 import "core:math/linalg"

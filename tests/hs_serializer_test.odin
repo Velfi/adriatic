@@ -1,6 +1,6 @@
 package tests
 
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "core:mem"
 import "core:testing"
 

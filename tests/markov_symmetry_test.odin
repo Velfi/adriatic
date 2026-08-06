@@ -2,7 +2,7 @@ package tests
 
 import "core:testing"
 
-import markov "../packages/markov"
+import markov "zelda_engine:markov"
 import back "zelda_engine:back"
 
 @(test)

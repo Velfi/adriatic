@@ -2,10 +2,10 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import flight "../packages/flight"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
 
 world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.Structure, structure_index: int) {

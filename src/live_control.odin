@@ -2,7 +2,7 @@ package main
 
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:c"
 import "core:fmt"

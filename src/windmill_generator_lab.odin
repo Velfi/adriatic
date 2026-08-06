@@ -1,7 +1,7 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import windmills "../packages/windmills"
 import "core:math"
 import canvas "zelda_engine:canvas2d"

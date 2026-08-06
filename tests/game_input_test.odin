@@ -1,6 +1,6 @@
 package tests
 
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import "core:testing"
 
 @(test)

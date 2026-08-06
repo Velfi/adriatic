@@ -2,7 +2,7 @@ package main
 
 import fixture_file "../packages/fixture_file"
 import harbor "../packages/harbor"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"

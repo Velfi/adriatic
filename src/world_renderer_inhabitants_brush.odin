@@ -2,10 +2,10 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 

@@ -1,7 +1,7 @@
 package main
 
 import fixture_file "../packages/fixture_file"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import roads "../packages/roads"
 import rt "base:runtime"
 import "core:hash"

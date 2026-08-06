@@ -1,6 +1,6 @@
 package main
 
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import quest "../packages/quest"
 import story "../packages/story"
 import "core:fmt"

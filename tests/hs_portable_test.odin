@@ -1,7 +1,7 @@
 package tests
 
-import hs "../packages/hs"
-import toml "../packages/toml"
+import hs "zelda_engine:hs"
+import toml "zelda_engine:toml"
 import "base:runtime"
 import "core:mem"
 import "core:strings"

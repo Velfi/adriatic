@@ -4,7 +4,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 
 run_prepare_environment_and_menu_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
     if capture_grass_wind_mode || capture_target == "grass" {

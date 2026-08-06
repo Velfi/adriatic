@@ -2,7 +2,7 @@ package main
 
 import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0002 "../packages/fixture_history/v0002"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import vehicles "../packages/vehicles"
 import "base:runtime"
 import "core:mem"

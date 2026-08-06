@@ -1,7 +1,7 @@
 package main
 
-import im "../packages/imgui"
-import imgui_vk "../packages/imgui/impl_vulkan"
+import im "zelda_engine:imgui"
+import imgui_vk "zelda_engine:imgui/impl_vulkan"
 import "core:c"
 import "core:fmt"
 import "core:math"

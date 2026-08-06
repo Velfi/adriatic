@@ -1,6 +1,6 @@
 package main
 
-import toml "../packages/toml"
+import toml "zelda_engine:toml"
 import "core:os"
 import "core:strings"
 import canvas2d "zelda_engine:canvas2d"

@@ -2,7 +2,7 @@ package main
 import "core:math"
 
 import circulation "../packages/circulation"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import terrain "../packages/terrain"
 import canvas2d "zelda_engine:canvas2d"
 

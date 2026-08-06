@@ -2,7 +2,7 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import leaves "../packages/leaf_mesh"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"

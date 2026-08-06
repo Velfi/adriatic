@@ -2,7 +2,7 @@ package main
 
 import leaf_mesh "../packages/leaf_mesh"
 import plant_assets "../packages/plant_assets"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
 

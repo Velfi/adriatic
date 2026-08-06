@@ -1,7 +1,7 @@
 package main
 
 import architecture "../packages/architecture"
-import planar_geometry "../packages/planar_geometry"
+import planar_geometry "zelda_engine:planar_geometry"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"

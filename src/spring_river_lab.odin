@@ -3,7 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import estuaries "../packages/estuaries"
 import spring_river "../packages/spring_river"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"

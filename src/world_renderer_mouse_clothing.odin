@@ -3,7 +3,7 @@ package main
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"

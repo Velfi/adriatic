@@ -1,7 +1,7 @@
 package main
 
 import fixture_v0002 "../packages/fixture_history/v0002"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "core:mem"
 
 fixture_migration_step_v0002_to_v0003 :: proc(

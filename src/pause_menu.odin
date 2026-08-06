@@ -1,12 +1,12 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import player_mail "../packages/player_mail"
 import roads "../packages/roads"
 import scene_stack "../packages/scene_stack"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:os"

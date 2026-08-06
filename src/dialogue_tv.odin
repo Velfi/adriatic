@@ -3,7 +3,7 @@ package main
 import dialogue "../packages/dialogue"
 import dialogue_glossary "../packages/dialogue_glossary"
 import engine_sound "../packages/engine_sound"
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"

@@ -1,7 +1,7 @@
 package main
 
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:testing"
 
 @(test)

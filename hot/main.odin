@@ -1,6 +1,6 @@
 package main
 
-import hot_abi "../packages/hot_abi"
+import hot_abi "zelda_engine:hot_abi"
 import "core:dynlib"
 import "core:fmt"
 import "core:os"

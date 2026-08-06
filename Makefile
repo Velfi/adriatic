@@ -618,7 +618,7 @@ $(HOT_APP_STAMP): $(HOT_APP)
 
 $(HOT_HOST): hot/main.odin Makefile toolchain.mk
 	@mkdir -p $(@D)
-	$(ODIN) build hot/main.odin -file $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_hot) -out:$@
+	$(ODIN) build hot/main.odin -file $(ZELDA_ENGINE_COLLECTION) $(ODIN_VET_FLAGS) $(PROFILE_ODIN_FLAGS_hot) -out:$@
 
 hot-app: $(HOT_APP_STAMP)
 

@@ -1,7 +1,7 @@
 package main
 
 import plants "../packages/plants"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:testing"
 
 generated_plant_lod_test_reset :: proc() {

@@ -1,7 +1,7 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import render_graph "../packages/render_graph"
+import render_graph "zelda_engine:render_graph"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"

@@ -3,7 +3,7 @@ package main
 import arch_walls "../packages/arch_walls"
 import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"

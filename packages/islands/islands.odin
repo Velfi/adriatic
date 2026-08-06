@@ -1,6 +1,6 @@
 package islands
 
-import markov "../markov"
+import markov "zelda_engine:markov"
 import "base:runtime"
 import "core:math"
 

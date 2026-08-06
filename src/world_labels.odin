@@ -1,6 +1,6 @@
 package main
 
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
 
 World_Label_Placement :: enum {

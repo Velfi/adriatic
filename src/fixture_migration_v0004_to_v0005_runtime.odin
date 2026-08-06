@@ -4,7 +4,7 @@ import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0002 "../packages/fixture_history/v0002"
 import fixture_v0003 "../packages/fixture_history/v0003"
 import fixture_v0004 "../packages/fixture_history/v0004"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "core:mem"
 
 Fixture_Migration_V0004_Legacy_Basis :: struct {

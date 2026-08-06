@@ -1,6 +1,6 @@
 package main
 
-import planar_geometry "../packages/planar_geometry"
+import planar_geometry "zelda_engine:planar_geometry"
 
 import road_planner "../packages/road_planner"
 import roads "../packages/roads"

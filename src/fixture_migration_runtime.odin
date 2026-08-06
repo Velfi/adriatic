@@ -1,7 +1,7 @@
 package main
 
 import fixture_v0001 "../packages/fixture_history/v0001"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "core:mem"
 import "core:strings"
 import back "zelda_engine:back"

@@ -2,7 +2,7 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import hero "../packages/hero_buildings"
 import terrain "../packages/terrain"
 import "core:math/linalg"

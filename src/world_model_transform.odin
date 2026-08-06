@@ -1,6 +1,6 @@
 package main
 
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import linalg "core:math/linalg"
 
 World_Model_Transform :: struct {

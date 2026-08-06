@@ -1,7 +1,7 @@
 package main
 
 import flight "../packages/flight"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"

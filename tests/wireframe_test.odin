@@ -1,6 +1,6 @@
 package tests
 
-import wireframe "../packages/wireframe"
+import wireframe "zelda_engine:wireframe"
 import "core:testing"
 
 @(test)

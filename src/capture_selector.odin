@@ -3,7 +3,7 @@ package main
 import marina "../packages/marina"
 import plants "../packages/plants"
 import story "../packages/story"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"

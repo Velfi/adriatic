@@ -2,7 +2,7 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:os"
 import "core:strconv"

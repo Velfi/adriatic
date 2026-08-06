@@ -1,6 +1,6 @@
 package vehicles
 
-import wireframe "../wireframe"
+import wireframe "zelda_engine:wireframe"
 
 // Product-facing wireframes. They face negative Z and deliberately describe
 // each airframe's role rather than trying to reproduce presentation meshes.

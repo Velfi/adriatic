@@ -3,7 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import roads "../packages/roads"
 import ruins "../packages/ruins"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"

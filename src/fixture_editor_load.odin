@@ -3,7 +3,7 @@ package main
 import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
 import flight "../packages/flight"
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import harbor "../packages/harbor"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"

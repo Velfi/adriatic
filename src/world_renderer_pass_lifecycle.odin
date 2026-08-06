@@ -4,7 +4,7 @@ import "core:mem"
 
 import atmosphere "../packages/atmosphere"
 import cinematic "../packages/cinematic"
-import render_graph "../packages/render_graph"
+import render_graph "zelda_engine:render_graph"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"

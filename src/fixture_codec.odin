@@ -1,7 +1,7 @@
 package main
 
 import fixture_file "../packages/fixture_file"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "core:mem"
 
 Fixture_Codec_Error_Kind :: enum {

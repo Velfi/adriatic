@@ -1,6 +1,6 @@
 package main
 
-import hot_abi "../packages/hot_abi"
+import hot_abi "zelda_engine:hot_abi"
 import "core:os"
 import "core:time"
 import canvas2d "zelda_engine:canvas2d"

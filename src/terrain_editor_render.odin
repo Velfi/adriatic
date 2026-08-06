@@ -3,7 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"

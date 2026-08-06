@@ -3,7 +3,7 @@ package main
 import mouse_gait "../packages/mouse_gait"
 import mouse_tail "../packages/mouse_tail"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:math"
 
 player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3) {

@@ -1,6 +1,6 @@
 package main
 
-import game_input "../packages/game_input"
+import game_input "zelda_engine:game_input"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import canvas2d "zelda_engine:canvas2d"

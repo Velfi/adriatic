@@ -2,9 +2,9 @@ package main
 import "core:math"
 import "core:mem"
 
-import dio "../packages/dio"
+import dio "zelda_engine:dio"
 import story "../packages/story"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"

@@ -1,11 +1,11 @@
 package main
 
 import architecture "../packages/architecture"
-import markov "../packages/markov"
+import markov "zelda_engine:markov"
 import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"

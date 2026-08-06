@@ -3,7 +3,7 @@ package main
 import flight "../packages/flight"
 import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
-import third_person "../packages/third_person"
+import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"

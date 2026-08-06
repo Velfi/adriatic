@@ -1,6 +1,6 @@
 package tests
 
-import render_graph "../packages/render_graph"
+import render_graph "zelda_engine:render_graph"
 import "core:testing"
 
 Render_Order :: struct {

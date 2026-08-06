@@ -2,7 +2,7 @@ package main
 
 import buildings "../packages/buildings"
 import fixture_v0012 "../packages/fixture_history/v0012"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import "base:runtime"
 import "core:testing"
 

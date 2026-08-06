@@ -1,6 +1,6 @@
 package tests
 
-import dither "../packages/dither"
+import dither "zelda_engine:dither"
 import "core:math"
 import "core:testing"
 

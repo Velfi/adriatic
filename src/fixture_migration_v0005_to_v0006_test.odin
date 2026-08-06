@@ -1,7 +1,7 @@
 package main
 
 import fixture_v0005 "../packages/fixture_history/v0005"
-import hs "../packages/hs"
+import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import "base:runtime"
 import "core:testing"

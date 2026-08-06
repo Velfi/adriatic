@@ -1,6 +1,6 @@
 package main
 
-import markov "../packages/markov"
+import markov "zelda_engine:markov"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:math/linalg"

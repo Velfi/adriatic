@@ -1,6 +1,6 @@
 package main
 
-import tweak_package "../packages/tweak"
+import tweak_package "zelda_engine:tweak"
 import "core:os"
 import "core:strings"
 import "core:testing"

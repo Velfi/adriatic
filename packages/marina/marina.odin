@@ -1,7 +1,7 @@
 package marina
 
 import boats "../boats"
-import markov "../markov"
+import markov "zelda_engine:markov"
 import "core:math"
 import "core:sync"
 
