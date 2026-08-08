@@ -78,6 +78,7 @@ KeyboardKey :: enum {
     DOWN,
     LEFT,
     RIGHT,
+    GRAVE,
     LEFT_BRACKET,
     RIGHT_BRACKET,
     ONE,

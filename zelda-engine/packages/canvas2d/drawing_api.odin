@@ -256,6 +256,8 @@ keyboard_key_scancodes :: #force_inline proc(key: KeyboardKey) -> (primary, alte
         return .LEFT, .UNKNOWN
     case .RIGHT:
         return .RIGHT, .UNKNOWN
+    case .GRAVE:
+        return .GRAVE, .UNKNOWN
     case .LEFT_BRACKET:
         return .LEFTBRACKET, .UNKNOWN
     case .RIGHT_BRACKET:
