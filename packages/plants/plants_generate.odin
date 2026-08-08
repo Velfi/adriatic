@@ -30,10 +30,10 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     habit := config.habit
     if habit == .Free_Standing &&
        (config.species == .Bougainvillea ||
-        config.species == .Grapevine ||
-        config.species == .Wisteria ||
-        config.species == .Climbing_Rose ||
-        config.species == .Star_Jasmine) {
+               config.species == .Grapevine ||
+               config.species == .Wisteria ||
+               config.species == .Climbing_Rose ||
+               config.species == .Star_Jasmine) {
         habit = default_habit(config.species)
     }
     climbing := habit != .Free_Standing
@@ -74,11 +74,20 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     if climbing do plant.support_signature = support_hash(config.support^)
     #partial switch config.species {
     case .Olive:
-        plant.wood = {radial_irregularity = .20, twist = 1.50}
+        plant.wood = {
+            radial_irregularity = .20,
+            twist               = 1.50,
+        }
     case .Italian_Cypress:
-        plant.wood = {radial_irregularity = .075, twist = .42}
+        plant.wood = {
+            radial_irregularity = .075,
+            twist               = .42,
+        }
     case .Lemon:
-        plant.wood = {radial_irregularity = .055, twist = .28}
+        plant.wood = {
+            radial_irregularity = .055,
+            twist               = .28,
+        }
     }
 
     generation_workspace_output_take(plant)
@@ -109,26 +118,38 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
     first := true
     for internode in graph.internodes {
         segment := plant_structure.Segment {
-            start = {
+            start        = {
                 internode.start[0] * profile.width_scale,
                 internode.start[1] * profile.height_scale,
                 internode.start[2] * profile.width_scale,
             },
-            end = {
+            end          = {
                 internode.end[0] * profile.width_scale,
                 internode.end[1] * profile.height_scale,
                 internode.end[2] * profile.width_scale,
             },
             radius_start = internode.radius_start,
-            radius_end = internode.radius_end,
-            depth = internode.render_depth,
+            radius_end   = internode.radius_end,
+            depth        = internode.render_depth,
         }
         if climbing {
             segment.start = route_species_point(
-                segment.start, config.support, climbing_height, climbing_half_width, habit, segment.depth, config.species,
+                segment.start,
+                config.support,
+                climbing_height,
+                climbing_half_width,
+                habit,
+                segment.depth,
+                config.species,
             )
             segment.end = route_species_point(
-                segment.end, config.support, climbing_height, climbing_half_width, habit, segment.depth, config.species,
+                segment.end,
+                config.support,
+                climbing_height,
+                climbing_half_width,
+                habit,
+                segment.depth,
+                config.species,
             )
         }
         append(&plant.segments, segment)
@@ -152,13 +173,20 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
         }
         if climbing {
             position = route_species_point(
-                position, config.support, climbing_height, climbing_half_width, habit, organ.render_depth, config.species,
+                position,
+                config.support,
+                climbing_height,
+                climbing_half_width,
+                habit,
+                organ.render_depth,
+                config.species,
             )
         }
         kind := generated_organ_attachment_kind(organ.kind)
         forward, up := attachment_frame(organ.forward, organ.up, profile, climbing)
         if climbing do fold_source_attachment_frame(&forward, &up, position, config.support)
-        traits := kind == .Leaf ? generated_leaf_traits(config.species, organ.variant, maturity, config.detail) : Leaf_Traits{}
+        traits :=
+            kind == .Leaf ? generated_leaf_traits(config.species, organ.variant, maturity, config.detail) : Leaf_Traits{}
         if kind == .Leaf {
             depth_scale := f32(1)
             #partial switch config.species {
@@ -175,19 +203,16 @@ generate :: proc(config: Generate_Config) -> Generate_Result {
             traits.length *= depth_scale
             traits.width *= .84 + depth_scale * .16
         }
-        append(
-            &plant.attachments,
-            Attachment {
-                kind = kind,
-                stage = attachment_stage(kind, config.seed, organ_index, maturity),
-                position = position,
-                forward = forward,
-                up = up,
-                depth = organ.render_depth,
-                variant = organ.variant,
-                leaf = traits,
-            },
-        )
+        append(&plant.attachments, Attachment {
+            kind     = kind,
+            stage    = attachment_stage(kind, config.seed, organ_index, maturity),
+            position = position,
+            forward  = forward,
+            up       = up,
+            depth    = organ.render_depth,
+            variant  = organ.variant,
+            leaf     = traits,
+        })
         update_bounds(&plant.bounds, position, &first)
         if kind == .Leaf do update_leaf_bounds(&plant.bounds, position, forward, up, traits, &first)
     }

@@ -1,10 +1,10 @@
 package postale
 
 import flight "../flight"
-import third_person "zelda_engine:third_person"
 import vehicles "../vehicles"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 // The generated Postale mesh includes exposed main wheels. Their tire bottoms
 // sit roughly 1.12 world units below the body origin at presentation scale,

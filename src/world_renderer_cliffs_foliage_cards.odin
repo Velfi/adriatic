@@ -3,9 +3,9 @@ import "core:math"
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_cliff_formation :: proc(structure: terrain.Structure, lod: Structure_LOD = .Near) {
     segments := lod == .Near ? 6 : lod == .Medium ? 4 : 2
@@ -135,31 +135,25 @@ world_bougainvillea_card :: proc(
     editor := world_renderer.editor
     if editor == nil do return
     if climbing_leaf_card_capture != nil {
-        append(
-            climbing_leaf_card_capture,
-            Bougainvillea_Card_Descriptor {
-                center = center,
-                width = width,
-                height = height,
-                tile = tile,
-                mirror = mirror,
-                roll = roll,
-                value = value,
-                young_growth = young_growth,
-                yaw_bias = yaw_bias,
-            },
-        )
+        append(climbing_leaf_card_capture, Bougainvillea_Card_Descriptor {
+            center       = center,
+            width        = width,
+            height       = height,
+            tile         = tile,
+            mirror       = mirror,
+            roll         = roll,
+            value        = value,
+            young_growth = young_growth,
+            yaw_bias     = yaw_bias,
+        })
     }
-    append(
-        &world_renderer.bougainvillea_instances,
-        Bougainvillea_Instance {
-            center = {center.x, center.y, center.z},
-            size = {width, height},
-            tile = u32(((tile % 16) + 16) % 16),
-            params = {mirror ? f32(1) : f32(0), roll, value, young_growth ? f32(1) : f32(0)},
-            yaw_bias = yaw_bias,
-        },
-    )
+    append(&world_renderer.bougainvillea_instances, Bougainvillea_Instance {
+        center   = {center.x, center.y, center.z},
+        size     = {width, height},
+        tile     = u32(((tile % 16) + 16) % 16),
+        params   = {mirror ? f32(1) : f32(0), roll, value, young_growth ? f32(1) : f32(0)},
+        yaw_bias = yaw_bias,
+    })
     return
 }
 
@@ -343,15 +337,12 @@ world_window_flower_bunch_billboard :: proc(
 
 @(no_instrumentation)
 world_grass_card :: proc(center: third_person.Vec3, width, height: f32, tile: int, color: canvas2d.Color) {
-    append(
-        &world_renderer.grass_instances,
-        Grass_Instance {
-            center = {center.x, center.y, center.z},
-            size = {width, height},
-            tile = u32(((tile % 16) + 16) % 16),
-            color = world_color(color),
-        },
-    )
+    append(&world_renderer.grass_instances, Grass_Instance {
+        center = {center.x, center.y, center.z},
+        size   = {width, height},
+        tile   = u32(((tile % 16) + 16) % 16),
+        color  = world_color(color),
+    })
 }
 
 world_wildflower_card :: proc(center: third_person.Vec3, width, height: f32, tile: int) {

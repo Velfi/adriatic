@@ -1,9 +1,9 @@
 package main
 
 import fixture_v0011 "../packages/fixture_history/v0011"
-import hs "zelda_engine:hs"
 import "base:runtime"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     @(test)

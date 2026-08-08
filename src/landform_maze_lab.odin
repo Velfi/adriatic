@@ -5,7 +5,6 @@ import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
@@ -13,18 +12,19 @@ import "core:math/linalg"
 import "core:strconv"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 LANDFORM_MAZE_CELLS :: 15
 LANDFORM_MAZE_GRID :: LANDFORM_MAZE_CELLS * 2 + 1
 LANDFORM_MAZE_DEFAULT_SEED :: u32(0x4d415a45)
 
 Landform_Maze_Lab_State :: struct {
-    walls:        [LANDFORM_MAZE_GRID * LANDFORM_MAZE_GRID]bool,
-    visited:      [LANDFORM_MAZE_CELLS * LANDFORM_MAZE_CELLS]bool,
-    seed:         u32,
-    cell_size:    f32,
-    wall_height:  f32,
-    flying:       bool,
+    walls:       [LANDFORM_MAZE_GRID * LANDFORM_MAZE_GRID]bool,
+    visited:     [LANDFORM_MAZE_CELLS * LANDFORM_MAZE_CELLS]bool,
+    seed:        u32,
+    cell_size:   f32,
+    wall_height: f32,
+    flying:      bool,
 }
 
 landform_maze_lab: Landform_Maze_Lab_State
@@ -59,7 +59,10 @@ landform_maze_generate :: proc(seed: u32) {
         choice_count := 0
         for direction, index in directions {
             nx, nz := x + direction[0], z + direction[1]
-            if nx >= 0 && nx < LANDFORM_MAZE_CELLS && nz >= 0 && nz < LANDFORM_MAZE_CELLS &&
+            if nx >= 0 &&
+               nx < LANDFORM_MAZE_CELLS &&
+               nz >= 0 &&
+               nz < LANDFORM_MAZE_CELLS &&
                !landform_maze_lab.visited[nz * LANDFORM_MAZE_CELLS + nx] {
                 choices[choice_count] = index
                 choice_count += 1
@@ -200,7 +203,11 @@ landform_maze_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     // A fixed-wing maze needs room for a banked 90-degree turn. Only part of
     // each pitch is open corridor, so use generous spacing while leaving the
     // ordinary Postale handling untouched.
-    landform_maze_lab = {seed = seed, cell_size = 256, wall_height = 86}
+    landform_maze_lab = {
+        seed        = seed,
+        cell_size   = 256,
+        wall_height = 86,
+    }
     landform_maze_generate(seed)
     landform_maze_apply_terrain(editor)
     atmosphere.set_world_minutes(&editor.atmosphere, 9 * 60 + 20)
@@ -257,13 +264,28 @@ landform_maze_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     canvas2d.DrawRectangleRec(panel, {15, 22, 20, 224})
     canvas2d.DrawTextEx(canvas2d.Font{}, "LANDFORM MAZE", {panel.x + 16, panel.y + 13}, 18, 1, {230, 221, 184, 255})
     if landform_maze_lab.flying {
-        canvas2d.DrawTextEx(canvas2d.Font{}, "ENTER TO EDIT  •  R TO RESTART", {panel.x + 16, panel.y + 48}, 15, 1, {205, 215, 197, 255})
+        canvas2d.DrawTextEx(
+            canvas2d.Font{},
+            "ENTER TO EDIT  •  R TO RESTART",
+            {panel.x + 16, panel.y + 48},
+            15,
+            1,
+            {205, 215, 197, 255},
+        )
     } else {
         canvas2d.DrawTextEx(canvas2d.Font{}, "ENTER TO FLY", {panel.x + 16, panel.y + 43}, 16, 1, {205, 215, 197, 255})
         canvas2d.DrawTextEx(
             canvas2d.Font{},
-            fmt.ctprintf("SEED %08X  •  RIDGES %.0f M  •  CORRIDORS %.0f M", landform_maze_lab.seed, landform_maze_lab.wall_height, landform_maze_lab.cell_size),
-            {panel.x + 16, panel.y + 69}, 13, 1, {151, 177, 157, 255},
+            fmt.ctprintf(
+                "SEED %08X  •  RIDGES %.0f M  •  CORRIDORS %.0f M",
+                landform_maze_lab.seed,
+                landform_maze_lab.wall_height,
+                landform_maze_lab.cell_size,
+            ),
+            {panel.x + 16, panel.y + 69},
+            13,
+            1,
+            {151, 177, 157, 255},
         )
     }
     _ = width

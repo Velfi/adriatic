@@ -7,12 +7,12 @@ import fountains "../packages/fountains"
 import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import vk "vendor:vulkan"
 import engine "zelda_engine:engine"
 import render3d "zelda_engine:render3d"
 import resources "zelda_engine:render_resources"
+import third_person "zelda_engine:third_person"
 
 // Stable semantic surface IDs shared by settlement generators. Keep existing
 // values fixed: generated geometry and shaders exchange these compact IDs.

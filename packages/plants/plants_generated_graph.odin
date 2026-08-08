@@ -120,32 +120,26 @@ generated_graph_build :: proc(plant: ^Generated_Plant, seed: u64) {
     for internode, index in plant.graph.internodes do terminal[internode.axis] = index
     for internode, axis in terminal {
         if internode < 0 do continue
-        append(
-            &plant.graph.buds,
-            Bud {
-                internode = internode,
-                state = plant.maturity < 1 ? Bud_State.Continuing : .Terminated,
-                vigor = plant.graph.axes[axis].vigor,
-                stable_id = generated_stable_id(seed, 0x425544, axis),
-            },
-        )
+        append(&plant.graph.buds, Bud {
+            internode = internode,
+            state     = plant.maturity < 1 ? Bud_State.Continuing : .Terminated,
+            vigor     = plant.graph.axes[axis].vigor,
+            stable_id = generated_stable_id(seed, 0x425544, axis),
+        })
     }
     for attachment, attachment_index in plant.attachments {
         internode, fraction := generated_graph_nearest_internode(&plant.graph, attachment.position)
         if internode < 0 do continue
-        append(
-            &plant.graph.organs,
-            Organ_Site {
-                internode = internode,
-                fraction = fraction,
-                kind = generated_graph_organ_kind(attachment.kind),
-                forward = attachment.forward,
-                up = attachment.up,
-                variant = attachment.variant,
-                render_depth = plant.graph.internodes[internode].render_depth,
-                stable_id = plant.attachment_ids[attachment_index],
-            },
-        )
+        append(&plant.graph.organs, Organ_Site {
+            internode    = internode,
+            fraction     = fraction,
+            kind         = generated_graph_organ_kind(attachment.kind),
+            forward      = attachment.forward,
+            up           = attachment.up,
+            variant      = attachment.variant,
+            render_depth = plant.graph.internodes[internode].render_depth,
+            stable_id    = plant.attachment_ids[attachment_index],
+        })
     }
 }
 

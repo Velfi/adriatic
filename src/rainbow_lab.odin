@@ -1,10 +1,10 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 rainbow_lab_minutes: f32
 rainbow_lab_rain: f32

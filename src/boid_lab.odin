@@ -2,10 +2,10 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import flocks "../packages/flocks"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 boid_lab_system: flocks.System
 boid_lab_paused: bool

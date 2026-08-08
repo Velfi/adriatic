@@ -5,28 +5,25 @@ import flight "../packages/flight"
 import plants "../packages/plants"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_character :: proc(editor: ^Editor) {
     if !editor.in_map || editor.pilot.mode != .On_Foot do return
     if !world_sphere_in_view(editor, editor.player.position + third_person.Vec3{0, .8, 0}, 2, 5) do return
-    world_mouse_model(
-        editor,
-        {
-            position = editor.player.position,
-            rotation = math.PI - editor.player.facing_yaw_radians,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
-            mailbag_enabled = !editor.capture_player_mailbag_hidden,
-            player_controlled = true,
-            track_paw_plants = true,
-            grounded = editor.player.grounded,
-        },
-    )
+    world_mouse_model(editor, {
+        position          = editor.player.position,
+        rotation          = math.PI - editor.player.facing_yaw_radians,
+        accessory         = editor.mouse_headgear,
+        fur               = editor.mouse_fur,
+        pattern           = editor.mouse_pattern,
+        scarf_enabled     = editor.mouse_scarf_enabled,
+        scarf_color       = editor.mouse_scarf_color,
+        mailbag_enabled   = !editor.capture_player_mailbag_hidden,
+        player_controlled = true,
+        track_paw_plants  = true,
+        grounded          = editor.player.grounded,
+    })
 }
 
 world_postale_pilot :: proc(editor: ^Editor) {
@@ -41,24 +38,20 @@ world_postale_pilot :: proc(editor: ^Editor) {
     seat_local := [3]f32{0, -.37, -.20}
     position := postale_vertex_world(&editor.postale, seat_local, POSTALE_PRESENTATION_SCALE)
     rotation := math.atan2(-basis.forward.x, -basis.forward.z)
-    world_mouse_model_parented(
-        editor,
-        {
-            position = position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
+    world_mouse_model_parented(editor, {
+            position          = position,
+            rotation          = rotation,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded = false,
-            hide_tail = true,
-            hide_hind_feet = true,
-            driving_pose = true,
-        },
-        basis,
-    )
+            grounded          = false,
+            hide_tail         = true,
+            hide_hind_feet    = true,
+            driving_pose      = true,
+        }, basis)
 }
 
 MARTA_STOOL_HEIGHT :: f32(.49)
@@ -500,17 +493,14 @@ world_marta :: proc(editor: ^Editor) {
     facing := math.atan2(-delta.x, -delta.z)
     position := service_position
     position.y += MARTA_STOOL_HEIGHT
-    world_mouse_model(
-        editor,
-        {
-            position = position,
-            rotation = math.PI - facing,
-            build = .88,
-            snout_length = 1.12,
-            accessory = .Flower,
-            grounded = false,
-        },
-    )
+    world_mouse_model(editor, {
+        position     = position,
+        rotation     = math.PI - facing,
+        build        = .88,
+        snout_length = 1.12,
+        accessory    = .Flower,
+        grounded     = false,
+    })
     if story.resident_has_unseen_action(&editor.story_state, .Marta) {
         world_mouse_interaction_indicator(editor, position)
     }
@@ -522,17 +512,14 @@ world_marin :: proc(editor: ^Editor) {
     if !world_sphere_in_view(editor, position + third_person.Vec3{0, 1.2, 0}, 2, 4) do return
     delta := third_person.Vec3{editor.player.position.x - position.x, 0, editor.player.position.z - position.z}
     facing := math.atan2(-delta.x, -delta.z)
-    world_mouse_model(
-        editor,
-        {
-            position = position,
-            rotation = math.PI - facing,
-            build = 1.05,
-            snout_length = .96,
-            accessory = .Paper_Boat,
-            grounded = true,
-        },
-    )
+    world_mouse_model(editor, {
+        position     = position,
+        rotation     = math.PI - facing,
+        build        = 1.05,
+        snout_length = .96,
+        accessory    = .Paper_Boat,
+        grounded     = true,
+    })
     world_mouse_interaction_indicator(editor, position)
 }
 
@@ -548,18 +535,15 @@ world_gerta :: proc(editor: ^Editor) {
     facing := math.atan2(-delta.x, -delta.z)
     position := service_position
     position.y += MARTA_STOOL_HEIGHT
-    world_mouse_model(
-        editor,
-        {
-            position = position,
-            rotation = math.PI - facing,
-            build = 1.16,
-            snout_length = .92,
-            accessory = .Flower,
-            accessory_side = 1,
-            grounded = false,
-        },
-    )
+    world_mouse_model(editor, {
+        position       = position,
+        rotation       = math.PI - facing,
+        build          = 1.16,
+        snout_length   = .92,
+        accessory      = .Flower,
+        accessory_side = 1,
+        grounded       = false,
+    })
     if story.resident_has_unseen_action(&editor.story_state, .Gerta) {
         world_mouse_interaction_indicator(editor, position)
     }

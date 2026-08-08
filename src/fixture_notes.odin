@@ -1,7 +1,7 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 fixture_note_placement_index := -1
 fixture_note_placement_original: Fixture_Note

@@ -2,10 +2,10 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import windows "../packages/facade_windows"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 window_lab_seed := u32(1948)
 window_lab_config: windows.Config

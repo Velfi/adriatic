@@ -2,10 +2,10 @@ package main
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Farm compounds are derived presentation/planning state. They deliberately
 // contain no fixture-owned references: placement, farmland, and rendering can

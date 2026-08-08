@@ -1,8 +1,8 @@
 package tests
 
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 vehicle_entry_uses_the_closest_available_vehicle :: proc(t: ^testing.T) {

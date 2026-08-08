@@ -3,16 +3,16 @@ package main
 import mouse_gait "../packages/mouse_gait"
 import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 Mouse_Clothing_Render_Context :: struct {
     using render:                                                                         Mouse_Render_Context,
     animation:                                                                            ^Player_Animation_Tweak,
     emote_pose:                                                                           Mouse_Emote_Pose,
-    architecture:                                                                             [5]Mouse_Bone_Pose,
+    architecture:                                                                         [5]Mouse_Bone_Pose,
     fur_dark, fur_light, paw:                                                             canvas2d.Color,
     stride_phase:                                                                         f32,
     gait:                                                                                 mouse_gait.Weights,

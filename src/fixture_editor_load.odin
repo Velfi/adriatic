@@ -3,7 +3,6 @@ package main
 import engine_sound "../packages/engine_sound"
 import farmland "../packages/farmland"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import harbor "../packages/harbor"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"
@@ -13,6 +12,7 @@ import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 
 Fixture_Editor_Load_Error_Kind :: enum {
     None,
@@ -340,9 +340,12 @@ fixture_editor_load_preflight :: proc(fixture: ^Fixture) -> string {
         }
         if seen_mice[resident_index] do return "mouse_placements.resident"
         seen_mice[resident_index] = true
-        if placement.x != placement.x || math.is_inf_f32(placement.x) ||
-           placement.z != placement.z || math.is_inf_f32(placement.z) ||
-           placement.rotation != placement.rotation || math.is_inf_f32(placement.rotation) {
+        if placement.x != placement.x ||
+           math.is_inf_f32(placement.x) ||
+           placement.z != placement.z ||
+           math.is_inf_f32(placement.z) ||
+           placement.rotation != placement.rotation ||
+           math.is_inf_f32(placement.rotation) {
             return "mouse_placements.position"
         }
     }

@@ -2,7 +2,6 @@ package main
 
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:c"
 import "core:fmt"
@@ -11,6 +10,7 @@ import "core:strconv"
 import "core:strings"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 LIVE_CONTROL_REQUEST_ENV :: "ADRIATIC_LIVE_CONTROL_REQUEST"
 LIVE_CONTROL_RESPONSE_ENV :: "ADRIATIC_LIVE_CONTROL_RESPONSE"

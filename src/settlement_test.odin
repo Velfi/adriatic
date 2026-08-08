@@ -9,12 +9,12 @@ import plants "../packages/plants"
 import roads "../packages/roads"
 import ruins "../packages/ruins"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 settlement_town_planned_groves_stay_in_the_inhabited_middle :: proc(t: ^testing.T) {
@@ -565,17 +565,14 @@ settlement_shared_pedestrian_trunks_receive_sparse_lighting :: proc(t: ^testing.
     }
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 40,
-            end_z = 0,
-            half_width = .5,
-            household_demand = 4,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x          = 0,
+        start_z          = 0,
+        end_x            = 40,
+        end_z            = 0,
+        half_width       = .5,
+        household_demand = 4,
+    })
     city.alley_count = 1
 
     settlement_plan_generate_lamps(&plan, &city)
@@ -2206,21 +2203,18 @@ settlement_imported_pedestrian_geometry_follows_finished_spline :: proc(t: ^test
     plan: Settlement_Plan
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 12,
-            end_z = 0,
-            half_width = .6,
-            curve_control_from = {3, 5},
-            curve_control_to = {9, 5},
-            curve_ready = true,
-            start_terminal = .Door,
-            end_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x            = 0,
+        start_z            = 0,
+        end_x              = 12,
+        end_z              = 0,
+        half_width         = .6,
+        curve_control_from = {3, 5},
+        curve_control_to   = {9, 5},
+        curve_ready        = true,
+        start_terminal     = .Door,
+        end_terminal       = .Road,
+    })
     city.alley_count = 1
 
     settlement_plan_import_access_network(&plan, &city, project)
@@ -2256,19 +2250,16 @@ settlement_imported_spline_sampling_preserves_chain_junctions_at_capacity :: pro
     for index in 0 ..< 6 {
         start, finish := [2]f32{f32(index * 4), 0}, [2]f32{f32((index + 1) * 4), 0}
         bow := index & 1 == 0 ? f32(1.5) : f32(-1.5)
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = start[0],
-                start_z = start[1],
-                end_x = finish[0],
-                end_z = finish[1],
-                half_width = .5,
-                curve_control_from = start + [2]f32{1, bow},
-                curve_control_to = finish + [2]f32{-1, bow},
-                curve_ready = true,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x            = start[0],
+            start_z            = start[1],
+            end_x              = finish[0],
+            end_z              = finish[1],
+            half_width         = .5,
+            curve_control_from = start + [2]f32{1, bow},
+            curve_control_to   = finish + [2]f32{-1, bow},
+            curve_ready        = true,
+        })
     }
     city.alley_count = 6
 
@@ -3033,16 +3024,13 @@ settlement_access_normalization_removes_sub_tolerance_slivers :: proc(t: ^testin
     defer architecture.city_plan_destroy(&city)
     segments := [3][2][2]f32{{{-1, 0}, {0, 0}}, {{0, 0}, {.03, 0}}, {{.03, 0}, {1, 0}}}
     for segment in segments {
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = segment[0][0],
-                start_z = segment[0][1],
-                end_x = segment[1][0],
-                end_z = segment[1][1],
-                half_width = .5,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x    = segment[0][0],
+            start_z    = segment[0][1],
+            end_x      = segment[1][0],
+            end_z      = segment[1][1],
+            half_width = .5,
+        })
     }
     city.alley_count = 3
 
@@ -3094,17 +3082,14 @@ settlement_access_collapses_sub_meter_double_junctions :: proc(t: ^testing.T) {
     }
     for segment, segment_index in segments {
         terminal := segment_index == 1 ? architecture.City_Alley_Terminal.Road : architecture.City_Alley_Terminal.None
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = segment[0][0],
-                start_z = segment[0][1],
-                end_x = segment[1][0],
-                end_z = segment[1][1],
-                half_width = .5,
-                end_terminal = terminal,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x      = segment[0][0],
+            start_z      = segment[0][1],
+            end_x        = segment[1][0],
+            end_z        = segment[1][1],
+            half_width   = .5,
+            end_terminal = terminal,
+        })
     }
     city.alley_count = len(segments)
     plan: Settlement_Plan
@@ -3160,17 +3145,14 @@ settlement_access_network_relaxation_shortens_only_anonymous_bends :: proc(t: ^t
 
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = -6,
-            start_z = 0,
-            end_x = 0,
-            end_z = 4,
-            half_width = .5,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = -6,
+        start_z        = 0,
+        end_x          = 0,
+        end_z          = 4,
+        half_width     = .5,
+        start_terminal = .Road,
+    })
     append(
         &city.alleys,
         architecture.City_Alley{start_x = 0, start_z = 4, end_x = 6, end_z = 0, half_width = .5, end_terminal = .Door},
@@ -3224,16 +3206,13 @@ settlement_access_shared_house_trunks_widen_by_demand :: proc(t: ^testing.T) {
     merge, road := [2]f32{0, 6}, [2]f32{0, 3.25}
     segments := [3][2][2]f32{{first_door, merge}, {second_door, merge}, {merge, road}}
     for segment in segments {
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = segment[0][0],
-                start_z = segment[0][1],
-                end_x = segment[1][0],
-                end_z = segment[1][1],
-                half_width = .5,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x    = segment[0][0],
+            start_z    = segment[0][1],
+            end_x      = segment[1][0],
+            end_z      = segment[1][1],
+            half_width = .5,
+        })
     }
     city.alley_count = 3
 
@@ -3255,16 +3234,13 @@ settlement_access_building_journeys_promote_cross_town_passages :: proc(t: ^test
     defer architecture.city_plan_destroy(&city)
     segments := [4][2][2]f32{{{-12, 8}, {-6, 8}}, {{-6, 8}, {6, 8}}, {{6, 8}, {12, 8}}, {{0, 8}, {0, 0}}}
     for segment in segments {
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = segment[0][0],
-                start_z = segment[0][1],
-                end_x = segment[1][0],
-                end_z = segment[1][1],
-                half_width = .5,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x    = segment[0][0],
+            start_z    = segment[0][1],
+            end_x      = segment[1][0],
+            end_z      = segment[1][1],
+            half_width = .5,
+        })
     }
     city.alley_count = len(segments)
     travel_length := [4]f32{6, 12, 6, 8}
@@ -3309,19 +3285,16 @@ settlement_access_household_routing_uses_spline_arc_length :: proc(t: ^testing.T
         {long_mid, long_road},
     }
     for segment, segment_index in segments {
-        append(
-            &city.alleys,
-            architecture.City_Alley {
-                start_x = segment[0][0],
-                start_z = segment[0][1],
-                end_x = segment[1][0],
-                end_z = segment[1][1],
-                half_width = .5,
-                start_terminal = segment_index == 0 ? architecture.City_Alley_Terminal.Door : .None,
-                end_terminal = segment_index == 2 || segment_index == 4 ? architecture.City_Alley_Terminal.Road : .None,
-                curve_ready = true,
-            },
-        )
+        append(&city.alleys, architecture.City_Alley {
+            start_x        = segment[0][0],
+            start_z        = segment[0][1],
+            end_x          = segment[1][0],
+            end_z          = segment[1][1],
+            half_width     = .5,
+            start_terminal = segment_index == 0 ? architecture.City_Alley_Terminal.Door : .None,
+            end_terminal   = segment_index == 2 || segment_index == 4 ? architecture.City_Alley_Terminal.Road : .None,
+            curve_ready    = true,
+        })
     }
     city.alley_count = len(segments)
     for &alley in city.alleys[:city.alley_count] {
@@ -3357,19 +3330,16 @@ settlement_access_household_routing_uses_spline_arc_length :: proc(t: ^testing.T
 settlement_access_curved_lane_widening_checks_spline_clearance :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 10,
-            end_z = 0,
-            half_width = .5,
-            curve_control_from = {2, 4},
-            curve_control_to = {8, 4},
-            curve_ready = true,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x            = 0,
+        start_z            = 0,
+        end_x              = 10,
+        end_z              = 0,
+        half_width         = .5,
+        curve_control_from = {2, 4},
+        curve_control_to   = {8, 4},
+        curve_ready        = true,
+    })
     city.alley_count = 1
     curve := settlement_access_alley_curve(&city, 0)
     middle := settlement_access_curve_point(curve, .5)
@@ -3398,29 +3368,23 @@ settlement_village_doorsteps_cannot_be_public_through_nodes :: proc(t: ^testing.
     city.count = 1
     door := settlement_structure_front_door_point(structure)
     outward := settlement_structure_entrance_outward(structure)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = door[0],
-            start_z = door[1],
-            end_x = door[0] + outward[0] * 4,
-            end_z = door[1] + outward[1] * 4,
-            half_width = .5,
-            start_terminal = .Door,
-            end_terminal = .Road,
-        },
-    )
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = door[0],
-            start_z = door[1],
-            end_x = door[0] - outward[0] * 3,
-            end_z = door[1] - outward[1] * 3,
-            half_width = .5,
-            end_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = door[0],
+        start_z        = door[1],
+        end_x          = door[0] + outward[0] * 4,
+        end_z          = door[1] + outward[1] * 4,
+        half_width     = .5,
+        start_terminal = .Door,
+        end_terminal   = .Road,
+    })
+    append(&city.alleys, architecture.City_Alley {
+        start_x      = door[0],
+        start_z      = door[1],
+        end_x        = door[0] - outward[0] * 3,
+        end_z        = door[1] - outward[1] * 3,
+        half_width   = .5,
+        end_terminal = .Road,
+    })
     city.alley_count = 2
 
     testing.expect_value(t, settlement_access_count_road_connected_doors(&plan, &city), 0)
@@ -3450,28 +3414,22 @@ settlement_access_working_width_reaches_the_road_root :: proc(t: ^testing.T) {
     city.count = 1
     door := settlement_structure_front_door_point(structure)
     merge, road := door + [2]f32{0, 5}, door + [2]f32{0, 10}
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = door[0],
-            start_z = door[1],
-            end_x = merge[0],
-            end_z = merge[1],
-            half_width = .9,
-            start_terminal = .Door,
-        },
-    )
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = merge[0],
-            start_z = merge[1],
-            end_x = road[0],
-            end_z = road[1],
-            half_width = .5,
-            end_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = door[0],
+        start_z        = door[1],
+        end_x          = merge[0],
+        end_z          = merge[1],
+        half_width     = .9,
+        start_terminal = .Door,
+    })
+    append(&city.alleys, architecture.City_Alley {
+        start_x      = merge[0],
+        start_z      = merge[1],
+        end_x        = road[0],
+        end_z        = road[1],
+        half_width   = .5,
+        end_terminal = .Road,
+    })
     city.alley_count = 2
 
     settlement_access_widen_shared_trunks(&plan, &city)
@@ -3501,17 +3459,14 @@ settlement_access_topology_reports_unexplained_leaf_endpoints :: proc(t: ^testin
 settlement_access_prunes_anonymous_leaf_from_a_served_junction :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = -4,
-            end_z = 0,
-            half_width = .5,
-            end_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x      = 0,
+        start_z      = 0,
+        end_x        = -4,
+        end_z        = 0,
+        half_width   = .5,
+        end_terminal = .Road,
+    })
     append(
         &city.alleys,
         architecture.City_Alley{start_x = 0, start_z = 0, end_x = 4, end_z = 0, half_width = .5, end_terminal = .Door},
@@ -3531,17 +3486,14 @@ settlement_access_prunes_anonymous_leaf_from_a_served_junction :: proc(t: ^testi
 settlement_access_prunes_anonymous_leaf_from_a_degree_two_chain :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 4,
-            end_z = 0,
-            half_width = .5,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 0,
+        end_x          = 4,
+        end_z          = 0,
+        half_width     = .5,
+        start_terminal = .Road,
+    })
     append(&city.alleys, architecture.City_Alley{start_x = 4, start_z = 0, end_x = 7, end_z = 2, half_width = .5})
     city.alley_count = 2
 
@@ -3568,17 +3520,14 @@ settlement_access_long_stairs_receive_bounded_rest_platforms :: proc(t: ^testing
 settlement_access_public_space_terminal_explains_road_rooted_spur :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 4,
-            end_z = 0,
-            half_width = .5,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 0,
+        end_x          = 4,
+        end_z          = 0,
+        half_width     = .5,
+        start_terminal = .Road,
+    })
     city.alley_count = 1
 
     settlement_access_prune_stale_terminal_free_stubs(&city)
@@ -3601,18 +3550,15 @@ settlement_access_straightens_only_the_terminal_road_throat :: proc(t: ^testing.
 
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 3.45,
-            end_x = .4,
-            end_z = 4.1,
-            half_width = .5,
-            start_terminal = .Road,
-            end_terminal = .Public_Space,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 3.45,
+        end_x          = .4,
+        end_z          = 4.1,
+        half_width     = .5,
+        start_terminal = .Road,
+        end_terminal   = .Public_Space,
+    })
     city.alley_count = 1
 
     settlement_access_straighten_road_throats(&plan, &city)
@@ -3700,17 +3646,14 @@ settlement_town_access_considers_nearby_shared_passages_before_new_road_spokes :
 settlement_access_surface_queries_include_flared_road_mouths :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 4,
-            end_z = 0,
-            half_width = .8,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 0,
+        end_x          = 4,
+        end_z          = 0,
+        half_width     = .8,
+        start_terminal = .Road,
+    })
     city.alley_count = 1
     testing.expect(t, settlement_access_point_on_alley_surface(&city, {.1, 1.05}, 0))
     testing.expect(t, !settlement_access_point_on_alley_surface(&city, {.8, 1.05}, 0))
@@ -3746,11 +3689,11 @@ settlement_access_surface_queries_follow_relaxed_curve_not_chord :: proc(t: ^tes
         &city.alleys,
         architecture.City_Alley{start_x = -12, end_x = 0, half_width = .4, start_terminal = .Road},
         architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 0,
-            end_z = 12,
-            half_width = .4,
+            start_x      = 0,
+            start_z      = 0,
+            end_x        = 0,
+            end_z        = 12,
+            half_width   = .4,
             end_terminal = .Door,
         },
     )
@@ -3791,11 +3734,11 @@ settlement_curved_access_falls_back_before_clipping_rotated_building :: proc(t: 
         &city.alleys,
         architecture.City_Alley{start_x = -12, end_x = 0, half_width = .4, start_terminal = .Road},
         architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 0,
-            end_z = 12,
-            half_width = .4,
+            start_x      = 0,
+            start_z      = 0,
+            end_x        = 0,
+            end_z        = 12,
+            half_width   = .4,
             end_terminal = .Door,
         },
     )
@@ -3869,17 +3812,14 @@ settlement_access_paving_caps_only_bends_and_junctions :: proc(t: ^testing.T) {
 settlement_access_paths_relax_at_first_network_contact :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = -5,
-            start_z = 0,
-            end_x = 5,
-            end_z = 0,
-            half_width = .5,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = -5,
+        start_z        = 0,
+        end_x          = 5,
+        end_z          = 0,
+        half_width     = .5,
+        start_terminal = .Road,
+    })
     city.alley_count = 1
     crossing: Settlement_Route
     crossing.points[0], crossing.points[1], crossing.count = {0, -5}, {0, 5}, 2
@@ -3903,18 +3843,15 @@ settlement_access_paths_relax_at_first_network_contact :: proc(t: ^testing.T) {
 settlement_access_split_preserves_outer_terminal_provenance :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 10,
-            end_z = 0,
-            half_width = .5,
-            start_terminal = .Door,
-            end_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 0,
+        end_x          = 10,
+        end_z          = 0,
+        half_width     = .5,
+        start_terminal = .Door,
+        end_terminal   = .Road,
+    })
     city.alley_count = 1
 
     testing.expect(t, settlement_access_split_alley(&city, 0, {4, 0}))
@@ -3929,28 +3866,22 @@ settlement_access_split_preserves_outer_terminal_provenance :: proc(t: ^testing.
 settlement_access_reverse_deduplication_merges_terminal_provenance :: proc(t: ^testing.T) {
     city: architecture.City_Plan
     defer architecture.city_plan_destroy(&city)
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 0,
-            start_z = 0,
-            end_x = 5,
-            end_z = 0,
-            half_width = .4,
-            start_terminal = .Door,
-        },
-    )
-    append(
-        &city.alleys,
-        architecture.City_Alley {
-            start_x = 5,
-            start_z = 0,
-            end_x = 0,
-            end_z = 0,
-            half_width = .6,
-            start_terminal = .Road,
-        },
-    )
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 0,
+        start_z        = 0,
+        end_x          = 5,
+        end_z          = 0,
+        half_width     = .4,
+        start_terminal = .Door,
+    })
+    append(&city.alleys, architecture.City_Alley {
+        start_x        = 5,
+        start_z        = 0,
+        end_x          = 0,
+        end_z          = 0,
+        half_width     = .6,
+        start_terminal = .Road,
+    })
     city.alley_count = 2
 
     settlement_access_deduplicate_segments(&city)

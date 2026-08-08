@@ -7,10 +7,10 @@ import flight "../packages/flight"
 import fog_field "../packages/fog_field"
 import rondine_game "../packages/rondine"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
     if capture_flight_mode && capture_target == "postale-bank-grid" {
@@ -214,15 +214,10 @@ run_prepare_world_and_flight_capture :: proc(editor: ^Editor, using config: ^Run
                     // surface-only spray and chine-contact verification.
                     step_count := capture_target == "rondine-launch" ? 480 : (rondine_drift_capture ? 720 : 640)
                     for _ in 0 ..< step_count {
-                        rondine_game.step(
-                            &editor.rondine,
-                            {
+                        rondine_game.step(&editor.rondine, {
                                 throttle_up = true,
-                                roll = rondine_drift_capture ? f32(1) : (capture_target == "rondine-launch" ? f32(0) : f32(.18)),
-                            },
-                            editor.project.sea_level,
-                            1.0 / 120.0,
-                        )
+                                roll        = rondine_drift_capture ? f32(1) : (capture_target == "rondine-launch" ? f32(0) : f32(.18)),
+                            }, editor.project.sea_level, 1.0 / 120.0)
                     }
                 }
             } else {

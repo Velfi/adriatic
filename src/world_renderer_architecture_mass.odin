@@ -4,8 +4,8 @@ import "core:math"
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_mass :: proc(
     structure: terrain.Structure,

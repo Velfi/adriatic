@@ -249,13 +249,7 @@ apply_authoring_brush :: proc(project: ^Project, request: Authoring_Brush_Reques
                     coastal_range :=
                         max(request.beach_height + abs(request.shelf_depth), f32(1)) *
                         max(clamp(request.flow, f32(0), AUTHORING_BRUSH_MAX_FLOW), f32(1))
-                    coastal := clamp(
-                        1 -
-                        abs(current - project.sea_level) /
-                            coastal_range,
-                        f32(0),
-                        f32(1),
-                    )
+                    coastal := clamp(1 - abs(current - project.sea_level) / coastal_range, f32(0), f32(1))
                     next += request.direction * max(request.beach_height, f32(1)) * mask * coastal
                 case .Shelf:
                     normalized := clamp(distance / radius, f32(0), f32(1))
@@ -432,8 +426,7 @@ apply_authoring_spline :: proc(project: ^Project, request: Authoring_Spline_Requ
     )
     if !overlaps do return false
     length := f32(0)
-    for index in 0 ..< len(points) -
-        1 { dx, dz := points[index + 1].x - points[index].x, points[index + 1].z - points[index].z; length += f32(math.sqrt(f64(dx * dx + dz * dz))) }
+    for index in 0 ..< len(points) - 1 { dx, dz := points[index + 1].x - points[index].x, points[index + 1].z - points[index].z; length += f32(math.sqrt(f64(dx * dx + dz * dz))) }
     if request.operation == .Grade && request.maximum_grade > 0 && abs(request.end_height - request.start_height) / max(length, f32(.001)) > request.maximum_grade do return false
     changed := false
     for z in bz0 ..= bz1 do for x in bx0 ..= bx1 {

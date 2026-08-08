@@ -2,11 +2,11 @@ package main
 
 import islands "../packages/islands"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 MARKOV_ISLAND_DEFAULT_SEED :: u32(0x49534c45)
 MARKOV_ISLAND_HALF_X :: f32(620)

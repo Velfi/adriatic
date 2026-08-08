@@ -4,9 +4,9 @@ package main
 import dialogue "../packages/dialogue"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 run_prepare_story_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
     if capture_target == "niko" ||

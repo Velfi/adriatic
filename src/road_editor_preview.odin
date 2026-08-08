@@ -378,20 +378,14 @@ road_connect_graph :: proc(editor: ^Editor, graph: ^roads.Graph, from, to: int) 
     }
     workspace := new(road_planner.Workspace)
     defer free(workspace)
-    route := road_planner.plan(
-        workspace,
-        {
-            origin_x = origin_x,
-            origin_z = origin_z,
-            width = width,
-            height = height,
-            sea_level = editor.project.sea_level,
-            heights = heights,
-        },
-        config,
-        {a.x, a.z},
-        {b.x, b.z},
-    )
+    route := road_planner.plan(workspace, {
+        origin_x  = origin_x,
+        origin_z  = origin_z,
+        width     = width,
+        height    = height,
+        sea_level = editor.project.sea_level,
+        heights   = heights,
+    }, config, {a.x, a.z}, {b.x, b.z})
     if !route.found do return -1
     bends: [roads.MAX_NODES]road_planner.Point
     bend_count := 0

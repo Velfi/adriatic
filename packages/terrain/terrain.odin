@@ -85,23 +85,27 @@ River_Water_Spline :: struct {
 }
 
 Default_Island_Hydrology :: struct {
-    river:               spring_river.Plan,
-    mountain_center:     spring_river.Vec2,
-    mountain_radius:     f32,
-    mountain_height:     f32,
-    coast_position:      spring_river.Vec2,
+    river:           spring_river.Plan,
+    mountain_center: spring_river.Vec2,
+    mountain_radius: f32,
+    mountain_height: f32,
+    coast_position:  spring_river.Vec2,
 }
 
 COAST_INDEX_CELL_METERS :: f32(32)
 COAST_QUERY_RADIUS_CELLS :: 2
 
-Coast_Segment :: struct { ax, az, bx, bz: f32 }
-Coast_Bin :: struct { segments: [dynamic]int }
+Coast_Segment :: struct {
+    ax, az, bx, bz: f32,
+}
+Coast_Bin :: struct {
+    segments: [dynamic]int,
+}
 Coast_Index :: struct {
-    min_x, min_z: f32,
+    min_x, min_z:  f32,
     width, height: int,
-    segments: [dynamic]Coast_Segment,
-    bins: [dynamic]Coast_Bin,
+    segments:      [dynamic]Coast_Segment,
+    bins:          [dynamic]Coast_Bin,
 }
 
 coast_index_destroy :: proc(index: ^Coast_Index) {
@@ -129,8 +133,12 @@ coast_index_build :: proc(index: ^Coast_Index, plan: ^islands.Plan, sign, center
     coast_index_destroy(index)
     index.min_x = center_x - DEFAULT_GENERATED_ISLAND_HALF_X - COAST_INDEX_CELL_METERS
     index.min_z = center_z - DEFAULT_GENERATED_ISLAND_HALF_Z - COAST_INDEX_CELL_METERS
-    index.width = int(math.ceil(f64((DEFAULT_GENERATED_ISLAND_HALF_X * 2 + COAST_INDEX_CELL_METERS * 2) / COAST_INDEX_CELL_METERS)))
-    index.height = int(math.ceil(f64((DEFAULT_GENERATED_ISLAND_HALF_Z * 2 + COAST_INDEX_CELL_METERS * 2) / COAST_INDEX_CELL_METERS)))
+    index.width = int(
+        math.ceil(f64((DEFAULT_GENERATED_ISLAND_HALF_X * 2 + COAST_INDEX_CELL_METERS * 2) / COAST_INDEX_CELL_METERS)),
+    )
+    index.height = int(
+        math.ceil(f64((DEFAULT_GENERATED_ISLAND_HALF_Z * 2 + COAST_INDEX_CELL_METERS * 2) / COAST_INDEX_CELL_METERS)),
+    )
     index.bins = make([dynamic]Coast_Bin, index.width * index.height)
     resize(&index.bins, index.width * index.height)
     for contour in plan.contours {
@@ -142,8 +150,10 @@ coast_index_build :: proc(index: ^Coast_Index, plan: ^islands.Plan, sign, center
             bnx := b.x / f32(islands.GRID_WIDTH - 1) * 2 - 1
             bnz := b.z / f32(islands.GRID_HEIGHT - 1) * 2 - 1
             if sign < 0 { anx = -anx; bnx = -bnx }
-            ax, az := center_x + anx * DEFAULT_GENERATED_ISLAND_HALF_X, center_z + anz * DEFAULT_GENERATED_ISLAND_HALF_Z
-            bx, bz := center_x + bnx * DEFAULT_GENERATED_ISLAND_HALF_X, center_z + bnz * DEFAULT_GENERATED_ISLAND_HALF_Z
+            ax, az :=
+                center_x + anx * DEFAULT_GENERATED_ISLAND_HALF_X, center_z + anz * DEFAULT_GENERATED_ISLAND_HALF_Z
+            bx, bz :=
+                center_x + bnx * DEFAULT_GENERATED_ISLAND_HALF_X, center_z + bnz * DEFAULT_GENERATED_ISLAND_HALF_Z
             dx, dz := bx - ax, bz - az
             pieces := max(int(math.ceil(math.sqrt(f64(dx * dx + dz * dz)))), 1)
             for piece in 0 ..< pieces {
@@ -436,20 +446,18 @@ default_island_hydrology_generate :: proc(
             ),
         ),
     )
-    river := spring_river.generate(
-        {
-            seed = islands.hash(island_seed ~ 0x52495652),
-            source = mountain_center,
-            direction = spring_river.normalize_or({world_mouth_x, river_mouth_z} - mountain_center, {0, -1}),
-            source_height = source_height,
-            length = river_length,
-            segment_length = 2,
-            gradient = source_height / DEFAULT_RIVER_LENGTH,
-            discharge = discharge,
-            meander = .48 + unit(island_seed ~ 0x4d45414e) * .34,
-            spring_radius = 5 + discharge * 2.4,
-        },
-    )
+    river := spring_river.generate({
+        seed           = islands.hash(island_seed ~ 0x52495652),
+        source         = mountain_center,
+        direction      = spring_river.normalize_or({world_mouth_x, river_mouth_z} - mountain_center, {0, -1}),
+        source_height  = source_height,
+        length         = river_length,
+        segment_length = 2,
+        gradient       = source_height / DEFAULT_RIVER_LENGTH,
+        discharge      = discharge,
+        meander        = .48 + unit(island_seed ~ 0x4d45414e) * .34,
+        spring_radius  = 5 + discharge * 2.4,
+    })
     default_route_river_downhill(
         &river,
         island,
@@ -2368,21 +2376,18 @@ default_generated_height :: proc(
         if sign < 0 do local_x = -local_x
         plan := &plans[island_index]
         grid_distance := islands.sample_signed_distance(plan, local_x, local_z)
-        fallback_distance := math.abs(grid_distance) * min(
-            DEFAULT_GENERATED_ISLAND_HALF_X * 2 / f32(islands.GRID_WIDTH - 1),
-            DEFAULT_GENERATED_ISLAND_HALF_Z * 2 / f32(islands.GRID_HEIGHT - 1),
-        )
+        fallback_distance :=
+            math.abs(grid_distance) *
+            min(
+                DEFAULT_GENERATED_ISLAND_HALF_X * 2 / f32(islands.GRID_WIDTH - 1),
+                DEFAULT_GENERATED_ISLAND_HALF_Z * 2 / f32(islands.GRID_HEIGHT - 1),
+            )
         // Exact segment distance is only needed in the indexed shoreline
         // band. Farther away the coarse mask distance has the same sign and is
         // sufficient for relief and footprint rejection.
         exact_distance := grid_distance < 0 ? -fallback_distance : fallback_distance
         if coasts != nil && fallback_distance <= COAST_INDEX_CELL_METERS * COAST_QUERY_RADIUS_CELLS {
-            exact_distance = coast_index_signed_distance(
-                &coasts[island_index],
-                world_x,
-                world_z,
-                exact_distance,
-            )
+            exact_distance = coast_index_signed_distance(&coasts[island_index], world_x, world_z, exact_distance)
         }
         signed_distance = min(signed_distance, exact_distance)
         generated := islands.sample_elevation(plan, local_x, local_z)
@@ -2687,7 +2692,14 @@ sample_land :: proc(project: ^Project, level: int, x, z: f32) -> (height, materi
 }
 
 @(no_instrumentation)
-sample_land_render :: #force_inline proc(project: ^Project, level: int, x, z: f32) -> (height, material: f32, found: bool) {
+sample_land_render :: #force_inline proc(
+    project: ^Project,
+    level: int,
+    x, z: f32,
+) -> (
+    height, material: f32,
+    found: bool,
+) {
     if project == nil || level < 0 || level >= CLIPMAP_LEVELS do return
 
     // Geometry may use a coarse clipmap at distance, but a narrow shoreline
@@ -2777,7 +2789,9 @@ sample_render_material_with_shoreline_coverage :: #force_inline proc(
     height, material, found := sample_land_render(project, level, x, z)
     if !found || material < 0 || footprint <= 2 || height > project.sea_level + 6 do return material
 
-    offsets := [4]struct {x, z: f32}{{-footprint, 0}, {footprint, 0}, {0, -footprint}, {0, footprint}}
+    offsets := [4]struct {
+        x, z: f32,
+    }{{-footprint, 0}, {footprint, 0}, {0, -footprint}, {0, footprint}}
     for offset in offsets {
         candidate_height, candidate_material, candidate_found := sample_land_render(
             project,

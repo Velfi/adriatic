@@ -1,9 +1,9 @@
 package main
 
 import cinematic "../packages/cinematic"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 cinematic_play :: proc(editor: ^Editor, script: ^cinematic.Script) -> bool {
     if editor == nil do return false

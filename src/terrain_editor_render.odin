@@ -3,12 +3,12 @@ package main
 import atmosphere "../packages/atmosphere"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 @(no_instrumentation)
 terrain_color :: #force_inline proc(height, painted, sea_level, x, z: f32) -> canvas2d.Color {

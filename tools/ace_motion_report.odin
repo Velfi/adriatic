@@ -105,20 +105,13 @@ print_tuning :: proc() {
     )
 }
 
-print_result :: proc(
-    scenario: air_compare.Scenario,
-    model: postale.Flight_Model,
-    result: air_compare.Run_Result,
-) {
+print_result :: proc(scenario: air_compare.Scenario, model: postale.Flight_Model, result: air_compare.Run_Result) {
     maximum_position_step, maximum_pace_step: f32
     previous_position := scenario.checkpoint.body.position
     previous_pace := scenario.checkpoint.telemetry.airspeed
     if model == .Ace_Arcade do previous_pace = scenario.checkpoint.ace_telemetry.pace
     for sample in result.samples {
-        maximum_position_step = max(
-            maximum_position_step,
-            linalg.length(sample.body.position - previous_position),
-        )
+        maximum_position_step = max(maximum_position_step, linalg.length(sample.body.position - previous_position))
         maximum_pace_step = max(maximum_pace_step, math.abs(sample.pace - previous_pace))
         previous_position = sample.body.position
         previous_pace = sample.pace

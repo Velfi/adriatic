@@ -2,11 +2,11 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 SHADOW_LAB_COLLECTION_COUNT :: 5
 SHADOW_LAB_LIGHTING_COUNT :: 5

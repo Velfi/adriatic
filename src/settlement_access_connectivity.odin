@@ -270,17 +270,14 @@ settlement_access_repair_disconnected_doors :: proc(
                 for index in 0 ..< network_path.count - 1 {
                     start_terminal := architecture.City_Alley_Terminal.None
                     if index == 0 do start_terminal = .Door
-                    append(
-                        &city_plan.alleys,
-                        architecture.City_Alley {
-                            start_x = network_path.points[index][0],
-                            start_z = network_path.points[index][1],
-                            end_x = network_path.points[index + 1][0],
-                            end_z = network_path.points[index + 1][1],
-                            half_width = width * .5,
-                            start_terminal = start_terminal,
-                        },
-                    )
+                    append(&city_plan.alleys, architecture.City_Alley {
+                        start_x        = network_path.points[index][0],
+                        start_z        = network_path.points[index][1],
+                        end_x          = network_path.points[index + 1][0],
+                        end_z          = network_path.points[index + 1][1],
+                        half_width     = width * .5,
+                        start_terminal = start_terminal,
+                    })
                     city_plan.alley_count += 1
                 }
                 repaired = true
@@ -328,18 +325,15 @@ settlement_access_repair_disconnected_doors :: proc(
                 end_terminal := architecture.City_Alley_Terminal.None
                 if index == 0 do start_terminal = .Door
                 if index == path.count - 2 && !joined_network do end_terminal = .Road
-                append(
-                    &city_plan.alleys,
-                    architecture.City_Alley {
-                        start_x = path.points[index][0],
-                        start_z = path.points[index][1],
-                        end_x = path.points[index + 1][0],
-                        end_z = path.points[index + 1][1],
-                        half_width = width * .5,
-                        start_terminal = start_terminal,
-                        end_terminal = end_terminal,
-                    },
-                )
+                append(&city_plan.alleys, architecture.City_Alley {
+                    start_x        = path.points[index][0],
+                    start_z        = path.points[index][1],
+                    end_x          = path.points[index + 1][0],
+                    end_z          = path.points[index + 1][1],
+                    half_width     = width * .5,
+                    start_terminal = start_terminal,
+                    end_terminal   = end_terminal,
+                })
                 city_plan.alley_count += 1
             }
             repaired = true

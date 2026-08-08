@@ -3,16 +3,18 @@ package main
 import atmosphere "../packages/atmosphere"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 PLANT_SITE_LAB_HALF_EXTENT :: f32(120)
 PLANT_SITE_LAB_MIN_DISTANCE :: f32(9)
 PLANT_SITE_LAB_SAMPLE_CAPACITY :: 520
 
-Plant_Site_Lab_Sample :: struct {x, z: f32}
+Plant_Site_Lab_Sample :: struct {
+    x, z: f32,
+}
 
 plant_site_lab_samples: [PLANT_SITE_LAB_SAMPLE_CAPACITY]Plant_Site_Lab_Sample
 plant_site_lab_sample_count: int
@@ -75,8 +77,12 @@ plant_site_lab_regenerate_samples :: proc() {
     // Fixed-budget dart throwing gives deterministic Poisson-disc coverage.
     for attempt in 0 ..< 32000 {
         if plant_site_lab_sample_count >= PLANT_SITE_LAB_SAMPLE_CAPACITY do break
-        x := -PLANT_SITE_LAB_HALF_EXTENT + plant_site_lab_random01(plant_site_lab_seed + u32(attempt) * 2) * PLANT_SITE_LAB_HALF_EXTENT * 2
-        z := -PLANT_SITE_LAB_HALF_EXTENT + plant_site_lab_random01(plant_site_lab_seed + u32(attempt) * 2 + 1) * PLANT_SITE_LAB_HALF_EXTENT * 2
+        x :=
+            -PLANT_SITE_LAB_HALF_EXTENT +
+            plant_site_lab_random01(plant_site_lab_seed + u32(attempt) * 2) * PLANT_SITE_LAB_HALF_EXTENT * 2
+        z :=
+            -PLANT_SITE_LAB_HALF_EXTENT +
+            plant_site_lab_random01(plant_site_lab_seed + u32(attempt) * 2 + 1) * PLANT_SITE_LAB_HALF_EXTENT * 2
         accepted := true
         for sample in plant_site_lab_samples[:plant_site_lab_sample_count] {
             dx, dz := x - sample.x, z - sample.z
@@ -98,17 +104,13 @@ plant_site_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
     if species_index >= 0 do plant_site_lab_species = plants.Species(species_index)
     plant_site_lab_species_dropdown_open = false
     plant_site_lab_regenerate_samples()
-    if !lab_terrain_load(
-        editor,
-        {
-            half_extent_x = PLANT_SITE_LAB_HALF_EXTENT,
-            half_extent_z = PLANT_SITE_LAB_HALF_EXTENT,
-            sea_level = 0,
-            outside_height = -7,
+    if !lab_terrain_load(editor, {
+            half_extent_x    = PLANT_SITE_LAB_HALF_EXTENT,
+            half_extent_z    = PLANT_SITE_LAB_HALF_EXTENT,
+            sea_level        = 0,
+            outside_height   = -7,
             outside_material = -.92,
-        },
-        plant_site_lab_terrain_sample,
-    ) {
+        }, plant_site_lab_terrain_sample) {
         return false
     }
     atmosphere.set_world_minutes(&editor.atmosphere, 14 * 60)
@@ -194,13 +196,39 @@ plant_site_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     control_bounds := [2]canvas2d.Rectangle{dropdown, resample}
     for bounds in control_bounds {
         hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
-        canvas2d.DrawRectangleRounded(bounds, .16, 6, hovered ? canvas2d.Color{45, 70, 70, 255} : canvas2d.Color{25, 49, 52, 248})
+        canvas2d.DrawRectangleRounded(
+            bounds,
+            .16,
+            6,
+            hovered ? canvas2d.Color{45, 70, 70, 255} : canvas2d.Color{25, 49, 52, 248},
+        )
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {99, 163, 158, 255})
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", plants.species_name(plant_site_lab_species)), {dropdown.x + 10, dropdown.y + 7}, 12, 1, {239, 224, 179, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, plant_site_lab_species_dropdown_open ? "^" : "v", {dropdown.x + dropdown.width - 18, dropdown.y + 7}, 12, 1, {177, 221, 213, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("%s", plants.species_name(plant_site_lab_species)),
+        {dropdown.x + 10, dropdown.y + 7},
+        12,
+        1,
+        {239, 224, 179, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        plant_site_lab_species_dropdown_open ? "^" : "v",
+        {dropdown.x + dropdown.width - 18, dropdown.y + 7},
+        12,
+        1,
+        {177, 221, 213, 255},
+    )
     canvas2d.DrawTextEx(canvas2d.Font{}, "RESAMPLE", {resample.x + 12, resample.y + 7}, 12, 1, {239, 224, 179, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%d SAMPLES", plant_site_lab_sample_count), {40, 113}, 11, 1, {177, 221, 213, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("%d SAMPLES", plant_site_lab_sample_count),
+        {40, 113},
+        11,
+        1,
+        {177, 221, 213, 255},
+    )
     if plant_site_lab_species_dropdown_open {
         for index in 0 ..< plants.SPECIES_COUNT {
             bounds := plant_site_lab_species_option_bounds(index)
@@ -209,7 +237,14 @@ plant_site_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
             fill := (hovered || selected) ? canvas2d.Color{45, 70, 70, 255} : canvas2d.Color{15, 37, 40, 250}
             canvas2d.DrawRectangleRec(bounds, fill)
             canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {79, 133, 131, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", plants.species_name(plants.Species(index))), {bounds.x + 9, bounds.y + 6}, 11, 1, selected ? canvas2d.Color{239, 224, 179, 255} : canvas2d.Color{190, 215, 211, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                fmt.ctprintf("%s", plants.species_name(plants.Species(index))),
+                {bounds.x + 9, bounds.y + 6},
+                11,
+                1,
+                selected ? canvas2d.Color{239, 224, 179, 255} : canvas2d.Color{190, 215, 211, 255},
+            )
         }
     }
 }

@@ -1,11 +1,11 @@
 package main
 
 import fixture_v0018 "../packages/fixture_history/v0018"
-import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import "base:runtime"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_v0018_to_v0019_payload :: proc(t: ^testing.T, paint_byte: u8, structure_count := 1) -> []byte {

@@ -5,11 +5,11 @@ import harbor "../packages/harbor"
 import marina "../packages/marina"
 import ruins "../packages/ruins"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:math/linalg"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 GAMEPLAY_PHYSICS_FIXED_STEP :: f64(1.0 / 120.0)
 GAMEPLAY_PHYSICS_MAX_CATCH_UP :: f64(.1)

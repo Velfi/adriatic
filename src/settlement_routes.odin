@@ -755,21 +755,15 @@ settlement_route_find :: proc(
 
     workspace := new(road_planner.Workspace)
     defer free(workspace)
-    planned := road_planner.plan(
-        workspace,
-        {
-            origin_x = origin_x,
-            origin_z = origin_z,
-            width = width,
-            height = height,
-            sea_level = project.sea_level + .45,
-            heights = heights,
-            blocked = blocked,
-        },
-        config,
-        {start_x, start_z},
-        {finish_x, finish_z},
-    )
+    planned := road_planner.plan(workspace, {
+        origin_x  = origin_x,
+        origin_z  = origin_z,
+        width     = width,
+        height    = height,
+        sea_level = project.sea_level + .45,
+        heights   = heights,
+        blocked   = blocked,
+    }, config, {start_x, start_z}, {finish_x, finish_z})
     if !planned.found || planned.point_count < 2 do return result
 
     // Planner endpoints live on grid cells. Preserve the authored contacts,

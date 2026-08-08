@@ -72,19 +72,16 @@ architecture_opening_layout_finalize :: proc(layout: ^Opening_Layout, ctx: Archi
                 ) {
                     continue
                 }
-                _ = opening_layout_add(
-                    layout,
-                    {
-                        face = face,
-                        kind = .Vent,
-                        horizontal = 0,
-                        y = opening_y,
-                        width = window_width,
-                        height = window_height,
-                        row = facade_floor_count(outer_height) + tier,
-                        column = 0,
-                    },
-                )
+                _ = opening_layout_add(layout, {
+                    face       = face,
+                    kind       = .Vent,
+                    horizontal = 0,
+                    y          = opening_y,
+                    width      = window_width,
+                    height     = window_height,
+                    row        = facade_floor_count(outer_height) + tier,
+                    column     = 0,
+                })
             }
         }
     }
@@ -155,19 +152,16 @@ architecture_opening_layout_finalize :: proc(layout: ^Opening_Layout, ctx: Archi
                         ) {
                             continue
                         }
-                        _ = opening_layout_add(
-                            layout,
-                            {
-                                face = face,
-                                kind = fallback_kind,
-                                horizontal = horizontal,
-                                y = opening_y,
-                                width = window_width,
-                                height = window_height,
-                                row = row,
-                                column = column,
-                            },
-                        )
+                        _ = opening_layout_add(layout, {
+                            face       = face,
+                            kind       = fallback_kind,
+                            horizontal = horizontal,
+                            y          = opening_y,
+                            width      = window_width,
+                            height     = window_height,
+                            row        = row,
+                            column     = column,
+                        })
                         added = true
                         break
                     }
@@ -211,19 +205,16 @@ architecture_opening_layout_finalize :: proc(layout: ^Opening_Layout, ctx: Archi
                 ) {
                     continue
                 }
-                _ = opening_layout_add(
-                    layout,
-                    {
-                        face = opening.face,
-                        kind = .Vent,
-                        horizontal = opening.horizontal,
-                        y = vent_y,
-                        width = vent_width,
-                        height = vent_height,
-                        row = 1,
-                        column = 0,
-                    },
-                )
+                _ = opening_layout_add(layout, {
+                    face       = opening.face,
+                    kind       = .Vent,
+                    horizontal = opening.horizontal,
+                    y          = vent_y,
+                    width      = vent_width,
+                    height     = vent_height,
+                    row        = 1,
+                    column     = 0,
+                })
                 break
             }
         }

@@ -1,10 +1,10 @@
 package architecture
 
 import buildings "../buildings"
-import planar_geometry "zelda_engine:planar_geometry"
 import roads "../roads"
 import terrain "../terrain"
 import "core:math"
+import planar_geometry "zelda_engine:planar_geometry"
 
 city_alley_segment_intersection :: proc(
     first_start_x, first_start_z, first_end_x, first_end_z: f32,
@@ -322,16 +322,13 @@ generate_poisson :: proc(
         structure.rotation = rotation
         structure_seed := u32(random01(&state) * f32(0xffffffff))
         structure.seed = structure_seed
-        structure.building = architecture_identity(
-            {
-                density = clamp((building_height - 8) / 42, 0, 1),
-                frontage = width,
-                depth = depth,
-                route = .Unspecified,
+        structure.building = architecture_identity({
+                density          = clamp((building_height - 8) / 42, 0, 1),
+                frontage         = width,
+                depth            = depth,
+                route            = .Unspecified,
                 purpose_explicit = false,
-            },
-            structure_seed,
-        )
+            }, structure_seed)
         structure.color = architecture_color(structure.seed)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue
@@ -398,18 +395,15 @@ generate_append :: proc(
         structure.kind = .Architecture
         structure.rotation = node.rotation
         structure.seed = structure_seed
-        structure.building = architecture_identity(
-            {
-                density = safe_density,
-                attached = safe_density >= .68,
-                frontage = node.width,
-                depth = node.depth,
-                route = .Street,
-                landmark_kind = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+        structure.building = architecture_identity({
+                density          = safe_density,
+                attached         = safe_density >= .68,
+                frontage         = node.width,
+                depth            = node.depth,
+                route            = .Street,
+                landmark_kind    = node.kind == .Landmark ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                 purpose_explicit = false,
-            },
-            structure_seed,
-        )
+            }, structure_seed)
         structure.color = architecture_color(structure_seed, node.kind == .Landmark)
         foundation_low, foundation_high := architecture_foundation_height_range(project, structure)
         if foundation_low <= project.sea_level do continue

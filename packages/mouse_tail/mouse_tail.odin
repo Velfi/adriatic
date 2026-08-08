@@ -4,9 +4,9 @@ import architecture "../architecture"
 import circulation "../circulation"
 import roads "../roads"
 import terrain "../terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 // Thirteen shorter links preserve the original 2.04 m authored length while
 // giving the rendered centerline enough resolution to form a smooth curve.

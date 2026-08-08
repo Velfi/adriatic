@@ -2,13 +2,13 @@ package main
 import "core:math"
 import "core:testing"
 
-import dio "zelda_engine:dio"
 import roads "../packages/roads"
 import spring_river "../packages/spring_river"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_roads_transient :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_roads_transient")
@@ -149,7 +149,7 @@ world_ocean_grid_config :: #force_inline proc(editor: ^Editor) -> Ocean_Grid_Con
     if editor != nil && !editor.in_map && editor.editor_camera.distance >= OCEAN_OVERVIEW_DISTANCE {
         return {
             center = {},
-            cell   = OCEAN_OVERVIEW_EXTENT * 2 / f32(OCEAN_GRID_DIVISIONS),
+            cell = OCEAN_OVERVIEW_EXTENT * 2 / f32(OCEAN_GRID_DIVISIONS),
             extent = OCEAN_OVERVIEW_EXTENT,
         }
     }
@@ -159,7 +159,7 @@ world_ocean_grid_config :: #force_inline proc(editor: ^Editor) -> Ocean_Grid_Con
             f32(math.floor(f64(target.x / OCEAN_NEAR_CELL))) * OCEAN_NEAR_CELL,
             f32(math.floor(f64(target.z / OCEAN_NEAR_CELL))) * OCEAN_NEAR_CELL,
         },
-        cell   = OCEAN_NEAR_CELL,
+        cell = OCEAN_NEAR_CELL,
         extent = OCEAN_NEAR_EXTENT,
     }
 }
@@ -221,8 +221,7 @@ world_ocean_sample_grid_refresh_bounds :: proc(
     grid_min_z := world_renderer.ocean_sample_grid_center[1] - extent
     grid_max_x := grid_min_x + cell * f32(OCEAN_GRID_DIVISIONS)
     grid_max_z := grid_min_z + cell * f32(OCEAN_GRID_DIVISIONS)
-    if dirty.max_x < grid_min_x || dirty.min_x > grid_max_x ||
-       dirty.max_z < grid_min_z || dirty.min_z > grid_max_z {
+    if dirty.max_x < grid_min_x || dirty.min_x > grid_max_x || dirty.max_z < grid_min_z || dirty.min_z > grid_max_z {
         return
     }
     first_x := clamp(int(math.floor(f64((dirty.min_x - cell - grid_min_x) / cell))), 0, OCEAN_GRID_RESOLUTION - 1)
@@ -266,10 +265,7 @@ world_ocean_sample_grid_shift :: proc(
         for x in 0 ..< OCEAN_GRID_RESOLUTION {
             source_x, source_z := x + offset[0], z + offset[1]
             destination := world_ocean_sample_grid_index(x, z)
-            if source_x >= 0 &&
-               source_x < OCEAN_GRID_RESOLUTION &&
-               source_z >= 0 &&
-               source_z < OCEAN_GRID_RESOLUTION {
+            if source_x >= 0 && source_x < OCEAN_GRID_RESOLUTION && source_z >= 0 && source_z < OCEAN_GRID_RESOLUTION {
                 world_renderer.ocean_sample_grid_scratch[destination] =
                     world_renderer.ocean_sample_grid[world_ocean_sample_grid_index(source_x, source_z)]
                 continue
@@ -317,7 +313,10 @@ world_ocean_cache_build :: proc(
             // grid is actually emitted. That avoids both z-fighting and a
             // missing rectangle when close editor views hide local detail.
             if !sampled_grid_visible ||
-               x1 <= local_min_x || x0 >= local_max_x || z1 <= local_min_z || z0 >= local_max_z {
+               x1 <= local_min_x ||
+               x0 >= local_max_x ||
+               z1 <= local_min_z ||
+               z0 >= local_max_z {
                 world_water_quad({x0, ocean_y, z0}, {x0, ocean_y, z1}, {x1, ocean_y, z1}, {x1, ocean_y, z0}, color)
                 continue
             }
@@ -394,10 +393,7 @@ world_ocean :: proc(editor: ^Editor) {
     sampled_grid_visible := editor.in_map || grid.extent >= OCEAN_OVERVIEW_EXTENT
     markov_island := lab_scene_is_active(editor, "markov-island")
     dirty := world_renderer.ocean_sample_grid_dirty
-    localized_terrain_change :=
-        dirty.valid &&
-        !dirty.full_rebuild &&
-        dirty.revision == editor.terrain_revision
+    localized_terrain_change := dirty.valid && !dirty.full_rebuild && dirty.revision == editor.terrain_revision
     revisions_match :=
         world_renderer.ocean_cache_project_revision == editor.project.revision &&
         world_renderer.ocean_cache_terrain_revision == editor.terrain_revision
@@ -412,9 +408,9 @@ world_ocean :: proc(editor: ^Editor) {
        world_renderer.ocean_cache_center == local_center &&
        world_renderer.ocean_cache_grid_cell == grid.cell &&
        (!sampled_grid_visible ||
-        (world_renderer.ocean_sample_grid_valid &&
-         world_renderer.ocean_sample_grid_center == local_center &&
-         world_renderer.ocean_sample_grid_cell == grid.cell)) &&
+               (world_renderer.ocean_sample_grid_valid &&
+                       world_renderer.ocean_sample_grid_center == local_center &&
+                       world_renderer.ocean_sample_grid_cell == grid.cell)) &&
        !localized_terrain_change {
         append(&world_renderer.vertices, ..world_renderer.ocean_geometry_cache[:])
         return

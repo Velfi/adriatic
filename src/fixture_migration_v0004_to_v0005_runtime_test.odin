@@ -5,12 +5,12 @@ import fixture_v0002 "../packages/fixture_history/v0002"
 import fixture_v0003 "../packages/fixture_history/v0003"
 import fixture_v0004 "../packages/fixture_history/v0004"
 import flight "../packages/flight"
-import hs "zelda_engine:hs"
 import postale_game "../packages/postale"
 import "base:runtime"
 import "core:math"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_v0004_runtime_steps: [4]Fixture_Migration_Step = {

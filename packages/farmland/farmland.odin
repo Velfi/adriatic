@@ -1,8 +1,8 @@
 package farmland
 
-import markov "zelda_engine:markov"
 import "core:math"
 import "core:sync"
+import markov "zelda_engine:markov"
 
 GRID_WIDTH :: 25
 GRID_HEIGHT :: 19

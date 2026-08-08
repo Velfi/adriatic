@@ -1,7 +1,7 @@
 package vehicles
 
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 CAR_WHEEL_TRACK_HALF :: f32(.675)
 CAR_WHEELBASE_HALF :: f32(.96)

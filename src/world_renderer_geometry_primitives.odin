@@ -5,11 +5,11 @@ import "core:mem"
 import atmosphere "../packages/atmosphere"
 import islands "../packages/islands"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
+import third_person "zelda_engine:third_person"
 
 world_dynamic_vertex_buffer_upload :: proc(frame: int) -> bool {
     if frame < 0 || frame >= engine.MAX_FRAMES_IN_FLIGHT do return false

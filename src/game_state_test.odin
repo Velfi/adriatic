@@ -11,11 +11,11 @@ import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:testing"
 import sdl "vendor:sdl3"
+import third_person "zelda_engine:third_person"
 
 when ODIN_TEST {
     @(test)

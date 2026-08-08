@@ -3,11 +3,11 @@ package main
 import atmosphere "../packages/atmosphere"
 import particle_systems "../packages/particles"
 import roads "../packages/roads"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 car_lab_pavement := roads.Pavement.Asphalt
 car_lab_show_ui := true

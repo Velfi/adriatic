@@ -1,11 +1,11 @@
 package tests
 
-import hs "zelda_engine:hs"
-import toml "zelda_engine:toml"
 import "base:runtime"
 import "core:mem"
 import "core:strings"
 import "core:testing"
+import hs "zelda_engine:hs"
+import toml "zelda_engine:toml"
 
 #assert(int(hs.Portable_Kind.Invalid) == 0)
 #assert(int(hs.Portable_Kind.Bool) == 1)

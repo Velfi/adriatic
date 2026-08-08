@@ -1,7 +1,7 @@
 package tests
 
-import game_input "zelda_engine:game_input"
 import "core:testing"
+import game_input "zelda_engine:game_input"
 
 @(test)
 input_starts_with_mouse_and_keyboard_active :: proc(t: ^testing.T) {

@@ -1,7 +1,6 @@
 package main
 
 import fixture_file "../packages/fixture_file"
-import hs "zelda_engine:hs"
 import roads "../packages/roads"
 import rt "base:runtime"
 import "core:hash"
@@ -9,6 +8,7 @@ import "core:mem"
 import "core:os"
 import "core:sync"
 import "core:thread"
+import hs "zelda_engine:hs"
 
 ROAD_STREAM_QUEUE_CAPACITY :: 256
 

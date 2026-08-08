@@ -3,11 +3,11 @@ package main
 import dialogue "../packages/dialogue"
 import dialogue_glossary "../packages/dialogue_glossary"
 import engine_sound "../packages/engine_sound"
-import game_input "zelda_engine:game_input"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 
 DIALOGUE_REFERENCE_HEIGHT :: f32(720)
 DIALOGUE_REVEAL_SECONDS :: f32(.032)

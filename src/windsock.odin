@@ -1,8 +1,8 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 WINDSOCK_POLE_HEIGHT :: f32(8.5)
 WINDSOCK_SECTION_COUNT :: 6

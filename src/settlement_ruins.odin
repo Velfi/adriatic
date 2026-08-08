@@ -194,18 +194,15 @@ settlement_ruin_add_access :: proc(
     }
     if path_length > 24 do return false
     for index in 0 ..< path.count - 1 {
-        append(
-            &city_plan.alleys,
-            architecture.City_Alley {
-                start_x = path.points[index][0],
-                start_z = path.points[index][1],
-                end_x = path.points[index + 1][0],
-                end_z = path.points[index + 1][1],
-                half_width = .7,
-                start_terminal = index == 0 ? .Public_Space : .None,
-                end_terminal = index == path.count - 2 ? .Road : .None,
-            },
-        )
+        append(&city_plan.alleys, architecture.City_Alley {
+            start_x        = path.points[index][0],
+            start_z        = path.points[index][1],
+            end_x          = path.points[index + 1][0],
+            end_z          = path.points[index + 1][1],
+            half_width     = .7,
+            start_terminal = index == 0 ? .Public_Space : .None,
+            end_terminal   = index == path.count - 2 ? .Road : .None,
+        })
         city_plan.alley_count += 1
     }
     return true

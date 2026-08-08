@@ -1,8 +1,8 @@
 package tests
 
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 horizontal_speed :: proc(state: third_person.State) -> f32 {
     return math.sqrt(state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z)

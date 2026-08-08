@@ -2,9 +2,9 @@ package main
 
 import buildings "../packages/buildings"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_storefront :: proc(
     structure: terrain.Structure,

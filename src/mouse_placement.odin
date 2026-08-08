@@ -2,9 +2,9 @@ package main
 
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:testing"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 MOUSE_PLACEMENT_CAPACITY :: 12
 
@@ -39,22 +39,55 @@ mouse_placement_available_at :: proc(editor: ^Editor, available_index: int) -> (
     return {}, false
 }
 
-mouse_placement_profile :: proc(resident: story.Resident, position: third_person.Vec3, rotation: f32) -> (Mouse_Model, f32) {
-    model := Mouse_Model{position = position, rotation = rotation, grounded = true}
+mouse_placement_profile :: proc(
+    resident: story.Resident,
+    position: third_person.Vec3,
+    rotation: f32,
+) -> (
+    Mouse_Model,
+    f32,
+) {
+    model := Mouse_Model {
+        position = position,
+        rotation = rotation,
+        grounded = true,
+    }
     scale := f32(1)
     switch resident {
-    case .Marta: model.build, model.snout_length, model.accessory, model.fur, model.pattern = .94, 1.04, .Goggles, .Chestnut, .Pale_Belly
-    case .Gerta: model.build, model.snout_length, model.accessory, model.fur, model.pattern = 1.08, .94, .Flat_Cap, .Silver, .Hooded
-    case .Niko: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = 1.08, 1.12, .Acorn_Cap, .Chestnut, .Pale_Belly, .94
-    case .Iva: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = .91, .86, .Flower, .Cream, .Piebald, 1.16
-    case .Bojan: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = 1.14, 1.22, .Bottle_Cap, .Soot, .Solid, .88
-    case .Zora: model.build, model.snout_length, model.fur, model.pattern, scale = 1.18, 1.10, .Russet, .Piebald, 1.05
-    case .Vesna: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = .86, 1.08, .Chef_Hat, .White, .Pale_Belly, 1.02
-    case .Petar: model.build, model.snout_length, model.fur, model.pattern, scale = 1.05, 1.18, .Russet, .Piebald, 1.10
-    case .Anica: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = .96, .82, .Goggles, .Chestnut, .Hooded, .90
-    case .Toma: model.build, model.snout_length, model.accessory, model.fur, model.pattern = 1.06, .96, .Paper_Boat, .Chestnut, .Hooded
-    case .Lena: model.build, model.snout_length, model.accessory, model.fur, model.pattern = .92, 1.10, .Paper_Boat, .Cream, .Piebald
-    case .Mirna: model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale = .98, .90, .Goggles, .Soot, .Piebald, 1.04
+    case .Marta:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern =
+            .94, 1.04, .Goggles, .Chestnut, .Pale_Belly
+    case .Gerta:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern =
+            1.08, .94, .Flat_Cap, .Silver, .Hooded
+    case .Niko:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            1.08, 1.12, .Acorn_Cap, .Chestnut, .Pale_Belly, .94
+    case .Iva:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            .91, .86, .Flower, .Cream, .Piebald, 1.16
+    case .Bojan:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            1.14, 1.22, .Bottle_Cap, .Soot, .Solid, .88
+    case .Zora:
+        model.build, model.snout_length, model.fur, model.pattern, scale = 1.18, 1.10, .Russet, .Piebald, 1.05
+    case .Vesna:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            .86, 1.08, .Chef_Hat, .White, .Pale_Belly, 1.02
+    case .Petar:
+        model.build, model.snout_length, model.fur, model.pattern, scale = 1.05, 1.18, .Russet, .Piebald, 1.10
+    case .Anica:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            .96, .82, .Goggles, .Chestnut, .Hooded, .90
+    case .Toma:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern =
+            1.06, .96, .Paper_Boat, .Chestnut, .Hooded
+    case .Lena:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern =
+            .92, 1.10, .Paper_Boat, .Cream, .Piebald
+    case .Mirna:
+        model.build, model.snout_length, model.accessory, model.fur, model.pattern, scale =
+            .98, .90, .Goggles, .Soot, .Piebald, 1.04
     }
     return model, scale
 }
@@ -80,7 +113,12 @@ mouse_placement_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cu
     resident, available := mouse_placement_available_at(editor, editor.mouse_placement_selected)
     if !available do return
     structure_history_push_undo(editor)
-    editor.mouse_placements[editor.mouse_placement_count] = {resident = resident, x = world_x, z = world_z, rotation = editor.mouse_placement_rotation}
+    editor.mouse_placements[editor.mouse_placement_count] = {
+        resident = resident,
+        x        = world_x,
+        z        = world_z,
+        rotation = editor.mouse_placement_rotation,
+    }
     editor.mouse_placement_count += 1
     editor.mouse_placement_selected = 0
 }
@@ -98,7 +136,9 @@ when ODIN_TEST {
     @(test)
     mouse_placement_picker_excludes_placed_residents :: proc(t: ^testing.T) {
         editor := new(Editor, context.temp_allocator)
-        editor.mouse_placements[0] = {resident = .Niko}
+        editor.mouse_placements[0] = {
+            resident = .Niko,
+        }
         editor.mouse_placement_count = 1
         testing.expect(t, mouse_placement_available_count(editor) == MOUSE_PLACEMENT_CAPACITY - 1)
         for index in 0 ..< mouse_placement_available_count(editor) {

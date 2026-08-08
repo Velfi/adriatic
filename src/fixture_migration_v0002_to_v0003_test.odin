@@ -2,11 +2,11 @@ package main
 
 import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0002 "../packages/fixture_history/v0002"
-import hs "zelda_engine:hs"
 import vehicles "../packages/vehicles"
 import "base:runtime"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_v0002_to_v0003_test_v2_payload :: proc(t: ^testing.T) -> ([]byte, bool) {

@@ -3,11 +3,11 @@ package main
 import road_planner "../packages/road_planner"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 ROAD_PATHING_LAB_NETWORK_COUNT :: 3
 ROAD_PATHING_LAB_ROUTE_CAPACITY :: 21

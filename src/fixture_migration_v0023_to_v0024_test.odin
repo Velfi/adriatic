@@ -7,7 +7,11 @@ import "core:testing"
 fixture_migration_v0023_to_v0024_discards_retired_dune_lab_state :: proc(t: ^testing.T) {
     historical: fixture_v0023.Fixture
     historical.lab.kind = .Dunes
-    historical.lab.dunes = {seed = 0x44554e45, wind_angle = .31, vegetation = .82}
+    historical.lab.dunes = {
+        seed       = 0x44554e45,
+        wind_angle = .31,
+        vegetation = .82,
+    }
     target := new(Fixture)
     defer free(target)
     target.lab.kind = cast(Lab_Kind)1

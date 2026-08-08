@@ -2,8 +2,8 @@
 package main
 
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 run_prepare_player_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
     if capture_target == "player" ||

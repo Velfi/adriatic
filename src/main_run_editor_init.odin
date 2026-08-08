@@ -9,13 +9,13 @@ import rondine_game "../packages/rondine"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:time"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 run_initialize_editor_defaults :: proc(
     editor: ^Editor,

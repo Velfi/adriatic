@@ -7,10 +7,10 @@ import postale_game "../packages/postale"
 import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 terrain_history_push :: proc(
     history: ^[TERRAIN_HISTORY_CAPACITY]^Terrain_History_State,

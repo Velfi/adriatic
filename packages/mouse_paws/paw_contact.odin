@@ -1,7 +1,7 @@
 package mouse_paws
 
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 PAW_COUNT :: 4
 TOE_COUNT :: 3

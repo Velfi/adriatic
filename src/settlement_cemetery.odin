@@ -4,11 +4,11 @@ import architecture "../packages/architecture"
 import cemeteries "../packages/cemeteries"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 SETTLEMENT_CEMETERY_GROUP_TAG :: u64(0xCE4E_7E12_0000_0000)
 SETTLEMENT_CEMETERY_GROUP_MASK :: u64(0xffff_ffff_0000_0000)

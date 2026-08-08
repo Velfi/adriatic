@@ -1,15 +1,11 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import dio "zelda_engine:dio"
 import flight "../packages/flight"
 import fog_field "../packages/fog_field"
-import im "zelda_engine:imgui"
 import mouse_tail "../packages/mouse_tail"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
-import tweak_package "zelda_engine:tweak"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
@@ -17,7 +13,11 @@ import "core:math/linalg"
 import "core:os"
 import "core:strings"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import im "zelda_engine:imgui"
 import spy "zelda_engine:spy"
+import third_person "zelda_engine:third_person"
+import tweak_package "zelda_engine:tweak"
 
 TWEAK_FILE_NAME :: "adriatic.tweak.toml"
 TWEAK_FILE_VERSION :: i64(1)
@@ -409,12 +409,7 @@ tweak_default_state :: proc() -> Tweak_State {
             body_softness_inertial_lag = .035,
             body_softness_max_displacement = .055,
         },
-        player_outline = {
-            enabled = false,
-            width = 1,
-            strength = .8,
-            color = {35 / 255.0, 32 / 255.0, 30 / 255.0},
-        },
+        player_outline = {enabled = false, width = 1, strength = .8, color = {35 / 255.0, 32 / 255.0, 30 / 255.0}},
         camera = {
             editor_camera = {yaw_radians = math.PI * .25, pitch_radians = .58, distance = 900},
             editor_focus = {
@@ -820,14 +815,7 @@ tweak_draw_time_of_day :: proc(editor: ^Editor) {
     total_minutes := int(a.world_minutes) % int(atmosphere.DAY_MINUTES)
     im.SameLine()
     im.Text("%02d:%02d", total_minutes / 60, total_minutes % 60)
-    im.SliderFloat(
-        "Time scale",
-        &editor.tweak.time_scale,
-        0,
-        20,
-        "%.2fx",
-        im.SliderFlags_AlwaysClamp,
-    )
+    im.SliderFloat("Time scale", &editor.tweak.time_scale, 0, 20, "%.2fx", im.SliderFlags_AlwaysClamp)
     im.Checkbox("Pause time", &a.paused)
 }
 

@@ -4,10 +4,10 @@ import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
 import buildings "../packages/buildings"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 LIGHTHOUSE_LAB_HEIGHTS := [3]f32{14, 22, 30}
 

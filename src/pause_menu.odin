@@ -1,18 +1,18 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import game_input "zelda_engine:game_input"
 import player_mail "../packages/player_mail"
 import roads "../packages/roads"
 import scene_stack "../packages/scene_stack"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
+import third_person "zelda_engine:third_person"
 
 Pause_Screen :: enum {
     Closed,

@@ -2,9 +2,9 @@ package chase_camera
 
 import air_effects "../air_effects"
 import flight "../flight"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 FOLLOW_DISTANCE :: f32(6.5)
 FOLLOW_HEIGHT :: f32(7.5)

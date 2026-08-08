@@ -468,7 +468,9 @@ generate_pine_needle_clump :: proc(config: Config) -> Mesh {
         needle_length := length * (.88 + f32((needle * 7) % 5) * .03)
         root := radial * spread * .035
         shoulder := root + radial * spread * .18 + [3]f32{0, needle_length * .48, 0}
-        tip := root + radial * spread * (.62 + f32(needle % 3) * .08) +
+        tip :=
+            root +
+            radial * spread * (.62 + f32(needle % 3) * .08) +
             [3]f32{0, needle_length, config.curl * (.55 + f32(needle % 2) * .25)}
         points := [3][3]f32{root, shoulder, tip}
         for segment in 0 ..< 2 {
@@ -476,10 +478,26 @@ generate_pine_needle_clump :: proc(config: Config) -> Mesh {
             taper_a := segment == 0 ? f32(1) : f32(.72)
             taper_b := segment == 0 ? f32(.72) : f32(.10)
             base := u16(mesh.vertex_count)
-            mesh.vertices[mesh.vertex_count + 0] = {a - tangent * needle_half_width * taper_a, {}, {0, f32(segment) * .5}}
-            mesh.vertices[mesh.vertex_count + 1] = {a + tangent * needle_half_width * taper_a, {}, {1, f32(segment) * .5}}
-            mesh.vertices[mesh.vertex_count + 2] = {b + tangent * needle_half_width * taper_b, {}, {1, f32(segment + 1) * .5}}
-            mesh.vertices[mesh.vertex_count + 3] = {b - tangent * needle_half_width * taper_b, {}, {0, f32(segment + 1) * .5}}
+            mesh.vertices[mesh.vertex_count + 0] = {
+                a - tangent * needle_half_width * taper_a,
+                {},
+                {0, f32(segment) * .5},
+            }
+            mesh.vertices[mesh.vertex_count + 1] = {
+                a + tangent * needle_half_width * taper_a,
+                {},
+                {1, f32(segment) * .5},
+            }
+            mesh.vertices[mesh.vertex_count + 2] = {
+                b + tangent * needle_half_width * taper_b,
+                {},
+                {1, f32(segment + 1) * .5},
+            }
+            mesh.vertices[mesh.vertex_count + 3] = {
+                b - tangent * needle_half_width * taper_b,
+                {},
+                {0, f32(segment + 1) * .5},
+            }
             mesh.vertex_count += 4
             indices := [6]u16{base, base + 2, base + 1, base, base + 3, base + 2}
             for index in indices {

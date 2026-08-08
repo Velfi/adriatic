@@ -3,11 +3,11 @@ package main
 import marina "../packages/marina"
 import plants "../packages/plants"
 import story "../packages/story"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import third_person "zelda_engine:third_person"
 
 CAPTURE_SELECTOR_FILTER_CAPACITY :: 8
 CAPTURE_SELECTOR_MATCH_CAPACITY :: 2048
@@ -160,21 +160,16 @@ capture_selector_collect :: proc(
     switch selector.kind {
     case .Character:
         player_position := editor.player.position
-        capture_subject_append(
-            matches,
-            &count,
-            {
-                kind = .Character,
-                id = 1,
-                name = "player",
-                subtype = "player",
-                position = player_position,
+        capture_subject_append(matches, &count, {
+                kind      = .Character,
+                id        = 1,
+                name      = "player",
+                subtype   = "player",
+                position  = player_position,
                 half_size = {.42, .72, .35},
-                yaw = editor.player.facing_yaw_radians,
+                yaw       = editor.player.facing_yaw_radians,
                 available = true,
-            },
-            selector,
-        )
+            }, selector)
         for resident in story.Resident {
             position, display_name, found := live_control_npc_position(editor, story.resident_name(resident))
             if !found do continue
@@ -184,38 +179,28 @@ capture_selector_collect :: proc(
                 if home_found do yaw = frontage_rotation + f32(math.PI * .5)
                 if resident == .Zora do yaw -= .10
             }
-            capture_subject_append(
-                matches,
-                &count,
-                {
-                    kind = .Character,
-                    id = 100 + u64(resident),
-                    name = display_name,
-                    subtype = fmt.tprintf("%v", resident),
-                    position = position,
+            capture_subject_append(matches, &count, {
+                    kind      = .Character,
+                    id        = 100 + u64(resident),
+                    name      = display_name,
+                    subtype   = fmt.tprintf("%v", resident),
+                    position  = position,
                     half_size = {.42, .72, .35},
-                    yaw = yaw,
+                    yaw       = yaw,
                     available = true,
-                },
-                selector,
-            )
+                }, selector)
         }
     case .Vehicle:
-        capture_subject_append(
-            matches,
-            &count,
-            {
-                kind = .Vehicle,
-                id = 1,
-                name = "car",
-                subtype = "car",
-                position = editor.car.position,
+        capture_subject_append(matches, &count, {
+                kind      = .Vehicle,
+                id        = 1,
+                name      = "car",
+                subtype   = "car",
+                position  = editor.car.position,
                 half_size = {1.05, .8, 1.8},
-                yaw = editor.car.yaw_radians,
+                yaw       = editor.car.yaw_radians,
                 available = true,
-            },
-            selector,
-        )
+            }, selector)
         for index in 0 ..< editor.aircraft.count {
             slot := &editor.aircraft.slots[index]
             if slot.vehicle == nil do continue
@@ -233,59 +218,44 @@ capture_selector_collect :: proc(
             case .Rondine:
                 position = editor.rondine.body.position
             }
-            capture_subject_append(
-                matches,
-                &count,
-                {
-                    kind = .Vehicle,
-                    id = 100 + u64(slot.kind),
-                    name = slot.name,
-                    subtype = fmt.tprintf("%v", slot.kind),
-                    position = position,
+            capture_subject_append(matches, &count, {
+                    kind      = .Vehicle,
+                    id        = 100 + u64(slot.kind),
+                    name      = slot.name,
+                    subtype   = fmt.tprintf("%v", slot.kind),
+                    position  = position,
                     half_size = {4.5, 2.0, 4.5},
-                    yaw = slot.vehicle.yaw_radians,
+                    yaw       = slot.vehicle.yaw_radians,
                     available = slot.available,
-                },
-                selector,
-            )
+                }, selector)
         }
     case .Structure:
         for index in 0 ..< editor.project.structure_count {
             structure := &editor.project.structures[index]
-            capture_subject_append(
-                matches,
-                &count,
-                {
-                    kind = .Structure,
-                    id = structure.id,
-                    name = fmt.tprintf("structure-%d", structure.id),
-                    subtype = fmt.tprintf("%v", structure.building.archetype),
-                    position = {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
+            capture_subject_append(matches, &count, {
+                    kind      = .Structure,
+                    id        = structure.id,
+                    name      = fmt.tprintf("structure-%d", structure.id),
+                    subtype   = fmt.tprintf("%v", structure.building.archetype),
+                    position  = {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
                     half_size = {structure.width * .5, structure.height * .5, structure.depth * .5},
-                    yaw = structure.rotation,
+                    yaw       = structure.rotation,
                     available = true,
-                },
-                selector,
-            )
+                }, selector)
         }
     case .Selection:
         if editor.structure_selected >= 0 && editor.structure_selected < editor.project.structure_count {
             structure := &editor.project.structures[editor.structure_selected]
-            capture_subject_append(
-                matches,
-                &count,
-                {
-                    kind = .Selection,
-                    id = structure.id,
-                    name = fmt.tprintf("structure-%d", structure.id),
-                    subtype = fmt.tprintf("%v", structure.building.archetype),
-                    position = {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
+            capture_subject_append(matches, &count, {
+                    kind      = .Selection,
+                    id        = structure.id,
+                    name      = fmt.tprintf("structure-%d", structure.id),
+                    subtype   = fmt.tprintf("%v", structure.building.archetype),
+                    position  = {structure.center_x, structure.base_y + structure.height * .5, structure.center_z},
                     half_size = {structure.width * .5, structure.height * .5, structure.depth * .5},
-                    yaw = structure.rotation,
+                    yaw       = structure.rotation,
                     available = true,
-                },
-                selector,
-            )
+                }, selector)
         }
     case .Prop:
         if editor.active_lab_scene == "ruins" {
@@ -295,41 +265,31 @@ capture_selector_collect :: proc(
                 if prop.building >= 0 && prop.building < ruins_lab_plan.building_count {
                     base_y = ruins_lab_plan.buildings[prop.building].base_y
                 }
-                capture_subject_append(
-                    matches,
-                    &count,
-                    {
-                        kind = .Prop,
-                        id = u64(index + 1),
-                        name = fmt.tprintf("%v-%d", prop.kind, index + 1),
-                        subtype = fmt.tprintf("%v", prop.kind),
-                        position = {prop.position.x, base_y + prop.scale * .5, prop.position.z},
+                capture_subject_append(matches, &count, {
+                        kind      = .Prop,
+                        id        = u64(index + 1),
+                        name      = fmt.tprintf("%v-%d", prop.kind, index + 1),
+                        subtype   = fmt.tprintf("%v", prop.kind),
+                        position  = {prop.position.x, base_y + prop.scale * .5, prop.position.z},
                         half_size = {prop.scale * .75, prop.scale * .75, prop.scale * .75},
-                        yaw = prop.yaw,
+                        yaw       = prop.yaw,
                         available = true,
-                    },
-                    selector,
-                )
+                    }, selector)
             }
         } else if editor.active_lab_scene == "markov-marina" {
             for index in 0 ..< markov_marina_plan.prop_count {
                 prop := &markov_marina_plan.props[index]
                 position := marina.plan_world_position(&markov_marina_plan, prop.position)
-                capture_subject_append(
-                    matches,
-                    &count,
-                    {
-                        kind = .Prop,
-                        id = u64(index + 1),
-                        name = fmt.tprintf("%v-%d", prop.kind, index + 1),
-                        subtype = fmt.tprintf("%v", prop.kind),
-                        position = {position.x, .7, position.z},
+                capture_subject_append(matches, &count, {
+                        kind      = .Prop,
+                        id        = u64(index + 1),
+                        name      = fmt.tprintf("%v-%d", prop.kind, index + 1),
+                        subtype   = fmt.tprintf("%v", prop.kind),
+                        position  = {position.x, .7, position.z},
                         half_size = {1, 1, 1},
-                        yaw = marina.plan_world_yaw(&markov_marina_plan, prop.yaw),
+                        yaw       = marina.plan_world_yaw(&markov_marina_plan, prop.yaw),
                         available = true,
-                    },
-                    selector,
-                )
+                    }, selector)
             }
         }
     case .Plant:
@@ -340,15 +300,12 @@ capture_selector_collect :: proc(
             generated := &plant_generator_results[plant_generator_isolated].plant
             scale := plant_generator_display_scale(species)
             minimum, maximum := generated.bounds.minimum, generated.bounds.maximum
-            capture_subject_append(
-                matches,
-                &count,
-                {
-                    kind = .Plant,
-                    id = u64(plant_generator_isolated + 1),
-                    name = fmt.tprintf("%v", species),
-                    subtype = fmt.tprintf("%v", species),
-                    position = {
+            capture_subject_append(matches, &count, {
+                    kind      = .Plant,
+                    id        = u64(plant_generator_isolated + 1),
+                    name      = fmt.tprintf("%v", species),
+                    subtype   = fmt.tprintf("%v", species),
+                    position  = {
                         (minimum[0] + maximum[0]) * .5 * scale,
                         (minimum[1] + maximum[1]) * .5 * scale,
                         (minimum[2] + maximum[2]) * .5 * scale,
@@ -359,9 +316,7 @@ capture_selector_collect :: proc(
                         (maximum[2] - minimum[2]) * .5 * scale,
                     },
                     available = true,
-                },
-                selector,
-            )
+                }, selector)
         }
     }
     return count

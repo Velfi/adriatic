@@ -2,10 +2,10 @@ package main
 import architecture "../packages/architecture"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 world_climbing_leaf_vine :: proc(
     structure: terrain.Structure,
     local_x, root_local_x, surface_z, vine_height: f32,
@@ -52,16 +52,14 @@ world_climbing_leaf_vine :: proc(
         plant_snapshot = &architecture_entry.result
     } else {
         // Preserve rendering if the fixed-capacity world cache is exhausted.
-        uncached_architecture = plants.generate(
-            {
-                species = .Bougainvillea,
-                seed = u64(plant_seed),
-                maturity = vine_maturity,
-                detail = architecture_detail,
-                habit = .Wall_Trained,
-                support = &support,
-            },
-        )
+        uncached_architecture = plants.generate({
+            species  = .Bougainvillea,
+            seed     = u64(plant_seed),
+            maturity = vine_maturity,
+            detail   = architecture_detail,
+            habit    = .Wall_Trained,
+            support  = &support,
+        })
         plant_snapshot = &uncached_architecture
     }
     defer if architecture_entry == nil do plants.destroy(&uncached_architecture)

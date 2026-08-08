@@ -2,9 +2,9 @@ package main
 import "core:math"
 
 import mouse_paws "../packages/mouse_paws"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_surface_paw_pad :: proc(
     center, normal: third_person.Vec3,

@@ -1,11 +1,11 @@
 package main
 
 import architecture "../packages/architecture"
-import planar_geometry "zelda_engine:planar_geometry"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:math/linalg"
+import planar_geometry "zelda_engine:planar_geometry"
 
 SETTLEMENT_ROAD_OVERLAP_REJECT :: f32(0.7)
 SETTLEMENT_ROAD_OVERLAP_WIDEN :: f32(0.1)

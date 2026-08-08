@@ -2,11 +2,11 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import cars "../packages/cars"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 CAR_GENERATOR_LAB_KINDS := [5]cars.Kind{.Sedan, .Coupe, .Pickup, .Delivery, .Woody}
 car_generator_lab_seed: u32 = 1947
@@ -354,12 +354,38 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     control_bounds := [2]canvas2d.Rectangle{dropdown, seed_button}
     for bounds in control_bounds {
         hovered := canvas2d.CheckCollisionPointRec(mouse, bounds)
-        canvas2d.DrawRectangleRounded(bounds, .16, 6, hovered ? canvas2d.Color{66, 58, 43, 255} : canvas2d.Color{42, 43, 38, 248})
+        canvas2d.DrawRectangleRounded(
+            bounds,
+            .16,
+            6,
+            hovered ? canvas2d.Color{66, 58, 43, 255} : canvas2d.Color{42, 43, 38, 248},
+        )
         canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {196, 167, 106, 255})
     }
-    canvas2d.DrawTextEx(canvas2d.Font{}, car_generator_lab_selection_label(), {dropdown.x + 10, dropdown.y + 7}, 12, 1, {247, 226, 176, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, car_generator_lab_kind_dropdown_open ? "^" : "v", {dropdown.x + dropdown.width - 18, dropdown.y + 7}, 12, 1, {196, 167, 106, 255})
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("NEW SEED  %d", car_generator_lab_seed), {seed_button.x + 10, seed_button.y + 7}, 11, 1, {247, 226, 176, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        car_generator_lab_selection_label(),
+        {dropdown.x + 10, dropdown.y + 7},
+        12,
+        1,
+        {247, 226, 176, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        car_generator_lab_kind_dropdown_open ? "^" : "v",
+        {dropdown.x + dropdown.width - 18, dropdown.y + 7},
+        12,
+        1,
+        {196, 167, 106, 255},
+    )
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("NEW SEED  %d", car_generator_lab_seed),
+        {seed_button.x + 10, seed_button.y + 7},
+        11,
+        1,
+        {247, 226, 176, 255},
+    )
     for kind, index in CAR_GENERATOR_LAB_KINDS {
         plan := cars.generate(kind, car_generator_lab_seed + u32(index) * 31)
         topology := cars.mesh(plan)
@@ -386,7 +412,14 @@ car_generator_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
             if index > 0 do label = fmt.ctprintf("%s", cars.kind_name(CAR_GENERATOR_LAB_KINDS[index - 1]))
             canvas2d.DrawRectangleRec(bounds, fill)
             canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {142, 123, 81, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + 10, bounds.y + 6}, 12, 1, selected ? canvas2d.Color{247, 226, 176, 255} : canvas2d.Color{224, 219, 197, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                label,
+                {bounds.x + 10, bounds.y + 6},
+                12,
+                1,
+                selected ? canvas2d.Color{247, 226, 176, 255} : canvas2d.Color{224, 219, 197, 255},
+            )
         }
     }
     _ = width

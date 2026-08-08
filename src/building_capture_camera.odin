@@ -2,9 +2,9 @@ package main
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:strconv"
+import third_person "zelda_engine:third_person"
 
 configure_building_capture_camera :: proc(editor: ^Editor, target_arg: string = "") -> bool {
     if editor == nil do return false

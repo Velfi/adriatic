@@ -164,8 +164,13 @@ generated_plants_own_stable_botanical_graphs_across_maturity :: proc(t: ^testing
 
 @(test)
 generation_emits_authored_organs_without_flat_policy_reclassification :: proc(t: ^testing.T) {
-    support := Support_Surface{width = 3, height = 2}
-    generated := generate({species = .Grapevine, seed = 551, maturity = 1, detail = .Near, habit = .Trellised, support = &support})
+    support := Support_Surface {
+        width  = 3,
+        height = 2,
+    }
+    generated := generate(
+        {species = .Grapevine, seed = 551, maturity = 1, detail = .Near, habit = .Trellised, support = &support},
+    )
     defer destroy(&generated)
     testing.expect(t, generated.error == .None)
     testing.expect_value(t, len(generated.plant.graph.organs), len(generated.plant.attachments))
@@ -179,7 +184,12 @@ generation_emits_authored_organs_without_flat_policy_reclassification :: proc(t:
 generation_workspace_reuses_graph_and_compiled_output_capacity :: proc(t: ^testing.T) {
     workspace: Generation_Workspace
     defer generation_workspace_destroy(&workspace)
-    config := Generate_Config{species = .Olive, seed = 808, maturity = 1, detail = .Near}
+    config := Generate_Config {
+        species  = .Olive,
+        seed     = 808,
+        maturity = 1,
+        detail   = .Near,
+    }
     testing.expect(t, generation_workspace_begin(&workspace))
     first := generate(config)
     generation_workspace_end(&workspace)

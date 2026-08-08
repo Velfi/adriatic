@@ -4,14 +4,12 @@ import dialogue "../packages/dialogue"
 import dialogue_session "../packages/dialogue_session"
 import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import libellula_game "../packages/libellula"
 import marina "../packages/marina"
 import postale_game "../packages/postale"
 import rondine_game "../packages/rondine"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:c"
 import "core:math"
@@ -19,6 +17,8 @@ import "core:math/linalg"
 import "core:slice"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
+import third_person "zelda_engine:third_person"
 
 attendant_dialogue_close :: proc(editor: ^Editor) {
     if editor == nil do return
@@ -426,16 +426,13 @@ draw_libellula_3d :: proc(editor: ^Editor, camera: Perspective_Camera, width, he
             height,
         )
         if !(pa.visible && pb.visible && pc.visible) do continue
-        append(
-            &editor.libellula_projected_faces,
-            Projected_Aircraft_Face {
-                a = pa.position,
-                b = pb.position,
-                c = pc.position,
-                depth = (pa.depth + pb.depth + pc.depth) / 3,
-                color = aircraft_part_color(a.part),
-            },
-        )
+        append(&editor.libellula_projected_faces, Projected_Aircraft_Face {
+            a     = pa.position,
+            b     = pb.position,
+            c     = pc.position,
+            depth = (pa.depth + pb.depth + pc.depth) / 3,
+            color = aircraft_part_color(a.part),
+        })
     }
     faces := editor.libellula_projected_faces[:]
     face_count := len(faces)

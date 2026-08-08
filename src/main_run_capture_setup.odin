@@ -15,13 +15,13 @@ import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 Run_Config :: struct {
     request:                                                                                      ^Capture_Request,

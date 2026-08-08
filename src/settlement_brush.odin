@@ -553,19 +553,16 @@ settlement_program_assign_new_purposes :: proc(
             site_index := new_sites[cursor]
             site := &plan.sites[site_index]
             site.purpose = purpose
-            identity := architecture.architecture_identity(
-                {
-                    region = settlement_building_region(plan.request.region),
-                    tissue = settlement_architecture_tissue(site.tissue),
-                    density = site.density,
-                    attached = site.attached,
-                    frontage = site.structure.width,
-                    depth = site.structure.depth,
-                    purpose = settlement_building_purpose(purpose),
+            identity := architecture.architecture_identity({
+                    region           = settlement_building_region(plan.request.region),
+                    tissue           = settlement_architecture_tissue(site.tissue),
+                    density          = site.density,
+                    attached         = site.attached,
+                    frontage         = site.structure.width,
+                    depth            = site.structure.depth,
+                    purpose          = settlement_building_purpose(purpose),
                     purpose_explicit = true,
-                },
-                site.structure.seed,
-            )
+                }, site.structure.seed)
             site.structure.building = identity
             for &structure in project.structures[:project.structure_count] {
                 if structure.kind != .Architecture ||
@@ -737,14 +734,11 @@ settlement_brush_ensure_anchors :: proc(
             structure.kind = .Architecture
             structure.rotation = angle
             structure.seed = settlement_landmark_seed(plan.request.region, ordinal, piece.seed)
-            structure.building = architecture.architecture_identity(
-                {
-                    region = settlement_building_region(plan.request.region),
-                    landmark_kind = settlement_building_landmark(landmark_kind),
+            structure.building = architecture.architecture_identity({
+                    region           = settlement_building_region(plan.request.region),
+                    landmark_kind    = settlement_building_landmark(landmark_kind),
                     purpose_explicit = true,
-                },
-                structure.seed,
-            )
+                }, structure.seed)
             structure.color = architecture.architecture_color(structure.seed, false)
             _, foundation_high := architecture.architecture_foundation_height_range(project, structure)
             structure.base_y = foundation_high

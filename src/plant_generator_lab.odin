@@ -10,13 +10,13 @@ import plant_bark "../packages/plant_bark"
 import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:strconv"
 import "core:testing"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 plant_generator_seed := u64(73)
 plant_generator_maturity := f32(1)
@@ -308,16 +308,14 @@ plant_generator_rebuild :: proc() {
         support := plant_generator_support(species)
         support_pointer: ^plants.Support_Surface
         if habit != .Free_Standing do support_pointer = &support
-        result := plants.generate(
-            {
-                species = species,
-                seed = plant_generator_seed + u64(index * 977),
-                maturity = plant_generator_maturity,
-                detail = plant_generator_detail,
-                habit = habit,
-                support = support_pointer,
-            },
-        )
+        result := plants.generate({
+            species  = species,
+            seed     = plant_generator_seed + u64(index * 977),
+            maturity = plant_generator_maturity,
+            detail   = plant_generator_detail,
+            habit    = habit,
+            support  = support_pointer,
+        })
         if result.error != .None {
             plants.destroy(&result)
             continue
@@ -1072,11 +1070,8 @@ plant_generator_camera_orbit_zoom :: proc(editor: ^Editor, orbit_x, orbit_y, whe
         distance = clamp(distance * f32(math.pow(.86, f64(wheel))), f32(.35), f32(120))
     }
     horizontal := math.cos(pitch) * distance
-    position := target + third_person.Vec3 {
-        math.sin(yaw) * horizontal,
-        math.sin(pitch) * distance,
-        math.cos(yaw) * horizontal,
-    }
+    position :=
+        target + third_person.Vec3{math.sin(yaw) * horizontal, math.sin(pitch) * distance, math.cos(yaw) * horizontal}
     editor.camera_pose = third_person.camera_look_at(position, target)
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
 }

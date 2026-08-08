@@ -1,7 +1,6 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:image"
 import _ "core:image/png"
@@ -11,6 +10,7 @@ import "core:os"
 import "core:strings"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 MATERIAL_LAB_CAPACITY :: 4096
 MATERIAL_LAB_LEGACY_CAPACITY :: 32
@@ -521,14 +521,11 @@ material_lab_current :: proc() -> ^Material_Lab_Material {
 
 material_lab_update_camera :: proc(editor: ^Editor) {
     if editor == nil do return
-    editor.camera_pose = third_person.camera_pose(
-        third_person.Vec3{0, 1.25, 0},
-        {
-            yaw_radians = material_lab.orbit_yaw,
-            pitch_radians = material_lab.orbit_pitch,
-            distance = material_lab.orbit_distance,
-        },
-    )
+    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, 1.25, 0}, {
+        yaw_radians   = material_lab.orbit_yaw,
+        pitch_radians = material_lab.orbit_pitch,
+        distance      = material_lab.orbit_distance,
+    })
     third_person.camera_set_pose(&editor.cameras, .Inspection, editor.camera_pose)
 }
 

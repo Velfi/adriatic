@@ -2,11 +2,11 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "zelda_engine:dio"
 import hero "../packages/hero_buildings"
 import terrain "../packages/terrain"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 
 world_architecture_oriented :: proc(
     structure: terrain.Structure,

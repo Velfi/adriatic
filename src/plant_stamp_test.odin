@@ -1,8 +1,8 @@
 package main
 
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 plant_stamp_target_distance_respects_rotated_footprint :: proc(t: ^testing.T) {

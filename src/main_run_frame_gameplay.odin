@@ -4,10 +4,8 @@ package main
 import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import chase_camera "../packages/chase_camera"
-import dio "zelda_engine:dio"
 import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import libellula_game "../packages/libellula"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
@@ -17,7 +15,6 @@ import rondine_game "../packages/rondine"
 import scene_stack "../packages/scene_stack"
 import spray_audio "../packages/spray_audio"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import wind_audio "../packages/wind_audio"
 import "core:fmt"
@@ -25,7 +22,10 @@ import "core:math"
 import "core:time"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import game_input "zelda_engine:game_input"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^Run_Frame_State) -> bool {
     crash_severity = f32(0)
@@ -145,19 +145,13 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                     )
                     if editor.aircraft.active == .Rondine {
                         local_wind := aircraft_local_airflow(editor, body)
-                        rondine_game.step(
-                            &editor.rondine,
-                            {
-                                throttle_up = control.throttle_up,
+                        rondine_game.step(&editor.rondine, {
+                                throttle_up   = control.throttle_up,
                                 throttle_down = control.throttle_down,
-                                pitch = control.pitch,
-                                roll = control.roll,
-                                yaw = control.yaw,
-                            },
-                            editor.project.sea_level,
-                            f32(AIRCRAFT_FIXED_STEP),
-                            local_wind,
-                        )
+                                pitch         = control.pitch,
+                                roll          = control.roll,
+                                yaw           = control.yaw,
+                            }, editor.project.sea_level, f32(AIRCRAFT_FIXED_STEP), local_wind)
                         if !rondine_footprint_is_clear_water(
                                editor,
                                editor.rondine.body.position,
@@ -168,19 +162,13 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         }
                     } else if editor.aircraft.active != .Postale {
                         local_wind := aircraft_local_airflow(editor, body)
-                        libellula_game.step(
-                            &editor.libellula,
-                            {
-                                throttle_up = control.throttle_up,
+                        libellula_game.step(&editor.libellula, {
+                                throttle_up   = control.throttle_up,
                                 throttle_down = control.throttle_down,
-                                pitch = control.pitch,
-                                roll = control.roll,
-                                yaw = control.yaw,
-                            },
-                            ground,
-                            f32(AIRCRAFT_FIXED_STEP),
-                            local_wind,
-                        )
+                                pitch         = control.pitch,
+                                roll          = control.roll,
+                                yaw           = control.yaw,
+                            }, ground, f32(AIRCRAFT_FIXED_STEP), local_wind)
                     } else {
                         local_wind := aircraft_local_airflow(editor, body)
                         ground_result := postale_game.step(
@@ -443,18 +431,14 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                         }
                     }
                     movement_intent := clamp(f32(math.sqrt(f64(move_x * move_x + move_y * move_y))), 0, 1)
-                    mouse_emote_update(
-                        &editor.mouse_emote,
-                        {
-                            movement_intent = movement_intent,
-                            horizontal_speed = player_horizontal_speed_before,
-                            grounded = editor.player.grounded,
+                    mouse_emote_update(&editor.mouse_emote, {
+                            movement_intent   = movement_intent,
+                            horizontal_speed  = player_horizontal_speed_before,
+                            grounded          = editor.player.grounded,
                             player_controlled = editor.pilot.mode == .On_Foot,
                             incompatible_pose = town_mouse_wheel_mounted,
-                            paused = pause_menu_is_open(editor),
-                        },
-                        frame_seconds,
-                    )
+                            paused            = pause_menu_is_open(editor),
+                        }, frame_seconds)
                     player_animation_update(editor, frame_seconds)
                     player_horizontal_speed := f32(
                         math.sqrt(
@@ -492,21 +476,15 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                             editor.player.position.x,
                             editor.player.position.z,
                         )
-                        particle_systems.spawn_scrabble(
-                            &editor.player_terrain_effects,
-                            frame_seconds,
-                            {
+                        particle_systems.spawn_scrabble(&editor.player_terrain_effects, frame_seconds, {
                                 position = {
                                     editor.player.position.x - intent_direction.x * .34,
                                     ground_y,
                                     editor.player.position.z - intent_direction.z * .34,
                                 },
                                 grounded = true,
-                                surface = dust_surface,
-                            },
-                            intent_direction,
-                            scrabble_strength,
-                        )
+                                surface  = dust_surface,
+                            }, intent_direction, scrabble_strength)
                     }
                     editor.player_stop_spray_cooldown = max(editor.player_stop_spray_cooldown - frame_seconds, f32(0))
                     if editor.player.grounded && player_horizontal_speed > .8 {
@@ -535,20 +513,15 @@ run_frame_simulate_gameplay :: proc(using run: ^Run_State, using frame_state: ^R
                             editor.player.position.x,
                             editor.player.position.z,
                         )
-                        particle_systems.spawn_stop_spray(
-                            &editor.player_terrain_effects,
-                            {
+                        particle_systems.spawn_stop_spray(&editor.player_terrain_effects, {
                                 position = {
                                     editor.player.position.x - travel_direction.x * .48,
                                     ground_y,
                                     editor.player.position.z - travel_direction.z * .48,
                                 },
                                 grounded = true,
-                                surface = dust_surface,
-                            },
-                            travel_direction,
-                            clamp(editor.player_stop_spray_speed / 10, .35, 1),
-                        )
+                                surface  = dust_surface,
+                            }, travel_direction, clamp(editor.player_stop_spray_speed / 10, .35, 1))
                         editor.player_stop_spray_cooldown = .28
                         editor.player_stop_spray_speed = 0
                     } else if player_horizontal_speed <= .08 {

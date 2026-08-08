@@ -3,13 +3,13 @@ import "core:math"
 import "core:mem"
 import "core:testing"
 
-import dio "zelda_engine:dio"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 import engine "zelda_engine:engine"
+import third_person "zelda_engine:third_person"
 
 terrain_dirty_bounds_include :: proc(target: ^Terrain_Dirty_Bounds, added: Terrain_Dirty_Bounds) {
     if target == nil || !added.valid do return
@@ -52,7 +52,8 @@ world_terrain_invalidate_derived :: proc(editor: ^Editor, changed: Terrain_Dirty
     }
     for &entry in world_renderer.architecture_street_area_cache {
         if !entry.valid do continue
-        radius := f32(math.sqrt(f64(entry.area.width * entry.area.width + entry.area.length * entry.area.length))) * .5 + 2
+        radius :=
+            f32(math.sqrt(f64(entry.area.width * entry.area.width + entry.area.length * entry.area.length))) * .5 + 2
         if terrain_dirty_bounds_intersects_circle(changed, entry.area.center_x, entry.area.center_z, radius) {
             entry.valid = false
             continue
@@ -312,7 +313,10 @@ clipmap_dirty_vertex_range :: proc(
     level: int,
     center: [2]f32,
     dirty: Terrain_Dirty_Bounds,
-) -> (range_min_x, range_min_z, range_max_x, range_max_z: int, valid: bool) {
+) -> (
+    range_min_x, range_min_z, range_max_x, range_max_z: int,
+    valid: bool,
+) {
     if editor == nil || !dirty.valid do return 0, 0, 0, 0, false
     data := &editor.project.levels[level]
     grid_cell := clipmap_grid_cell(editor, level)
@@ -345,12 +349,12 @@ clipmap_live_edit_dirty :: proc(editor: ^Editor, level: int, dirty: Terrain_Dirt
     center_x := (dirty.min_x + dirty.max_x) * .5
     center_z := (dirty.min_z + dirty.max_z) * .5
     return {
-        valid    = true,
+        valid = true,
         revision = dirty.revision,
-        min_x    = max(dirty.min_x, center_x - radius),
-        min_z    = max(dirty.min_z, center_z - radius),
-        max_x    = min(dirty.max_x, center_x + radius),
-        max_z    = min(dirty.max_z, center_z + radius),
+        min_x = max(dirty.min_x, center_x - radius),
+        min_z = max(dirty.min_z, center_z - radius),
+        max_x = min(dirty.max_x, center_x + radius),
+        max_z = min(dirty.max_z, center_z + radius),
     }
 }
 

@@ -2,25 +2,25 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import bridges "../packages/bridges"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 bridge_lab_seed := u32(0xB12D6E)
 bridge_lab_config: bridges.Config
 bridge_lab_cleft_width := f32(30)
 bridge_lab_cleft_depth := f32(7)
 bridge_lab_bank_slope := f32(4)
-bridge_lab_archetype_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 232, 28}}
-bridge_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {282, 68, 154, 28}}
-bridge_lab_length_bounds :: proc() -> canvas2d.Rectangle {return {38, 116, 128, 28}}
-bridge_lab_spans_bounds :: proc() -> canvas2d.Rectangle {return {178, 116, 118, 28}}
-bridge_lab_clearance_bounds :: proc() -> canvas2d.Rectangle {return {308, 116, 136, 28}}
-bridge_lab_cleft_width_bounds :: proc() -> canvas2d.Rectangle {return {456, 116, 136, 28}}
-bridge_lab_cleft_depth_bounds :: proc() -> canvas2d.Rectangle {return {604, 116, 136, 28}}
-bridge_lab_cutwaters_bounds :: proc() -> canvas2d.Rectangle {return {38, 160, 122, 28}}
-bridge_lab_shops_bounds :: proc() -> canvas2d.Rectangle {return {172, 160, 104, 28}}
+bridge_lab_archetype_bounds :: proc() -> canvas2d.Rectangle { return {38, 68, 232, 28} }
+bridge_lab_seed_bounds :: proc() -> canvas2d.Rectangle { return {282, 68, 154, 28} }
+bridge_lab_length_bounds :: proc() -> canvas2d.Rectangle { return {38, 116, 128, 28} }
+bridge_lab_spans_bounds :: proc() -> canvas2d.Rectangle { return {178, 116, 118, 28} }
+bridge_lab_clearance_bounds :: proc() -> canvas2d.Rectangle { return {308, 116, 136, 28} }
+bridge_lab_cleft_width_bounds :: proc() -> canvas2d.Rectangle { return {456, 116, 136, 28} }
+bridge_lab_cleft_depth_bounds :: proc() -> canvas2d.Rectangle { return {604, 116, 136, 28} }
+bridge_lab_cutwaters_bounds :: proc() -> canvas2d.Rectangle { return {38, 160, 122, 28} }
+bridge_lab_shops_bounds :: proc() -> canvas2d.Rectangle { return {172, 160, 104, 28} }
 
 bridge_lab_archetype_name :: proc(value: bridges.Archetype) -> cstring {
     switch value {
@@ -115,17 +115,13 @@ bridge_lab_regenerate_terrain :: proc(editor: ^Editor) {
     // Carry the cleft well beyond the authored camera so the focused patch
     // reads as a continuous landform instead of a rectangular test basin.
     extent_z := max(f32(110), bridge_lab_config.width * 8)
-    _ = lab_terrain_load(
-        editor,
-        {
-            half_extent_x = extent_x,
-            half_extent_z = extent_z,
-            sea_level = 0,
-            outside_height = bridge_lab_config.clearance,
+    _ = lab_terrain_load(editor, {
+            half_extent_x    = extent_x,
+            half_extent_z    = extent_z,
+            sea_level        = 0,
+            outside_height   = bridge_lab_config.clearance,
             outside_material = .22,
-        },
-        bridge_lab_terrain_sample,
-    )
+        }, bridge_lab_terrain_sample)
 }
 
 bridge_generator_lab_configure :: proc(editor: ^Editor, target: string) -> bool {
@@ -213,7 +209,11 @@ bridge_generator_lab_process_input :: proc(editor: ^Editor) {
         terrain_changed = true
     }
     if cleft_width_delta != 0 {
-        bridge_lab_cleft_width = clamp(bridge_lab_cleft_width + f32(cleft_width_delta), f32(4), bridge_lab_config.length * .90)
+        bridge_lab_cleft_width = clamp(
+            bridge_lab_cleft_width + f32(cleft_width_delta),
+            f32(4),
+            bridge_lab_config.length * .90,
+        )
         terrain_changed = true
     }
     if cleft_depth_delta != 0 {
@@ -693,5 +693,12 @@ bridge_generator_lab_draw_ui :: proc(_: ^Editor, _: i32, _: i32) {
     lab_ui_draw_stepper(bridge_lab_cleft_depth_bounds(), fmt.ctprintf("%.1f M", bridge_lab_cleft_depth))
     lab_ui_draw_button(bridge_lab_cutwaters_bounds(), "CUTWATERS", bridge_lab_config.pier_cutwaters)
     if bridge_lab_config.archetype == .Venetian_Canal do lab_ui_draw_button(bridge_lab_shops_bounds(), "SHOPS", bridge_lab_config.urban_shops)
-    canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s  /  %s", bridge_lab_region_name(plan.region), bridge_lab_material_name(plan.material)), {300, 168}, 11, 1, {190, 213, 189, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        fmt.ctprintf("%s  /  %s", bridge_lab_region_name(plan.region), bridge_lab_material_name(plan.material)),
+        {300, 168},
+        11,
+        1,
+        {190, 213, 189, 255},
+    )
 }

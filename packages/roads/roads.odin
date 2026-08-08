@@ -895,20 +895,17 @@ bake_edge :: proc(
             } else if lane == 1 || lane == 4 {
                 surface = .Shoulder
             }
-            current[lane] = mesh_vertex(
-                mesh,
-                {
-                    position = positions[lane],
-                    normal = normal,
-                    uv = {lane_uv[lane], distance_along},
-                    surface = surface,
-                    pavement = edge.pavement,
-                    road_half_width = edge.half_width,
-                    use_intensity = edge.use_intensity,
-                    source_edge = edge_index + 1,
-                    edge_t = t,
-                },
-            )
+            current[lane] = mesh_vertex(mesh, {
+                position        = positions[lane],
+                normal          = normal,
+                uv              = {lane_uv[lane], distance_along},
+                surface         = surface,
+                pavement        = edge.pavement,
+                road_half_width = edge.half_width,
+                use_intensity   = edge.use_intensity,
+                source_edge     = edge_index + 1,
+                edge_t          = t,
+            })
         }
         if sample > 0 {
             chunk_length += linalg.length(center - previous_center)
@@ -1032,57 +1029,45 @@ bake_end_cap :: proc(
             road_radius := left_road_radius + (right_road_radius - left_road_radius) * fraction
             shoulder_radius := left_shoulder_radius + (right_shoulder_radius - left_shoulder_radius) * fraction
             verge_radius := left_verge_radius + (right_verge_radius - left_verge_radius) * fraction
-            road_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = center_position + direction * road_radius,
-                    normal = normal,
-                    uv = {.335 + fraction * .33, 0},
-                    surface = .Road,
-                    pavement = edge.pavement,
-                    road_half_width = edge.half_width,
-                    use_intensity = edge.use_intensity,
-                },
-            )
-            shoulder_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = center_position + direction * shoulder_radius,
-                    normal = normal,
-                    uv = {.20 + fraction * .60, 0},
-                    surface = .Shoulder,
-                    pavement = edge.pavement,
-                    road_half_width = edge.half_width,
-                    use_intensity = edge.use_intensity,
-                },
-            )
-            verge_arc[sample] = mesh_vertex(
-                mesh,
-                {
-                    position = center_position + direction * verge_radius,
-                    normal = normal,
-                    uv = {fraction, 0},
-                    surface = .Verge,
-                    pavement = edge.pavement,
-                    road_half_width = edge.half_width,
-                    use_intensity = edge.use_intensity,
-                },
-            )
+            road_arc[sample] = mesh_vertex(mesh, {
+                position        = center_position + direction * road_radius,
+                normal          = normal,
+                uv              = {.335 + fraction * .33, 0},
+                surface         = .Road,
+                pavement        = edge.pavement,
+                road_half_width = edge.half_width,
+                use_intensity   = edge.use_intensity,
+            })
+            shoulder_arc[sample] = mesh_vertex(mesh, {
+                position        = center_position + direction * shoulder_radius,
+                normal          = normal,
+                uv              = {.20 + fraction * .60, 0},
+                surface         = .Shoulder,
+                pavement        = edge.pavement,
+                road_half_width = edge.half_width,
+                use_intensity   = edge.use_intensity,
+            })
+            verge_arc[sample] = mesh_vertex(mesh, {
+                position        = center_position + direction * verge_radius,
+                normal          = normal,
+                uv              = {fraction, 0},
+                surface         = .Verge,
+                pavement        = edge.pavement,
+                road_half_width = edge.half_width,
+                use_intensity   = edge.use_intensity,
+            })
         }
     }
 
-    center := mesh_vertex(
-        mesh,
-        {
-            position = center_position,
-            normal = normal,
-            uv = {.5, 0},
-            surface = .Junction,
-            pavement = edge.pavement,
-            road_half_width = edge.half_width,
-            use_intensity = edge.use_intensity,
-        },
-    )
+    center := mesh_vertex(mesh, {
+        position        = center_position,
+        normal          = normal,
+        uv              = {.5, 0},
+        surface         = .Junction,
+        pavement        = edge.pavement,
+        road_half_width = edge.half_width,
+        use_intensity   = edge.use_intensity,
+    })
     for segment in 0 ..< END_CAP_SEGMENTS {
         mesh_triangle(mesh, center, road_arc[segment], road_arc[segment + 1])
         mesh_quad(mesh, road_arc[segment], shoulder_arc[segment], shoulder_arc[segment + 1], road_arc[segment + 1])
@@ -1132,18 +1117,15 @@ bake_junction :: proc(
         }
     }
     center_position := node.position + normal * (settings.surface_lift + .002)
-    center := mesh_vertex(
-        mesh,
-        {
-            position = center_position,
-            normal = normal,
-            uv = {.5, .5},
-            surface = .Junction,
-            pavement = pavement,
-            road_half_width = max(widest, f32(0)),
-            use_intensity = incident_count > 0 ? incident_use_sum / f32(incident_count) : 1,
-        },
-    )
+    center := mesh_vertex(mesh, {
+        position        = center_position,
+        normal          = normal,
+        uv              = {.5, .5},
+        surface         = .Junction,
+        pavement        = pavement,
+        road_half_width = max(widest, f32(0)),
+        use_intensity   = incident_count > 0 ? incident_use_sum / f32(incident_count) : 1,
+    })
     for index in 0 ..< point_count {
         next := (index + 1) % point_count
         mesh_triangle(mesh, center, points[index].road_index, points[next].road_index)

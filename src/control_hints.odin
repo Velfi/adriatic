@@ -1,9 +1,9 @@
 package main
 
-import game_input "zelda_engine:game_input"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 
 CONTROL_HINT_TILE_SIZE :: f32(64)
 CONTROL_HINT_DRAW_SIZE :: f32(22)

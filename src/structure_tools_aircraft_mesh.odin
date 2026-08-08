@@ -2,20 +2,20 @@ package main
 
 import architecture "../packages/architecture"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import harbor "../packages/harbor"
 import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
 import rondine_game "../packages/rondine"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:c"
 import "core:math"
 import "core:math/linalg"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 plant_stamp_update_target :: proc(
     editor: ^Editor,
@@ -153,8 +153,7 @@ marina_selection_plan_hit :: proc(plan: ^harbor.Harbor_Plan, world_x, world_z, t
 marina_selection_hit :: proc(editor: ^Editor, world_x, world_z: f32) -> int {
     if editor == nil do return -1
     tolerance := max(editor.project.levels[0].cell_size * .25, f32(1.5))
-    if editor.marina_authored &&
-       marina_selection_plan_hit(&editor.harbor_authored_plan, world_x, world_z, tolerance) {
+    if editor.marina_authored && marina_selection_plan_hit(&editor.harbor_authored_plan, world_x, world_z, tolerance) {
         return MARINA_SELECTION_AUTHORED
     }
     for index in 0 ..< editor.default_marina_count {
@@ -228,10 +227,18 @@ structure_selection_finish_box :: proc(editor: ^Editor) {
     maximum_z := max(editor.structure_selection_box_start_z, editor.structure_selection_box_end_z)
     structure_selection_clear(editor)
     for structure, index in editor.project.structures[:editor.project.structure_count] {
-        radius_x := (math.abs(math.cos(structure.rotation)) * structure.width + math.abs(math.sin(structure.rotation)) * structure.depth) * .5
-        radius_z := (math.abs(math.sin(structure.rotation)) * structure.width + math.abs(math.cos(structure.rotation)) * structure.depth) * .5
-        if structure.center_x + radius_x < minimum_x || structure.center_x - radius_x > maximum_x ||
-           structure.center_z + radius_z < minimum_z || structure.center_z - radius_z > maximum_z {
+        radius_x :=
+            (math.abs(math.cos(structure.rotation)) * structure.width +
+                math.abs(math.sin(structure.rotation)) * structure.depth) *
+            .5
+        radius_z :=
+            (math.abs(math.sin(structure.rotation)) * structure.width +
+                math.abs(math.cos(structure.rotation)) * structure.depth) *
+            .5
+        if structure.center_x + radius_x < minimum_x ||
+           structure.center_x - radius_x > maximum_x ||
+           structure.center_z + radius_z < minimum_z ||
+           structure.center_z - radius_z > maximum_z {
             continue
         }
         structure_selection_add_group(editor, structure.group_id)
@@ -268,8 +275,14 @@ structure_selection_bounds :: proc(editor: ^Editor) -> (Structure_Selection_Boun
     found := false
     for structure, index in editor.project.structures[:editor.project.structure_count] {
         if !structure_index_selected(editor, index) do continue
-        radius_x := (math.abs(math.cos(structure.rotation)) * structure.width + math.abs(math.sin(structure.rotation)) * structure.depth) * .5
-        radius_z := (math.abs(math.sin(structure.rotation)) * structure.width + math.abs(math.cos(structure.rotation)) * structure.depth) * .5
+        radius_x :=
+            (math.abs(math.cos(structure.rotation)) * structure.width +
+                math.abs(math.sin(structure.rotation)) * structure.depth) *
+            .5
+        radius_z :=
+            (math.abs(math.sin(structure.rotation)) * structure.width +
+                math.abs(math.cos(structure.rotation)) * structure.depth) *
+            .5
         if !found {
             bounds = {
                 structure.center_x - radius_x,

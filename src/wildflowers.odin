@@ -4,8 +4,8 @@ import architecture "../packages/architecture"
 import circulation "../packages/circulation"
 import particle_systems "../packages/particles"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 // Sparse, jittered patch centers make wildflowers locally abundant but keep
 // most grass uninterrupted. A fine hash roughens each patch's circular edge.

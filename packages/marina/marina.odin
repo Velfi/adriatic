@@ -1,9 +1,9 @@
 package marina
 
 import boats "../boats"
-import markov "zelda_engine:markov"
 import "core:math"
 import "core:sync"
+import markov "zelda_engine:markov"
 
 GRID_WIDTH :: 27
 GRID_HEIGHT :: 21

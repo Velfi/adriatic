@@ -301,18 +301,15 @@ architecture_opening_layout_add_faces :: proc(layout: ^Opening_Layout, ctx: Arch
                 }
             }
             if !door_occluded {
-                _ = opening_layout_add(
-                    layout,
-                    {
-                        face = face,
-                        kind = primary_face && habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
-                        horizontal = door_horizontal,
-                        y = door_y,
-                        width = door_width,
-                        height = door_height,
-                        primary = primary_face,
-                    },
-                )
+                _ = opening_layout_add(layout, {
+                    face       = face,
+                    kind       = primary_face && habitable ? Opening_Kind.Door : Opening_Kind.Service_Door,
+                    horizontal = door_horizontal,
+                    y          = door_y,
+                    width      = door_width,
+                    height     = door_height,
+                    primary    = primary_face,
+                })
             }
         }
 
@@ -653,20 +650,17 @@ architecture_opening_layout_add_faces :: proc(layout: ^Opening_Layout, ctx: Arch
                 ) {
                     continue
                 }
-                _ = opening_layout_add(
-                    layout,
-                    {
-                        face = face,
-                        kind = kind,
-                        horizontal = horizontal,
-                        y = opening_y,
-                        width = opening_width,
-                        height = opening_height,
-                        row = row,
-                        column = column,
-                        primary = primary_face,
-                    },
-                )
+                _ = opening_layout_add(layout, {
+                    face       = face,
+                    kind       = kind,
+                    horizontal = horizontal,
+                    y          = opening_y,
+                    width      = opening_width,
+                    height     = opening_height,
+                    row        = row,
+                    column     = column,
+                    primary    = primary_face,
+                })
             }
         }
     }

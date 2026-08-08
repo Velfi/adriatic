@@ -1,13 +1,13 @@
 package main
 import "core:math"
 
-import dio "zelda_engine:dio"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 import gltf "zelda_engine:gltf"
+import third_person "zelda_engine:third_person"
 
 world_small_faceted_rock :: proc(structure: terrain.Structure) {
     world_small_rock_templates_init()
@@ -450,26 +450,20 @@ world_static_indirect_commands_build :: proc() {
         if draw.cache_index < 0 || draw.cache_index >= len(world_renderer.static_geometry_cache) do continue
         entry := &world_renderer.static_geometry_cache[draw.cache_index]
         if !entry.valid || len(entry.world_indices) == 0 do continue
-        append(
-            &world_renderer.static_draw_commands,
-            vk.DrawIndexedIndirectCommand {
-                indexCount = u32(len(entry.world_indices)),
-                instanceCount = 1,
-                firstIndex = entry.retained_first_index,
-                vertexOffset = i32(entry.retained_first_vertex),
-            },
-        )
+        append(&world_renderer.static_draw_commands, vk.DrawIndexedIndirectCommand {
+            indexCount    = u32(len(entry.world_indices)),
+            instanceCount = 1,
+            firstIndex    = entry.retained_first_index,
+            vertexOffset  = i32(entry.retained_first_vertex),
+        })
     }
     if world_renderer.retained_patio_index_count > 0 {
-        append(
-            &world_renderer.static_draw_commands,
-            vk.DrawIndexedIndirectCommand {
-                indexCount = world_renderer.retained_patio_index_count,
-                instanceCount = 1,
-                firstIndex = world_renderer.retained_patio_first_index,
-                vertexOffset = i32(world_renderer.retained_patio_first_vertex),
-            },
-        )
+        append(&world_renderer.static_draw_commands, vk.DrawIndexedIndirectCommand {
+            indexCount    = world_renderer.retained_patio_index_count,
+            instanceCount = 1,
+            firstIndex    = world_renderer.retained_patio_first_index,
+            vertexOffset  = i32(world_renderer.retained_patio_first_vertex),
+        })
     }
 }
 

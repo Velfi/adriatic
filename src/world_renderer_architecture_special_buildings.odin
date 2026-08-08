@@ -5,8 +5,8 @@ import architecture "../packages/architecture"
 import circulation "../packages/circulation"
 import hero "../packages/hero_buildings"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_mixed_use_service_door :: proc(
     structure: terrain.Structure,

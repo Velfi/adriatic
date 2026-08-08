@@ -3,10 +3,10 @@ package main
 import fixture_v0001 "../packages/fixture_history/v0001"
 import fixture_v0002 "../packages/fixture_history/v0002"
 import fixture_v0003 "../packages/fixture_history/v0003"
-import hs "zelda_engine:hs"
 import "base:runtime"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_v0003_runtime_seed_common :: proc(source: ^$T, radius, route_width: f32) {

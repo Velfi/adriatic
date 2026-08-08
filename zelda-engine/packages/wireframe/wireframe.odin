@@ -38,7 +38,7 @@ lerp :: proc(a, b, t: f32) -> f32 { return a + (b - a) * clamp_f32(t, 0, 1) }
 abs_f32 :: proc(value: f32) -> f32 { if value < 0 do return -value; return value }
 round_i32 :: proc(value: f32) -> int { if value >= 0 do return int(value + .5); return int(value - .5) }
 
-default_camera :: proc() -> Camera {return{
+default_camera :: proc() -> Camera {return {
         right = {1, 0, 0},
         up = {0, 1, 0},
         forward = {0, 0, -1},

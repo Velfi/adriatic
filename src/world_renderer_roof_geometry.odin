@@ -4,9 +4,9 @@ import "core:math"
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_mouse_limb_hull :: proc(
     points: []third_person.Vec3,

@@ -5,10 +5,10 @@ import "core:testing"
 import cinematic "../packages/cinematic"
 import particles "../packages/particles"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 WORLD_VERTEX_INITIAL_CAPACITY :: 600_000
 ROAD_VERTEX_INITIAL_CAPACITY :: 320_000

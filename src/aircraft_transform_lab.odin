@@ -2,9 +2,9 @@ package main
 
 import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 aircraft_transform_lab_configure :: proc(editor: ^Editor, _: string) -> bool {
     if editor == nil do return false

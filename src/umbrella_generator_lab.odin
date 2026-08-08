@@ -1,10 +1,10 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import umbrellas "../packages/umbrellas"
 import "core:fmt"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 umbrella_lab_seed := u32(0x554d4252)
 umbrella_lab_kind := umbrellas.Kind.Beach
@@ -12,11 +12,11 @@ umbrella_lab_radius := f32(1.85)
 umbrella_lab_height := f32(2.35)
 umbrella_lab_panels := 10
 
-umbrella_lab_type_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 118, 28}}
-umbrella_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {168, 68, 154, 28}}
-umbrella_lab_radius_bounds :: proc() -> canvas2d.Rectangle {return {38, 118, 138, 28}}
-umbrella_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {188, 118, 138, 28}}
-umbrella_lab_panels_bounds :: proc() -> canvas2d.Rectangle {return {338, 118, 122, 28}}
+umbrella_lab_type_bounds :: proc() -> canvas2d.Rectangle { return {38, 68, 118, 28} }
+umbrella_lab_seed_bounds :: proc() -> canvas2d.Rectangle { return {168, 68, 154, 28} }
+umbrella_lab_radius_bounds :: proc() -> canvas2d.Rectangle { return {38, 118, 138, 28} }
+umbrella_lab_height_bounds :: proc() -> canvas2d.Rectangle { return {188, 118, 138, 28} }
+umbrella_lab_panels_bounds :: proc() -> canvas2d.Rectangle { return {338, 118, 122, 28} }
 
 umbrella_lab_reset_kind :: proc(kind: umbrellas.Kind) {
     config := umbrellas.defaults(kind)
@@ -75,15 +75,12 @@ umbrella_lab_process_input :: proc(_: ^Editor) {
 world_umbrella_generator_lab :: proc(_: ^Editor) {
     ground := umbrella_lab_kind == .Beach ? canvas2d.Color{219, 196, 145, 255} : canvas2d.Color{180, 169, 145, 255}
     world_box_rotated({0, -.12, 0}, {16, .24, 16}, 0, ground)
-    plan := umbrellas.generate(
-        umbrella_lab_seed,
-        {
-            kind = umbrella_lab_kind,
-            radius = umbrella_lab_radius,
-            height = umbrella_lab_height,
-            panel_count = umbrella_lab_panels,
-        },
-    )
+    plan := umbrellas.generate(umbrella_lab_seed, {
+        kind        = umbrella_lab_kind,
+        radius      = umbrella_lab_radius,
+        height      = umbrella_lab_height,
+        panel_count = umbrella_lab_panels,
+    })
     world_umbrella(&plan, {0, 0, 0})
 }
 

@@ -1,8 +1,8 @@
 package islands
 
-import markov "zelda_engine:markov"
 import "base:runtime"
 import "core:math"
+import markov "zelda_engine:markov"
 
 GRID_WIDTH :: 96
 GRID_HEIGHT :: 64
@@ -157,18 +157,15 @@ build_foliage :: proc(plan: ^Plan, seed: u32) {
             if moisture >= threshold do continue
             width := .055 + f32((salt >> 8) & 255) / 255 * .055
             depth := .050 + f32((salt >> 16) & 255) / 255 * .050
-            append(
-                &plan.foliage,
-                Foliage_Patch {
-                    x = f32(sample_x) / f32(GRID_WIDTH - 1) * 2 - 1,
-                    z = f32(sample_z) / f32(GRID_HEIGHT - 1) * 2 - 1,
-                    width = width,
-                    depth = depth,
-                    height = .035 + f32((salt >> 24) & 255) / 255 * .045,
-                    rotation = f32(salt & 0xffff) / 65535 * f32(math.PI),
-                    seed = hash(salt ~ 0x53454544),
-                },
-            )
+            append(&plan.foliage, Foliage_Patch {
+                x        = f32(sample_x) / f32(GRID_WIDTH - 1) * 2 - 1,
+                z        = f32(sample_z) / f32(GRID_HEIGHT - 1) * 2 - 1,
+                width    = width,
+                depth    = depth,
+                height   = .035 + f32((salt >> 24) & 255) / 255 * .045,
+                rotation = f32(salt & 0xffff) / 65535 * f32(math.PI),
+                seed     = hash(salt ~ 0x53454544),
+            })
         }
     }
 }

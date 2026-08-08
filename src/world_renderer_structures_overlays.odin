@@ -3,11 +3,11 @@ import "core:math"
 import "core:slice"
 
 import architecture "../packages/architecture"
-import dio "zelda_engine:dio"
 import fountains "../packages/fountains"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_settlement_gardens :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_settlement_gardens")
@@ -173,19 +173,19 @@ world_structure_selection_overlay :: proc(editor: ^Editor) {
     color := canvas2d.Color{244, 226, 122, 255}
     minimum := third_person.Vec3{bounds.minimum_x, bounds.minimum_y, bounds.minimum_z}
     maximum := third_person.Vec3{bounds.maximum_x, bounds.maximum_y, bounds.maximum_z}
-    corners := [8]third_person.Vec3{
-        {minimum.x, minimum.y, minimum.z}, {maximum.x, minimum.y, minimum.z},
-        {maximum.x, minimum.y, maximum.z}, {minimum.x, minimum.y, maximum.z},
-        {minimum.x, maximum.y, minimum.z}, {maximum.x, maximum.y, minimum.z},
-        {maximum.x, maximum.y, maximum.z}, {minimum.x, maximum.y, maximum.z},
+    corners := [8]third_person.Vec3 {
+        {minimum.x, minimum.y, minimum.z},
+        {maximum.x, minimum.y, minimum.z},
+        {maximum.x, minimum.y, maximum.z},
+        {minimum.x, minimum.y, maximum.z},
+        {minimum.x, maximum.y, minimum.z},
+        {maximum.x, maximum.y, minimum.z},
+        {maximum.x, maximum.y, maximum.z},
+        {minimum.x, maximum.y, maximum.z},
     }
     extent := max(maximum.x - minimum.x, maximum.z - minimum.z)
     thickness := clamp(extent * .006, f32(.08), f32(.32))
-    edges := [12][2]int{
-        {0, 1}, {1, 2}, {2, 3}, {3, 0},
-        {4, 5}, {5, 6}, {6, 7}, {7, 4},
-        {0, 4}, {1, 5}, {2, 6}, {3, 7},
-    }
+    edges := [12][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}
     for edge in edges {
         world_box_between(corners[edge[0]], corners[edge[1]], {0, 1, 0}, thickness, thickness, color)
     }
@@ -345,9 +345,11 @@ world_structures :: proc(editor: ^Editor) {
         world_architecture_alleys(editor, &editor.architecture_preview_plan, true)
         for candidate in editor.architecture_preview_plan.structures[:editor.architecture_preview_plan.count] {
             preview := candidate
-            preview.color = editor.building_generator_preview_valid ? [4]u8{168, 239, 220, 210} : [4]u8{229, 105, 90, 190}
+            preview.color =
+                editor.building_generator_preview_valid ? [4]u8{168, 239, 220, 210} : [4]u8{229, 105, 90, 190}
             world_formation(preview, &editor.project)
-            frame_color := editor.building_generator_preview_valid ? canvas2d.Color{190, 255, 229, 210} : canvas2d.Color{255, 145, 126, 220}
+            frame_color :=
+                editor.building_generator_preview_valid ? canvas2d.Color{190, 255, 229, 210} : canvas2d.Color{255, 145, 126, 220}
             world_structure_frame(preview, preview.base_y + .05, frame_color)
         }
     }

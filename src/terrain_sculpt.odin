@@ -285,47 +285,41 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
                 abs(session.end_height - session.start_height) / max(length, f32(.001)) <= settings.maximum_grade
             if !session.grade_valid do return false
         }
-        return terrain.apply_authoring_spline(
-            &editor.project,
-            {
-                owner = session.owner,
-                operation = operation,
-                points = session.path[:session.path_count],
-                width = settings.size,
-                feather = settings.feather,
-                flow = settings.flow,
-                height = settings.height,
-                side_bias = settings.side_bias,
-                roughness = settings.roughness,
-                endpoint_taper = settings.endpoint_taper,
-                start_height = session.start_height,
-                end_height = session.end_height,
-                maximum_grade = settings.maximum_grade,
-                preserve_detail = settings.preserve_detail,
-                affect_seabed = affects_seabed,
-                profile = settings.profile,
-                seed = settings.seed,
-            },
-        )
+        return terrain.apply_authoring_spline(&editor.project, {
+            owner           = session.owner,
+            operation       = operation,
+            points          = session.path[:session.path_count],
+            width           = settings.size,
+            feather         = settings.feather,
+            flow            = settings.flow,
+            height          = settings.height,
+            side_bias       = settings.side_bias,
+            roughness       = settings.roughness,
+            endpoint_taper  = settings.endpoint_taper,
+            start_height    = session.start_height,
+            end_height      = session.end_height,
+            maximum_grade   = settings.maximum_grade,
+            preserve_detail = settings.preserve_detail,
+            affect_seabed   = affects_seabed,
+            profile         = settings.profile,
+            seed            = settings.seed,
+        })
     }
     if action == .Pad {
-        changed, volume := terrain.apply_authoring_area(
-            &editor.project,
-            {
-                owner = session.owner,
-                start_x = session.start_x,
-                start_z = session.start_z,
-                end_x = session.current_x,
-                end_z = session.current_z,
-                target_height = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
-                feather = max(settings.edge_slope * settings.size, settings.feather),
-                flow = settings.flow,
-                corner_radius = settings.corner_radius,
-                affect_seabed = affects_seabed,
-                cut_limit = settings.cut_limit,
-                fill_limit = settings.fill_limit,
-            },
-        )
+        changed, volume := terrain.apply_authoring_area(&editor.project, {
+            owner         = session.owner,
+            start_x       = session.start_x,
+            start_z       = session.start_z,
+            end_x         = session.current_x,
+            end_z         = session.current_z,
+            target_height = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
+            feather       = max(settings.edge_slope * settings.size, settings.feather),
+            flow          = settings.flow,
+            corner_radius = settings.corner_radius,
+            affect_seabed = affects_seabed,
+            cut_limit     = settings.cut_limit,
+            fill_limit    = settings.fill_limit,
+        })
         session.cut_volume, session.fill_volume = volume.cut, volume.fill
         return changed
     }
@@ -357,47 +351,45 @@ terrain_sculpt_apply :: proc(editor: ^Editor, session: ^Terrain_Sculpt_Session) 
     }
     changed := false
     for point in session.path[first_point:session.path_count] {
-        changed =
-            terrain.apply_authoring_brush(
-                &editor.project,
-                {
-                    owner = session.owner,
-                    operation = operation,
-                    world_x = point.x,
-                    world_z = point.z,
-                    size = settings.size,
-                    inner_core = settings.inner_core,
-                    feather = settings.feather,
-                    // Flow defines the authored brush profile. Strength makes a
-                    // held stroke deliberate instead of reapplying a full flow
-                    // value on every rendered frame.
-                    flow = settings.flow * settings.brush_strength,
-                    direction = settings.direction,
-                    affect_seabed = affects_seabed,
-                    target_height = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
-                    beach_height = settings.beach_elevation,
-                    shelf_depth = settings.shelf_depth,
-                    shelf_slope = settings.shelf_slope,
-                    talus = settings.talus,
-                    iterations = settings.iterations,
-                    rainfall = settings.rainfall,
-                    sediment_capacity = settings.sediment,
-                    amplitude = settings.amplitude,
-                    noise_scale = settings.noise_scale,
-                    octaves = settings.octaves,
-                    seed = settings.seed,
-                    terrace_height = settings.terrace_height,
-                    terrace_reference = settings.terrace_reference,
-                    terrace_depth = settings.terrace_depth,
-                    retaining_slope = settings.retaining_slope,
-                    irregularity = settings.irregularity,
-                    cut_limit = settings.cut_limit,
-                    fill_limit = settings.fill_limit,
-                    preserve_coastline = settings.preserve_coastline,
-                    quality = session.finalizing ? .Final : .Interactive,
-                },
-            ) ||
-            changed
+        changed = terrain.apply_authoring_brush(
+            &editor.project,
+            {
+                owner              = session.owner,
+                operation          = operation,
+                world_x            = point.x,
+                world_z            = point.z,
+                size               = settings.size,
+                inner_core         = settings.inner_core,
+                feather            = settings.feather,
+                // Flow defines the authored brush profile. Strength makes a
+                // held stroke deliberate instead of reapplying a full flow
+                // value on every rendered frame.
+                flow               = settings.flow * settings.brush_strength,
+                direction          = settings.direction,
+                affect_seabed      = affects_seabed,
+                target_height      = settings.elevation_mode == .Sampled ? session.sampled_height : settings.target_elevation,
+                beach_height       = settings.beach_elevation,
+                shelf_depth        = settings.shelf_depth,
+                shelf_slope        = settings.shelf_slope,
+                talus              = settings.talus,
+                iterations         = settings.iterations,
+                rainfall           = settings.rainfall,
+                sediment_capacity  = settings.sediment,
+                amplitude          = settings.amplitude,
+                noise_scale        = settings.noise_scale,
+                octaves            = settings.octaves,
+                seed               = settings.seed,
+                terrace_height     = settings.terrace_height,
+                terrace_reference  = settings.terrace_reference,
+                terrace_depth      = settings.terrace_depth,
+                retaining_slope    = settings.retaining_slope,
+                irregularity       = settings.irregularity,
+                cut_limit          = settings.cut_limit,
+                fill_limit         = settings.fill_limit,
+                preserve_coastline = settings.preserve_coastline,
+                quality            = session.finalizing ? .Final : .Interactive,
+            },
+            ) || changed
     }
     if !session.finalizing do session.applied_path_count = session.path_count
     return changed
@@ -449,7 +441,8 @@ terrain_sculpt_update_preview :: proc(editor: ^Editor, world_x, world_z: f32, cu
     session := &editor.terrain_sculpt.session
     if editor == nil || !session.active do return
     settings := editor.terrain_sculpt.settings[int(editor.terrain_sculpt.action)]
-    drag_preview := terrain_action_is_spline(editor.terrain_sculpt.action) || terrain_action_is_area(editor.terrain_sculpt.action)
+    drag_preview :=
+        terrain_action_is_spline(editor.terrain_sculpt.action) || terrain_action_is_area(editor.terrain_sculpt.action)
     // Spline and area tools are position-defined previews. Brush tools are
     // hold-defined and must build on their preceding held stamp.
     if drag_preview do terrain_sculpt_restore_base(editor)
@@ -537,7 +530,9 @@ terrain_sculpt_commit :: proc(editor: ^Editor) {
             abs(session.current_z - session.start_z) > .01
     }
     dirty_x, dirty_z, dirty_radius := session.dirty_x, session.dirty_z, session.dirty_radius
-    incremental_brush := !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action)
+    incremental_brush :=
+        !terrain_action_is_spline(editor.terrain_sculpt.action) &&
+        !terrain_action_is_area(editor.terrain_sculpt.action)
     if !incremental_brush do terrain_sculpt_restore_base(editor)
     if !meaningful {
         if incremental_brush do terrain_sculpt_restore_base(editor)

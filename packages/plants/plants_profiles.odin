@@ -198,39 +198,77 @@ Profile :: struct {
 
 profile_for :: proc(species: Species) -> Profile {
     switch species {
-    case .Italian_Cypress: return {3, 1.65, 2.10}
-    case .Olive: return {4, 1.35, 1.00}
-    case .Fig: return {3, 1.22, .76}
-    case .Lemon: return {3, 1.00, 1.00}
-    case .Pomegranate: return {3, 1.00, .94}
-    case .Almond: return {3, 1.00, 1.00}
-    case .Oleander: return {3, .96, .90}
-    case .Rosemary: return {3, .96, .92}
-    case .Grapevine: return {3, 1.35, .84}
-    case .Bougainvillea: return {3, 1.18, 1.04}
-    case .Stone_Pine: return {3, 2.00, 1.12}
-    case .Bay_Laurel: return {3, 1.02, 1.10}
-    case .Carob: return {3, 1.36, .96}
-    case .Strawberry_Tree: return {3, 1.04, 1.05}
-    case .Myrtle: return {3, .78, 1.15}
-    case .Mastic: return {3, .75, 1.00}
-    case .Lavender: return {3, .88, .98}
-    case .Thyme: return {3, 1.22, .52}
-    case .Sage: return {3, .95, 1.00}
-    case .Prickly_Pear: return {2, 1.18, .95}
-    case .Pelargonium: return {3, 1.06, .72}
-    case .Wisteria: return {2, 1.32, 1.04}
-    case .Climbing_Rose: return {2, 1.18, 1.00}
-    case .Hydrangea_Bush: return {3, 1.18, .76}
-    case .Hydrangea_Tree: return {3, 1.05, 1.28}
-    case .Agapanthus: return {2, .82, 1.32}
-    case .Star_Jasmine: return {2, 1.22, .94}
-    case .Holm_Oak: return {3, 1.48, .86}
-    case .Oriental_Plane: return {3, 1.42, 1.16}
-    case .European_Hackberry: return {3, 1.24, 1.10}
-    case .White_Poplar: return {3, .90, 1.48}
-    case .Golden_Barrel, .Agave, .Aloe, .Aeonium, .Echeveria,
-         .Jade_Plant, .Stonecrop, .Blue_Chalk_Sticks, .Golden_Torch_Cactus:
+    case .Italian_Cypress:
+        return {3, 1.65, 2.10}
+    case .Olive:
+        return {4, 1.35, 1.00}
+    case .Fig:
+        return {3, 1.22, .76}
+    case .Lemon:
+        return {3, 1.00, 1.00}
+    case .Pomegranate:
+        return {3, 1.00, .94}
+    case .Almond:
+        return {3, 1.00, 1.00}
+    case .Oleander:
+        return {3, .96, .90}
+    case .Rosemary:
+        return {3, .96, .92}
+    case .Grapevine:
+        return {3, 1.35, .84}
+    case .Bougainvillea:
+        return {3, 1.18, 1.04}
+    case .Stone_Pine:
+        return {3, 2.00, 1.12}
+    case .Bay_Laurel:
+        return {3, 1.02, 1.10}
+    case .Carob:
+        return {3, 1.36, .96}
+    case .Strawberry_Tree:
+        return {3, 1.04, 1.05}
+    case .Myrtle:
+        return {3, .78, 1.15}
+    case .Mastic:
+        return {3, .75, 1.00}
+    case .Lavender:
+        return {3, .88, .98}
+    case .Thyme:
+        return {3, 1.22, .52}
+    case .Sage:
+        return {3, .95, 1.00}
+    case .Prickly_Pear:
+        return {2, 1.18, .95}
+    case .Pelargonium:
+        return {3, 1.06, .72}
+    case .Wisteria:
+        return {2, 1.32, 1.04}
+    case .Climbing_Rose:
+        return {2, 1.18, 1.00}
+    case .Hydrangea_Bush:
+        return {3, 1.18, .76}
+    case .Hydrangea_Tree:
+        return {3, 1.05, 1.28}
+    case .Agapanthus:
+        return {2, .82, 1.32}
+    case .Star_Jasmine:
+        return {2, 1.22, .94}
+    case .Holm_Oak:
+        return {3, 1.48, .86}
+    case .Oriental_Plane:
+        return {3, 1.42, 1.16}
+    case .European_Hackberry:
+        return {3, 1.24, 1.10}
+    case .White_Poplar:
+        return {3, .90, 1.48}
+    case .Golden_Barrel,
+         .Agave,
+         .Aloe,
+         .Aeonium,
+         .Echeveria,
+         .Jade_Plant,
+         .Stonecrop,
+         .Blue_Chalk_Sticks,
+         .Golden_Torch_Cactus:
         return {1, 1, 1}
     }
     return {}

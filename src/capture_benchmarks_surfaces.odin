@@ -4,12 +4,12 @@ import engine_sound "../packages/engine_sound"
 import particle_systems "../packages/particles"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:slice"
 import "core:strings"
+import third_person "zelda_engine:third_person"
 
 
 benchmark_seed_scene :: proc(editor: ^Editor, scenario: string) -> bool {

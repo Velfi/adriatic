@@ -1,7 +1,7 @@
 package main
 
-import terrain "../packages/terrain"
 import harbor "../packages/harbor"
+import terrain "../packages/terrain"
 import "core:testing"
 
 @(test)
@@ -70,8 +70,14 @@ selection_move_gizmo_uses_the_group_bounds_and_axes :: proc(t: ^testing.T) {
     terrain.init_project(&editor.project)
     defer terrain.destroy_project(&editor.project)
     editor.selection_tool_active = true
-    first := terrain.add_structure(&editor.project, terrain.Structure{center_x = 10, center_z = 20, width = 8, depth = 6, height = 4})
-    second := terrain.add_structure(&editor.project, terrain.Structure{center_x = 30, center_z = 40, width = 10, depth = 12, height = 7})
+    first := terrain.add_structure(
+        &editor.project,
+        terrain.Structure{center_x = 10, center_z = 20, width = 8, depth = 6, height = 4},
+    )
+    second := terrain.add_structure(
+        &editor.project,
+        terrain.Structure{center_x = 30, center_z = 40, width = 10, depth = 12, height = 7},
+    )
     structure_selection_set_index(editor, first)
     structure_selection_add_group(editor, editor.project.structures[second].group_id)
 
@@ -120,9 +126,9 @@ authored_marina_can_be_selected_and_deleted :: proc(t: ^testing.T) {
     terrain.init_project(&editor.project)
     defer terrain.destroy_project(&editor.project)
     editor.harbor_authored_plan = {
-        valid = true,
-        bounds = {{-20, -5}, {20, 5}},
-        office = {0, 0},
+        valid           = true,
+        bounds          = {{-20, -5}, {20, 5}},
+        office          = {0, 0},
         structure_count = 1,
     }
     editor.harbor_authored_plan.structures[0] = {
@@ -148,8 +154,16 @@ generated_marina_selection_and_deletion_compact_undoable_state :: proc(t: ^testi
     terrain.init_project(&editor.project)
     defer structure_history_storage_destroy(editor)
     editor.default_marina_count = 2
-    editor.default_harbors[0] = {valid = true, bounds = {{-15, -5}, {15, 5}}, office = {0, 0}}
-    editor.default_harbors[1] = {valid = true, bounds = {{85, -5}, {115, 5}}, office = {100, 0}}
+    editor.default_harbors[0] = {
+        valid  = true,
+        bounds = {{-15, -5}, {15, 5}},
+        office = {0, 0},
+    }
+    editor.default_harbors[1] = {
+        valid  = true,
+        bounds = {{85, -5}, {115, 5}},
+        office = {100, 0},
+    }
     editor.default_marinas[1].seed = 42
 
     testing.expect_value(t, marina_selection_hit(editor, 100, 0), 1)

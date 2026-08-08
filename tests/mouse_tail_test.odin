@@ -4,10 +4,10 @@ import architecture "../packages/architecture"
 import mouse_tail "../packages/mouse_tail"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 tail_distance :: proc(a, b: third_person.Vec3) -> f32 {
     return linalg.length(b - a)
@@ -317,18 +317,15 @@ mouse_tail_deep_structure_overlap_cannot_launch_a_segment_to_the_roof :: proc(t:
     solid_kinds := [7]terrain.Formation_Kind{.Box, .Rock, .Spire, .Mountain, .Ridge, .Cliff, .Architecture}
     for kind in solid_kinds {
         project := new(terrain.Project)
-        append(
-            &project.structures,
-            terrain.Structure {
-                center_x = 0,
-                center_z = 0,
-                width = 1000,
-                depth = 1000,
-                base_y = 0,
-                height = 100,
-                kind = kind,
-            },
-        )
+        append(&project.structures, terrain.Structure {
+            center_x = 0,
+            center_z = 0,
+            width    = 1000,
+            depth    = 1000,
+            base_y   = 0,
+            height   = 100,
+            kind     = kind,
+        })
         project.structure_count = 1
 
         config := mouse_tail.default_config()

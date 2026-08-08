@@ -59,19 +59,16 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
     town_route_consolidate_crowding(&network)
     town_route_merge_tight_vs(&network)
     town_route_emit_streets(plan, &network)
-    _ = circulation.plan_add(
-        plan,
-        {
-            center_x = center_x,
-            center_z = center_z,
-            width = 28,
-            length = 18,
-            kind = .Plaza,
-            source = .Generated,
-            pavement = .Cobblestone,
-            walkable = true,
-        },
-    )
+    _ = circulation.plan_add(plan, {
+        center_x = center_x,
+        center_z = center_z,
+        width    = 28,
+        length   = 18,
+        kind     = .Plaza,
+        source   = .Generated,
+        pavement = .Cobblestone,
+        walkable = true,
+    })
 
     for structure_index in structure_indices {
         structure := project.structures[structure_index]
@@ -102,20 +99,17 @@ circulation_plan_add_town :: proc(plan: ^circulation.Plan, project: ^terrain.Pro
         path_dx, path_dz := target_x - door_x, target_z - door_z
         path_length := f32(math.sqrt(f64(path_dx * path_dx + path_dz * path_dz)))
         if path_length <= 1.5 do continue
-        _ = circulation.plan_add(
-            plan,
-            {
-                center_x = (door_x + target_x) * .5,
-                center_z = (door_z + target_z) * .5,
-                width = 3.6,
-                length = path_length,
-                rotation = math.atan2(path_dx, path_dz),
-                kind = .Path,
-                source = .Derived,
-                pavement = .Cobblestone,
-                walkable = true,
-            },
-        )
+        _ = circulation.plan_add(plan, {
+            center_x = (door_x + target_x) * .5,
+            center_z = (door_z + target_z) * .5,
+            width    = 3.6,
+            length   = path_length,
+            rotation = math.atan2(path_dx, path_dz),
+            kind     = .Path,
+            source   = .Derived,
+            pavement = .Cobblestone,
+            walkable = true,
+        })
     }
 }
 

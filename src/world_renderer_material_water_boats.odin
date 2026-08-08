@@ -4,9 +4,9 @@ import "core:math"
 import boats "../packages/boats"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 @(no_instrumentation)
 world_settlement_material_quad :: #force_inline proc(

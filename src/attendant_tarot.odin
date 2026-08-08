@@ -5,17 +5,17 @@ import boats "../packages/boats"
 import dialogue "../packages/dialogue"
 import dialogue_session "../packages/dialogue_session"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import libellula_game "../packages/libellula"
 import story "../packages/story"
 import tarot "../packages/tarot"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:time"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
+import third_person "zelda_engine:third_person"
 
 attendant_spawn_position :: proc(editor: ^Editor, _: third_person.Vec3) -> third_person.Vec3 {
     // Marta works the reception counter in the east airport terminal, whose
@@ -486,14 +486,11 @@ open_story_dialogue :: proc(editor: ^Editor, resident: story.Resident) -> bool {
     case .Marta, .Gerta:
         return false
     }
-    conversation, opened := dialogue.open(
-        definition,
-        {
-            data = rawptr(&editor.story_state),
-            location_id = resident == .Vesna || resident == .Petar || resident == .Anica ? "clinic" : (resident == .Iva || resident == .Zora || resident == .Mirna ? "east_island" : "west_island"),
-            resident_index = int(resident),
-        },
-    )
+    conversation, opened := dialogue.open(definition, {
+        data           = rawptr(&editor.story_state),
+        location_id    = resident == .Vesna || resident == .Petar || resident == .Anica ? "clinic" : (resident == .Iva || resident == .Zora || resident == .Mirna ? "east_island" : "west_island"),
+        resident_index = int(resident),
+    })
     if !opened do return false
     story.acknowledge_resident_action(&editor.story_state, resident)
     dialogue_session.begin(&editor.dialogue_session, .Story)

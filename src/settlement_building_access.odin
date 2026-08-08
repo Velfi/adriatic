@@ -494,18 +494,15 @@ settlement_plan_generate_building_access :: proc(
             end_terminal := architecture.City_Alley_Terminal.None
             if index == 0 do start_terminal = .Door
             if index == best_path.count - 2 && !best_joins_network do end_terminal = .Road
-            append(
-                &city_plan.alleys,
-                architecture.City_Alley {
-                    start_x = best_path.points[index][0],
-                    start_z = best_path.points[index][1],
-                    end_x = best_path.points[index + 1][0],
-                    end_z = best_path.points[index + 1][1],
-                    half_width = width * .5,
-                    start_terminal = start_terminal,
-                    end_terminal = end_terminal,
-                },
-            )
+            append(&city_plan.alleys, architecture.City_Alley {
+                start_x        = best_path.points[index][0],
+                start_z        = best_path.points[index][1],
+                end_x          = best_path.points[index + 1][0],
+                end_z          = best_path.points[index + 1][1],
+                half_width     = width * .5,
+                start_terminal = start_terminal,
+                end_terminal   = end_terminal,
+            })
             city_plan.alley_count += 1
         }
         settlement_access_split_intersections(city_plan)

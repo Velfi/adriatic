@@ -2,11 +2,11 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "zelda_engine:dio"
 import flight "../packages/flight"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_climbing_leaves_for_structure :: proc(editor: ^Editor, structure: terrain.Structure, structure_index: int) {
     function_profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_climbing_leaves")

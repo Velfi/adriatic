@@ -2,10 +2,10 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 MOUSE_WHEEL_RADIUS :: f32(4.2)
 MOUSE_WHEEL_MOUSE_RADIUS :: f32(2.8)
@@ -285,19 +285,16 @@ world_mouse_wheel_lab :: proc(editor: ^Editor) {
 
     mouse_x := math.cos(mouse_wheel_mouse_angle) * MOUSE_WHEEL_MOUSE_RADIUS
     mouse_z := math.sin(mouse_wheel_mouse_angle) * MOUSE_WHEEL_MOUSE_RADIUS
-    world_mouse_model(
-        editor,
-        {
-            position = {mouse_x, deck_height + .13, mouse_z},
-            rotation = mouse_wheel_mouse_angle + math.PI * .5,
-            fur = .Chestnut,
-            pattern = .Solid,
-            grounded = true,
-            gait_preview = true,
-            gait_speed = mouse_wheel_runner_speed,
-            gait_phase = mouse_wheel_stride_phase,
-        },
-    )
+    world_mouse_model(editor, {
+        position     = {mouse_x, deck_height + .13, mouse_z},
+        rotation     = mouse_wheel_mouse_angle + math.PI * .5,
+        fur          = .Chestnut,
+        pattern      = .Solid,
+        grounded     = true,
+        gait_preview = true,
+        gait_speed   = mouse_wheel_runner_speed,
+        gait_phase   = mouse_wheel_stride_phase,
+    })
 
     // Axle housing and four feet keep the wheel visually grounded as a lab rig.
     world_vertical_prism({0, -.02, 0}, .62, .62, .55, 0, {73, 70, 64, 255})

@@ -92,15 +92,12 @@ generate :: proc(source: Config) -> Mesh {
             normal := linalg.normalize0(linalg.cross(tangent_around, tangent_up))
             radial := linalg.normalize0([3]f32{position[0], 0, position[2]})
             if linalg.dot(normal, radial) < 0 do normal = -normal
-            append(
-                &mesh.vertices,
-                Vertex {
-                    position = position,
-                    normal = normal,
-                    uv = {f32(side) / f32(radial_segments), t},
-                    rib = u16(side / config.samples_per_rib),
-                },
-            )
+            append(&mesh.vertices, Vertex {
+                position = position,
+                normal   = normal,
+                uv       = {f32(side) / f32(radial_segments), t},
+                rib      = u16(side / config.samples_per_rib),
+            })
         }
     }
     for ring in 0 ..< config.vertical_rings {
@@ -117,14 +114,11 @@ generate :: proc(source: Config) -> Mesh {
     base_center := u32(len(mesh.vertices))
     append(&mesh.vertices, Vertex{position = {0, 0, 0}, normal = {0, -1, 0}, uv = {.5, .5}})
     crown_center := u32(len(mesh.vertices))
-    append(
-        &mesh.vertices,
-        Vertex {
-            position = {0, config.height - clamp(config.crown_depression, f32(0), config.height * .45), 0},
-            normal = {0, 1, 0},
-            uv = {.5, .5},
-        },
-    )
+    append(&mesh.vertices, Vertex {
+        position = {0, config.height - clamp(config.crown_depression, f32(0), config.height * .45), 0},
+        normal   = {0, 1, 0},
+        uv       = {.5, .5},
+    })
     crown_first := u32(config.vertical_rings * radial_segments)
     for side in 0 ..< radial_segments {
         next := (side + 1) % radial_segments

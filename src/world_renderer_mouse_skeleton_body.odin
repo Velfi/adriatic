@@ -2,9 +2,9 @@ package main
 import "core:math"
 import "core:testing"
 
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Pose channels are authored as absolute mouse-local pivots. Keep those
 // pivots connected after all locomotion and emote contributions have been
@@ -495,22 +495,16 @@ world_mouse_skinned_hull :: proc(
         }
     }
 
-    rear_center_local := mouse_skin_vertex(
-        {
+    rear_center_local := mouse_skin_vertex({
             bind_position = {0, profile.center_y[0], profile.ring_z[0]},
-            groups = {{.Pelvis, 1}, {.Spine, 0}},
-            color = fur,
-        },
-        architecture,
-    )
-    nose_center_local := mouse_skin_vertex(
-        {
+            groups        = {{.Pelvis, 1}, {.Spine, 0}},
+            color         = fur,
+        }, architecture)
+    nose_center_local := mouse_skin_vertex({
             bind_position = {0, profile.center_y[RINGS - 1], profile.ring_z[RINGS - 1]},
-            groups = {{.Head, 1}, {.Neck, 0}},
-            color = fur_light,
-        },
-        architecture,
-    )
+            groups        = {{.Head, 1}, {.Neck, 0}},
+            color         = fur_light,
+        }, architecture)
     rear_x, rear_z := world_rotate_xz(origin.x, origin.z, rear_center_local.x, rear_center_local.z, rotation)
     nose_x, nose_z := world_rotate_xz(origin.x, origin.z, nose_center_local.x, nose_center_local.z, rotation)
     rear_center := third_person.Vec3{rear_x, origin.y + rear_center_local.y, rear_z}

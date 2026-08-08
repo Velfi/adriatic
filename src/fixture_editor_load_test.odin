@@ -4,7 +4,6 @@ import architecture "../packages/architecture"
 import fixture_file "../packages/fixture_file"
 import fixture_v0001 "../packages/fixture_history/v0001"
 import flight "../packages/flight"
-import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import vehicles "../packages/vehicles"
 import "base:runtime"
@@ -12,6 +11,7 @@ import "core:math"
 import "core:mem"
 import "core:testing"
 import sdl "vendor:sdl3"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     Fixture_Editor_Test_Root_Snapshot :: struct {
@@ -43,19 +43,16 @@ when ODIN_TEST {
         terrain.init_project(&source.project)
         source.project.revision = 707
         source.project.sea_level = 3
-        append(
-            &source.project.structures,
-            terrain.Structure {
-                id = 81,
-                center_x = 4,
-                center_z = -7,
-                width = 5,
-                depth = 6,
-                base_y = 1,
-                height = 4,
-                kind = .Rock,
-            },
-        )
+        append(&source.project.structures, terrain.Structure {
+            id       = 81,
+            center_x = 4,
+            center_z = -7,
+            width    = 5,
+            depth    = 6,
+            base_y   = 1,
+            height   = 4,
+            kind     = .Rock,
+        })
         source.project.structure_count = 1
         source.authoring_tool = .Marina
         source.sdf_obstacles[0] = {

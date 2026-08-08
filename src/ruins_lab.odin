@@ -3,11 +3,11 @@ package main
 import atmosphere "../packages/atmosphere"
 import roads "../packages/roads"
 import ruins "../packages/ruins"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 RUINS_LAB_DEFAULT_SEED :: u32(0x5255494e)
 

@@ -7,11 +7,11 @@ import fountains "../packages/fountains"
 import leaf_mesh "../packages/leaf_mesh"
 import plant_structure "../packages/plant_structure"
 import plants "../packages/plants"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 Garden_Style :: enum u8 {
     Courtyard,
@@ -123,15 +123,12 @@ garden_generate :: proc(seed: u32, style: Garden_Style) -> Garden_Plan {
     }
     switch style {
     case .Courtyard:
-        plan.fountain = fountains.generate(
-            seed ~ 0xF017A17,
-            {
-                radius = 2.25,
-                style = .Tiered,
-                jet_count = 8 + int(garden_hash(seed) % 5),
-                jet_height = 1.9 + garden_random01(seed, 0, 0xF0) * .7,
-            },
-        )
+        plan.fountain = fountains.generate(seed ~ 0xF017A17, {
+            radius     = 2.25,
+            style      = .Tiered,
+            jet_count  = 8 + int(garden_hash(seed) % 5),
+            jet_height = 1.9 + garden_random01(seed, 0, 0xF0) * .7,
+        })
         // Four clipped corners frame a bright, formal central court.
         for index in 0 ..< 4 {
             x := index % 2 == 0 ? f32(-7.4) : f32(7.4)
@@ -436,7 +433,13 @@ garden_local_crown :: proc(kind: int) -> (center, radii: plant_structure.Vec3) {
     return {}, {1, 1, 1}
 }
 
-garden_clip_segment_to_crown :: proc(source: plant_structure.Segment, kind: int) -> (result: plant_structure.Segment, visible: bool) {
+garden_clip_segment_to_crown :: proc(
+    source: plant_structure.Segment,
+    kind: int,
+) -> (
+    result: plant_structure.Segment,
+    visible: bool,
+) {
     center, radii := garden_local_crown(kind)
     // Preserve only the structural leader beneath an elevated tree crown.
     // Once it enters the canopy, it is clipped with the lateral growth; keeping
@@ -515,15 +518,13 @@ garden_lab_rebuild_plant_structure :: proc() {
     }
     for kind in 0 ..< len(garden_lab_plant_structure_plants) {
         for variant in 0 ..< len(garden_lab_plant_structure_plants[kind]) {
-            generated := plants.generate(
-                {
-                    species = species[kind],
-                    seed = u64(garden_lab_seed) + u64(kind * 313 + variant * 1013),
-                    maturity = 1,
-                    detail = .Medium,
-                    habit = .Free_Standing,
-                },
-            )
+            generated := plants.generate({
+                species  = species[kind],
+                seed     = u64(garden_lab_seed) + u64(kind * 313 + variant * 1013),
+                maturity = 1,
+                detail   = .Medium,
+                habit    = .Free_Standing,
+            })
             if generated.error != .None do continue
             garden_lab_plant_structure_plants[kind][variant] = generated
             garden_lab_plant_structure_ready[kind][variant] = true
@@ -558,30 +559,25 @@ garden_lab_rebuild_plant_structure :: proc() {
         exclusions = arch_opening[:],
         signature  = 0x67617264656e6172,
     }
-    arch := plants.generate(
-        {
-            species = .Bougainvillea,
-            seed = u64(garden_lab_seed) + 0xb067,
-            maturity = 1,
-            detail = .Near,
-            habit = .Wall_Trained,
-            support = &arch_support,
-        },
-    )
+    arch := plants.generate({
+        species  = .Bougainvillea,
+        seed     = u64(garden_lab_seed) + 0xb067,
+        maturity = 1,
+        detail   = .Near,
+        habit    = .Wall_Trained,
+        support  = &arch_support,
+    })
     if arch.error == .None {
         garden_lab_arch_plant = arch
         garden_lab_arch_ready = true
-        garden_lab_arch_branch_mesh = branch_mesh.generate(
-            arch.plant.segments[:],
-            {
-                radial_segments = 5,
-                samples_per_segment = 2,
-                minimum_radius = .014,
-                radial_irregularity = .08,
-                twist = .35,
-                seed = u64(garden_lab_seed),
-            },
-        )
+        garden_lab_arch_branch_mesh = branch_mesh.generate(arch.plant.segments[:], {
+            radial_segments     = 5,
+            samples_per_segment = 2,
+            minimum_radius      = .014,
+            radial_irregularity = .08,
+            twist               = .35,
+            seed                = u64(garden_lab_seed),
+        })
         garden_lab_arch_branch_ready = len(garden_lab_arch_branch_mesh.indices) > 0
         for variant in 0 ..< len(garden_lab_arch_leaf_meshes) {
             traits := plants.leaf_traits(.Bougainvillea, u8(variant), 1)
@@ -602,29 +598,25 @@ garden_lab_rebuild_plant_structure :: proc() {
         root_x    = -2.62,
         signature = 0x6772617065747265,
     }
-    vine := plants.generate(
-        {
-            species = .Grapevine,
-            seed = u64(garden_lab_seed) + 0x67726170,
-            maturity = 1,
-            detail = .Near,
-            habit = .Trellised,
-            support = &vine_support,
-        },
-    )
+    vine := plants.generate({
+        species  = .Grapevine,
+        seed     = u64(garden_lab_seed) + 0x67726170,
+        maturity = 1,
+        detail   = .Near,
+        habit    = .Trellised,
+        support  = &vine_support,
+    })
     mirror_support := vine_support
     mirror_support.root_x = 2.62
     mirror_support.signature = 0x6772617065747266
-    mirror_vine := plants.generate(
-        {
-            species = .Grapevine,
-            seed = u64(garden_lab_seed) + 0x67726171,
-            maturity = 1,
-            detail = .Near,
-            habit = .Trellised,
-            support = &mirror_support,
-        },
-    )
+    mirror_vine := plants.generate({
+        species  = .Grapevine,
+        seed     = u64(garden_lab_seed) + 0x67726171,
+        maturity = 1,
+        detail   = .Near,
+        habit    = .Trellised,
+        support  = &mirror_support,
+    })
     if vine.error == .None && mirror_vine.error == .None {
         append(&vine.plant.segments, ..mirror_vine.plant.segments[:])
         append(&vine.plant.attachments, ..mirror_vine.plant.attachments[:])
@@ -633,17 +625,14 @@ garden_lab_rebuild_plant_structure :: proc() {
     if vine.error == .None {
         garden_lab_kitchen_vine = vine
         garden_lab_kitchen_vine_ready = true
-        garden_lab_kitchen_vine_branch_mesh = branch_mesh.generate(
-            vine.plant.segments[:],
-            {
-                radial_segments = 5,
-                samples_per_segment = 2,
-                minimum_radius = .012,
-                radial_irregularity = .12,
-                twist = .5,
-                seed = u64(garden_lab_seed) + 91,
-            },
-        )
+        garden_lab_kitchen_vine_branch_mesh = branch_mesh.generate(vine.plant.segments[:], {
+            radial_segments     = 5,
+            samples_per_segment = 2,
+            minimum_radius      = .012,
+            radial_irregularity = .12,
+            twist               = .5,
+            seed                = u64(garden_lab_seed) + 91,
+        })
         garden_lab_kitchen_vine_branch_ready = len(garden_lab_kitchen_vine_branch_mesh.indices) > 0
         for variant in 0 ..< len(garden_lab_kitchen_vine_leaf_meshes) {
             traits := plants.leaf_traits(.Grapevine, u8(variant), 1)
@@ -789,7 +778,11 @@ garden_draw_path_tile :: proc(x, z, width, depth: f32) {
     world_box({x, .035, z}, {width, .07, depth}, GARDEN_STONE)
 }
 
-garden_plant_structure_point :: proc(base: third_person.Vec3, source: plant_structure.Vec3, scale, yaw: f32) -> third_person.Vec3 {
+garden_plant_structure_point :: proc(
+    base: third_person.Vec3,
+    source: plant_structure.Vec3,
+    scale, yaw: f32,
+) -> third_person.Vec3 {
     c, s := math.cos(yaw), math.sin(yaw)
     x, z := source[0] * scale, source[2] * scale
     return {base.x + x * c - z * s, base.y + source[1] * scale, base.z + x * s + z * c}

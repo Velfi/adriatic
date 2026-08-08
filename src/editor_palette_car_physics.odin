@@ -4,13 +4,13 @@ import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
 import rondine_game "../packages/rondine"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 editor_palette_button_bounds :: proc(index: int) -> canvas2d.Rectangle {
     palette := editor_palette_bounds()

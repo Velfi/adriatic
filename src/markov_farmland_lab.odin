@@ -4,11 +4,11 @@ import atmosphere "../packages/atmosphere"
 import farmland "../packages/farmland"
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 MARKOV_FARMLAND_DEFAULT_SEED :: u32(0x4641524d)
 MARKOV_FARMLAND_ORIGIN_X :: f32(terrain.WORLD_SIZE_METERS * .5 * terrain.DEFAULT_ISLAND_OFFSET)

@@ -1,9 +1,9 @@
 package main
 
-import hot_abi "zelda_engine:hot_abi"
 import "core:os"
 import "core:time"
 import canvas2d "zelda_engine:canvas2d"
+import hot_abi "zelda_engine:hot_abi"
 
 @(export)
 abi_version :: proc() -> u64 {

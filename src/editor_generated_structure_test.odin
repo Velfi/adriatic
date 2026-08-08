@@ -6,9 +6,9 @@ import "core:testing"
 @(test)
 editor_reclassifies_house_as_storefront_with_commercial_purpose :: proc(t: ^testing.T) {
     identity := buildings.Identity {
-        archetype = .Townhouse,
-        purpose = .Dwelling,
-        region = .Adriatic,
+        archetype     = .Townhouse,
+        purpose       = .Dwelling,
+        region        = .Adriatic,
         landmark_kind = .None,
     }
 
@@ -23,9 +23,9 @@ editor_reclassifies_house_as_storefront_with_commercial_purpose :: proc(t: ^test
 @(test)
 editor_reclassification_wraps_and_clears_landmark_classification :: proc(t: ^testing.T) {
     identity := buildings.Identity {
-        archetype = .Lighthouse,
-        purpose = .Dwelling,
-        region = .Aegean,
+        archetype     = .Lighthouse,
+        purpose       = .Dwelling,
+        region        = .Aegean,
         landmark_kind = .Lighthouse,
     }
 

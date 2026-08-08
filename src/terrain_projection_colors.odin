@@ -5,11 +5,11 @@ import atmosphere "../packages/atmosphere"
 import flight "../packages/flight"
 import postale_game "../packages/postale"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 @(no_instrumentation)
 perspective_camera :: #force_inline proc(

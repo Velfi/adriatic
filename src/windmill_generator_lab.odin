@@ -1,10 +1,10 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import windmills "../packages/windmills"
 import "core:math"
 import canvas "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 windmill_lab_seed := u32(1948)
 windmill_lab_region := windmills.Region.Adriatic

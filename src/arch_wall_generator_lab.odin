@@ -3,19 +3,19 @@ package main
 import arch_walls "../packages/arch_walls"
 import atmosphere "../packages/atmosphere"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 arch_wall_lab_config: arch_walls.Config
 arch_wall_lab_path: arch_walls.Path
 arch_wall_lab_shape := 0
 
-arch_wall_lab_path_bounds :: proc() -> canvas2d.Rectangle {return {38, 91, 142, 28}}
-arch_wall_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {192, 91, 142, 28}}
-arch_wall_lab_thickness_bounds :: proc() -> canvas2d.Rectangle {return {346, 91, 142, 28}}
-arch_wall_lab_spacing_bounds :: proc() -> canvas2d.Rectangle {return {500, 91, 142, 28}}
+arch_wall_lab_path_bounds :: proc() -> canvas2d.Rectangle { return {38, 91, 142, 28} }
+arch_wall_lab_height_bounds :: proc() -> canvas2d.Rectangle { return {192, 91, 142, 28} }
+arch_wall_lab_thickness_bounds :: proc() -> canvas2d.Rectangle { return {346, 91, 142, 28} }
+arch_wall_lab_spacing_bounds :: proc() -> canvas2d.Rectangle { return {500, 91, 142, 28} }
 
 arch_wall_lab_path_name :: proc() -> cstring {
     return arch_wall_lab_shape == 0 ? "CURVE" : arch_wall_lab_shape == 1 ? "LONG" : "COURTYARD"

@@ -2,12 +2,12 @@ package main
 import "core:math"
 
 import architecture "../packages/architecture"
-import dio "zelda_engine:dio"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_story_resident_home_pose_uncached :: proc(
     editor: ^Editor,
@@ -212,19 +212,15 @@ world_settlement_inhabitants :: proc(editor: ^Editor, include_animated := true, 
             ground := terrain.sample_surface_height(&editor.project, 0, point[0], point[1])
             if ground <= editor.project.sea_level + .35 do continue
             if !world_sphere_in_view(editor, {point[0], ground + .8, point[1]}, 1.4, 2) do continue
-            world_mouse_model_scaled(
-                editor,
-                {
-                    position = {point[0], ground, point[1]},
-                    rotation = math.PI - math.atan2(tangent[0], tangent[1]),
-                    build = .82 + f32((inhabitant.seed >> 12) & 15) / 50,
+            world_mouse_model_scaled(editor, {
+                    position     = {point[0], ground, point[1]},
+                    rotation     = math.PI - math.atan2(tangent[0], tangent[1]),
+                    build        = .82 + f32((inhabitant.seed >> 12) & 15) / 50,
                     snout_length = .9 + f32((inhabitant.seed >> 16) & 15) / 35,
-                    fur = Mouse_Fur((inhabitant.seed >> 20) % 6),
-                    pattern = Mouse_Fur_Pattern((inhabitant.seed >> 24) % 6),
-                    grounded = true,
-                },
-                .82,
-            )
+                    fur          = Mouse_Fur((inhabitant.seed >> 20) % 6),
+                    pattern      = Mouse_Fur_Pattern((inhabitant.seed >> 24) % 6),
+                    grounded     = true,
+                }, .82)
             animated += 1
             continue
         }
@@ -283,38 +279,28 @@ world_story_meeting :: proc(editor: ^Editor) {
     }
     facing_niko := math.atan2(iva_draw.x - niko_draw.x, iva_draw.z - niko_draw.z)
     facing_iva := math.atan2(niko_draw.x - iva_draw.x, niko_draw.z - iva_draw.z)
-    world_town_mouse_model_scaled_cached(
-        editor,
-        {
-            position = niko_draw,
-            rotation = math.PI - facing_niko,
-            build = 1.12,
+    world_town_mouse_model_scaled_cached(editor, {
+            position     = niko_draw,
+            rotation     = math.PI - facing_niko,
+            build        = 1.12,
             snout_length = .94,
-            accessory = .Acorn_Cap,
-            fur = .Chestnut,
-            pattern = .Pale_Belly,
-            grounded = true,
-        },
-        1.02,
-        TOWN_MOUSE_CACHE_MEETING_NIKO,
-    )
-    world_town_mouse_model_scaled_cached(
-        editor,
-        {
-            position = iva_draw,
-            rotation = math.PI - facing_iva,
-            build = .86,
-            snout_length = 1.16,
-            accessory = .Flower,
-            fur = .Cream,
-            pattern = .Piebald,
+            accessory    = .Acorn_Cap,
+            fur          = .Chestnut,
+            pattern      = .Pale_Belly,
+            grounded     = true,
+        }, 1.02, TOWN_MOUSE_CACHE_MEETING_NIKO)
+    world_town_mouse_model_scaled_cached(editor, {
+            position      = iva_draw,
+            rotation      = math.PI - facing_iva,
+            build         = .86,
+            snout_length  = 1.16,
+            accessory     = .Flower,
+            fur           = .Cream,
+            pattern       = .Piebald,
             scarf_enabled = true,
-            scarf_color = {177, 65, 73, 255},
-            grounded = true,
-        },
-        iva_portrait_scale,
-        TOWN_MOUSE_CACHE_MEETING_IVA,
-    )
+            scarf_color   = {177, 65, 73, 255},
+            grounded      = true,
+        }, iva_portrait_scale, TOWN_MOUSE_CACHE_MEETING_IVA)
     if story.resident_has_unseen_action(&editor.story_state, .Niko) {
         world_mouse_interaction_indicator(editor, niko)
     }
@@ -441,23 +427,18 @@ world_town_mice :: proc(editor: ^Editor) {
             ) {
                 continue
             }
-            world_town_mouse_model_scaled_cached(
-                editor,
-                {
-                    position = {x, ground_y, z},
-                    rotation = rotation,
-                    build = resident.build,
-                    snout_length = resident.snout_length,
-                    accessory = resident.accessory,
-                    fur = resident.fur,
-                    pattern = resident.pattern,
+            world_town_mouse_model_scaled_cached(editor, {
+                    position      = {x, ground_y, z},
+                    rotation      = rotation,
+                    build         = resident.build,
+                    snout_length  = resident.snout_length,
+                    accessory     = resident.accessory,
+                    fur           = resident.fur,
+                    pattern       = resident.pattern,
                     scarf_enabled = resident.scarf,
-                    scarf_color = resident.scarf_color,
-                    grounded = true,
-                },
-                resident.scale,
-                TOWN_MOUSE_CACHE_TOWN_FIRST + island_index * len(residents) + resident_index,
-            )
+                    scarf_color   = resident.scarf_color,
+                    grounded      = true,
+                }, resident.scale, TOWN_MOUSE_CACHE_TOWN_FIRST + island_index * len(residents) + resident_index)
             if named && story.resident_has_unseen_action(&editor.story_state, named_resident) {
                 world_mouse_interaction_indicator(editor, {x, ground_y, z})
             }
@@ -465,22 +446,17 @@ world_town_mice :: proc(editor: ^Editor) {
     }
     zora_position, zora_rotation, zora_found := world_story_resident_home_pose(editor, .Zora)
     if zora_found && world_sphere_in_view(editor, zora_position + third_person.Vec3{0, 1.1, 0}, 2, 4) {
-        world_town_mouse_model_scaled_cached(
-            editor,
-            {
-                position = zora_position,
-                rotation = zora_rotation + math.PI * .5 - .10,
-                build = 1.18,
-                snout_length = 1.10,
-                fur = .Russet,
-                pattern = .Piebald,
+        world_town_mouse_model_scaled_cached(editor, {
+                position      = zora_position,
+                rotation      = zora_rotation + math.PI * .5 - .10,
+                build         = 1.18,
+                snout_length  = 1.10,
+                fur           = .Russet,
+                pattern       = .Piebald,
                 scarf_enabled = true,
-                scarf_color = {205, 151, 52, 255},
-                grounded = true,
-            },
-            1.05,
-            TOWN_MOUSE_CACHE_ZORA,
-        )
+                scarf_color   = {205, 151, 52, 255},
+                grounded      = true,
+            }, 1.05, TOWN_MOUSE_CACHE_ZORA)
         if story.resident_has_unseen_action(&editor.story_state, .Zora) {
             world_mouse_interaction_indicator(editor, zora_position)
         }
@@ -490,23 +466,18 @@ world_town_mice :: proc(editor: ^Editor) {
         position, frontage_rotation, found := world_story_resident_home_pose(editor, postal_resident)
         if !found || !world_sphere_in_view(editor, position + third_person.Vec3{0, 1.1, 0}, 2, 4) do continue
         is_toma := postal_resident == .Toma
-        world_town_mouse_model_scaled_cached(
-            editor,
-            {
-                position = position,
-                rotation = frontage_rotation + math.PI * .5,
-                build = is_toma ? f32(1.06) : f32(.92),
-                snout_length = is_toma ? f32(.96) : f32(1.10),
-                accessory = .Paper_Boat,
-                fur = is_toma ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
-                pattern = is_toma ? Mouse_Fur_Pattern.Hooded : Mouse_Fur_Pattern.Piebald,
+        world_town_mouse_model_scaled_cached(editor, {
+                position      = position,
+                rotation      = frontage_rotation + math.PI * .5,
+                build         = is_toma ? f32(1.06) : f32(.92),
+                snout_length  = is_toma ? f32(.96) : f32(1.10),
+                accessory     = .Paper_Boat,
+                fur           = is_toma ? Mouse_Fur.Chestnut : Mouse_Fur.Cream,
+                pattern       = is_toma ? Mouse_Fur_Pattern.Hooded : Mouse_Fur_Pattern.Piebald,
                 scarf_enabled = true,
-                scarf_color = is_toma ? canvas2d.Color{45, 73, 104, 255} : canvas2d.Color{154, 54, 52, 255},
-                grounded = true,
-            },
-            1,
-            TOWN_MOUSE_CACHE_POSTAL_FIRST + postal_index,
-        )
+                scarf_color   = is_toma ? canvas2d.Color{45, 73, 104, 255} : canvas2d.Color{154, 54, 52, 255},
+                grounded      = true,
+            }, 1, TOWN_MOUSE_CACHE_POSTAL_FIRST + postal_index)
         if story.resident_has_unseen_action(&editor.story_state, postal_resident) ||
            player_mail_available_count(editor) > 0 {
             world_mouse_interaction_indicator(editor, position)
@@ -562,22 +533,18 @@ world_lighthouse_keeper_model :: proc(
     scale: f32 = 1,
 ) {
     if editor == nil do return
-    world_mouse_model_scaled(
-        editor,
-        {
-            position = position,
-            rotation = rotation,
-            build = west_keeper ? f32(1.08) : f32(.94),
-            snout_length = west_keeper ? f32(.94) : f32(1.08),
-            accessory = .Bottle_Cap,
-            fur = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
-            pattern = .Pale_Belly,
+    world_mouse_model_scaled(editor, {
+            position      = position,
+            rotation      = rotation,
+            build         = west_keeper ? f32(1.08) : f32(.94),
+            snout_length  = west_keeper ? f32(.94) : f32(1.08),
+            accessory     = .Bottle_Cap,
+            fur           = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
+            pattern       = .Pale_Belly,
             scarf_enabled = true,
-            scarf_color = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
-            grounded = grounded,
-        },
-        scale,
-    )
+            scarf_color   = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
+            grounded      = grounded,
+        }, scale)
 }
 
 world_lighthouse_keeper_model_cached :: proc(
@@ -588,23 +555,18 @@ world_lighthouse_keeper_model_cached :: proc(
     keeper_index: int,
 ) {
     if editor == nil do return
-    world_town_mouse_model_scaled_cached(
-        editor,
-        {
-            position = position,
-            rotation = rotation,
-            build = west_keeper ? f32(1.08) : f32(.94),
-            snout_length = west_keeper ? f32(.94) : f32(1.08),
-            accessory = .Bottle_Cap,
-            fur = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
-            pattern = .Pale_Belly,
+    world_town_mouse_model_scaled_cached(editor, {
+            position      = position,
+            rotation      = rotation,
+            build         = west_keeper ? f32(1.08) : f32(.94),
+            snout_length  = west_keeper ? f32(.94) : f32(1.08),
+            accessory     = .Bottle_Cap,
+            fur           = west_keeper ? Mouse_Fur.Soot : Mouse_Fur.Silver,
+            pattern       = .Pale_Belly,
             scarf_enabled = true,
-            scarf_color = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
-            grounded = true,
-        },
-        1,
-        TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + keeper_index,
-    )
+            scarf_color   = west_keeper ? canvas2d.Color{218, 151, 43, 255} : canvas2d.Color{184, 62, 48, 255},
+            grounded      = true,
+        }, 1, TOWN_MOUSE_CACHE_LIGHTHOUSE_FIRST + keeper_index)
 }
 
 world_brush_disc :: proc(editor: ^Editor, x, z, radius, height_offset: f32, color: canvas2d.Color) {

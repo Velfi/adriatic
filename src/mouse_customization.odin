@@ -1,9 +1,9 @@
 package main
 
-import game_input "zelda_engine:game_input"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 
 CUSTOMIZATION_COLOR_COUNT :: 6
 CUSTOMIZATION_PATTERN_COUNT :: 6

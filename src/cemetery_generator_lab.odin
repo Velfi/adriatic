@@ -3,10 +3,10 @@ package main
 import atmosphere "../packages/atmosphere"
 import cemeteries "../packages/cemeteries"
 import plants "../packages/plants"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 CEMETERY_LAB_DEFAULT_SEED :: u32(0xC3E7E8)
 
@@ -48,17 +48,14 @@ cemetery_lab_memorial_name :: proc(kind: cemeteries.Memorial_Kind) -> cstring {
 }
 
 cemetery_lab_plan :: proc() -> cemeteries.Plan {
-    return cemeteries.generate(
-        cemetery_lab_seed,
-        {
-            width = cemetery_lab_width,
-            depth = cemetery_lab_depth,
-            density = cemetery_lab_density,
-            style = cemetery_lab_style,
-            memorial_kind = cemetery_lab_memorial_index >= 0 ? cemeteries.Memorial_Kind(cemetery_lab_memorial_index) : .Obelisk,
-            memorial_explicit = cemetery_lab_memorial_index >= 0,
-        },
-    )
+    return cemeteries.generate(cemetery_lab_seed, {
+        width             = cemetery_lab_width,
+        depth             = cemetery_lab_depth,
+        density           = cemetery_lab_density,
+        style             = cemetery_lab_style,
+        memorial_kind     = cemetery_lab_memorial_index >= 0 ? cemeteries.Memorial_Kind(cemetery_lab_memorial_index) : .Obelisk,
+        memorial_explicit = cemetery_lab_memorial_index >= 0,
+    })
 }
 
 cemetery_lab_configure_camera :: proc(editor: ^Editor) {

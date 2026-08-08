@@ -1,14 +1,14 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import dither "zelda_engine:dither"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import canvas2d "zelda_engine:canvas2d"
+import dither "zelda_engine:dither"
 import render2d "zelda_engine:render2d"
+import third_person "zelda_engine:third_person"
 
 Dither_Mode :: dither.Mode
 dither_mode_label :: dither.mode_label

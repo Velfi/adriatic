@@ -1,9 +1,9 @@
 package main
 
-import toml "zelda_engine:toml"
 import "core:os"
 import "core:strings"
 import canvas2d "zelda_engine:canvas2d"
+import toml "zelda_engine:toml"
 
 PLAYER_SETTINGS_FILENAME :: "player-settings.toml"
 PLAYER_SETTINGS_VERSION :: i64(1)

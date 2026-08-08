@@ -4,10 +4,10 @@ import "core:math"
 import circulation "../packages/circulation"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import gltf "zelda_engine:gltf"
+import third_person "zelda_engine:third_person"
 
 mouse_mailbag_body_surface_local :: proc(
     architecture: ^[5]Mouse_Bone_Pose,
@@ -184,7 +184,12 @@ world_mouse_mailbag_imported_pouch :: proc(
     }
 }
 
-world_mouse_mailbag :: proc(editor: ^Editor, origin: third_person.Vec3, rotation: f32, architecture: ^[5]Mouse_Bone_Pose) {
+world_mouse_mailbag :: proc(
+    editor: ^Editor,
+    origin: third_person.Vec3,
+    rotation: f32,
+    architecture: ^[5]Mouse_Bone_Pose,
+) {
     if editor == nil || architecture == nil || !editor.mailbag_pouch_asset.ready do return
     canvas_dark := canvas2d.Color{91, 57, 31, 255}
     leather := canvas2d.Color{67, 39, 27, 255}

@@ -1,11 +1,11 @@
 package main
 
-import hs "zelda_engine:hs"
 import vehicles "../packages/vehicles"
 import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     Fixture_Lifecycle_Test_Allocator :: struct {

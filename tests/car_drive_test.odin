@@ -1,9 +1,9 @@
 package tests
 
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 car_drive_has_progressive_forward_and_reverse_motion :: proc(t: ^testing.T) {

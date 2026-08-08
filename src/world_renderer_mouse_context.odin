@@ -1,7 +1,7 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Mouse_Render_Context holds the model-space inputs shared by the mouse's
 // independently rendered clothing and accessory layers.

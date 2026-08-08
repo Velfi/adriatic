@@ -1,9 +1,9 @@
 package main
 
-import tweak_package "zelda_engine:tweak"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import tweak_package "zelda_engine:tweak"
 
 when ODIN_TEST {
     @(test)
@@ -29,10 +29,10 @@ when ODIN_TEST {
         source.time_scale = 4.5
         source.atmosphere.paused = true
         source.player_outline = {
-            enabled = true,
-            width = 3,
+            enabled  = true,
+            width    = 3,
             strength = .45,
-            color = {.2, .3, .4},
+            color    = {.2, .3, .4},
         }
         testing.expect(t, tweak_package.save(path, TWEAK_FILE_VERSION, &source) == nil)
 

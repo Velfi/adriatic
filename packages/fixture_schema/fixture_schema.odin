@@ -664,15 +664,12 @@ ensure_record :: proc(b: ^Builder, package_id, name, type_path: string) -> strin
                         b.type_states[key] = 3
                         return "invalid"
                     }
-                    append(
-                        &record.fields,
-                        Field_Record {
-                            name = field_name.name,
-                            tag = tag,
-                            type = field_type_name,
-                            is_using = bool_int(.Using in field.flags) != 0,
-                        },
-                    )
+                    append(&record.fields, Field_Record {
+                        name     = field_name.name,
+                        tag      = tag,
+                        type     = field_type_name,
+                        is_using = bool_int(.Using in field.flags) != 0,
+                    })
                 }
             }
         }

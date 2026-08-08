@@ -3,8 +3,8 @@ package main
 import mouse_gait "../packages/mouse_gait"
 import mouse_tail "../packages/mouse_tail"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 player_tail_root :: proc(editor: ^Editor) -> (root, backward: third_person.Vec3) {
     if editor == nil do return

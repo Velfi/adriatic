@@ -84,18 +84,15 @@ generate :: proc(seed: u32, requested_width, requested_length: f32) -> Plan {
             radius = mosaic_radius * (.22 + f32(spoke % 4) * .18)
             piece_width *= 1.22
         }
-        append_paving(
-            &plan,
-            {
-                x = f32(math.cos(f64(angle))) * radius,
-                z = f32(math.sin(f64(angle))) * radius,
-                width = piece_width,
-                length = piece_length,
-                rotation = piece_rotation,
-                kind = .Mosaic,
-                tone = u8((spoke + int(hash >> 16)) % 3),
-            },
-        )
+        append_paving(&plan, {
+            x        = f32(math.cos(f64(angle))) * radius,
+            z        = f32(math.sin(f64(angle))) * radius,
+            width    = piece_width,
+            length   = piece_length,
+            rotation = piece_rotation,
+            kind     = .Mosaic,
+            tone     = u8((spoke + int(hash >> 16)) % 3),
+        })
     }
     // Off-center fragments make the covering feel accumulated and repaired,
     // rather than stamped from a perfectly symmetrical civic-road kit.
@@ -103,18 +100,15 @@ generate :: proc(seed: u32, requested_width, requested_length: f32) -> Plan {
         hash := mix(seed ~ u32(patch + 101) * u32(0x85ebca6b))
         unit_x := f32(hash & 1023) / 1023
         unit_z := f32((hash >> 10) & 1023) / 1023
-        append_paving(
-            &plan,
-            {
-                x = (unit_x - .5) * (plan.width - border * 5),
-                z = (unit_z - .5) * (plan.length - border * 5),
-                width = .55 + f32((hash >> 20) & 7) * .16,
-                length = 1.2 + f32((hash >> 23) & 7) * .24,
-                rotation = f32(hash % 628) * .01,
-                kind = .Inlay,
-                tone = u8((hash >> 29) % 3),
-            },
-        )
+        append_paving(&plan, {
+            x        = (unit_x - .5) * (plan.width - border * 5),
+            z        = (unit_z - .5) * (plan.length - border * 5),
+            width    = .55 + f32((hash >> 20) & 7) * .16,
+            length   = 1.2 + f32((hash >> 23) & 7) * .24,
+            rotation = f32(hash % 628) * .01,
+            kind     = .Inlay,
+            tone     = u8((hash >> 29) % 3),
+        })
     }
 
     plan.valid = validate(&plan)

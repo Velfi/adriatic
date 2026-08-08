@@ -1,9 +1,9 @@
 package main
 
 import fountains "../packages/fountains"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 FOUNTAIN_STONE := canvas2d.Color{178, 169, 148, 255}
 FOUNTAIN_STONE_DARK := canvas2d.Color{112, 107, 98, 255}

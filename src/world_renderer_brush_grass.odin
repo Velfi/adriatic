@@ -2,9 +2,9 @@ package main
 import "core:math"
 
 import circulation "../packages/circulation"
-import dio "zelda_engine:dio"
 import terrain "../packages/terrain"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 
 world_plant_stamp_attachment_preview :: proc(editor: ^Editor) {
     if editor == nil ||
@@ -495,16 +495,13 @@ world_ground_grass :: proc(editor: ^Editor) {
                 append(&world_renderer.grass_instances, grass)
                 world_renderer.grass_instances_emitted += 1
                 if cached.has_flower {
-                    append(
-                        &world_renderer.wildflower_instances,
-                        Grass_Instance {
-                            center = {x, cached.flower_y, z},
-                            size = cached.flower_size,
-                            tile = cached.flower_tile,
-                            color = {1, 1, 1, 2},
-                            cull_params = {cached.density_roll, field_radius, 1, 0},
-                        },
-                    )
+                    append(&world_renderer.wildflower_instances, Grass_Instance {
+                        center      = {x, cached.flower_y, z},
+                        size        = cached.flower_size,
+                        tile        = cached.flower_tile,
+                        color       = {1, 1, 1, 2},
+                        cull_params = {cached.density_roll, field_radius, 1, 0},
+                    })
                 }
             }
             chunk.stream_emitted = true

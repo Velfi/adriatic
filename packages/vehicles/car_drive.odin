@@ -1,7 +1,7 @@
 package vehicles
 
-import third_person "zelda_engine:third_person"
 import "core:math"
+import third_person "zelda_engine:third_person"
 
 Car_Handling_Model :: enum {
     Current_Physics,

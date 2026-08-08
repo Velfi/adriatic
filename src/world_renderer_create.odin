@@ -144,9 +144,9 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         colorWriteMask = {.R},
     }
     mask_cb := vk.PipelineColorBlendStateCreateInfo {
-        sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         attachmentCount = 1,
-        pAttachments = &mask_ca,
+        pAttachments    = &mask_ca,
     }
     mask_info := info
     mask_info.pStages = raw_data(mask_stages[:])
@@ -163,13 +163,14 @@ world_renderer_create :: proc(ctx: ^engine.Vk_Context) -> bool {
         mask_rendering.depthAttachmentFormat = .D32_SFLOAT
         mask_info.pNext = &mask_rendering
         if vk.CreateGraphicsPipelines(
-            ctx.device,
-            vk.PipelineCache(0),
-            1,
-            &mask_info,
-            nil,
-            &world_renderer.player_outline_mask_pipelines[sample_index],
-        ) != .SUCCESS {
+               ctx.device,
+               vk.PipelineCache(0),
+               1,
+               &mask_info,
+               nil,
+               &world_renderer.player_outline_mask_pipelines[sample_index],
+           ) !=
+           .SUCCESS {
             mask_info.pMultisampleState = original_mask_multisample
             return false
         }

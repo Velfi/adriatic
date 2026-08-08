@@ -1010,17 +1010,14 @@ build_piers_and_slips :: proc(
                 position := add(center, scale(normal, f32(side) * 6))
                 yaw := math.atan2(delta.x, delta.z)
                 if side < 0 do yaw += math.PI
-                _ = append_berth(
-                    plan,
-                    {
-                        position = position,
-                        yaw = yaw,
-                        class = (berth_index + pier_index) & 1 == 0 ? boats.Class.Sail : boats.Class.Motor,
-                        kind = .Slip,
-                        occupied = (mix_seed(seed + u32(berth_index * 31 + pier_index * 73 + side + 2)) & 3) != 0,
-                        clearance_radius = 5.5,
-                    },
-                )
+                _ = append_berth(plan, {
+                    position         = position,
+                    yaw              = yaw,
+                    class            = (berth_index + pier_index) & 1 == 0 ? boats.Class.Sail : boats.Class.Motor,
+                    kind             = .Slip,
+                    occupied         = (mix_seed(seed + u32(berth_index * 31 + pier_index * 73 + side + 2)) & 3) != 0,
+                    clearance_radius = 5.5,
+                })
             }
         }
     }
@@ -1066,17 +1063,14 @@ build_moorings :: proc(plan: ^Harbor_Plan, site: ^Harbor_Site, scale_meters: f32
         }
         if !clear do continue
         yaw := (random_unit(random_seed ~ 0xa341_316c) - .5) * .28
-        _ = append_berth(
-            plan,
-            {
-                position = point,
-                yaw = yaw,
-                class = (attempt & 1) == 0 ? boats.Class.Sail : boats.Class.Motor,
-                kind = .Swing_Mooring,
-                occupied = (random_seed & 3) != 0,
-                clearance_radius = minimum_spacing * .5,
-            },
-        )
+        _ = append_berth(plan, {
+            position         = point,
+            yaw              = yaw,
+            class            = (attempt & 1) == 0 ? boats.Class.Sail : boats.Class.Motor,
+            kind             = .Swing_Mooring,
+            occupied         = (random_seed & 3) != 0,
+            clearance_radius = minimum_spacing * .5,
+        })
         desired -= 1
     }
 }

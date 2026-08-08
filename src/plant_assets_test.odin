@@ -67,40 +67,42 @@ plant_asset_round_trip_validates_all_lod_payloads :: proc(t: ^testing.T) {
 @(test)
 plant_asset_request_compiles_the_site_context_named_by_its_key :: proc(t: ^testing.T) {
     ordinary := plant_assets.Plant_Asset_Request {
-        species = .Olive,
-        seed = 44,
+        species       = .Olive,
+        seed          = 44,
         maturity_step = GENERATED_PLANT_MATURITY_STEPS,
-        habit = .Free_Standing,
+        habit         = .Free_Standing,
     }
     dry := ordinary
     dry.site = {
-        valid = true,
-        aridity = .9,
-        exposure = .8,
-        slope = .4,
+        valid            = true,
+        aridity          = .9,
+        exposure         = .8,
+        slope            = .4,
         elevation_meters = 320,
         coast_distance_m = 900,
-        substrate = .Rock,
+        substrate        = .Rock,
     }
     testing.expect(t, plant_assets.plant_asset_source_key(ordinary) != plant_assets.plant_asset_source_key(dry))
     asset, compiled := plant_asset_compile(dry)
     testing.expect(t, compiled)
     if compiled {
         defer plant_asset_destroy(&asset)
-        testing.expect_value(t, plants.site_context_signature(asset.header.request.site), plants.site_context_signature(dry.site))
+        testing.expect_value(
+            t,
+            plants.site_context_signature(asset.header.request.site),
+            plants.site_context_signature(dry.site),
+        )
     }
 }
 
 @(test)
 plant_asset_rejects_corrupt_and_unknown_versions :: proc(t: ^testing.T) {
-    asset, compiled := plant_asset_compile(
-        {
-            species = plants.Species.Rosemary,
-            seed = 91,
-            maturity_step = GENERATED_PLANT_MATURITY_STEPS,
-            habit = .Free_Standing,
-        },
-    )
+    asset, compiled := plant_asset_compile({
+        species       = plants.Species.Rosemary,
+        seed          = 91,
+        maturity_step = GENERATED_PLANT_MATURITY_STEPS,
+        habit         = .Free_Standing,
+    })
     testing.expect(t, compiled)
     if !compiled do return
     defer plant_asset_destroy(&asset)

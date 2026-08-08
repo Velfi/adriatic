@@ -3,11 +3,11 @@ package main
 import atmosphere "../packages/atmosphere"
 import estuaries "../packages/estuaries"
 import spring_river "../packages/spring_river"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 SPRING_RIVER_LAB_DEFAULT_SEED :: u32(0x53505247)
 SPRING_RIVER_LAB_ESTUARY_HALF_WIDTH :: f32(170)
@@ -59,20 +59,18 @@ spring_river_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> La
 
 spring_river_lab_regenerate :: proc(editor: ^Editor) {
     estuaries.destroy(&spring_river_lab_estuary)
-    spring_river_lab_plan = spring_river.generate(
-        {
-            seed = spring_river_lab_seed,
-            source = {-16, -105},
-            direction = {.10, 1},
-            source_height = 14.5,
-            length = 230,
-            segment_length = 2,
-            gradient = spring_river_lab_gradient,
-            discharge = spring_river_lab_discharge,
-            meander = spring_river_lab_meander,
-            spring_radius = 4.8,
-        },
-    )
+    spring_river_lab_plan = spring_river.generate({
+        seed           = spring_river_lab_seed,
+        source         = {-16, -105},
+        direction      = {.10, 1},
+        source_height  = 14.5,
+        length         = 230,
+        segment_length = 2,
+        gradient       = spring_river_lab_gradient,
+        discharge      = spring_river_lab_discharge,
+        meander        = spring_river_lab_meander,
+        spring_radius  = 4.8,
+    })
     mouth := spring_river.mouth(&spring_river_lab_plan)
     estuary_config := estuaries.config_from_river_mouth(
         mouth,
@@ -82,17 +80,13 @@ spring_river_lab_regenerate :: proc(editor: ^Editor) {
     estuary_config.seed = spring_river.hash(spring_river_lab_seed ~ 0x45535455)
     spring_river_lab_estuary = estuaries.generate(estuary_config)
     if editor == nil do return
-    _ = lab_terrain_load(
-        editor,
-        {
-            half_extent_x = 210,
-            half_extent_z = 150,
-            sea_level = spring_river_lab_estuary.config.mean_sea_level,
-            outside_height = 12,
+    _ = lab_terrain_load(editor, {
+            half_extent_x    = 210,
+            half_extent_z    = 150,
+            sea_level        = spring_river_lab_estuary.config.mean_sea_level,
+            outside_height   = 12,
             outside_material = .18,
-        },
-        spring_river_lab_terrain_sample,
-    )
+        }, spring_river_lab_terrain_sample)
 }
 
 spring_river_lab_exit :: proc(_: ^Editor) {

@@ -2,9 +2,9 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import fountains "../packages/fountains"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 fountain_lab_seed := u32(0xF017A17)
 fountain_lab_style := fountains.Style.Tiered
@@ -12,11 +12,11 @@ fountain_lab_radius := f32(3.8)
 fountain_lab_jets := 10
 fountain_lab_height := f32(2.8)
 
-fountain_lab_style_bounds :: proc() -> canvas2d.Rectangle {return {38, 68, 118, 28}}
-fountain_lab_seed_bounds :: proc() -> canvas2d.Rectangle {return {168, 68, 154, 28}}
-fountain_lab_radius_bounds :: proc() -> canvas2d.Rectangle {return {38, 118, 138, 28}}
-fountain_lab_jets_bounds :: proc() -> canvas2d.Rectangle {return {188, 118, 122, 28}}
-fountain_lab_height_bounds :: proc() -> canvas2d.Rectangle {return {322, 118, 138, 28}}
+fountain_lab_style_bounds :: proc() -> canvas2d.Rectangle { return {38, 68, 118, 28} }
+fountain_lab_seed_bounds :: proc() -> canvas2d.Rectangle { return {168, 68, 154, 28} }
+fountain_lab_radius_bounds :: proc() -> canvas2d.Rectangle { return {38, 118, 138, 28} }
+fountain_lab_jets_bounds :: proc() -> canvas2d.Rectangle { return {188, 118, 122, 28} }
+fountain_lab_height_bounds :: proc() -> canvas2d.Rectangle { return {322, 118, 138, 28} }
 
 fountain_lab_style_name :: proc() -> cstring {
     switch fountain_lab_style {
@@ -109,15 +109,12 @@ fountain_lab_process_input :: proc(_: ^Editor) {
 world_fountain_generator_lab :: proc(_: ^Editor) {
     stone := canvas2d.Color{155, 145, 125, 255}
     world_box_rotated({0, -.13, 0}, {18, .26, 18}, 0, stone)
-    plan := fountains.generate(
-        fountain_lab_seed,
-        {
-            radius = fountain_lab_radius,
-            style = fountain_lab_style,
-            jet_count = fountain_lab_jets,
-            jet_height = fountain_lab_height,
-        },
-    )
+    plan := fountains.generate(fountain_lab_seed, {
+        radius     = fountain_lab_radius,
+        style      = fountain_lab_style,
+        jet_count  = fountain_lab_jets,
+        jet_height = fountain_lab_height,
+    })
     world_fountain(&plan, {0, 0, 0})
 }
 
@@ -139,19 +136,13 @@ fountain_lab_draw_ui :: proc(_: ^Editor, width, height: i32) {
     lab_ui_draw_stepper(fountain_lab_radius_bounds(), fmt.ctprintf("%.1f M", fountain_lab_radius))
     lab_ui_draw_stepper(fountain_lab_jets_bounds(), fmt.ctprintf("%d", fountain_lab_jets))
     lab_ui_draw_stepper(fountain_lab_height_bounds(), fmt.ctprintf("%.2f M", fountain_lab_height))
-    plan := fountains.generate(
-        fountain_lab_seed,
-        {
-            radius = fountain_lab_radius,
-            style = fountain_lab_style,
-            jet_count = fountain_lab_jets,
-            jet_height = fountain_lab_height,
-        },
-    )
-    pattern_status := fmt.ctprintf(
-        "Pattern %s",
-        fountain_lab_pattern_name(plan.jet_pattern),
-    )
+    plan := fountains.generate(fountain_lab_seed, {
+        radius     = fountain_lab_radius,
+        style      = fountain_lab_style,
+        jet_count  = fountain_lab_jets,
+        jet_height = fountain_lab_height,
+    })
+    pattern_status := fmt.ctprintf("Pattern %s", fountain_lab_pattern_name(plan.jet_pattern))
     canvas2d.DrawTextEx(canvas2d.Font{}, pattern_status, {38, 152}, 12, 1, {145, 180, 188, 255})
     _ = width
     _ = height

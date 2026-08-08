@@ -1120,8 +1120,7 @@ pelican_hull_point :: proc(ring: Mesh_Ring, side, sides: int) -> [3]f32 {
 }
 
 add_pelican_hull :: proc(mesh: ^Aircraft_Mesh, rings: []Mesh_Ring, sides: int, part: Aircraft_Mesh_Part) {
-    for r in 0 ..< len(rings) -
-        1 { for s in 0 ..< sides { n := (s + 1) % sides; mesh_quad(mesh, pelican_hull_point(rings[r], s, sides), pelican_hull_point(rings[r], n, sides), pelican_hull_point(rings[r + 1], n, sides), pelican_hull_point(rings[r + 1], s, sides), part) } }
+    for r in 0 ..< len(rings) - 1 { for s in 0 ..< sides { n := (s + 1) % sides; mesh_quad(mesh, pelican_hull_point(rings[r], s, sides), pelican_hull_point(rings[r], n, sides), pelican_hull_point(rings[r + 1], n, sides), pelican_hull_point(rings[r + 1], s, sides), part) } }
 }
 
 pelican_mesh :: proc() -> ^Aircraft_Mesh {

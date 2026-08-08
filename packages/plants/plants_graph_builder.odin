@@ -160,15 +160,12 @@ graph_builder_leader :: proc(
         )
     }
     if parent >= 0 {
-        append(
-            &builder.graph.buds,
-            Bud {
-                internode = parent,
-                state = builder.maturity < 1 ? Bud_State.Continuing : .Terminated,
-                vigor = 1,
-                stable_id = graph_builder_id(builder, 0x425544, stable_key),
-            },
-        )
+        append(&builder.graph.buds, Bud {
+            internode = parent,
+            state     = builder.maturity < 1 ? Bud_State.Continuing : .Terminated,
+            vigor     = 1,
+            stable_id = graph_builder_id(builder, 0x425544, stable_key),
+        })
     }
     return axis
 }
@@ -210,15 +207,12 @@ graph_builder_shoot :: proc(
         emergence,
     )
     if internode >= 0 {
-        append(
-            &builder.graph.buds,
-            Bud {
-                internode = internode,
-                state = builder.maturity < 1 ? Bud_State.Continuing : .Terminated,
-                vigor = builder.graph.axes[axis].vigor,
-                stable_id = graph_builder_id(builder, 0x425544, stable_key),
-            },
-        )
+        append(&builder.graph.buds, Bud {
+            internode = internode,
+            state     = builder.maturity < 1 ? Bud_State.Continuing : .Terminated,
+            vigor     = builder.graph.axes[axis].vigor,
+            stable_id = graph_builder_id(builder, 0x425544, stable_key),
+        })
     }
     return axis
 }

@@ -31,16 +31,14 @@ plant_catalog_generates_every_species_at_every_detail :: proc(t: ^testing.T) {
             habit := plants.default_habit(species)
             support_pointer: ^plants.Support_Surface
             if habit != .Free_Standing do support_pointer = &support
-            result := plants.generate(
-                {
-                    species = species,
-                    seed = 73,
-                    maturity = 1,
-                    detail = detail,
-                    habit = habit,
-                    support = support_pointer,
-                },
-            )
+            result := plants.generate({
+                species  = species,
+                seed     = 73,
+                maturity = 1,
+                detail   = detail,
+                habit    = habit,
+                support  = support_pointer,
+            })
             testing.expectf(
                 t,
                 result.error == .None,
@@ -168,16 +166,14 @@ climbing_generation_fills_supports_within_area_density :: proc(t: ^testing.T) {
     }
     segment_counts: [2]int
     for &support, index in supports {
-        result := plants.generate(
-            {
-                species = .Bougainvillea,
-                seed = 73,
-                maturity = 1,
-                detail = .Near,
-                habit = .Wall_Trained,
-                support = &support,
-            },
-        )
+        result := plants.generate({
+            species  = .Bougainvillea,
+            seed     = 73,
+            maturity = 1,
+            detail   = .Near,
+            habit    = .Wall_Trained,
+            support  = &support,
+        })
         defer plants.destroy(&result)
         testing.expect_value(t, result.error, plants.Generate_Error.None)
         segment_limit, attachment_limit := plants.climbing_density_limits(.Near, &support)
@@ -892,16 +888,14 @@ plant_generated_geometry_preserves_winding :: proc(t: ^testing.T) {
         if habit != .Free_Standing do support_pointer = &support
         found_species_leaf := false
         for detail in plants.Detail_Level {
-            result := plants.generate(
-                {
-                    species = species,
-                    seed = 73,
-                    maturity = 1,
-                    detail = detail,
-                    habit = habit,
-                    support = support_pointer,
-                },
-            )
+            result := plants.generate({
+                species  = species,
+                seed     = 73,
+                maturity = 1,
+                detail   = detail,
+                habit    = habit,
+                support  = support_pointer,
+            })
             testing.expect_value(t, result.error, plants.Generate_Error.None)
 
             branch_config := branch_mesh.Config {
@@ -1757,16 +1751,14 @@ climbing_plants_route_attachments_away_from_openings :: proc(t: ^testing.T) {
     plant_support(&support, &exclusions)
     climbing_species := [2]plants.Species{plants.Species.Bougainvillea, plants.Species.Grapevine}
     for species in climbing_species {
-        result := plants.generate(
-            {
-                species = species,
-                seed = 15,
-                maturity = 1,
-                detail = .Near,
-                habit = plants.default_habit(species),
-                support = &support,
-            },
-        )
+        result := plants.generate({
+            species  = species,
+            seed     = 15,
+            maturity = 1,
+            detail   = .Near,
+            habit    = plants.default_habit(species),
+            support  = &support,
+        })
         defer plants.destroy(&result)
         testing.expect_value(t, result.error, plants.Generate_Error.None)
         testing.expect(t, result.plant.root_kind == .Planter)
@@ -1898,16 +1890,14 @@ bougainvillea_seeds_choose_distinct_window_routes :: proc(t: ^testing.T) {
     route_signatures: [16]u64
     distinct_signatures := 0
     for seed in 0 ..< len(route_signatures) {
-        result := plants.generate(
-            {
-                species = .Bougainvillea,
-                seed = u64(seed),
-                maturity = 1,
-                detail = .Near,
-                habit = .Wall_Trained,
-                support = &support,
-            },
-        )
+        result := plants.generate({
+            species  = .Bougainvillea,
+            seed     = u64(seed),
+            maturity = 1,
+            detail   = .Near,
+            habit    = .Wall_Trained,
+            support  = &support,
+        })
         testing.expect_value(t, result.error, plants.Generate_Error.None)
         signature: u64
         for attachment in result.plant.attachments {
@@ -2367,26 +2357,22 @@ new_ornamental_catalog_species_generate_deterministically :: proc(t: ^testing.T)
         habit := plants.default_habit(species)
         support_pointer: ^plants.Support_Surface
         if habit != .Free_Standing do support_pointer = &support
-        first := plants.generate(
-            {
-                species = species,
-                seed = 0x0a71d3,
-                maturity = 1,
-                detail = .Near,
-                habit = habit,
-                support = support_pointer,
-            },
-        )
-        second := plants.generate(
-            {
-                species = species,
-                seed = 0x0a71d3,
-                maturity = 1,
-                detail = .Near,
-                habit = habit,
-                support = support_pointer,
-            },
-        )
+        first := plants.generate({
+            species  = species,
+            seed     = 0x0a71d3,
+            maturity = 1,
+            detail   = .Near,
+            habit    = habit,
+            support  = support_pointer,
+        })
+        second := plants.generate({
+            species  = species,
+            seed     = 0x0a71d3,
+            maturity = 1,
+            detail   = .Near,
+            habit    = habit,
+            support  = support_pointer,
+        })
         defer plants.destroy(&first)
         defer plants.destroy(&second)
         testing.expectf(t, first.error == .None, "%s failed generation: %v", plants.species_name(species), first.error)
@@ -2798,16 +2784,14 @@ young_reproductive_attachments_begin_at_the_earliest_stage :: proc(t: ^testing.T
     plant_support(&support, &exclusions)
     flower_count := 0
     for seed in u64(70) ..= 90 {
-        plant := plants.generate(
-            {
-                species = .Bougainvillea,
-                seed = seed,
-                maturity = .20,
-                detail = .Near,
-                habit = .Wall_Trained,
-                support = &support,
-            },
-        )
+        plant := plants.generate({
+            species  = .Bougainvillea,
+            seed     = seed,
+            maturity = .20,
+            detail   = .Near,
+            habit    = .Wall_Trained,
+            support  = &support,
+        })
         testing.expect_value(t, plant.error, plants.Generate_Error.None)
         for attachment in plant.plant.attachments {
             if attachment.kind != .Flower do continue

@@ -1,9 +1,6 @@
 package plants
 
-generate_architecture_stage :: proc(
-    config: Generate_Config,
-    maturity: f32,
-) -> (Plant_Graph, Generate_Error) {
+generate_architecture_stage :: proc(config: Generate_Config, maturity: f32) -> (Plant_Graph, Generate_Error) {
     graph: Plant_Graph
     switch config.species {
     case .Olive,

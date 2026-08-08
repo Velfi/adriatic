@@ -1,18 +1,18 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import dio "zelda_engine:dio"
 import fog_field "../packages/fog_field"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 import engine "zelda_engine:engine"
 import resources "zelda_engine:render_resources"
+import third_person "zelda_engine:third_person"
 
 DYNAMIC_SHADOW_CASCADE_COUNT :: 3
 DYNAMIC_SHADOW_RESOLUTIONS := [DYNAMIC_SHADOW_CASCADE_COUNT]u32{2048, 1024, 1024}
@@ -563,10 +563,17 @@ shadow_plant_position :: proc(
     structural_compliance := linalg.lerp(f32(.35), f32(1.15), clamp(1 - vertex.stiffness, f32(0), f32(1)))
     broad := math.sin(phase) + math.sin(phase * .47 + 1.9) * .34
     position +=
-        direction * broad * amplitude * structural_compliance *
+        direction *
+        broad *
+        amplitude *
+        structural_compliance *
         (root_weight * .55 + primary_weight * .32 + secondary_weight * .18)
     position +=
-        across * math.sin(phase * 1.31 + vertex.phase + 4.2) * amplitude * structural_compliance * .07 *
+        across *
+        math.sin(phase * 1.31 + vertex.phase + 4.2) *
+        amplitude *
+        structural_compliance *
+        .07 *
         (primary_weight + secondary_weight)
     position.y -= amplitude * structural_compliance * .018 * root_weight
     if vertex.flutter > 0 && instance.plant_motion[2] > 0 {
@@ -596,7 +603,7 @@ shadow_plant_transition_visible :: proc(a, b, c: third_person.Vec3, opacity: f32
     if opacity <= .001 do return false
     x := f32(math.floor(f64((a.x + b.x + c.x) / 3 * 3.5))) + 17.3
     y := f32(math.floor(f64((a.z + b.z + c.z) / 3 * 3.5))) + 41.7
-    fract := proc(value: f32) -> f32 {return value - f32(math.floor(f64(value)))}
+    fract := proc(value: f32) -> f32 { return value - f32(math.floor(f64(value))) }
     p3 := third_person.Vec3{fract(x * .1031), fract(y * .1031), fract(x * .1031)}
     dot_value := p3.x * (p3.y + 33.33) + p3.y * (p3.z + 33.33) + p3.z * (p3.x + 33.33)
     p3 += third_person.Vec3{dot_value, dot_value, dot_value}

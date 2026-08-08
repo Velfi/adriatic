@@ -81,15 +81,12 @@ world_spatial_sync_structures :: proc(editor: ^Editor) {
         bounds := world_structure_bounds_2d(structure)
         existing, found := world_renderer.spatial_index.objects[id]
         if !found || existing.bounds != bounds {
-            world_spatial_index_upsert(
-                &world_renderer.spatial_index,
-                {
-                    id = id,
-                    bounds = bounds,
-                    source_revision = editor.project.revision,
-                    terrain_revision = editor.terrain_revision,
-                },
-            )
+            world_spatial_index_upsert(&world_renderer.spatial_index, {
+                id               = id,
+                bounds           = bounds,
+                source_revision  = editor.project.revision,
+                terrain_revision = editor.terrain_revision,
+            })
         } else {
             existing.source_revision = editor.project.revision
             existing.terrain_revision = editor.terrain_revision

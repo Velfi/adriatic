@@ -149,19 +149,16 @@ generate :: proc(
         tangent := delta / distance
         normal := Vec2{-tangent.y, tangent.x} * half_width
         step_height := max(config.minimum_ground_step, f32(.01))
-        append(
-            &plan.spans,
-            Span {
-                from = from,
-                to = to,
-                left_from = stepped_ground(terrain_height, terrain_data, from + normal, step_height),
-                right_from = stepped_ground(terrain_height, terrain_data, from - normal, step_height),
-                left_to = stepped_ground(terrain_height, terrain_data, to + normal, step_height),
-                right_to = stepped_ground(terrain_height, terrain_data, to - normal, step_height),
-                station_from = station,
-                station_to = station + distance,
-            },
-        )
+        append(&plan.spans, Span {
+            from         = from,
+            to           = to,
+            left_from    = stepped_ground(terrain_height, terrain_data, from + normal, step_height),
+            right_from   = stepped_ground(terrain_height, terrain_data, from - normal, step_height),
+            left_to      = stepped_ground(terrain_height, terrain_data, to + normal, step_height),
+            right_to     = stepped_ground(terrain_height, terrain_data, to - normal, step_height),
+            station_from = station,
+            station_to   = station + distance,
+        })
         station += distance
         previous = to
     }
@@ -178,17 +175,14 @@ generate :: proc(
                 position := span.from + (span.to - span.from) * t
                 tangent := span.to - span.from
                 tangent /= max(vec2_length(tangent), f32(.000001))
-                append(
-                    &plan.arches,
-                    Arch {
-                        position = position,
-                        tangent = tangent,
-                        ground = sample_ground(terrain_height, terrain_data, position),
-                        station = station_target,
-                        width = config.arch_width,
-                        height = config.arch_height,
-                    },
-                )
+                append(&plan.arches, Arch {
+                    position = position,
+                    tangent  = tangent,
+                    ground   = sample_ground(terrain_height, terrain_data, position),
+                    station  = station_target,
+                    width    = config.arch_width,
+                    height   = config.arch_height,
+                })
                 break
             }
         }

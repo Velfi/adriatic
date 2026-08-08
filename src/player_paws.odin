@@ -2,10 +2,10 @@ package main
 
 import mouse_gait "../packages/mouse_gait"
 import mouse_paws "../packages/mouse_paws"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 PLAYER_PAW_RAY_RISE :: f32(.20)
 PLAYER_PAW_RAY_LENGTH :: f32(.48)

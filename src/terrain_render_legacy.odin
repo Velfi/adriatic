@@ -5,7 +5,6 @@ import postale_game "../packages/postale"
 import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
@@ -15,6 +14,7 @@ import "core:time"
 import timezone "core:time/timezone"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 draw_terrain :: proc(editor: ^Editor, width, height: i32, time: f32) {
     // The depth-tested world pass has already drawn the game/editor scene.

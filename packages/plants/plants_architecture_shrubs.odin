@@ -26,8 +26,16 @@ oleander_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plant_
         for node in 0 ..< 6 {
             next := position + direction * (.105 + f32(node) * .006) * growth
             parent = graph_builder_internode(
-                &builder, axis, unit, parent, position, next, radius, radius * .84,
-                key * 256 + u64(node), emergence + f32(node) * .025,
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                radius,
+                radius * .84,
+                key * 256 + u64(node),
+                emergence + f32(node) * .025,
             )
             tangent := linalg.normalize0(linalg.cross(direction, radial))
             if linalg.dot(tangent, tangent) < .1 do tangent = {1, 0, 0}
@@ -39,20 +47,38 @@ oleander_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plant_
                     tangent * math.cos(leaf_angle) + binormal * math.sin(leaf_angle) + direction * .16,
                 )
                 _ = graph_builder_organ(
-                    &builder, parent, 1, .Leaf, leaf_forward, direction,
-                    key * 4096 + u64(node) * 8 + u64(leaf), emergence + f32(node) * .025, u8(leaf),
+                    &builder,
+                    parent,
+                    1,
+                    .Leaf,
+                    leaf_forward,
+                    direction,
+                    key * 4096 + u64(node) * 8 + u64(leaf),
+                    emergence + f32(node) * .025,
+                    u8(leaf),
                 )
             }
             if detail != .Far && node >= 4 {
                 side := cane & 1 == 0 ? tangent : -tangent
                 flower_axis := graph_builder_shoot(
-                    &builder, parent, linalg.normalize0(direction * .35 + side * .75), .11 * growth,
-                    radius * .42, .Flowering_Shoot, .Arching, key * 64 + u64(node),
+                    &builder,
+                    parent,
+                    linalg.normalize0(direction * .35 + side * .75),
+                    .11 * growth,
+                    radius * .42,
+                    .Flowering_Shoot,
+                    .Arching,
+                    key * 64 + u64(node),
                     max(f32(.48), emergence + f32(node) * .025),
                 )
                 if flower_axis >= 0 {
                     organ := graph_builder_reproductive(
-                        &builder, len(builder.graph.internodes) - 1, 1, .Flower, key * 8192 + u64(node), .48,
+                        &builder,
+                        len(builder.graph.internodes) - 1,
+                        1,
+                        .Flower,
+                        key * 8192 + u64(node),
+                        .48,
                     )
                     if organ >= 0 do builder.graph.organs[organ].render_depth = -9
                 }
@@ -79,8 +105,15 @@ agapanthus_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plan
         ring := leaf % 3
         forward := linalg.normalize0(radial + plant_structure.Vec3{0, .32 + .12 * f32(ring), 0})
         _ = graph_builder_organ(
-            &builder, core, 0, .Rosette_Leaf, forward, {-radial[2], 0, radial[0]},
-            1000 + u64(leaf), f32(leaf) * .006, u8(leaf & 3),
+            &builder,
+            core,
+            0,
+            .Rosette_Leaf,
+            forward,
+            {-radial[2], 0, radial[0]},
+            1000 + u64(leaf),
+            f32(leaf) * .006,
+            u8(leaf & 3),
         )
     }
     if detail != .Far {
@@ -91,13 +124,26 @@ agapanthus_graph :: proc(seed: u64, maturity: f32, detail: Detail_Level) -> Plan
             radial := plant_structure.Vec3{math.cos(angle), 0, math.sin(angle)}
             start := radial * (.035 + f32(scape % 2) * .018)
             scape_axis, scape_unit, visible := graph_builder_axis(
-                &builder, -1, -1, .Inflorescence, .Orthotropic, key, .42 + f32(scape) * .035,
+                &builder,
+                -1,
+                -1,
+                .Inflorescence,
+                .Orthotropic,
+                key,
+                .42 + f32(scape) * .035,
             )
             if !visible do continue
             node := graph_builder_internode(
-                &builder, scape_axis, scape_unit, -1, start,
+                &builder,
+                scape_axis,
+                scape_unit,
+                -1,
+                start,
                 start + radial * .120 + plant_structure.Vec3{0, (.60 + f32(scape) * .055) * growth, 0},
-                .009, .0045, key * 256, .42 + f32(scape) * .035,
+                .009,
+                .0045,
+                key * 256,
+                .42 + f32(scape) * .035,
             )
             organ := graph_builder_reproductive(&builder, node, 1, .Flower, key * 256 + 1, .42)
             if organ >= 0 do builder.graph.organs[organ].render_depth = -5
@@ -147,21 +193,44 @@ native_herb_graph :: proc(species: Species, seed: u64, maturity: f32, detail: De
         current_radius := radius * (.30 + maturity * .70)
         for node in 0 ..< node_count {
             progress := f32(node + 1) / f32(node_count)
-            next := radial * spread * growth * progress + plant_structure.Vec3{0, height * growth * progress, 0} +
+            next :=
+                radial * spread * growth * progress +
+                plant_structure.Vec3{0, height * growth * progress, 0} +
                 tangent * math.sin(progress * math.PI) * .025 * growth
             parent = graph_builder_internode(
-                &builder, axis, unit, parent, position, next, current_radius, current_radius * .72,
-                key * 256 + u64(node), emergence + f32(node) * .055,
+                &builder,
+                axis,
+                unit,
+                parent,
+                position,
+                next,
+                current_radius,
+                current_radius * .72,
+                key * 256 + u64(node),
+                emergence + f32(node) * .055,
             )
             if parent >= 0 {
                 leaf_tilt := species == .Rosemary || species == .Lavender ? f32(.30) : f32(.16)
                 _ = graph_builder_organ(
-                    &builder, parent, .72, .Leaf, linalg.normalize0(tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
-                    radial, key * 1024 + u64(node) * 2, emergence + f32(node) * .055,
+                    &builder,
+                    parent,
+                    .72,
+                    .Leaf,
+                    linalg.normalize0(tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
+                    radial,
+                    key * 1024 + u64(node) * 2,
+                    emergence + f32(node) * .055,
                 )
                 _ = graph_builder_organ(
-                    &builder, parent, .72, .Leaf, linalg.normalize0(-tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
-                    -radial, key * 1024 + u64(node) * 2 + 1, emergence + f32(node) * .055, 1,
+                    &builder,
+                    parent,
+                    .72,
+                    .Leaf,
+                    linalg.normalize0(-tangent + plant_structure.Vec3{0, leaf_tilt, 0}),
+                    -radial,
+                    key * 1024 + u64(node) * 2 + 1,
+                    emergence + f32(node) * .055,
+                    1,
                 )
             }
             position = next
@@ -169,7 +238,12 @@ native_herb_graph :: proc(species: Species, seed: u64, maturity: f32, detail: De
         }
         if flower_modulus > 0 && stem % flower_modulus != 0 && parent >= 0 && detail != .Far {
             organ := graph_builder_reproductive(
-                &builder, parent, 1, .Flower, key * 4096, max(flower_emergence, emergence),
+                &builder,
+                parent,
+                1,
+                .Flower,
+                key * 4096,
+                max(flower_emergence, emergence),
             )
             if organ >= 0 do builder.graph.organs[organ].render_depth = flower_depth
         }

@@ -97,16 +97,17 @@ lab_flat_terrain_load :: proc(
     if editor == nil || height != height || math.is_inf_f32(height) do return false
     // Keep the ordinary terrain samplers useful for actors and props inside a
     // lab while the renderer supplies the genuinely unbounded visual plane.
-    if !lab_terrain_load(
-        editor,
-        {
-            sea_level = height - 64,
-            outside_height = height,
-            outside_material = material,
-        },
-    ) {
+    if !lab_terrain_load(editor, {
+        sea_level        = height - 64,
+        outside_height   = height,
+        outside_material = material,
+    }) {
         return false
     }
-    editor.lab_flat_terrain = {enabled = true, height = height, color = color}
+    editor.lab_flat_terrain = {
+        enabled = true,
+        height  = height,
+        color   = color,
+    }
     return true
 }

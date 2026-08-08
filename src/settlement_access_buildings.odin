@@ -235,16 +235,13 @@ settlement_access_promote_circulation_links :: proc(
         if path_length >= best_existing * .82 do continue
         passage_half_width := settlement_circulation_link_half_width(plan.request.scale)
         for point_index in 0 ..< path.count - 1 {
-            append(
-                &city_plan.alleys,
-                architecture.City_Alley {
-                    start_x = path.points[point_index][0],
-                    start_z = path.points[point_index][1],
-                    end_x = path.points[point_index + 1][0],
-                    end_z = path.points[point_index + 1][1],
-                    half_width = passage_half_width,
-                },
-            )
+            append(&city_plan.alleys, architecture.City_Alley {
+                start_x    = path.points[point_index][0],
+                start_z    = path.points[point_index][1],
+                end_x      = path.points[point_index + 1][0],
+                end_z      = path.points[point_index + 1][1],
+                half_width = passage_half_width,
+            })
             city_plan.alley_count += 1
         }
         settlement_access_split_intersections(city_plan)
@@ -596,18 +593,15 @@ settlement_access_append_public_path :: proc(
         end_terminal := architecture.City_Alley_Terminal.None
         if index == 0 do start_terminal = .Public_Space
         if road_at_finish && index == path.count - 2 do end_terminal = .Road
-        append(
-            &city_plan.alleys,
-            architecture.City_Alley {
-                start_x = path.points[index][0],
-                start_z = path.points[index][1],
-                end_x = path.points[index + 1][0],
-                end_z = path.points[index + 1][1],
-                half_width = 1.2,
-                start_terminal = start_terminal,
-                end_terminal = end_terminal,
-            },
-        )
+        append(&city_plan.alleys, architecture.City_Alley {
+            start_x        = path.points[index][0],
+            start_z        = path.points[index][1],
+            end_x          = path.points[index + 1][0],
+            end_z          = path.points[index + 1][1],
+            half_width     = 1.2,
+            start_terminal = start_terminal,
+            end_terminal   = end_terminal,
+        })
         city_plan.alley_count += 1
     }
 }

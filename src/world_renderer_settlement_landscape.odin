@@ -5,13 +5,13 @@ import "core:time"
 import architecture "../packages/architecture"
 import buildings "../packages/buildings"
 import circulation "../packages/circulation"
-import dio "zelda_engine:dio"
 import fountains "../packages/fountains"
 import plants "../packages/plants"
 import plazas "../packages/plazas"
 import terrain "../packages/terrain"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
 
 world_town_mouse_wheel_position :: proc(area: circulation.Area) -> (x, z: f32) {
     wheel_radius := f32(1.68)
@@ -167,15 +167,12 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
                 if area_index != primary_plaza_index && min(area.width, area.length) >= 16 {
                     fountain_radius := clamp(min(area.width, area.length) * .16, f32(2.4), f32(5.2))
                     fountain_style := fountains.Style(plazas.mix(seed ~ 0xA53C91E5) % 3)
-                    fountain := fountains.generate(
-                        seed ~ 0xF017A17,
-                        {
-                            radius = fountain_radius,
-                            style = fountain_style,
-                            jet_count = clamp(int(fountain_radius * 2.5), 6, 16),
-                            jet_height = fountain_radius * .72,
-                        },
-                    )
+                    fountain := fountains.generate(seed ~ 0xF017A17, {
+                        radius     = fountain_radius,
+                        style      = fountain_style,
+                        jet_count  = clamp(int(fountain_radius * 2.5), 6, 16),
+                        jet_height = fountain_radius * .72,
+                    })
                     fountain_y := terrain.sample_surface_height(&editor.project, 0, area.center_x, area.center_z) + .24
                     world_fountain_structure(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
                 }
@@ -223,15 +220,12 @@ world_architecture_streets :: proc(editor: ^Editor, sun_direction: [3]f32, cloud
             seed := u32(i32(area.center_x * 10)) ~ (u32(i32(area.center_z * 10)) * u32(0x9e3779b9))
             fountain_radius := clamp(min(area.width, area.length) * .16, f32(2.4), f32(5.2))
             fountain_style := fountains.Style(plazas.mix(seed ~ 0xA53C91E5) % 3)
-            fountain := fountains.generate(
-                seed ~ 0xF017A17,
-                {
-                    radius = fountain_radius,
-                    style = fountain_style,
-                    jet_count = clamp(int(fountain_radius * 2.5), 6, 16),
-                    jet_height = fountain_radius * .72,
-                },
-            )
+            fountain := fountains.generate(seed ~ 0xF017A17, {
+                radius     = fountain_radius,
+                style      = fountain_style,
+                jet_count  = clamp(int(fountain_radius * 2.5), 6, 16),
+                jet_height = fountain_radius * .72,
+            })
             fountain_y := terrain.sample_surface_height(&editor.project, 0, area.center_x, area.center_z) + .24
             world_fountain_effects(&fountain, {area.center_x, fountain_y, area.center_z}, area.rotation)
         }

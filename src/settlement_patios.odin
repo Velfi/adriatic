@@ -2,10 +2,10 @@ package main
 
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 SETTLEMENT_PATIO_CAPACITY :: 48
 

@@ -3,11 +3,11 @@ import "core:math"
 
 import flight "../packages/flight"
 import mouse_gait "../packages/mouse_gait"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 world_vehicle_showcase :: proc(editor: ^Editor) {
     // The showcase is intentionally self-contained: the vehicle is presented
@@ -59,23 +59,19 @@ world_showcase_aircraft_pilot :: proc(
         position.y + basis.up.y * seat_height,
         position.z + basis.up.z * seat_height,
     }
-    world_mouse_model_parented(
-        editor,
-        {
-            position = seat_position,
-            rotation = rotation,
-            accessory = editor.mouse_headgear,
-            fur = editor.mouse_fur,
-            pattern = editor.mouse_pattern,
-            scarf_enabled = editor.mouse_scarf_enabled,
-            scarf_color = editor.mouse_scarf_color,
+    world_mouse_model_parented(editor, {
+            position          = seat_position,
+            rotation          = rotation,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
             player_controlled = true,
-            grounded = false,
-            hide_tail = true,
-            hide_hind_feet = true,
-        },
-        basis,
-    )
+            grounded          = false,
+            hide_tail         = true,
+            hide_hind_feet    = true,
+        }, basis)
 }
 
 world_rondine_pilot :: proc(editor: ^Editor) {

@@ -3,11 +3,11 @@ package main
 import atmosphere "../packages/atmosphere"
 import mouse_gait "../packages/mouse_gait"
 import particle_systems "../packages/particles"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 MOUSE_GAIT_LAB_SPEEDS := [5]f32{2.6, 6.4, 9.0, 9.8, 11.2}
 MOUSE_GAIT_LAB_NAMES := [5]string{"WALK", "TROT", "TROT / GALLOP", "GALLOP", "FULL BOUND"}
@@ -363,21 +363,18 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
         // Keep the inspection actor near the optical center. The former flat-
         // ground placement at x=-4.25 fell outside the authored camera's
         // horizontal frustum even though the course itself remained visible.
-        world_mouse_model(
-            editor,
-            {
-                position = mouse_gait_lab_course_actor_position,
-                rotation = editor.player.facing_yaw_radians,
-                fur = Mouse_Fur(1),
-                pattern = .Solid,
-                grounded = true,
-                player_controlled = true,
-                track_paw_plants = true,
-                gait_preview = true,
-                gait_speed = 2.6,
-                gait_phase = math.PI * 1.72,
-            },
-        )
+        world_mouse_model(editor, {
+            position          = mouse_gait_lab_course_actor_position,
+            rotation          = editor.player.facing_yaw_radians,
+            fur               = Mouse_Fur(1),
+            pattern           = .Solid,
+            grounded          = true,
+            player_controlled = true,
+            track_paw_plants  = true,
+            gait_preview      = true,
+            gait_speed        = 2.6,
+            gait_phase        = math.PI * 1.72,
+        })
         return
     }
     track_length := f32(12)
@@ -417,20 +414,17 @@ world_mouse_gait_lab :: proc(editor: ^Editor) {
         if mouse_gait_lab_focus_lane >= 0 && mouse_gait_lab_show_paths {
             world_mouse_gait_paw_paths(editor, speed, z, -math.PI * .5)
         }
-        world_mouse_model(
-            editor,
-            {
-                position = {0, 0, z},
-                rotation = -math.PI * .5,
-                fur = Mouse_Fur(lane),
-                pattern = .Solid,
-                grounded = true,
-                gait_preview = true,
-                gait_speed = speed,
-                gait_phase = phase,
-                player_controlled = mouse_gait_lab_stop_spray || mouse_gait_lab_scurry,
-            },
-        )
+        world_mouse_model(editor, {
+            position          = {0, 0, z},
+            rotation          = -math.PI * .5,
+            fur               = Mouse_Fur(lane),
+            pattern           = .Solid,
+            grounded          = true,
+            gait_preview      = true,
+            gait_speed        = speed,
+            gait_phase        = phase,
+            player_controlled = mouse_gait_lab_stop_spray || mouse_gait_lab_scurry,
+        })
     }
     if mouse_gait_lab_stop_spray || mouse_gait_lab_scurry do world_player_terrain_particles(editor)
 }

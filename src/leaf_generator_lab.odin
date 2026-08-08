@@ -2,11 +2,11 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import leaves "../packages/leaf_mesh"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 leaf_generator_shape := leaves.Shape.Elliptic
 leaf_generator_serration := f32(0)
@@ -16,12 +16,17 @@ leaf_generator_focus_triptych := false
 leaf_generator_veins := true
 leaf_generator_shape_dropdown_open := false
 
-leaf_generator_shape_dropdown_bounds :: proc() -> canvas2d.Rectangle {return {38, 60, 210, 28}}
-leaf_generator_shape_option_bounds :: proc(index: int) -> canvas2d.Rectangle {return {38, 88 + f32(index) * 25, 210, 25}}
-leaf_generator_gallery_bounds :: proc() -> canvas2d.Rectangle {return {260, 60, 92, 28}}
-leaf_generator_texture_bounds :: proc() -> canvas2d.Rectangle {return {364, 60, 92, 28}}
-leaf_generator_edge_bounds :: proc() -> canvas2d.Rectangle {return {38, 101, 128, 28}}
-leaf_generator_curl_bounds :: proc() -> canvas2d.Rectangle {return {178, 101, 128, 28}}
+leaf_generator_shape_dropdown_bounds :: proc() -> canvas2d.Rectangle { return {38, 60, 210, 28} }
+leaf_generator_shape_option_bounds :: proc(index: int) -> canvas2d.Rectangle { return {
+        38,
+        88 + f32(index) * 25,
+        210,
+        25,
+    } }
+leaf_generator_gallery_bounds :: proc() -> canvas2d.Rectangle { return {260, 60, 92, 28} }
+leaf_generator_texture_bounds :: proc() -> canvas2d.Rectangle { return {364, 60, 92, 28} }
+leaf_generator_edge_bounds :: proc() -> canvas2d.Rectangle { return {38, 101, 128, 28} }
+leaf_generator_curl_bounds :: proc() -> canvas2d.Rectangle { return {178, 101, 128, 28} }
 
 leaf_generator_shape_slug :: proc(shape: leaves.Shape) -> string {
     switch shape {
@@ -237,12 +242,23 @@ leaf_generator_draw_mesh :: proc(shape: leaves.Shape, origin: third_person.Vec3,
         color_b := leaf_generator_pigment(base_color, tip_color, vb.uv)
         color_c := leaf_generator_pigment(base_color, tip_color, vc.uv)
         if leaf_generator_veins {
-        if shape == .Pine_Needle_Clump {
-            world_triangle_foliage(a, b, c, base_color, base_color, tip_color, normal_a, normal_b, normal_c, .Leaf)
-            world_triangle_foliage(c, b, a, tip_color, base_color, base_color, -normal_c, -normal_b, -normal_a, .Leaf)
-            continue
-        }
-        world_triangle_leaf_textured(
+            if shape == .Pine_Needle_Clump {
+                world_triangle_foliage(a, b, c, base_color, base_color, tip_color, normal_a, normal_b, normal_c, .Leaf)
+                world_triangle_foliage(
+                    c,
+                    b,
+                    a,
+                    tip_color,
+                    base_color,
+                    base_color,
+                    -normal_c,
+                    -normal_b,
+                    -normal_a,
+                    .Leaf,
+                )
+                continue
+            }
+            world_triangle_leaf_textured(
                 a,
                 b,
                 c,
@@ -359,11 +375,27 @@ leaf_generator_lab_draw_ui :: proc(editor: ^Editor, width: i32, height: i32) {
     canvas2d.DrawRectangleRoundedLinesEx(panel, .14, 8, 1, {111, 146, 111, 255})
     canvas2d.DrawTextEx(canvas2d.Font{}, "LEAF MESH GENERATOR", {38, 38}, 18, 1, {232, 224, 189, 255})
     dropdown := leaf_generator_shape_dropdown_bounds()
-    lab_ui_draw_button(dropdown, fmt.ctprintf("%s  %s", leaves.shape_name(leaf_generator_shape), leaf_generator_shape_dropdown_open ? "^" : "v"), leaf_generator_isolated)
+    lab_ui_draw_button(
+        dropdown,
+        fmt.ctprintf(
+            "%s  %s",
+            leaves.shape_name(leaf_generator_shape),
+            leaf_generator_shape_dropdown_open ? "^" : "v",
+        ),
+        leaf_generator_isolated,
+    )
     lab_ui_draw_button(leaf_generator_gallery_bounds(), "GALLERY", !leaf_generator_isolated)
     lab_ui_draw_button(leaf_generator_texture_bounds(), "TEXTURE", leaf_generator_veins)
-    lab_ui_draw_button(leaf_generator_edge_bounds(), fmt.ctprintf("EDGE  %.0f%%", leaf_generator_effective_serration(leaf_generator_shape) * 100), leaf_generator_serration > 0)
-    lab_ui_draw_button(leaf_generator_curl_bounds(), fmt.ctprintf("CURL  %.2f", leaf_generator_curl), leaf_generator_curl > 0)
+    lab_ui_draw_button(
+        leaf_generator_edge_bounds(),
+        fmt.ctprintf("EDGE  %.0f%%", leaf_generator_effective_serration(leaf_generator_shape) * 100),
+        leaf_generator_serration > 0,
+    )
+    lab_ui_draw_button(
+        leaf_generator_curl_bounds(),
+        fmt.ctprintf("CURL  %.2f", leaf_generator_curl),
+        leaf_generator_curl > 0,
+    )
     if leaf_generator_focus_triptych {
         shapes := [3]leaves.Shape{.Fig, .Grapevine, .Ivy}
         for shape, column in shapes {
@@ -382,9 +414,19 @@ leaf_generator_lab_draw_ui :: proc(editor: ^Editor, width: i32, height: i32) {
             bounds := leaf_generator_shape_option_bounds(index)
             selected := index == int(leaf_generator_shape)
             hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
-            canvas2d.DrawRectangleRec(bounds, (selected || hovered) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250})
+            canvas2d.DrawRectangleRec(
+                bounds,
+                (selected || hovered) ? canvas2d.Color{57, 68, 63, 255} : canvas2d.Color{29, 35, 33, 250},
+            )
             canvas2d.DrawRectangleRoundedLinesEx(bounds, 0, 1, 1, {107, 121, 104, 255})
-            canvas2d.DrawTextEx(canvas2d.Font{}, fmt.ctprintf("%s", leaves.shape_name(leaves.Shape(index))), {bounds.x + 10, bounds.y + 6}, 11, 1, {232, 224, 189, 255})
+            canvas2d.DrawTextEx(
+                canvas2d.Font{},
+                fmt.ctprintf("%s", leaves.shape_name(leaves.Shape(index))),
+                {bounds.x + 10, bounds.y + 6},
+                11,
+                1,
+                {232, 224, 189, 255},
+            )
         }
     }
 }

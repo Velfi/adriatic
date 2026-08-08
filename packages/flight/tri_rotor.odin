@@ -47,7 +47,7 @@ libellula_airframe :: proc() -> Tri_Rotor_Airframe {
     }
 }
 
-default_tri_rotor_runtime :: proc() -> Tri_Rotor_Runtime {return{
+default_tri_rotor_runtime :: proc() -> Tri_Rotor_Runtime {return {
         left_engine_output = 1,
         right_engine_output = 1,
         rear_engine_output = 1,

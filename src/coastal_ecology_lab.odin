@@ -2,11 +2,11 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import rocky "../packages/coastal_ecology"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 ROCKY_BEACH_DEFAULT_SEED :: u32(0x54494445)
 
@@ -52,17 +52,13 @@ rocky_beach_lab_terrain_sample :: proc(_: ^Editor, world_x, world_z: f32) -> Lab
 rocky_beach_regenerate :: proc(editor: ^Editor) {
     rocky_beach_plan = rocky.generate(rocky_beach_config)
     if editor == nil do return
-    _ = lab_terrain_load(
-        editor,
-        {
-            half_extent_x = rocky_beach_config.width * .5,
-            half_extent_z = rocky_beach_config.depth * .5,
-            sea_level = rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase),
-            outside_height = 5.5,
+    _ = lab_terrain_load(editor, {
+            half_extent_x    = rocky_beach_config.width * .5,
+            half_extent_z    = rocky_beach_config.depth * .5,
+            sea_level        = rocky.tide_height(rocky_beach_config, rocky_beach_tide_phase),
+            outside_height   = 5.5,
             outside_material = -.08,
-        },
-        rocky_beach_lab_terrain_sample,
-    )
+        }, rocky_beach_lab_terrain_sample)
 }
 
 rocky_beach_lab_configure :: proc(editor: ^Editor, target: string) -> bool {

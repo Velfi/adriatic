@@ -73,31 +73,27 @@ gameplay_physics_drives_car_forward_across_frames :: proc(t: ^testing.T) {
 
     floor := physics.add_box(editor.gameplay_physics.world, {20, .5, 20}, {0, -.5, 0}, .Static)
     testing.expect(t, floor != physics.INVALID_BODY)
-    vehicle := physics.create_vehicle(
-        editor.gameplay_physics.world,
-        {
-            half_width = .7,
-            half_height = .25,
-            half_length = 1.2,
-            mass = 700,
-            center_of_mass_offset_y = -.15,
-            wheel_x = .78,
-            front_wheel_z = .82,
-            rear_wheel_z = -.82,
-            wheel_y = -.2,
-            wheel_radius = .32,
-            wheel_width = .24,
-            suspension_min = .08,
-            suspension_max = .3,
-            suspension_frequency = 2.4,
-            suspension_damping = .9,
-            max_steer_angle = .6,
-            max_engine_torque = 520,
-            max_brake_torque = 1100,
-            max_handbrake_torque = 1400,
-        },
-        {0, .75, 0},
-    )
+    vehicle := physics.create_vehicle(editor.gameplay_physics.world, {
+        half_width              = .7,
+        half_height             = .25,
+        half_length             = 1.2,
+        mass                    = 700,
+        center_of_mass_offset_y = -.15,
+        wheel_x                 = .78,
+        front_wheel_z           = .82,
+        rear_wheel_z            = -.82,
+        wheel_y                 = -.2,
+        wheel_radius            = .32,
+        wheel_width             = .24,
+        suspension_min          = .08,
+        suspension_max          = .3,
+        suspension_frequency    = 2.4,
+        suspension_damping      = .9,
+        max_steer_angle         = .6,
+        max_engine_torque       = 520,
+        max_brake_torque        = 1100,
+        max_handbrake_torque    = 1400,
+    }, {0, .75, 0})
     testing.expect(t, vehicle != nil)
     defer physics.destroy_vehicle(editor.gameplay_physics.world, vehicle)
 

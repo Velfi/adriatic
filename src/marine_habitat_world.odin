@@ -15,14 +15,11 @@ marine_habitat_append_plan_exclusions :: proc(
         append(exclusions, terrain.Marine_Habitat_Exclusion{center_x = point.x, center_z = point.z, radius = 14})
     }
     for edit in plan.terrain_edits[:plan.terrain_edit_count] {
-        append(
-            exclusions,
-            terrain.Marine_Habitat_Exclusion {
-                center_x = edit.center.x,
-                center_z = edit.center.z,
-                radius = edit.radius + 4,
-            },
-        )
+        append(exclusions, terrain.Marine_Habitat_Exclusion {
+            center_x = edit.center.x,
+            center_z = edit.center.z,
+            radius   = edit.radius + 4,
+        })
     }
 }
 

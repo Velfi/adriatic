@@ -2,12 +2,12 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import estuaries "../packages/estuaries"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:time"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 ESTUARY_LAB_HALF_X :: f32(620)
 ESTUARY_LAB_HALF_Z :: f32(620)

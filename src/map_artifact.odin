@@ -2,7 +2,6 @@ package main
 
 import fixture_file "../packages/fixture_file"
 import harbor "../packages/harbor"
-import hs "zelda_engine:hs"
 import marina "../packages/marina"
 import story "../packages/story"
 import terrain "../packages/terrain"
@@ -11,6 +10,7 @@ import "core:math"
 import "core:mem"
 import "core:os"
 import "core:strings"
+import hs "zelda_engine:hs"
 
 MAP_ARTIFACT_MAGIC :: [8]byte{'A', 'D', 'R', 'M', 'A', 'P', 0, 0}
 MAP_ARTIFACT_CONTAINER_VERSION :: u16(1)

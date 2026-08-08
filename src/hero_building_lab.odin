@@ -2,10 +2,10 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import hero "../packages/hero_buildings"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 hero_lab_kind := hero.Kind.Post_Office
 hero_lab_seed := u32(0x504f5354)
@@ -16,17 +16,14 @@ hero_lab_bays := 5
 hero_lab_height := f32(4.8)
 
 hero_lab_plan :: proc() -> hero.Plan {
-    return hero.generate(
-        hero_lab_seed,
-        {
-            kind = hero_lab_kind,
-            frontage = hero_lab_frontage,
-            depth = hero_lab_depth,
-            arcade_depth = hero_lab_arcade_depth,
-            bay_count = hero_lab_bays,
-            arcade_height = hero_lab_height,
-        },
-    )
+    return hero.generate(hero_lab_seed, {
+        kind          = hero_lab_kind,
+        frontage      = hero_lab_frontage,
+        depth         = hero_lab_depth,
+        arcade_depth  = hero_lab_arcade_depth,
+        bay_count     = hero_lab_bays,
+        arcade_height = hero_lab_height,
+    })
 }
 
 hero_lab_camera :: proc(editor: ^Editor) {

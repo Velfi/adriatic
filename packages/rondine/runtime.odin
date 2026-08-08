@@ -1,10 +1,10 @@
 package rondine
 
 import flight "../flight"
-import third_person "zelda_engine:third_person"
 import vehicles "../vehicles"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 GROUND_CLEARANCE :: f32(1.05)
 TARGET_SKIM_HEIGHT :: f32(3)

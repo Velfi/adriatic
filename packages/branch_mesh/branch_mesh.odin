@@ -138,14 +138,11 @@ append_ring :: proc(
         normal := linalg.normalize0(right * math.cos(angle) + up * math.sin(angle))
         lobing := math.sin(angle * 3 + phase) * .68 + math.sin(angle * 5 - phase * .73) * .32
         local_radius := radius * (1 + irregularity * lobing)
-        append(
-            &mesh.vertices,
-            Vertex {
-                position = center + normal * local_radius,
-                normal = normal,
-                bark_uv = {f32(side) / f32(radial_segments), along},
-            },
-        )
+        append(&mesh.vertices, Vertex {
+            position = center + normal * local_radius,
+            normal   = normal,
+            bark_uv  = {f32(side) / f32(radial_segments), along},
+        })
     }
     return first
 }

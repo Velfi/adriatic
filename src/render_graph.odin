@@ -1,11 +1,11 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import render_graph "zelda_engine:render_graph"
 import terrain "../packages/terrain"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
 import engine "zelda_engine:engine"
+import render_graph "zelda_engine:render_graph"
 
 Render_Graph_Context :: struct {
     pass:                     ^canvas2d.World_Pass_Context,
@@ -51,19 +51,17 @@ world_player_outline_mask_pass :: proc(pass: ^canvas2d.World_Mask_Pass_Context, 
     cmd := pass.frame.command_buffer
     engine.vk_cmd_label_begin(pass.ctx, cmd, "Adriatic / Player Outline Mask")
     viewport := vk.Viewport {
-        width = f32(pass.framebuffer_extent.width),
-        height = f32(pass.framebuffer_extent.height),
+        width    = f32(pass.framebuffer_extent.width),
+        height   = f32(pass.framebuffer_extent.height),
         minDepth = 0,
         maxDepth = 1,
     }
-    scissor := vk.Rect2D {extent = pass.framebuffer_extent}
+    scissor := vk.Rect2D {
+        extent = pass.framebuffer_extent,
+    }
     vk.CmdSetViewport(cmd, 0, 1, &viewport)
     vk.CmdSetScissor(cmd, 0, 1, &scissor)
-    vk.CmdBindPipeline(
-        cmd,
-        .GRAPHICS,
-        world_renderer.player_outline_mask_pipelines[sample_index],
-    )
+    vk.CmdBindPipeline(cmd, .GRAPHICS, world_renderer.player_outline_mask_pipelines[sample_index])
     vk.CmdPushConstants(
         cmd,
         world_renderer.layout,
@@ -75,13 +73,7 @@ world_player_outline_mask_pass :: proc(pass: ^canvas2d.World_Mask_Pass_Context, 
     offset := vk.DeviceSize(0)
     buffer := &world_renderer.vertex[pass.frame.frame_index]
     vk.CmdBindVertexBuffers(cmd, 0, 1, &buffer.handle, &offset)
-    vk.CmdDraw(
-        cmd,
-        u32(world_renderer.player_vertex_count),
-        1,
-        u32(world_renderer.player_vertex_first),
-        0,
-    )
+    vk.CmdDraw(cmd, u32(world_renderer.player_vertex_count), 1, u32(world_renderer.player_vertex_first), 0)
     engine.vk_cmd_label_end(pass.ctx, cmd)
 }
 

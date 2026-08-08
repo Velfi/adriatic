@@ -4,8 +4,8 @@ package main
 import dialogue "../packages/dialogue"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 run_prepare_vehicle_and_marta_capture :: proc(editor: ^Editor, using config: ^Run_Config) {
     if capture_car_mode && !capture_lab_mode {

@@ -4,12 +4,12 @@ import "core:math"
 import "core:testing"
 import "core:time"
 
-import dio "zelda_engine:dio"
 import particles "../packages/particles"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_frame_build_transient :: proc(editor: ^Editor) {
     profile := dio.flame_graph_begin(dio.flame_graph_current(), "world_frame_build_transient_dynamic")
@@ -53,21 +53,18 @@ world_frame_build_transient :: proc(editor: ^Editor) {
         world_ellipsoid_rotated({0, -.08, 0}, .72, .08, .72, 0, {40, 58, 61, 255})
         world_ellipsoid_rotated({0, -.025, 0}, .60, .035, .60, 0, {77, 112, 111, 255})
         world_renderer.player_vertex_first = len(world_renderer.vertices)
-        world_mouse_model(
-            editor,
-            {
-                position = {0, 0, 0},
-                rotation = editor.customization_preview_yaw + .65,
-                accessory = editor.mouse_headgear,
-                fur = editor.mouse_fur,
-                pattern = editor.mouse_pattern,
-                scarf_enabled = editor.mouse_scarf_enabled,
-                scarf_color = editor.mouse_scarf_color,
-                preview = true,
-                player_controlled = true,
-                grounded = false,
-            },
-        )
+        world_mouse_model(editor, {
+            position          = {0, 0, 0},
+            rotation          = editor.customization_preview_yaw + .65,
+            accessory         = editor.mouse_headgear,
+            fur               = editor.mouse_fur,
+            pattern           = editor.mouse_pattern,
+            scarf_enabled     = editor.mouse_scarf_enabled,
+            scarf_color       = editor.mouse_scarf_color,
+            preview           = true,
+            player_controlled = true,
+            grounded          = false,
+        })
         world_renderer.player_vertex_count = len(world_renderer.vertices) - world_renderer.player_vertex_first
         return
     }

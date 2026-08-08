@@ -4,9 +4,9 @@ import "core:math"
 import architecture "../packages/architecture"
 import facade_windows "../packages/facade_windows"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Shared weathered architectural metal. Its moderate response gives exterior
 // ironwork a readable highlight without making aged or painted pieces chrome.

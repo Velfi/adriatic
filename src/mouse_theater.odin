@@ -2,11 +2,11 @@ package main
 
 import atmosphere "../packages/atmosphere"
 import engine_sound "../packages/engine_sound"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strings"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Mouse Theater is a deterministic, transient cinematic stage. Its geometry is
 // generated each frame from a compact auditorium plan, leaving future shots
@@ -572,18 +572,14 @@ world_mouse_theater :: proc(editor: ^Editor) {
     world_mouse_theater_limelights(editor)
     world_mouse_theater_spotlight(editor)
     actor_position, actor_rotation, actor_gait_speed, actor_gait_phase := mouse_theater_actor_pose()
-    world_mouse_model_scaled(
-        editor,
-        {
-            position = actor_position,
-            rotation = actor_rotation,
-            fur = .Chestnut,
-            pattern = .Solid,
-            grounded = false,
+    world_mouse_model_scaled(editor, {
+            position     = actor_position,
+            rotation     = actor_rotation,
+            fur          = .Chestnut,
+            pattern      = .Solid,
+            grounded     = false,
             gait_preview = true,
-            gait_speed = actor_gait_speed,
-            gait_phase = actor_gait_phase,
-        },
-        1.55,
-    )
+            gait_speed   = actor_gait_speed,
+            gait_phase   = actor_gait_phase,
+        }, 1.55)
 }

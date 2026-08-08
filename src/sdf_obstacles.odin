@@ -2,10 +2,10 @@ package main
 
 import flight "../packages/flight"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 SDF_TORUS_MAJOR_SEGMENTS :: 16
 SDF_TORUS_TUBE_SEGMENTS :: 8
@@ -295,22 +295,37 @@ sdf_obstacle_pick_ray :: proc(
     return selected
 }
 
-sdf_obstacle_gizmo_screen_size :: proc(camera: Perspective_Camera, position: flight.Vec3, pixels: f32, width, height: i32) -> f32 {
+sdf_obstacle_gizmo_screen_size :: proc(
+    camera: Perspective_Camera,
+    position: flight.Vec3,
+    pixels: f32,
+    width, height: i32,
+) -> f32 {
     if height <= 0 || camera.focal_length <= 0 do return 0
     depth := linalg.dot(position - camera.position, camera.forward)
     if depth <= .08 do return 0
     return pixels * depth * 2 / (camera.focal_length * f32(height))
 }
 
-sdf_obstacle_projected_radius_pixels :: proc(camera: Perspective_Camera, position: flight.Vec3, radius: f32, height: i32) -> f32 {
+sdf_obstacle_projected_radius_pixels :: proc(
+    camera: Perspective_Camera,
+    position: flight.Vec3,
+    radius: f32,
+    height: i32,
+) -> f32 {
     if height <= 0 || camera.focal_length <= 0 || radius <= 0 do return 0
     depth := linalg.dot(position - camera.position, camera.forward)
     if depth <= .08 do return 0
     return radius * camera.focal_length * f32(height) / (2 * depth)
 }
 
-sdf_obstacle_projected_outer_radius_pixels :: proc(camera: Perspective_Camera, obstacle: SDF_Torus_Obstacle, height: i32) -> f32 {
-    outer_radius := (obstacle.major_radius + obstacle.tube_radius) * max(obstacle.scale.x, max(obstacle.scale.y, obstacle.scale.z))
+sdf_obstacle_projected_outer_radius_pixels :: proc(
+    camera: Perspective_Camera,
+    obstacle: SDF_Torus_Obstacle,
+    height: i32,
+) -> f32 {
+    outer_radius :=
+        (obstacle.major_radius + obstacle.tube_radius) * max(obstacle.scale.x, max(obstacle.scale.y, obstacle.scale.z))
     return sdf_obstacle_projected_radius_pixels(camera, obstacle.position, outer_radius, height)
 }
 
@@ -328,22 +343,26 @@ sdf_obstacle_initial_scale :: proc(camera: Perspective_Camera, position: flight.
     world_radius := sdf_obstacle_gizmo_screen_size(camera, position, SDF_OBSTACLE_INITIAL_RADIUS_PIXELS, width, height)
     default_outer_radius := SDF_OBSTACLE_DEFAULT_MAJOR_RADIUS + SDF_OBSTACLE_DEFAULT_TUBE_RADIUS
     if world_radius <= 0 || default_outer_radius <= 0 do return 1
-    return clamp(
-        world_radius / default_outer_radius,
-        SDF_OBSTACLE_MINIMUM_SCALE,
-        SDF_OBSTACLE_MAXIMUM_SCALE,
-    )
+    return clamp(world_radius / default_outer_radius, SDF_OBSTACLE_MINIMUM_SCALE, SDF_OBSTACLE_MAXIMUM_SCALE)
 }
 
 sdf_obstacle_gizmo_size :: proc(camera: Perspective_Camera, position: flight.Vec3, width, height: i32) -> f32 {
     return sdf_obstacle_gizmo_screen_size(camera, position, SDF_OBSTACLE_GIZMO_AXIS_PIXELS, width, height)
 }
 
-sdf_obstacle_rotation_ring_radius :: proc(camera: Perspective_Camera, position: flight.Vec3, width, height: i32) -> f32 {
+sdf_obstacle_rotation_ring_radius :: proc(
+    camera: Perspective_Camera,
+    position: flight.Vec3,
+    width, height: i32,
+) -> f32 {
     return sdf_obstacle_gizmo_screen_size(camera, position, SDF_OBSTACLE_ROTATION_RING_PIXELS, width, height)
 }
 
-sdf_obstacle_scale_handle_radius :: proc(camera: Perspective_Camera, position: flight.Vec3, width, height: i32) -> f32 {
+sdf_obstacle_scale_handle_radius :: proc(
+    camera: Perspective_Camera,
+    position: flight.Vec3,
+    width, height: i32,
+) -> f32 {
     return sdf_obstacle_gizmo_screen_size(camera, position, SDF_OBSTACLE_SCALE_HANDLE_PIXELS, width, height)
 }
 
@@ -357,15 +376,24 @@ sdf_obstacle_gizmo_stroke_size :: proc(camera: Perspective_Camera, position: fli
 
 sdf_obstacle_axis_vector :: proc(axis: SDF_Obstacle_Axis) -> flight.Vec3 {
     switch axis {
-    case .None: return {}
-    case .X: return {1, 0, 0}
-    case .Y: return {0, 1, 0}
-    case .Z: return {0, 0, 1}
+    case .None:
+        return {}
+    case .X:
+        return {1, 0, 0}
+    case .Y:
+        return {0, 1, 0}
+    case .Z:
+        return {0, 0, 1}
     }
     return {}
 }
 
-sdf_obstacle_ray_plane_point :: proc(origin, direction, plane_point, plane_normal: flight.Vec3) -> (flight.Vec3, bool) {
+sdf_obstacle_ray_plane_point :: proc(
+    origin, direction, plane_point, plane_normal: flight.Vec3,
+) -> (
+    flight.Vec3,
+    bool,
+) {
     denominator := linalg.dot(direction, plane_normal)
     if math.abs(denominator) <= .0001 do return {}, false
     distance := linalg.dot(plane_point - origin, plane_normal) / denominator
@@ -375,29 +403,47 @@ sdf_obstacle_ray_plane_point :: proc(origin, direction, plane_point, plane_norma
 
 sdf_obstacle_gizmo_axis_color :: #force_inline proc(axis: SDF_Obstacle_Axis) -> canvas2d.Color {
     switch axis {
-    case .None: return {}
-    case .X: return {224, 80, 72, 255}
-    case .Y: return {92, 190, 96, 255}
-    case .Z: return {76, 132, 224, 255}
+    case .None:
+        return {}
+    case .X:
+        return {224, 80, 72, 255}
+    case .Y:
+        return {92, 190, 96, 255}
+    case .Z:
+        return {76, 132, 224, 255}
     }
     return {}
 }
 
-sdf_obstacle_gizmo_axis_render_color :: #force_inline proc(mode: SDF_Obstacle_Gizmo_Mode, constrained_axis, axis: SDF_Obstacle_Axis) -> canvas2d.Color {
+sdf_obstacle_gizmo_axis_render_color :: #force_inline proc(
+    mode: SDF_Obstacle_Gizmo_Mode,
+    constrained_axis, axis: SDF_Obstacle_Axis,
+) -> canvas2d.Color {
     if (mode == .Translate || mode == .Rotate) && constrained_axis == axis && axis != .None do return SDF_OBSTACLE_GIZMO_ACTIVE_COLOR
     return sdf_obstacle_gizmo_axis_color(axis)
 }
 
-sdf_obstacle_scale_handle_color :: #force_inline proc(mode: SDF_Obstacle_Gizmo_Mode, constrained_axis, axis: SDF_Obstacle_Axis) -> canvas2d.Color {
+sdf_obstacle_scale_handle_color :: #force_inline proc(
+    mode: SDF_Obstacle_Gizmo_Mode,
+    constrained_axis, axis: SDF_Obstacle_Axis,
+) -> canvas2d.Color {
     if mode == .Scale && constrained_axis == axis && axis != .None do return SDF_OBSTACLE_GIZMO_ACTIVE_COLOR
     return sdf_obstacle_gizmo_axis_color(axis)
 }
 
-sdf_obstacle_gizmo_center_active :: #force_inline proc(mode: SDF_Obstacle_Gizmo_Mode, constrained_axis: SDF_Obstacle_Axis) -> bool {
+sdf_obstacle_gizmo_center_active :: #force_inline proc(
+    mode: SDF_Obstacle_Gizmo_Mode,
+    constrained_axis: SDF_Obstacle_Axis,
+) -> bool {
     return mode == .None || constrained_axis == .None
 }
 
-sdf_obstacle_axis_drag_point :: proc(origin, axis_direction, ray_origin, ray_direction: flight.Vec3) -> (flight.Vec3, bool) {
+sdf_obstacle_axis_drag_point :: proc(
+    origin, axis_direction, ray_origin, ray_direction: flight.Vec3,
+) -> (
+    flight.Vec3,
+    bool,
+) {
     if !(linalg.dot(axis_direction, axis_direction) > .0001) do return {}, false
     axis := linalg.normalize0(axis_direction)
     parallel := linalg.dot(ray_direction, axis)
@@ -410,21 +456,39 @@ sdf_obstacle_axis_drag_point :: proc(origin, axis_direction, ray_origin, ray_dir
     return origin + axis * axis_distance, true
 }
 
-sdf_obstacle_axis_drag_position :: proc(snapshot: flight.Vec3, axis: SDF_Obstacle_Axis, ray_origin, ray_direction: flight.Vec3) -> (flight.Vec3, bool) {
+sdf_obstacle_axis_drag_position :: proc(
+    snapshot: flight.Vec3,
+    axis: SDF_Obstacle_Axis,
+    ray_origin, ray_direction: flight.Vec3,
+) -> (
+    flight.Vec3,
+    bool,
+) {
     return sdf_obstacle_axis_drag_point(snapshot, sdf_obstacle_axis_vector(axis), ray_origin, ray_direction)
 }
 
-sdf_obstacle_free_drag_position :: proc(snapshot, ray_origin, ray_direction, camera_forward: flight.Vec3) -> (flight.Vec3, bool) {
+sdf_obstacle_free_drag_position :: proc(
+    snapshot, ray_origin, ray_direction, camera_forward: flight.Vec3,
+) -> (
+    flight.Vec3,
+    bool,
+) {
     return sdf_obstacle_ray_plane_point(ray_origin, ray_direction, snapshot, camera_forward)
 }
 
 sdf_obstacle_modal_active :: #force_inline proc(editor: ^Editor) -> bool {
-    return editor != nil && editor.sdf_obstacle_interaction.gizmo_mode != .None && editor.sdf_obstacle_interaction.transform_snapshot_valid
+    return(
+        editor != nil &&
+        editor.sdf_obstacle_interaction.gizmo_mode != .None &&
+        editor.sdf_obstacle_interaction.transform_snapshot_valid \
+    )
 }
 
 sdf_obstacle_modal_selection_matches :: #force_inline proc(editor: ^Editor) -> bool {
-    return sdf_obstacle_modal_active(editor) &&
-        editor.sdf_obstacle_selected == editor.sdf_obstacle_interaction.transform_snapshot_slot
+    return(
+        sdf_obstacle_modal_active(editor) &&
+        editor.sdf_obstacle_selected == editor.sdf_obstacle_interaction.transform_snapshot_slot \
+    )
 }
 
 sdf_obstacle_modal_finish :: proc(editor: ^Editor, cancel: bool) {
@@ -460,19 +524,32 @@ sdf_obstacle_modal_begin :: proc(editor: ^Editor, mode: SDF_Obstacle_Gizmo_Mode,
     return true
 }
 
-sdf_obstacle_rotation_angle :: proc(camera: Perspective_Camera, mouse: canvas2d.Vector2, position: flight.Vec3, width, height: i32) -> (f32, bool) {
+sdf_obstacle_rotation_angle :: proc(
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    position: flight.Vec3,
+    width, height: i32,
+) -> (
+    f32,
+    bool,
+) {
     center := project_3d(camera, position, width, height)
     if !center.visible do return 0, false
     x, y := mouse.x - center.position.x, mouse.y - center.position.y
-    if x*x + y*y < 16 do return 0, false
+    if x * x + y * y < 16 do return 0, false
     return f32(math.atan2(f64(y), f64(x))), true
 }
 
 sdf_obstacle_rotation_delta :: proc(from, to: f32) -> f32 {
-    return f32(math.atan2(f64(math.sin(to-from)), f64(math.cos(to-from))))
+    return f32(math.atan2(f64(math.sin(to - from)), f64(math.cos(to - from))))
 }
 
-sdf_obstacle_rotation_axis_update :: proc(editor: ^Editor, camera: Perspective_Camera, mouse: canvas2d.Vector2, width, height: i32) -> bool {
+sdf_obstacle_rotation_axis_update :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+) -> bool {
     interaction := &editor.sdf_obstacle_interaction
     snapshot := interaction.transform_snapshot
     local_axis := sdf_obstacle_axis_vector(interaction.constrained_axis)
@@ -488,15 +565,22 @@ sdf_obstacle_rotation_axis_update :: proc(editor: ^Editor, camera: Perspective_C
     }
     anchor_radial := interaction.drag_anchor_world - snapshot.position
     if !(linalg.dot(anchor_radial, anchor_radial) > .0001) do return true
-    delta := f32(math.atan2(
-        f64(linalg.dot(world_axis, linalg.cross(anchor_radial, radial))),
-        f64(linalg.dot(anchor_radial, radial)),
-    ))
+    delta := f32(
+        math.atan2(
+            f64(linalg.dot(world_axis, linalg.cross(anchor_radial, radial))),
+            f64(linalg.dot(anchor_radial, radial)),
+        ),
+    )
     local_delta := linalg.quaternion_angle_axis(delta, local_axis)
     return sdf_obstacle_set_rotation(editor, linalg.mul(snapshot.rotation, local_delta))
 }
 
-sdf_obstacle_rotation_update :: proc(editor: ^Editor, camera: Perspective_Camera, mouse: canvas2d.Vector2, width, height: i32) -> bool {
+sdf_obstacle_rotation_update :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+) -> bool {
     if !sdf_obstacle_modal_selection_matches(editor) do return false
     interaction := &editor.sdf_obstacle_interaction
     if interaction.constrained_axis != .None do return sdf_obstacle_rotation_axis_update(editor, camera, mouse, width, height)
@@ -522,7 +606,16 @@ sdf_obstacle_rotation_set_axis :: proc(editor: ^Editor, axis: SDF_Obstacle_Axis)
     return true
 }
 
-sdf_obstacle_rotation_ring_hit :: proc(camera: Perspective_Camera, mouse: canvas2d.Vector2, obstacle: SDF_Torus_Obstacle, radius: f32, width, height: i32) -> (SDF_Obstacle_Axis, bool) {
+sdf_obstacle_rotation_ring_hit :: proc(
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    obstacle: SDF_Torus_Obstacle,
+    radius: f32,
+    width, height: i32,
+) -> (
+    SDF_Obstacle_Axis,
+    bool,
+) {
     best := SDF_OBSTACLE_GIZMO_HANDLE_PIXELS
     result := SDF_Obstacle_Axis.None
     rotation := flight.normalize_orientation(obstacle.rotation)
@@ -530,15 +623,16 @@ sdf_obstacle_rotation_ring_hit :: proc(camera: Perspective_Camera, mouse: canvas
     axes := [3]SDF_Obstacle_Axis{.X, .Y, .Z}
     for axis in axes {
         local_axis := sdf_obstacle_axis_vector(axis)
-        u := math.abs(local_axis.y) < .9 ? linalg.normalize0(linalg.cross(local_axis, flight.Vec3{0, 1, 0})) : flight.Vec3{1, 0, 0}
+        u :=
+            math.abs(local_axis.y) < .9 ? linalg.normalize0(linalg.cross(local_axis, flight.Vec3{0, 1, 0})) : flight.Vec3{1, 0, 0}
         v := linalg.cross(local_axis, u)
         for segment in 0 ..< SDF_OBSTACLE_ROTATION_RING_SEGMENTS {
             angle := f32(segment) * 2 * math.PI / f32(SDF_OBSTACLE_ROTATION_RING_SEGMENTS)
             point := obstacle.position + linalg.mul(rotation, (u * math.cos(angle) + v * math.sin(angle)) * radius)
             projected := project_3d(camera, point, width, height)
             if !projected.visible do continue
-            dx, dy := mouse.x-projected.position.x, mouse.y-projected.position.y
-            distance := math.sqrt(dx*dx + dy*dy)
+            dx, dy := mouse.x - projected.position.x, mouse.y - projected.position.y
+            distance := math.sqrt(dx * dx + dy * dy)
             if distance < best { best = distance; result = axis }
         }
     }
@@ -570,7 +664,10 @@ sdf_obstacle_gizmo_hit_test :: proc(
     position: flight.Vec3,
     size: f32,
     width, height: i32,
-) -> (axis: SDF_Obstacle_Axis, hit: bool) {
+) -> (
+    axis: SDF_Obstacle_Axis,
+    hit: bool,
+) {
     center := project_3d(camera, position, width, height)
     if !center.visible do return .None, false
     delta_x, delta_y := mouse.x - center.position.x, mouse.y - center.position.y
@@ -619,9 +716,12 @@ sdf_obstacle_modal_update :: proc(editor: ^Editor, camera: Perspective_Camera, d
 sdf_obstacle_scale_with_axis :: proc(scale: flight.Vec3, axis: SDF_Obstacle_Axis, multiplier: f32) -> flight.Vec3 {
     result := scale
     switch axis {
-    case .X: result.x *= multiplier
-    case .Y: result.y *= multiplier
-    case .Z: result.z *= multiplier
+    case .X:
+        result.x *= multiplier
+    case .Y:
+        result.y *= multiplier
+    case .Z:
+        result.z *= multiplier
     case .None:
     }
     return result
@@ -629,15 +729,24 @@ sdf_obstacle_scale_with_axis :: proc(scale: flight.Vec3, axis: SDF_Obstacle_Axis
 
 sdf_obstacle_scale_component :: proc(scale: flight.Vec3, axis: SDF_Obstacle_Axis) -> f32 {
     switch axis {
-    case .X: return scale.x
-    case .Y: return scale.y
-    case .Z: return scale.z
-    case .None: return 0
+    case .X:
+        return scale.x
+    case .Y:
+        return scale.y
+    case .Z:
+        return scale.z
+    case .None:
+        return 0
     }
     return 0
 }
 
-sdf_obstacle_scale_axis_update :: proc(editor: ^Editor, camera: Perspective_Camera, direction: flight.Vec3, width, height: i32) -> bool {
+sdf_obstacle_scale_axis_update :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    direction: flight.Vec3,
+    width, height: i32,
+) -> bool {
     if !sdf_obstacle_modal_selection_matches(editor) do return false
     interaction := &editor.sdf_obstacle_interaction
     snapshot := interaction.transform_snapshot
@@ -657,26 +766,31 @@ sdf_obstacle_scale_axis_update :: proc(editor: ^Editor, camera: Perspective_Came
     anchor_distance := linalg.dot(world_axis, interaction.drag_anchor_world - snapshot.position)
     current_distance := linalg.dot(world_axis, point - snapshot.position)
     zoom_factor := sdf_obstacle_scale_zoom_factor(camera, snapshot, height)
-    multiplier := clamp(
-        1 + (current_distance - anchor_distance) / radius * zoom_factor,
-        f32(.001),
-        f32(128),
-    )
+    multiplier := clamp(1 + (current_distance - anchor_distance) / radius * zoom_factor, f32(.001), f32(128))
     axis_baseline := interaction.drag_anchor_screen[0]
     if !fixture_editor_scalar_finite(axis_baseline) do return false
     obstacle := sdf_obstacle_selected_ptr(editor)
     if obstacle == nil do return false
     result := obstacle.scale
     switch interaction.constrained_axis {
-    case .X: result.x = axis_baseline * multiplier
-    case .Y: result.y = axis_baseline * multiplier
-    case .Z: result.z = axis_baseline * multiplier
-    case .None: return false
+    case .X:
+        result.x = axis_baseline * multiplier
+    case .Y:
+        result.y = axis_baseline * multiplier
+    case .Z:
+        result.z = axis_baseline * multiplier
+    case .None:
+        return false
     }
     return sdf_obstacle_set_scale(editor, result)
 }
 
-sdf_obstacle_scale_free_update :: proc(editor: ^Editor, camera: Perspective_Camera, mouse: canvas2d.Vector2, width, height: i32) -> bool {
+sdf_obstacle_scale_free_update :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+) -> bool {
     if !sdf_obstacle_modal_selection_matches(editor) do return false
     interaction := &editor.sdf_obstacle_interaction
     if !fixture_editor_scalar_finite(interaction.drag_anchor_screen[0]) {
@@ -689,7 +803,13 @@ sdf_obstacle_scale_free_update :: proc(editor: ^Editor, camera: Perspective_Came
     return sdf_obstacle_set_scale(editor, interaction.transform_snapshot.scale * multiplier)
 }
 
-sdf_obstacle_scale_update :: proc(editor: ^Editor, camera: Perspective_Camera, direction: flight.Vec3, mouse: canvas2d.Vector2, width, height: i32) -> bool {
+sdf_obstacle_scale_update :: proc(
+    editor: ^Editor,
+    camera: Perspective_Camera,
+    direction: flight.Vec3,
+    mouse: canvas2d.Vector2,
+    width, height: i32,
+) -> bool {
     if editor == nil do return false
     if editor.sdf_obstacle_interaction.constrained_axis == .None {
         return sdf_obstacle_scale_free_update(editor, camera, mouse, width, height)
@@ -706,7 +826,16 @@ sdf_obstacle_scale_set_axis :: proc(editor: ^Editor, axis: SDF_Obstacle_Axis) ->
     return true
 }
 
-sdf_obstacle_scale_gizmo_hit :: proc(camera: Perspective_Camera, mouse: canvas2d.Vector2, obstacle: SDF_Torus_Obstacle, radius: f32, width, height: i32) -> (SDF_Obstacle_Axis, bool) {
+sdf_obstacle_scale_gizmo_hit :: proc(
+    camera: Perspective_Camera,
+    mouse: canvas2d.Vector2,
+    obstacle: SDF_Torus_Obstacle,
+    radius: f32,
+    width, height: i32,
+) -> (
+    SDF_Obstacle_Axis,
+    bool,
+) {
     best := SDF_OBSTACLE_GIZMO_HANDLE_PIXELS
     result := SDF_Obstacle_Axis.None
     rotation := flight.normalize_orientation(obstacle.rotation)
@@ -715,8 +844,8 @@ sdf_obstacle_scale_gizmo_hit :: proc(camera: Perspective_Camera, mouse: canvas2d
         world_axis := linalg.mul(rotation, sdf_obstacle_axis_vector(axis))
         endpoint := project_3d(camera, obstacle.position + world_axis * radius, width, height)
         if !endpoint.visible do continue
-        dx, dy := mouse.x-endpoint.position.x, mouse.y-endpoint.position.y
-        distance := math.sqrt(dx*dx + dy*dy)
+        dx, dy := mouse.x - endpoint.position.x, mouse.y - endpoint.position.y
+        distance := math.sqrt(dx * dx + dy * dy)
         if distance < best { best = distance; result = axis }
     }
     return result, result != .None
@@ -792,15 +921,21 @@ sdf_obstacle_process_input :: proc(
         }
         return true
     }
-    if canvas2d.IsKeyPressed(.G) && sdf_obstacle_modal_start_allowed(editor, ray_ok) && sdf_obstacle_modal_begin(editor, .Translate, .None) {
+    if canvas2d.IsKeyPressed(.G) &&
+       sdf_obstacle_modal_start_allowed(editor, ray_ok) &&
+       sdf_obstacle_modal_begin(editor, .Translate, .None) {
         _ = sdf_obstacle_modal_update(editor, camera, direction)
         return true
     }
-    if canvas2d.IsKeyPressed(.R) && sdf_obstacle_modal_start_allowed(editor, ray_ok) && sdf_obstacle_modal_begin(editor, .Rotate, .None) {
+    if canvas2d.IsKeyPressed(.R) &&
+       sdf_obstacle_modal_start_allowed(editor, ray_ok) &&
+       sdf_obstacle_modal_begin(editor, .Rotate, .None) {
         if !sdf_obstacle_rotation_update(editor, camera, mouse, width, height) do sdf_obstacle_modal_finish(editor, true)
         return true
     }
-    if canvas2d.IsKeyPressed(.S) && sdf_obstacle_modal_start_allowed(editor, ray_ok) && sdf_obstacle_modal_begin(editor, .Scale, .None) {
+    if canvas2d.IsKeyPressed(.S) &&
+       sdf_obstacle_modal_start_allowed(editor, ray_ok) &&
+       sdf_obstacle_modal_begin(editor, .Scale, .None) {
         if !sdf_obstacle_scale_update(editor, camera, direction, mouse, width, height) do sdf_obstacle_modal_finish(editor, true)
         return true
     }
@@ -893,12 +1028,19 @@ sdf_obstacle_gizmo_box_between :: proc(a, b, forward: third_person.Vec3, width, 
     }
     center := (a + b) * .5
     signs := [8][3]f32 {
-        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-        {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
+        {-1, -1, -1},
+        {1, -1, -1},
+        {1, 1, -1},
+        {-1, 1, -1},
+        {-1, -1, 1},
+        {1, -1, 1},
+        {1, 1, 1},
+        {-1, 1, 1},
     }
     points: [8]third_person.Vec3
     for index in 0 ..< len(points) {
-        points[index] = center +
+        points[index] =
+            center +
             axis_x * (signs[index][0] * width * .5) +
             axis_y * (signs[index][1] * length * .5) +
             axis_z * (signs[index][2] * depth * .5)
@@ -932,7 +1074,7 @@ sdf_obstacle_gizmo_arrow :: proc(origin: flight.Vec3, axis: SDF_Obstacle_Axis, s
     base_center := origin + direction * size * .82
     radius := size * .10
     tip := origin + direction * size
-    corners := [4]flight.Vec3{
+    corners := [4]flight.Vec3 {
         base_center + side_a * radius + side_b * radius,
         base_center - side_a * radius + side_b * radius,
         base_center - side_a * radius - side_b * radius,
@@ -944,9 +1086,17 @@ sdf_obstacle_gizmo_arrow :: proc(origin: flight.Vec3, axis: SDF_Obstacle_Axis, s
     }
 }
 
-sdf_obstacle_rotation_ring :: proc(camera: Perspective_Camera, obstacle: SDF_Torus_Obstacle, axis: SDF_Obstacle_Axis, radius: f32, width, height: i32, color: canvas2d.Color) {
+sdf_obstacle_rotation_ring :: proc(
+    camera: Perspective_Camera,
+    obstacle: SDF_Torus_Obstacle,
+    axis: SDF_Obstacle_Axis,
+    radius: f32,
+    width, height: i32,
+    color: canvas2d.Color,
+) {
     local_axis := sdf_obstacle_axis_vector(axis)
-    local_u := math.abs(local_axis.y) < .9 ? linalg.normalize0(linalg.cross(local_axis, flight.Vec3{0, 1, 0})) : flight.Vec3{1, 0, 0}
+    local_u :=
+        math.abs(local_axis.y) < .9 ? linalg.normalize0(linalg.cross(local_axis, flight.Vec3{0, 1, 0})) : flight.Vec3{1, 0, 0}
     local_v := linalg.cross(local_axis, local_u)
     rotation := flight.normalize_orientation(obstacle.rotation)
     previous := obstacle.position + linalg.mul(rotation, local_u * radius)
@@ -954,17 +1104,11 @@ sdf_obstacle_rotation_ring :: proc(camera: Perspective_Camera, obstacle: SDF_Tor
     if stroke <= 0 do return
     for segment in 1 ..< SDF_OBSTACLE_ROTATION_RING_SEGMENTS + 1 {
         angle := f32(segment) * 2 * math.PI / f32(SDF_OBSTACLE_ROTATION_RING_SEGMENTS)
-        point := obstacle.position + linalg.mul(rotation, (local_u * math.cos(angle) + local_v * math.sin(angle)) * radius)
+        point :=
+            obstacle.position + linalg.mul(rotation, (local_u * math.cos(angle) + local_v * math.sin(angle)) * radius)
         previous_projected := project_3d(camera, previous, width, height)
         point_projected := project_3d(camera, point, width, height)
-        if previous_projected.visible && point_projected.visible do sdf_obstacle_gizmo_box_between(
-            previous,
-            point,
-            linalg.mul(rotation, local_axis),
-            stroke,
-            stroke,
-            color,
-        )
+        if previous_projected.visible && point_projected.visible do sdf_obstacle_gizmo_box_between(previous, point, linalg.mul(rotation, local_axis), stroke, stroke, color)
         previous = point
     }
 }
@@ -1039,15 +1183,7 @@ world_sdf_obstacles :: proc(editor: ^Editor) {
     interaction := editor.sdf_obstacle_interaction
     ring_radius := sdf_obstacle_rotation_ring_radius(camera, selected.position, world_width, world_height)
     axes := [3]SDF_Obstacle_Axis{.X, .Y, .Z}
-    for axis in axes do sdf_obstacle_rotation_ring(
-        camera,
-        selected^,
-        axis,
-        ring_radius,
-        world_width,
-        world_height,
-        sdf_obstacle_gizmo_axis_render_color(interaction.gizmo_mode, interaction.constrained_axis, axis),
-    )
+    for axis in axes do sdf_obstacle_rotation_ring(camera, selected^, axis, ring_radius, world_width, world_height, sdf_obstacle_gizmo_axis_render_color(interaction.gizmo_mode, interaction.constrained_axis, axis))
     if interaction.gizmo_mode == .Rotate {
         if sdf_obstacle_gizmo_center_active(interaction.gizmo_mode, interaction.constrained_axis) do world_box(selected.position, {size * .16, size * .16, size * .16}, SDF_OBSTACLE_GIZMO_ACTIVE_COLOR)
         return

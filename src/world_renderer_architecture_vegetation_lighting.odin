@@ -3,8 +3,8 @@ import "core:math"
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_cypress_crown :: proc(x, z, base_y: f32, seed: u32) {
     // One continuous profile avoids the pinched necks of stacked cones. The
@@ -484,16 +484,13 @@ world_architecture_grass_footprints :: proc(
         footprint := architecture.architecture_footprint(structure)
         for mass in footprint.masses[:footprint.count] {
             center_x, center_z := architecture.architecture_mass_world(structure, mass)
-            append(
-                &footprints,
-                Architecture_Grass_Footprint {
-                    center_x = center_x,
-                    center_z = center_z,
-                    half_width = mass.width * .5,
-                    half_depth = mass.depth * .5,
-                    rotation = structure.rotation,
-                },
-            )
+            append(&footprints, Architecture_Grass_Footprint {
+                center_x   = center_x,
+                center_z   = center_z,
+                half_width = mass.width * .5,
+                half_depth = mass.depth * .5,
+                rotation   = structure.rotation,
+            })
         }
     }
     // The airport terminals are procedural landmarks rather than authored
@@ -508,23 +505,19 @@ world_architecture_grass_footprints :: proc(
     }
     for structure in editor.project.structures[:editor.project.structure_count] {
         if !airport_structure_is_stamp(structure) do continue
-        append(
-            &footprints,
-            Architecture_Grass_Footprint {
-                center_x = structure.center_x,
-                center_z = structure.center_z,
-                half_width = 20,
-                half_depth = 15,
-                rotation = structure.rotation,
-            },
-            Architecture_Grass_Footprint {
-                center_x = structure.center_x,
-                center_z = structure.center_z,
-                half_width = 8,
-                half_depth = 22,
-                rotation = structure.rotation,
-            },
-        )
+        append(&footprints, Architecture_Grass_Footprint {
+            center_x   = structure.center_x,
+            center_z   = structure.center_z,
+            half_width = 20,
+            half_depth = 15,
+            rotation   = structure.rotation,
+        }, Architecture_Grass_Footprint {
+            center_x   = structure.center_x,
+            center_z   = structure.center_z,
+            half_width = 8,
+            half_depth = 22,
+            rotation   = structure.rotation,
+        })
     }
     return footprints
 }

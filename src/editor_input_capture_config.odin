@@ -7,10 +7,10 @@ import dialogue "../packages/dialogue"
 import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: bool) -> bool {
     if editor == nil || editor.in_map || (!editor.road_mode && !editor.selection_tool_active) do return false
@@ -30,8 +30,8 @@ road_process_input :: proc(editor: ^Editor, world_x, world_z: f32, cursor_hit: b
     if cursor_hit &&
        editor.road_drag_edge < 0 &&
        (selection_only ||
-        (editor.road_construction_phase != .Drag_Start_Tangent &&
-         editor.road_construction_phase != .Drag_End_Tangent)) {
+               (editor.road_construction_phase != .Drag_Start_Tangent &&
+                       editor.road_construction_phase != .Drag_End_Tangent)) {
         editor.road_hover_edge, editor.road_hover_handle = road_handle_at(editor, world_x, world_z)
     }
     if !selection_only && editor.road_construction_phase == .Drag_Start_Tangent {
@@ -688,14 +688,11 @@ seed_municipal_route_lamps :: proc(editor: ^Editor) {
         z := editor.editor_focus.z + (f32(row) - 3.5) * 13
         for sample in 0 ..< sample_count {
             along := (f32(sample) + .5) / f32(sample_count)
-            append(
-                &plan.lamps,
-                architecture.City_Lamp {
-                    x = editor.editor_focus.x - segment_length * .5 + segment_length * along,
-                    z = z,
-                    yaw = 0,
-                },
-            )
+            append(&plan.lamps, architecture.City_Lamp {
+                x   = editor.editor_focus.x - segment_length * .5 + segment_length * along,
+                z   = z,
+                yaw = 0,
+            })
             plan.lamp_count += 1
         }
     }

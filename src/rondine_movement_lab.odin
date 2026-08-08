@@ -3,10 +3,10 @@ package main
 import atmosphere "../packages/atmosphere"
 import flight "../packages/flight"
 import rondine_game "../packages/rondine"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 RONDINE_MOVEMENT_LAB_COUNT :: 9
 RONDINE_MOVEMENT_LAB_NAMES := [RONDINE_MOVEMENT_LAB_COUNT]string {

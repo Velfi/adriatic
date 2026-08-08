@@ -289,21 +289,18 @@ town_route_emit_streets :: proc(plan: ^circulation.Plan, network: ^Town_Route_Ne
         dx, dz := b[0] - a[0], b[1] - a[1]
         length := f32(math.sqrt(f64(dx * dx + dz * dz)))
         if length <= .1 do continue
-        _ = circulation.plan_add(
-            plan,
-            {
-                center_x = (a[0] + b[0]) * .5,
-                center_z = (a[1] + b[1]) * .5,
-                width = length + .35,
-                length = 6.5,
-                rotation = math.atan2(dz, dx),
-                kind = .Street,
-                source = .Generated,
-                pavement = .Cobblestone,
-                walkable = true,
-                driveable = true,
-            },
-        )
+        _ = circulation.plan_add(plan, {
+            center_x  = (a[0] + b[0]) * .5,
+            center_z  = (a[1] + b[1]) * .5,
+            width     = length + .35,
+            length    = 6.5,
+            rotation  = math.atan2(dz, dx),
+            kind      = .Street,
+            source    = .Generated,
+            pavement  = .Cobblestone,
+            walkable  = true,
+            driveable = true,
+        })
     }
 }
 
@@ -481,18 +478,15 @@ architecture_identity :: proc(ctx: Architecture_Context, seed: u32) -> buildings
 @(no_instrumentation)
 architecture_resolve_legacy_identity :: #force_inline proc(structure: terrain.Structure) -> buildings.Identity {
     if structure.building.archetype != .Legacy do return structure.building
-    return architecture_identity(
-        {
-            purpose = .Dwelling,
-            density = clamp((structure.height - 8) / 36, 0, 1),
-            attached = structure.width < 18,
-            frontage = structure.width,
-            depth = structure.depth,
-            route = .Street,
+    return architecture_identity({
+            purpose          = .Dwelling,
+            density          = clamp((structure.height - 8) / 36, 0, 1),
+            attached         = structure.width < 18,
+            frontage         = structure.width,
+            depth            = structure.depth,
+            route            = .Street,
             purpose_explicit = false,
-        },
-        structure.seed,
-    )
+        }, structure.seed)
 }
 
 // Adds one connected settlement to the shared circulation plan. Keeping this

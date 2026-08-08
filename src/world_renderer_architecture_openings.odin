@@ -4,8 +4,8 @@ import "core:math"
 import architecture "../packages/architecture"
 import flight "../packages/flight"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_face_openings :: proc(
     structure: terrain.Structure,

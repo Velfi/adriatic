@@ -2,10 +2,10 @@ package main
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 Climbing_Leaf_Crown_Context :: struct {
     structure:                 terrain.Structure,

@@ -23,10 +23,10 @@ import roads "../packages/roads"
 import rondine_game "../packages/rondine"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:time"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 HOT_RELOAD :: #config(HOT_RELOAD, false)
 SHOW_STARTUP_MENU :: #config(SHOW_STARTUP_MENU, false)

@@ -5,10 +5,10 @@ import "core:testing"
 import cinematic "../packages/cinematic"
 import particles "../packages/particles"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 cinematic_render_camera :: proc(ctx: ^Render_Graph_Context, value: cinematic.Camera) {
     pose := third_person.Camera_Pose {

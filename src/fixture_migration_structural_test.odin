@@ -2,11 +2,11 @@ package main
 
 import architecture "../packages/architecture"
 import fixture_v0001 "../packages/fixture_history/v0001"
-import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import "base:runtime"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_structural_payload :: proc(

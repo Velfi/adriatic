@@ -26,7 +26,10 @@ main :: proc() {
         project.terrain_level_layout[level] = {1, -256, -256}
         for page_z in 0 ..< pages_axis {
             for page_x in 0 ..< pages_axis {
-                append(&project.terrain_pages, terrain.Terrain_Page{level = u8(level), page_x = u8(page_x), page_z = u8(page_z)})
+                append(
+                    &project.terrain_pages,
+                    terrain.Terrain_Page{level = u8(level), page_x = u8(page_x), page_z = u8(page_z)},
+                )
             }
         }
     }
@@ -40,5 +43,13 @@ main :: proc() {
     started = time.now()
     for _ in 0 ..< iterations do sink += terrain.terrain_page_indices_in_bounds(project, 0, -32, -32, 32, 32, result[:])
     bounded := time.since(started)
-    fmt.printf("pages=%d iterations=%d legacy=%v bounded=%v speedup=%.2fx checksum=%d\n", len(project.terrain_pages), iterations, legacy, bounded, f64(legacy) / f64(bounded), sink)
+    fmt.printf(
+        "pages=%d iterations=%d legacy=%v bounded=%v speedup=%.2fx checksum=%d\n",
+        len(project.terrain_pages),
+        iterations,
+        legacy,
+        bounded,
+        f64(legacy) / f64(bounded),
+        sink,
+    )
 }

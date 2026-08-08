@@ -1,10 +1,10 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 PATIO_STONE := canvas2d.Color{205, 190, 159, 255}
 PATIO_STONE_DARK := canvas2d.Color{139, 128, 108, 255}

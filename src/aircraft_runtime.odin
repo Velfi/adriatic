@@ -8,11 +8,11 @@ import postale_game "../packages/postale"
 import rondine_game "../packages/rondine"
 import surface_weather "../packages/surface_weather"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import wind_audio "../packages/wind_audio"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 active_aircraft_wing_trail_anchors :: proc(
     editor: ^Editor,

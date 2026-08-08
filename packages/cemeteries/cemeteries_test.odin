@@ -67,17 +67,14 @@ memorial_court_remains_clear_across_supported_domain :: proc(t: ^testing.T) {
     for style in Style {
         for kind in Memorial_Kind {
             for seed in u32(0) ..< 32 {
-                plan := generate(
-                    seed,
-                    {
-                        width = 24,
-                        depth = 30,
-                        density = 1,
-                        style = style,
-                        memorial_kind = kind,
-                        memorial_explicit = true,
-                    },
-                )
+                plan := generate(seed, {
+                    width             = 24,
+                    depth             = 30,
+                    density           = 1,
+                    style             = style,
+                    memorial_kind     = kind,
+                    memorial_explicit = true,
+                })
                 testing.expect(t, plan.valid)
                 for grave in plan.graves[:plan.grave_count] {
                     dx := grave.x - plan.memorial.x

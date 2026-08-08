@@ -1,10 +1,10 @@
 package main
 
 import fixture_v0001 "../packages/fixture_history/v0001"
-import hs "zelda_engine:hs"
 import "core:mem"
 import "core:strings"
 import back "zelda_engine:back"
+import hs "zelda_engine:hs"
 
 FIXTURE_MIGRATION_ARENA_BLOCK_SIZE :: 128 * mem.Megabyte
 FIXTURE_MIGRATION_ARENA_OUT_OF_BAND_SIZE :: 64 * mem.Megabyte

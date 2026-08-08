@@ -1,7 +1,7 @@
 package tests
 
-import wireframe "zelda_engine:wireframe"
 import "core:testing"
+import wireframe "zelda_engine:wireframe"
 
 @(test)
 wireframe_interpolates_vertex_color :: proc(t: ^testing.T) {

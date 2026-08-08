@@ -1,8 +1,8 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 // Mouse emotes are procedural pose contributions, not clips. Keep this stable
 // identity independent of UI text so dialogue, live control, and capture all

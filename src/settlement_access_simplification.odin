@@ -168,17 +168,14 @@ settlement_access_stem_shallow_forks :: proc(
                         incident.end_x, incident.end_z = merge[0], merge[1]
                     }
                 }
-                append(
-                    &city_plan.alleys,
-                    architecture.City_Alley {
-                        start_x = point[0],
-                        start_z = point[1],
-                        end_x = merge[0],
-                        end_z = merge[1],
-                        half_width = width,
-                        household_demand = demand,
-                    },
-                )
+                append(&city_plan.alleys, architecture.City_Alley {
+                    start_x          = point[0],
+                    start_z          = point[1],
+                    end_x            = merge[0],
+                    end_z            = merge[1],
+                    half_width       = width,
+                    household_demand = demand,
+                })
                 city_plan.alley_count += 1
                 candidate := plan^
                 settlement_plan_measure_access_topology(&candidate, city_plan, project)

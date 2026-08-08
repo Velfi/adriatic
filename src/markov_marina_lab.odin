@@ -5,19 +5,19 @@ import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import dialogue "../packages/dialogue"
 import dialogue_session "../packages/dialogue_session"
-import game_input "zelda_engine:game_input"
 import harbor "../packages/harbor"
 import marina "../packages/marina"
 import plants "../packages/plants"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 MARKOV_MARINA_DEFAULT_SEED :: u32(0x4d415249)
 MARINA_GEOMETRY_CACHE_DEFAULT_FIRST :: 0
@@ -1031,20 +1031,18 @@ markov_marina_segment :: proc(source: marina.Segment, plan: ^marina.Plan) {
             rock_width := rock_scale * (.78 + aspect_roll * .48)
             rock_depth := rock_scale * (1.18 - aspect_roll * .35) * (.88 + depth_roll * .30)
             rock_height := .38 + rock_scale * (.24 + height_roll * .22)
-            world_formation(
-                {
-                    center_x = along_x + stone_x,
-                    center_z = along_z + stone_z,
-                    width = rock_width,
-                    depth = rock_depth,
-                    base_y = .18 + (1 - toe_fraction) * .25,
-                    height = rock_height + toe_fraction * .08,
-                    rotation = yaw + (rotation_roll * 2 - 1) * .42,
-                    color = {tone, tone + 2, tone, 255},
-                    kind = .Rock,
-                    seed = seed,
-                },
-            )
+            world_formation({
+                center_x = along_x + stone_x,
+                center_z = along_z + stone_z,
+                width    = rock_width,
+                depth    = rock_depth,
+                base_y   = .18 + (1 - toe_fraction) * .25,
+                height   = rock_height + toe_fraction * .08,
+                rotation = yaw + (rotation_roll * 2 - 1) * .42,
+                color    = {tone, tone + 2, tone, 255},
+                kind     = .Rock,
+                seed     = seed,
+            })
         }
     }
 }
@@ -1140,19 +1138,16 @@ markov_marina_office_structure :: proc(plan: ^marina.Plan, project: ^terrain.Pro
     structure.rotation = plan.world_yaw
     structure.kind = .Architecture
     structure.seed = seed
-    structure.building = architecture.architecture_identity(
-        {
-            region = .Adriatic,
-            tissue = .Harbor,
-            density = .42,
-            frontage = structure.width,
-            depth = structure.depth,
-            route = .Waterfront,
-            waterfront = true,
+    structure.building = architecture.architecture_identity({
+            region        = .Adriatic,
+            tissue        = .Harbor,
+            density       = .42,
+            frontage      = structure.width,
+            depth         = structure.depth,
+            route         = .Waterfront,
+            waterfront    = true,
             landmark_kind = .Harbor_Office,
-        },
-        seed,
-    )
+        }, seed)
     structure.color = architecture.architecture_color(seed, true)
     return structure
 }
@@ -1171,19 +1166,16 @@ shoreline_harbor_office_structure :: proc(
     structure.rotation = math.atan2(-plan.tangent.x, plan.tangent.z)
     structure.kind = .Architecture
     structure.seed = seed
-    structure.building = architecture.architecture_identity(
-        {
-            region = .Adriatic,
-            tissue = .Harbor,
-            density = .42,
-            frontage = structure.width,
-            depth = structure.depth,
-            route = .Waterfront,
-            waterfront = true,
+    structure.building = architecture.architecture_identity({
+            region        = .Adriatic,
+            tissue        = .Harbor,
+            density       = .42,
+            frontage      = structure.width,
+            depth         = structure.depth,
+            route         = .Waterfront,
+            waterfront    = true,
             landmark_kind = .Harbor_Office,
-        },
-        seed,
-    )
+        }, seed)
     structure.color = architecture.architecture_color(seed, true)
     return structure
 }

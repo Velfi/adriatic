@@ -55,19 +55,16 @@ circulation_query_unifies_authored_edges_and_generated_areas :: proc(t: ^testing
     _ = roads.add_straight_edge(&graph, from, to, 6, 1, .Asphalt)
 
     plan: circulation.Plan
-    _ = circulation.plan_add(
-        &plan,
-        {
-            center_x = 10,
-            center_z = 20,
-            width = 20,
-            length = 4,
-            kind = .Path,
-            source = .Derived,
-            pavement = .Cobblestone,
-            walkable = true,
-        },
-    )
+    _ = circulation.plan_add(&plan, {
+        center_x = 10,
+        center_z = 20,
+        width    = 20,
+        length   = 4,
+        kind     = .Path,
+        source   = .Derived,
+        pavement = .Cobblestone,
+        walkable = true,
+    })
 
     road_hit := circulation.surface_at(&graph, &plan, {10, 2, 1})
     testing.expect(t, road_hit.on_surface)

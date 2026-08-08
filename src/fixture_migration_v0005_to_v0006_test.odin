@@ -1,10 +1,10 @@
 package main
 
 import fixture_v0005 "../packages/fixture_history/v0005"
-import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import "base:runtime"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     fixture_migration_v0005_payload :: proc(t: ^testing.T) -> ([]byte, bool) {

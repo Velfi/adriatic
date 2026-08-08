@@ -3,9 +3,7 @@ package main
 import atmosphere "../packages/atmosphere"
 import chase_camera "../packages/chase_camera"
 import flight "../packages/flight"
-import markov "zelda_engine:markov"
 import postale_game "../packages/postale"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
@@ -13,6 +11,8 @@ import "core:math/linalg"
 import "core:strconv"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import markov "zelda_engine:markov"
+import third_person "zelda_engine:third_person"
 
 MARKOV_WRECK_LENGTH :: 31
 MARKOV_WRECK_CELL :: f32(11)

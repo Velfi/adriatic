@@ -456,29 +456,23 @@ settlement_access_restore_door_throats :: proc(project: ^terrain.Project, city_p
                 alley.end_x, alley.end_z = replacement[0], replacement[1]
                 alley.end_terminal = .None
             }
-            append(
-                &city_plan.alleys,
-                architecture.City_Alley {
-                    start_x = door[0],
-                    start_z = door[1],
-                    end_x = landing[0],
-                    end_z = landing[1],
-                    half_width = half_width,
-                    start_terminal = original_terminal,
-                },
-            )
+            append(&city_plan.alleys, architecture.City_Alley {
+                start_x        = door[0],
+                start_z        = door[1],
+                end_x          = landing[0],
+                end_z          = landing[1],
+                half_width     = half_width,
+                start_terminal = original_terminal,
+            })
             city_plan.alley_count += 1
             if dogleg {
-                append(
-                    &city_plan.alleys,
-                    architecture.City_Alley {
-                        start_x = landing[0],
-                        start_z = landing[1],
-                        end_x = elbow[0],
-                        end_z = elbow[1],
-                        half_width = half_width,
-                    },
-                )
+                append(&city_plan.alleys, architecture.City_Alley {
+                    start_x    = landing[0],
+                    start_z    = landing[1],
+                    end_x      = elbow[0],
+                    end_z      = elbow[1],
+                    half_width = half_width,
+                })
                 city_plan.alley_count += 1
             }
             restored += 1

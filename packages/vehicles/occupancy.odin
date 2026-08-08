@@ -1,8 +1,8 @@
 package vehicles
 
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 // The occupancy layer deliberately has no physics dependency. The game owns
 // collision queries, then calls try_exit with whether the door-side spot is

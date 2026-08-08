@@ -2,13 +2,13 @@ package main
 import "core:math"
 
 import bridges "../packages/bridges"
-import dio "zelda_engine:dio"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import third_person "zelda_engine:third_person"
 
 world_quad_to :: #force_inline proc(
     destination: ^[dynamic]World_Vertex,
@@ -504,15 +504,12 @@ world_road_cache_chunk_finish :: proc(first_vertex: int) {
         dz := vertex.position[2] - center.z
         radius_squared = max(radius_squared, dx * dx + dy * dy + dz * dz)
     }
-    append(
-        &world_renderer.road_geometry_chunks,
-        Road_Geometry_Cache_Chunk {
-            first_vertex = first_vertex,
-            vertex_count = vertex_count,
-            center = center,
-            radius = f32(math.sqrt(f64(radius_squared))),
-        },
-    )
+    append(&world_renderer.road_geometry_chunks, Road_Geometry_Cache_Chunk {
+        first_vertex = first_vertex,
+        vertex_count = vertex_count,
+        center       = center,
+        radius       = f32(math.sqrt(f64(radius_squared))),
+    })
 }
 
 world_road_geometry_cache_preserve_outside_bounds :: proc(editor: ^Editor, dirty: Terrain_Dirty_Bounds) {
@@ -583,13 +580,10 @@ world_retained_roads_prepare :: proc(editor: ^Editor) {
     }
     for chunk in world_renderer.road_geometry_chunks {
         if !world_sphere_in_view(editor, chunk.center, chunk.radius, 1) do continue
-        append(
-            &world_renderer.road_draw_commands,
-            vk.DrawIndirectCommand {
-                vertexCount = u32(chunk.vertex_count),
-                instanceCount = 1,
-                firstVertex = u32(chunk.first_vertex),
-            },
-        )
+        append(&world_renderer.road_draw_commands, vk.DrawIndirectCommand {
+            vertexCount   = u32(chunk.vertex_count),
+            instanceCount = 1,
+            firstVertex   = u32(chunk.first_vertex),
+        })
     }
 }

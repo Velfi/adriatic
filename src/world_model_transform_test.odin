@@ -1,7 +1,7 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 when ODIN_TEST {
     @(test)

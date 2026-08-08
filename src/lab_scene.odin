@@ -2,8 +2,8 @@ package main
 
 import architecture "../packages/architecture"
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 // Lab scenes are transient, named worlds used for focused visual development.
 // A lab owns scene configuration and camera setup; loading one never saves back

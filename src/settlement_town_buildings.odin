@@ -481,32 +481,26 @@ settlement_plan_generate_buildings :: proc(
             structure.depth = depth
             structure.height = height
             structure.rotation = rotation
-            identity := architecture.architecture_identity(
-                {
-                    region = settlement_building_region(settlement.request.region),
-                    tissue = settlement_architecture_tissue(district.tissue),
-                    density = density,
-                    attached = attached,
-                    frontage = frontage,
-                    depth = depth,
-                    route = route_found ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
-                    waterfront = district.tissue == .Harbor,
+            identity := architecture.architecture_identity({
+                    region           = settlement_building_region(settlement.request.region),
+                    tissue           = settlement_architecture_tissue(district.tissue),
+                    density          = density,
+                    attached         = attached,
+                    frontage         = frontage,
+                    depth            = depth,
+                    route            = route_found ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
+                    waterfront       = district.tissue == .Harbor,
                     purpose_explicit = false,
-                },
-                seed,
-            )
+                }, seed)
             if hero_candidate {
                 landmark_kind := buildings.Landmark_Kind.Post_Office
                 if hero_kind == .Clinic do landmark_kind = .Clinic
-                identity = architecture.architecture_identity(
-                    {
-                        region = settlement_building_region(settlement.request.region),
+                identity = architecture.architecture_identity({
+                        region        = settlement_building_region(settlement.request.region),
                         landmark_kind = landmark_kind,
-                        frontage = frontage,
-                        depth = depth,
-                    },
-                    seed,
-                )
+                        frontage      = frontage,
+                        depth         = depth,
+                    }, seed)
                 if hero_kind == .Clinic {
                     hero_clinic_placed = true
                 } else {

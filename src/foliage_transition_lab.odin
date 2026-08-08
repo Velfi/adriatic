@@ -2,10 +2,10 @@ package main
 
 import plants "../packages/plants"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:strings"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 Foliage_Transition_Example :: enum u8 {
     Wheat_Field,

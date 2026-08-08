@@ -4,11 +4,11 @@ import road_designer "../packages/road_designer"
 import road_planner "../packages/road_planner"
 import roads "../packages/roads"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 ROAD_PLANNING_LAB_GRID :: 112
 ROAD_PLANNING_LAB_SAMPLE_COUNT :: ROAD_PLANNING_LAB_GRID * ROAD_PLANNING_LAB_GRID
@@ -351,23 +351,19 @@ road_planning_lab_rebuild_road :: proc(editor: ^Editor) {
     road_planning_lab.route_bend_count = bend_count
     road_planning_lab.graph_too_complex = false
     if road_planning_lab.optimizer == nil || road_planning_lab.design_work == nil do return
-    _ = road_designer.begin(
-        road_planning_lab.optimizer,
-        {
-            grid = grid,
-            cell_size = road_planning_lab.config.cell_size,
-            start = road_planning_lab.points[0],
-            finish = road_planning_lab.points[1],
-            pavement = road_planning_lab.pavement,
-            width = 4.2,
-            shoulder = 1.2,
-            sea_level = grid.sea_level,
+    _ = road_designer.begin(road_planning_lab.optimizer, {
+            grid            = grid,
+            cell_size       = road_planning_lab.config.cell_size,
+            start           = road_planning_lab.points[0],
+            finish          = road_planning_lab.points[1],
+            pavement        = road_planning_lab.pavement,
+            width           = 4.2,
+            shoulder        = 1.2,
+            sea_level       = grid.sea_level,
             available_nodes = roads.MAX_NODES,
             available_edges = roads.MAX_EDGES,
-            seed = road_planning_lab.seed,
-        },
-        road_planning_lab.design_work,
-    )
+            seed            = road_planning_lab.seed,
+        }, road_planning_lab.design_work)
     editor.project.revision += 1
 }
 

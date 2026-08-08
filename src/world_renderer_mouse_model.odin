@@ -7,9 +7,9 @@ import mouse_kinematics "../packages/mouse_kinematics"
 import mouse_paws "../packages/mouse_paws"
 import mouse_tail "../packages/mouse_tail"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_mouse_model :: proc(editor: ^Editor, model: Mouse_Model) {
     first_vertex := len(world_renderer.vertices)

@@ -1,8 +1,8 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 Mouse_Accessory_Render_Context :: struct {
     using render:                                                    Mouse_Render_Context,

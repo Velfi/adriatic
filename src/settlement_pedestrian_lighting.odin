@@ -55,18 +55,15 @@ settlement_plan_generate_pedestrian_access :: proc(
             continue
         }
         width := settlement_route_width_sample(rng, .Alley)
-        append(
-            &city_plan.alleys,
-            architecture.City_Alley {
-                start_x = start[0],
-                start_z = start[1],
-                end_x = end[0],
-                end_z = end[1],
-                half_width = width * .5,
-                start_terminal = .Road,
-                end_terminal = .Public_Space,
-            },
-        )
+        append(&city_plan.alleys, architecture.City_Alley {
+            start_x        = start[0],
+            start_z        = start[1],
+            end_x          = end[0],
+            end_z          = end[1],
+            half_width     = width * .5,
+            start_terminal = .Road,
+            end_terminal   = .Public_Space,
+        })
         city_plan.alley_count += 1
     }
 }

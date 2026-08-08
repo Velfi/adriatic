@@ -373,20 +373,17 @@ network_add_spline :: proc(
         tile.revision += 1
         tile.dirty = true
     }
-    append(
-        &network.metadata.proxy,
-        Proxy_Route {
-            id = route_id,
-            points = proxy_points,
-            tiles = proxy_tiles,
-            min_x = minimum_x,
-            min_z = minimum_z,
-            max_x = maximum_x,
-            max_z = maximum_z,
-            half_width = width * .5,
-            pavement = pavement,
-        },
-    )
+    append(&network.metadata.proxy, Proxy_Route {
+        id         = route_id,
+        points     = proxy_points,
+        tiles      = proxy_tiles,
+        min_x      = minimum_x,
+        min_z      = minimum_z,
+        max_x      = maximum_x,
+        max_z      = maximum_z,
+        half_width = width * .5,
+        pavement   = pavement,
+    })
     network.metadata.next_route_id += 1
     staged_owned = false
     return route_id, true

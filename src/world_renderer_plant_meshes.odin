@@ -26,11 +26,7 @@ world_plant_mesh_release :: proc(mesh_index: int) {
     mesh.available = true
 }
 
-world_plant_mesh_reuse_or_add :: proc(
-    vertices: []Plant_Vertex,
-    indices: []u32,
-    casts_shadow: bool = true,
-) -> int {
+world_plant_mesh_reuse_or_add :: proc(vertices: []Plant_Vertex, indices: []u32, casts_shadow: bool = true) -> int {
     best := -1
     best_waste := ~u64(0)
     for &mesh, index in world_renderer.plant_meshes {

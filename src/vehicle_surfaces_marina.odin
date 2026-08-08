@@ -194,18 +194,15 @@ seed_city_capture :: proc(editor: ^Editor, target: string = "") {
             structure := terrain.structure_make(x, z, 30, 24, base_y, 19.2)
             structure.kind = .Architecture
             structure.seed = seed
-            structure.building = architecture.architecture_identity(
-                {
-                    purpose = .Inn_Shop,
-                    tissue = .Mercantile,
-                    density = .70,
-                    frontage = structure.width,
-                    depth = structure.depth,
-                    route = .Street,
+            structure.building = architecture.architecture_identity({
+                    purpose          = .Inn_Shop,
+                    tissue           = .Mercantile,
+                    density          = .70,
+                    frontage         = structure.width,
+                    depth            = structure.depth,
+                    route            = .Street,
                     purpose_explicit = true,
-                },
-                seed,
-            )
+                }, seed)
             structure.building.archetype = .Mixed_Use_Dwelling
             structure.building.purpose = .Inn_Shop
             added := terrain.add_structure(&editor.project, structure)
@@ -230,18 +227,15 @@ seed_city_capture :: proc(editor: ^Editor, target: string = "") {
         structure := terrain.structure_make(x, z, 18, 14, ground_y + 2.2, 12)
         structure.kind = .Architecture
         structure.seed = u32(stoop_seed)
-        structure.building = architecture.architecture_identity(
-            {
-                purpose = .Dwelling,
-                tissue = .Unspecified,
-                density = .45,
-                frontage = structure.width,
-                depth = structure.depth,
-                route = .Street,
+        structure.building = architecture.architecture_identity({
+                purpose          = .Dwelling,
+                tissue           = .Unspecified,
+                density          = .45,
+                frontage         = structure.width,
+                depth            = structure.depth,
+                route            = .Street,
                 purpose_explicit = true,
-            },
-            structure.seed,
-        )
+            }, structure.seed)
         structure.building.archetype = .Dwelling
         added := terrain.add_structure(&editor.project, structure)
         if added >= 0 do editor.project.structures[added].seed = structure.seed
@@ -308,17 +302,14 @@ seed_default_island_towns_seeded :: proc(editor: ^Editor, island_seeds: [len(ter
         }
         if storefront_index >= 0 {
             storefront := &editor.project.structures[storefront_index]
-            storefront.building = architecture.architecture_identity(
-                {
-                    region = region,
-                    purpose = .Inn_Shop,
-                    density = .8,
-                    attached = true,
-                    route = .Civic,
+            storefront.building = architecture.architecture_identity({
+                    region           = region,
+                    purpose          = .Inn_Shop,
+                    density          = .8,
+                    attached         = true,
+                    route            = .Civic,
                     purpose_explicit = true,
-                },
-                storefront.seed,
-            )
+                }, storefront.seed)
         }
         // A rejected town plan can roll its staged structures back below the
         // count captured before generation. In that case there is no new

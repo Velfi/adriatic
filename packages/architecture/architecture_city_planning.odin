@@ -1,10 +1,10 @@
 package architecture
 
 import buildings "../buildings"
-import planar_geometry "zelda_engine:planar_geometry"
 import roads "../roads"
 import terrain "../terrain"
 import "core:math"
+import planar_geometry "zelda_engine:planar_geometry"
 
 @(no_instrumentation)
 architecture_frontage_structure :: #force_inline proc(structure: terrain.Structure) -> terrain.Structure {
@@ -474,19 +474,16 @@ city_plan_density_grid :: proc(
                 structure.rotation = rotation
                 structure.seed = building_seed
                 mercantile_frontage := frontage.found && density >= .45 && int((building_seed >> 11) % 8) <= 1
-                structure.building = architecture_identity(
-                    {
-                        tissue = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
-                        density = density,
-                        attached = density >= .68,
-                        frontage = width,
-                        depth = depth,
-                        route = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
-                        landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+                structure.building = architecture_identity({
+                        tissue           = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
+                        density          = density,
+                        attached         = density >= .68,
+                        frontage         = width,
+                        depth            = depth,
+                        route            = frontage.found ? Context_Route.Street : Context_Route.Unspecified,
+                        landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
                         purpose_explicit = false,
-                    },
-                    building_seed,
-                )
+                    }, building_seed)
                 structure.color = architecture_color(structure.seed, anchor)
                 if !city_structure_road_clear(&project.road_graph, &structure) do continue
                 if !city_structure_site_valid(project, &structure) do continue
@@ -567,20 +564,17 @@ city_plan_add_parcel_building :: proc(
     structure.rotation = rotation
     structure.seed = seed
     mercantile_frontage := !alley_frontage && density >= .45 && int((seed >> 11) % 8) <= 1
-    structure.building = architecture_identity(
-        {
-            tissue = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
-            density = density,
-            attached = density > .72,
-            frontage = width,
-            depth = building_depth,
-            frontage_side = frontage_side,
-            route = alley_frontage ? Context_Route.Alley : Context_Route.Street,
-            landmark_kind = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
+    structure.building = architecture_identity({
+            tissue           = mercantile_frontage ? Context_Tissue.Mercantile : Context_Tissue.Unspecified,
+            density          = density,
+            attached         = density > .72,
+            frontage         = width,
+            depth            = building_depth,
+            frontage_side    = frontage_side,
+            route            = alley_frontage ? Context_Route.Alley : Context_Route.Street,
+            landmark_kind    = anchor ? buildings.Landmark_Kind.Campanile : buildings.Landmark_Kind.None,
             purpose_explicit = false,
-        },
-        seed,
-    )
+        }, seed)
     structure.color = architecture_color(seed, anchor)
     if !city_structure_road_clear(&project.road_graph, &structure) do return
     if !city_structure_site_valid(project, &structure) do return

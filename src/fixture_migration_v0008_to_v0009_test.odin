@@ -1,10 +1,10 @@
 package main
 
 import fixture_v0008 "../packages/fixture_history/v0008"
-import hs "zelda_engine:hs"
 import terrain "../packages/terrain"
 import "base:runtime"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 when ODIN_TEST {
     @(test)

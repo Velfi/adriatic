@@ -542,21 +542,18 @@ settlement_plan_generate_village_buildings :: proc(
         structure.seed = seed
         structure.width, structure.depth, structure.height = frontage, depth, height
         structure.rotation = best_rotation
-        structure.building = architecture.architecture_identity(
-            {
-                region = settlement_building_region(plan.request.region),
-                purpose = settlement_building_purpose(purpose),
-                tissue = settlement_architecture_tissue(tissue),
-                density = density,
-                attached = false,
-                frontage = frontage,
-                depth = depth,
-                route = best_frontage_kind == .Quay ? architecture.Context_Route.Waterfront : best_frontage_kind != .None ? architecture.Context_Route.Lane : purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
-                waterfront = plan.village_reason == .Harbor_Fishery,
+        structure.building = architecture.architecture_identity({
+                region           = settlement_building_region(plan.request.region),
+                purpose          = settlement_building_purpose(purpose),
+                tissue           = settlement_architecture_tissue(tissue),
+                density          = density,
+                attached         = false,
+                frontage         = frontage,
+                depth            = depth,
+                route            = best_frontage_kind == .Quay ? architecture.Context_Route.Waterfront : best_frontage_kind != .None ? architecture.Context_Route.Lane : purpose == .Inn_Shop ? architecture.Context_Route.Street : architecture.Context_Route.Unspecified,
+                waterfront       = plan.village_reason == .Harbor_Fishery,
                 purpose_explicit = true,
-            },
-            seed,
-        )
+            }, seed)
         structure.color = architecture.architecture_color(seed, false)
         if plan.request.region == .Aegean do structure.color = {236, 232, 216, 255}
         parcel := architecture.City_Parcel {
@@ -643,30 +640,24 @@ settlement_plan_generate_village_buildings :: proc(
             threshold_half_width := f32(.6)
             if linalg.length(threshold - door) >= .4 &&
                settlement_access_segment_clear(&result, door, threshold, threshold_half_width, structure_index) {
-                append(
-                    &result.alleys,
-                    architecture.City_Alley {
-                        start_x = door[0],
-                        start_z = door[1],
-                        end_x = threshold[0],
-                        end_z = threshold[1],
-                        half_width = threshold_half_width,
-                        start_terminal = .Door,
-                    },
-                )
+                append(&result.alleys, architecture.City_Alley {
+                    start_x        = door[0],
+                    start_z        = door[1],
+                    end_x          = threshold[0],
+                    end_z          = threshold[1],
+                    half_width     = threshold_half_width,
+                    start_terminal = .Door,
+                })
                 result.alley_count += 1
                 if linalg.length(court_goal - threshold) > .05 {
-                    append(
-                        &result.alleys,
-                        architecture.City_Alley {
-                            start_x = threshold[0],
-                            start_z = threshold[1],
-                            end_x = court_goal[0],
-                            end_z = court_goal[1],
-                            half_width = threshold_half_width,
-                            end_terminal = .Public_Space,
-                        },
-                    )
+                    append(&result.alleys, architecture.City_Alley {
+                        start_x      = threshold[0],
+                        start_z      = threshold[1],
+                        end_x        = court_goal[0],
+                        end_z        = court_goal[1],
+                        half_width   = threshold_half_width,
+                        end_terminal = .Public_Space,
+                    })
                     result.alley_count += 1
                 }
             }

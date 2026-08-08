@@ -7,12 +7,12 @@ import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
 import roads "../packages/roads"
 import rondine_game "../packages/rondine"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strconv"
+import third_person "zelda_engine:third_person"
 
 run_prepare_showcase :: proc(editor: ^Editor, using config: ^Run_Config) -> bool {
     if vehicle_showcase_mode {

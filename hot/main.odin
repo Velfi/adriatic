@@ -1,10 +1,10 @@
 package main
 
-import hot_abi "zelda_engine:hot_abi"
 import "core:dynlib"
 import "core:fmt"
 import "core:os"
 import "core:time"
+import hot_abi "zelda_engine:hot_abi"
 
 HOT_LOAD_ATTEMPTS :: 12
 HOT_LOAD_RETRY_DELAY :: 25 * time.Millisecond

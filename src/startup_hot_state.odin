@@ -1,11 +1,11 @@
 package main
 
-import hs "zelda_engine:hs"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:mem"
 import "core:os"
 import canvas2d "zelda_engine:canvas2d"
+import hs "zelda_engine:hs"
 
 draw_startup_loading_screen :: proc(
     width, height: i32,

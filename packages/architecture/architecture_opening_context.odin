@@ -102,19 +102,16 @@ architecture_opening_layout_add_habitable_row_on_face :: proc(
                     logical_column = max(logical_column, existing.column + 1)
                 }
             }
-            return opening_layout_add(
-                layout,
-                {
-                    face = face,
-                    kind = .Window,
-                    horizontal = horizontal,
-                    y = opening_y,
-                    width = fitted_width,
-                    height = window_height,
-                    row = row,
-                    column = logical_column,
-                },
-            )
+            return opening_layout_add(layout, {
+                face       = face,
+                kind       = .Window,
+                horizontal = horizontal,
+                y          = opening_y,
+                width      = fitted_width,
+                height     = window_height,
+                row        = row,
+                column     = logical_column,
+            })
         }
     }
     return false

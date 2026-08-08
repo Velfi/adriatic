@@ -3,13 +3,13 @@ package main
 import flight "../packages/flight"
 import libellula_game "../packages/libellula"
 import postale_game "../packages/postale"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 VEHICLE_PAINT_TEXTURE_WIDTH :: 2048
 VEHICLE_PAINT_TEXTURE_HEIGHT :: 1024
@@ -245,15 +245,12 @@ vehicle_paint_open :: proc(editor: ^Editor) {
             editor.libellula.body.position.z,
         }
     }
-    editor.camera_pose = third_person.camera_pose(
-        {0, 1, 0},
-        {
-            yaw_radians = editor.vehicle_paint_yaw,
-            pitch_radians = editor.vehicle_paint_pitch,
-            distance = editor.vehicle_paint_distance,
-            height = 0,
-        },
-    )
+    editor.camera_pose = third_person.camera_pose({0, 1, 0}, {
+        yaw_radians   = editor.vehicle_paint_yaw,
+        pitch_radians = editor.vehicle_paint_pitch,
+        distance      = editor.vehicle_paint_distance,
+        height        = 0,
+    })
     editor.map_time = f32(canvas2d.GetTime())
     vehicle_paint_upload_texture(editor)
     set_pointer_locked(false)
@@ -1727,15 +1724,12 @@ vehicle_paint_camera_step :: proc(editor: ^Editor, delta_seconds: f32) {
     if math.abs(pinch_scale - 1) > .001 {
         editor.vehicle_paint_distance = clamp(editor.vehicle_paint_distance / pinch_scale, 4.2, 9.5)
     }
-    editor.camera_pose = third_person.camera_pose(
-        third_person.Vec3{0, 1, 0},
-        {
-            yaw_radians = editor.vehicle_paint_yaw,
-            pitch_radians = editor.vehicle_paint_pitch,
-            distance = editor.vehicle_paint_distance,
-            height = 0,
-        },
-    )
+    editor.camera_pose = third_person.camera_pose(third_person.Vec3{0, 1, 0}, {
+        yaw_radians   = editor.vehicle_paint_yaw,
+        pitch_radians = editor.vehicle_paint_pitch,
+        distance      = editor.vehicle_paint_distance,
+        height        = 0,
+    })
     _ = delta_seconds
 }
 

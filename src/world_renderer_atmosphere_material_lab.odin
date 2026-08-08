@@ -7,11 +7,11 @@ import atmosphere "../packages/atmosphere"
 import fog_field "../packages/fog_field"
 import particles "../packages/particles"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import vk "vendor:vulkan"
 import engine "zelda_engine:engine"
 import resources "zelda_engine:render_resources"
+import third_person "zelda_engine:third_person"
 
 world_rain_streaks :: proc(editor: ^Editor) {
     if editor == nil || !editor.in_map || !driving_aircraft(editor) do return

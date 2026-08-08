@@ -1,7 +1,7 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import linalg "core:math/linalg"
+import third_person "zelda_engine:third_person"
 
 World_Model_Transform :: struct {
     origin:        third_person.Vec3,

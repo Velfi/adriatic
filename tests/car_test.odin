@@ -1,10 +1,10 @@
 package tests
 
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 simple_car_solid_mesh_is_closed_and_grouped :: proc(t: ^testing.T) {

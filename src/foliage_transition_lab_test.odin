@@ -2,9 +2,9 @@ package main
 
 import leaf_mesh "../packages/leaf_mesh"
 import plant_assets "../packages/plant_assets"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 foliage_transition_lab_recognizes_every_authored_corridor :: proc(t: ^testing.T) {
@@ -105,33 +105,50 @@ plant_instance_shadow_deformation_keeps_leaf_pivot_on_branch :: proc(t: ^testing
 @(test)
 plant_vertex_shadow_wind_keeps_roots_fixed_and_respects_stiffness :: proc(t: ^testing.T) {
     instance := generated_plant_instance(
-        {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {}, {255, 255, 255, 255}, {}, 1, .41, 1, 1, 1,
+        {1, 0, 0},
+        {0, 1, 0},
+        {0, 0, 1},
+        {},
+        {255, 255, 255, 255},
+        {},
+        1,
+        .41,
+        1,
+        1,
+        1,
     )
-    root := Plant_Vertex{position = {}, stiffness = 1}
+    root := Plant_Vertex {
+        position  = {},
+        stiffness = 1,
+    }
     root_position := shadow_plant_position(root, instance, 8, .7, 6, 2)
     testing.expect(t, math.abs(root_position[0]) + math.abs(root_position[1]) + math.abs(root_position[2]) < 1e-6)
 
     stiff := Plant_Vertex {
-        position = {0, 3, 0},
-        primary_anchor = {},
+        position         = {0, 3, 0},
+        primary_anchor   = {},
         secondary_anchor = {0, 1, 0},
-        stiffness = 1,
-        hierarchy_depth = 2,
-        phase = .27,
+        stiffness        = 1,
+        hierarchy_depth  = 2,
+        phase            = .27,
     }
     flexible := stiff
     flexible.stiffness = 0
     stiff_position := shadow_plant_position(stiff, instance, 8, .7, 6, 2)
     flexible_position := shadow_plant_position(flexible, instance, 8, .7, 6, 2)
     stiff_delta := math.sqrt(
-        f64(stiff_position[0] * stiff_position[0] +
+        f64(
+            stiff_position[0] * stiff_position[0] +
             (stiff_position[1] - 3) * (stiff_position[1] - 3) +
-            stiff_position[2] * stiff_position[2]),
+            stiff_position[2] * stiff_position[2],
+        ),
     )
     flexible_delta := math.sqrt(
-        f64(flexible_position[0] * flexible_position[0] +
+        f64(
+            flexible_position[0] * flexible_position[0] +
             (flexible_position[1] - 3) * (flexible_position[1] - 3) +
-            flexible_position[2] * flexible_position[2]),
+            flexible_position[2] * flexible_position[2],
+        ),
     )
     testing.expect(t, flexible_delta > stiff_delta)
 }

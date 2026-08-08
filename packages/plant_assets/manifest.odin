@@ -57,23 +57,29 @@ plant_asset_manifest_requests :: proc(allocator := context.allocator) -> [dynami
         species := bounded_seed & 3 == 0 ? plants.Species.Agapanthus : .Pelargonium
         for side in ([2]int{-1, 1}) {
             seed := u64(bounded_seed) ~ u64(side + 1) << 8 ~ 0x5245535f504f54
-            append(&result, Plant_Asset_Request {
-                species = species,
-                seed = seed,
-                maturity_step = 4, // world_renderer_architecture_entry_props: .86
-                habit = .Free_Standing,
-            })
+            append(
+                &result,
+                Plant_Asset_Request {
+                    species       = species,
+                    seed          = seed,
+                    maturity_step = 4, // world_renderer_architecture_entry_props: .86
+                    habit         = .Free_Standing,
+                },
+            )
         }
     }
 
     for sign_key in ([2]u64{0x100, 0x200}) {
         for planter_index in 0 ..< 4 {
-            append(&result, Plant_Asset_Request {
-                species = planter_index & 1 == 0 ? .Oleander : .Lavender,
-                seed = u64(0xa17c_ade0) ~ u64(planter_index) ~ sign_key,
-                maturity_step = 4, // world_renderer_characters_signs: .82
-                habit = .Free_Standing,
-            })
+            append(
+                &result,
+                Plant_Asset_Request {
+                    species       = planter_index & 1 == 0 ? .Oleander : .Lavender,
+                    seed          = u64(0xa17c_ade0) ~ u64(planter_index) ~ sign_key,
+                    maturity_step = 4, // world_renderer_characters_signs: .82
+                    habit         = .Free_Standing,
+                },
+            )
         }
     }
     return result

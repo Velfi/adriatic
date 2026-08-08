@@ -1,9 +1,9 @@
 package tests
 
 import mouse_paws "../packages/mouse_paws"
-import third_person "zelda_engine:third_person"
 import "core:math"
 import "core:testing"
+import third_person "zelda_engine:third_person"
 
 @(test)
 mouse_paw_contact_has_explicit_stance_and_swing_transitions :: proc(t: ^testing.T) {

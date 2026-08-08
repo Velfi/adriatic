@@ -5,10 +5,8 @@ import atmosphere "../packages/atmosphere"
 import boats "../packages/boats"
 import circulation "../packages/circulation"
 import dialogue_session "../packages/dialogue_session"
-import dio "zelda_engine:dio"
 import engine_sound "../packages/engine_sound"
 import flight "../packages/flight"
-import game_input "zelda_engine:game_input"
 import libellula_game "../packages/libellula"
 import ocean_audio "../packages/ocean_audio"
 import particle_systems "../packages/particles"
@@ -22,13 +20,15 @@ import spray_audio "../packages/spray_audio"
 import story "../packages/story"
 import surface_weather "../packages/surface_weather"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import wind_audio "../packages/wind_audio"
 import "core:math"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import dio "zelda_engine:dio"
+import game_input "zelda_engine:game_input"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 Editor :: struct {
     using fixture:                      Fixture,
@@ -232,19 +232,16 @@ editor_circulation_plan :: #force_inline proc(editor: ^Editor) -> ^circulation.P
             if editor.settlement_plan.valid {
                 for edit in editor.settlement_plan.terrain_edits[:editor.settlement_plan.terrain_edit_count] {
                     if edit.kind != .Plaza do continue
-                    _ = circulation.plan_add(
-                        &editor.circulation_plan,
-                        {
-                            center_x = edit.center[0],
-                            center_z = edit.center[1],
-                            width = edit.half_extent[0] * 2,
-                            length = edit.half_extent[1] * 2,
-                            kind = .Plaza,
-                            source = .Generated,
-                            pavement = .Cobblestone,
-                            walkable = true,
-                        },
-                    )
+                    _ = circulation.plan_add(&editor.circulation_plan, {
+                        center_x = edit.center[0],
+                        center_z = edit.center[1],
+                        width    = edit.half_extent[0] * 2,
+                        length   = edit.half_extent[1] * 2,
+                        kind     = .Plaza,
+                        source   = .Generated,
+                        pavement = .Cobblestone,
+                        walkable = true,
+                    })
                 }
             }
         }

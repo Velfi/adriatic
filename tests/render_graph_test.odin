@@ -1,7 +1,7 @@
 package tests
 
-import render_graph "zelda_engine:render_graph"
 import "core:testing"
+import render_graph "zelda_engine:render_graph"
 
 Render_Order :: struct {
     values: [4]int,

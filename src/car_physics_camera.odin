@@ -5,7 +5,6 @@ import postale_game "../packages/postale"
 import roads "../packages/roads"
 import story "../packages/story"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:fmt"
 import "core:math"
@@ -15,6 +14,7 @@ import "core:time"
 import timezone "core:time/timezone"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 car_physics_step :: proc(
     editor: ^Editor,

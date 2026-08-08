@@ -1,8 +1,8 @@
 package tests
 
-import hs "zelda_engine:hs"
 import "core:mem"
 import "core:testing"
+import hs "zelda_engine:hs"
 
 HS_Serializer_Bulk_Index :: enum u8 {
     First,

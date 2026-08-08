@@ -3,11 +3,11 @@ import "core:math"
 
 import flight "../packages/flight"
 import mouse_gait "../packages/mouse_gait"
-import third_person "zelda_engine:third_person"
 import vehicles "../packages/vehicles"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
 import physics "zelda_engine:physics"
+import third_person "zelda_engine:third_person"
 
 player_animation_approach :: proc(current, target, rate, delta_seconds: f32) -> f32 {
     maximum_delta := max(rate, f32(.1)) * delta_seconds

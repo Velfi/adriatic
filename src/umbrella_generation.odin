@@ -1,9 +1,9 @@
 package main
 
-import third_person "zelda_engine:third_person"
 import umbrellas "../packages/umbrellas"
 import "core:math"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 umbrella_palette :: proc(index: u8) -> (canvas2d.Color, canvas2d.Color) {
     switch index % 4 {

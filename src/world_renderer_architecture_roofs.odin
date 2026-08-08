@@ -4,8 +4,8 @@ import "core:time"
 
 import architecture "../packages/architecture"
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_architecture_roof :: proc(
     source_structure: terrain.Structure,

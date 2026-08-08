@@ -84,28 +84,50 @@ EDITOR_ARCHITECTURE_TYPES := [22]buildings.Archetype {
 
 editor_architecture_archetype_name :: proc(archetype: buildings.Archetype) -> cstring {
     switch archetype {
-    case .Legacy: return "HOUSE"
-    case .Dwelling: return "HOUSE"
-    case .Townhouse: return "TOWNHOUSE"
-    case .Shop_House: return "STOREFRONT"
-    case .Mixed_Use_Dwelling: return "MIXED USE"
-    case .Workshop: return "WORKSHOP"
-    case .Farmstead: return "FARMHOUSE"
-    case .Barn_Granary: return "BARN"
-    case .Mill: return "MILL"
-    case .Fishery: return "FISHERY"
-    case .Storehouse: return "STOREHOUSE"
-    case .Campanile: return "CAMPANILE"
-    case .Palace_Loggia: return "PALACE"
-    case .Church: return "CHURCH"
-    case .Monastery: return "MONASTERY"
-    case .Fortress_Gate: return "FORTRESS GATE"
-    case .Harbor_Office: return "HARBOR OFFICE"
-    case .Market_Hall: return "MARKET HALL"
-    case .Cycladic_Bell: return "BELL TOWER"
-    case .Post_Office: return "POST OFFICE"
-    case .Lighthouse: return "LIGHTHOUSE"
-    case .Clinic: return "CLINIC"
+    case .Legacy:
+        return "HOUSE"
+    case .Dwelling:
+        return "HOUSE"
+    case .Townhouse:
+        return "TOWNHOUSE"
+    case .Shop_House:
+        return "STOREFRONT"
+    case .Mixed_Use_Dwelling:
+        return "MIXED USE"
+    case .Workshop:
+        return "WORKSHOP"
+    case .Farmstead:
+        return "FARMHOUSE"
+    case .Barn_Granary:
+        return "BARN"
+    case .Mill:
+        return "MILL"
+    case .Fishery:
+        return "FISHERY"
+    case .Storehouse:
+        return "STOREHOUSE"
+    case .Campanile:
+        return "CAMPANILE"
+    case .Palace_Loggia:
+        return "PALACE"
+    case .Church:
+        return "CHURCH"
+    case .Monastery:
+        return "MONASTERY"
+    case .Fortress_Gate:
+        return "FORTRESS GATE"
+    case .Harbor_Office:
+        return "HARBOR OFFICE"
+    case .Market_Hall:
+        return "MARKET HALL"
+    case .Cycladic_Bell:
+        return "BELL TOWER"
+    case .Post_Office:
+        return "POST OFFICE"
+    case .Lighthouse:
+        return "LIGHTHOUSE"
+    case .Clinic:
+        return "CLINIC"
     }
     return "BUILDING"
 }
@@ -189,9 +211,10 @@ EDITOR_UI_TOOL_COLUMNS :: 2
 EDITOR_UI_TOOL_BUTTON_SIZE :: f32(48)
 EDITOR_UI_TOOL_BUTTON_GAP :: f32(6)
 EDITOR_UI_RAIL_PADDING :: f32(12)
-EDITOR_UI_RAIL_WIDTH :: f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
-                        f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP +
-                        EDITOR_UI_RAIL_PADDING * 2
+EDITOR_UI_RAIL_WIDTH ::
+    f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
+    f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP +
+    EDITOR_UI_RAIL_PADDING * 2
 
 FIXTURE_FILE_PATH_CAPACITY :: 1024
 
@@ -580,8 +603,9 @@ editor_ui_layout :: proc(editor: ^Editor, width, height: i32) -> Editor_UI_Layou
 editor_ui_tool_bounds :: #force_inline proc(layout: Editor_UI_Layout, index: int) -> canvas2d.Rectangle {
     column := index % EDITOR_UI_TOOL_COLUMNS
     row := index / EDITOR_UI_TOOL_COLUMNS
-    grid_width := f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
-                  f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP
+    grid_width :=
+        f32(EDITOR_UI_TOOL_COLUMNS) * EDITOR_UI_TOOL_BUTTON_SIZE +
+        f32(EDITOR_UI_TOOL_COLUMNS - 1) * EDITOR_UI_TOOL_BUTTON_GAP
     grid_x := layout.left.x + (layout.left.width - grid_width) * .5
     return {
         grid_x + f32(column) * (EDITOR_UI_TOOL_BUTTON_SIZE + EDITOR_UI_TOOL_BUTTON_GAP),
@@ -707,12 +731,7 @@ editor_ui_icon_button :: proc(
     }
 
     content_x := bounds.x + (bounds.width - content_width) * .5
-    icon_bounds := canvas2d.Rectangle {
-        content_x,
-        bounds.y + (bounds.height - icon_size) * .5,
-        icon_size,
-        icon_size,
-    }
+    icon_bounds := canvas2d.Rectangle{content_x, bounds.y + (bounds.height - icon_size) * .5, icon_size, icon_size}
     tint := canvas2d.Color{225, 231, 235, 255}
     if selected do tint = {244, 255, 254, 255}
     if !enabled do tint = {105, 112, 120, 255}
@@ -720,10 +739,7 @@ editor_ui_icon_button :: proc(
     ui_draw_text(
         .Label,
         label,
-        {
-            content_x + icon_size + gap,
-            bounds.y + (bounds.height - text_size.y) * .5 + EDITOR_UI_BUTTON_TEXT_Y_OFFSET,
-        },
+        {content_x + icon_size + gap, bounds.y + (bounds.height - text_size.y) * .5 + EDITOR_UI_BUTTON_TEXT_Y_OFFSET},
         text_scale,
         tint,
     )
@@ -1314,8 +1330,16 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         row += 1
         editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "FLOW", settings.flow, 0, 1, 2)
         row += 1
-        if !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action) {
-            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "STRENGTH", settings.brush_strength, .01, 10, 2)
+        if !terrain_action_is_spline(editor.terrain_sculpt.action) &&
+           !terrain_action_is_area(editor.terrain_sculpt.action) {
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "STRENGTH",
+                settings.brush_strength,
+                .01,
+                10,
+                2,
+            )
             row += 1
         }
         switch editor.terrain_sculpt.action {
@@ -1429,13 +1453,13 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         if editor.terrain_sculpt.advanced {
             seabed_policy_editable := terrain_action_seabed_policy_editable(editor.terrain_sculpt.action)
             if seabed_policy_editable {
-            seabed_bounds := editor_ui_slider_bounds(layout, row)
-            editor_ui_panel_button(
-                {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30},
-                settings.affect_seabed ? "AFFECT SEABED: YES" : "AFFECT SEABED: NO",
-                settings.affect_seabed,
-            )
-            row += 1
+                seabed_bounds := editor_ui_slider_bounds(layout, row)
+                editor_ui_panel_button(
+                    {seabed_bounds.x, seabed_bounds.y + 20, seabed_bounds.width, 30},
+                    settings.affect_seabed ? "AFFECT SEABED: YES" : "AFFECT SEABED: NO",
+                    settings.affect_seabed,
+                )
+                row += 1
             }
             editor_ui_slider_draw(
                 editor_ui_slider_bounds(layout, row),
@@ -1584,13 +1608,7 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         land_bounds := canvas2d.Rectangle{mode_bounds.x, mode_bounds.y + 20, half, 30}
         marine_bounds := canvas2d.Rectangle{mode_bounds.x + half + 6, mode_bounds.y + 20, half, 30}
         editor_ui_icon_button(editor, land_bounds, "LAND", .Land, !editor.marine_ecology_paint)
-        editor_ui_icon_button(
-            editor,
-            marine_bounds,
-            "MARINE",
-            .Marine,
-            editor.marine_ecology_paint,
-        )
+        editor_ui_icon_button(editor, marine_bounds, "MARINE", .Marine, editor.marine_ecology_paint)
         row += 1
         if editor.marine_ecology_paint {
             kind_bounds := editor_ui_slider_bounds(layout, row)
@@ -1910,41 +1928,123 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
         bounds = editor_ui_slider_bounds(layout, row)
         third := (bounds.width - 12) / 3
         ui_draw_text(.Label, "TYPE", {bounds.x, bounds.y}, .5, {209, 215, 222, 255})
-        editor_ui_panel_button({bounds.x, bounds.y + 24, third, 30}, "HOUSE", editor.building_generator_kind == .Ordinary)
-        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 24, third, 30}, "POST", editor.building_generator_kind == .Post_Office)
-        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}, "CLINIC", editor.building_generator_kind == .Clinic)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 24, third, 30},
+            "HOUSE",
+            editor.building_generator_kind == .Ordinary,
+        )
+        editor_ui_panel_button(
+            {bounds.x + third + 6, bounds.y + 24, third, 30},
+            "POST",
+            editor.building_generator_kind == .Post_Office,
+        )
+        editor_ui_panel_button(
+            {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30},
+            "CLINIC",
+            editor.building_generator_kind == .Clinic,
+        )
         row += 1
         bounds = editor_ui_slider_bounds(layout, row)
         half = (bounds.width - 6) * .5
-        editor_ui_panel_button({bounds.x, bounds.y + 4, half, 30}, "TERMINAL", editor.building_generator_kind == .Airport_Terminal)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 4, half, 30}, "MARINA OFFICE", editor.building_generator_kind == .Marina_Office)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 4, half, 30},
+            "TERMINAL",
+            editor.building_generator_kind == .Airport_Terminal,
+        )
+        editor_ui_panel_button(
+            {bounds.x + half + 6, bounds.y + 4, half, 30},
+            "MARINA OFFICE",
+            editor.building_generator_kind == .Marina_Office,
+        )
         row += 1
         bounds = editor_ui_slider_bounds(layout, row)
         third = (bounds.width - 12) / 3
-        editor_ui_panel_button({bounds.x, bounds.y + 4, third, 30}, "WINDMILL", editor.building_generator_kind == .Windmill)
-        editor_ui_panel_button({bounds.x + third + 6, bounds.y + 4, third, 30}, "PATIO", editor.building_generator_kind == .Patio)
-        editor_ui_panel_button({bounds.x + (third + 6) * 2, bounds.y + 4, third, 30}, "GARDEN", editor.building_generator_kind == .Garden)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 4, third, 30},
+            "WINDMILL",
+            editor.building_generator_kind == .Windmill,
+        )
+        editor_ui_panel_button(
+            {bounds.x + third + 6, bounds.y + 4, third, 30},
+            "PATIO",
+            editor.building_generator_kind == .Patio,
+        )
+        editor_ui_panel_button(
+            {bounds.x + (third + 6) * 2, bounds.y + 4, third, 30},
+            "GARDEN",
+            editor.building_generator_kind == .Garden,
+        )
         row += 1
         bounds = editor_ui_slider_bounds(layout, row)
         half = (bounds.width - 6) * .5
-        editor_ui_panel_button({bounds.x, bounds.y + 4, half, 30}, "CEMETERY", editor.building_generator_kind == .Cemetery)
-        editor_ui_panel_button({bounds.x + half + 6, bounds.y + 4, half, 30}, "PLAZA", editor.building_generator_kind == .Plaza)
+        editor_ui_panel_button(
+            {bounds.x, bounds.y + 4, half, 30},
+            "CEMETERY",
+            editor.building_generator_kind == .Cemetery,
+        )
+        editor_ui_panel_button(
+            {bounds.x + half + 6, bounds.y + 4, half, 30},
+            "PLAZA",
+            editor.building_generator_kind == .Plaza,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "WIDTH (m)", editor.building_generator_width, 6, 36, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "WIDTH (m)",
+            editor.building_generator_width,
+            6,
+            36,
+            1,
+        )
         row += 1
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "DEPTH (m)", editor.building_generator_depth, 6, 40, 1)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "DEPTH (m)",
+            editor.building_generator_depth,
+            6,
+            40,
+            1,
+        )
         row += 1
         if editor.building_generator_kind == .Ordinary {
-            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "HEIGHT (m)", editor.building_generator_height, 4, 48, 1)
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "HEIGHT (m)",
+                editor.building_generator_height,
+                4,
+                48,
+                1,
+            )
             row += 1
-            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "CHARACTER", editor.building_generator_density, 0, 1, 2)
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "CHARACTER",
+                editor.building_generator_density,
+                0,
+                1,
+                2,
+            )
             row += 1
         }
-        editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "VARIATION", editor.building_generator_variation, 1, 256, 0)
+        editor_ui_slider_draw(
+            editor_ui_slider_bounds(layout, row),
+            "VARIATION",
+            editor.building_generator_variation,
+            1,
+            256,
+            0,
+        )
         row += 1
         status: cstring = editor.building_generator_preview_valid ? "CLICK TO PLACE BUILDING" : "BUILDING DOES NOT FIT"
-        color := editor.building_generator_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
-        ui_draw_text(.Data, status, {editor_ui_slider_bounds(layout, row).x, editor_ui_slider_bounds(layout, row).y}, .4, color)
+        color :=
+            editor.building_generator_preview_valid ? canvas2d.Color{134, 224, 216, 255} : canvas2d.Color{224, 126, 108, 255}
+        ui_draw_text(
+            .Data,
+            status,
+            {editor_ui_slider_bounds(layout, row).x, editor_ui_slider_bounds(layout, row).y},
+            .4,
+            color,
+        )
         row += 1
     case .Marina:
         bounds := editor_ui_slider_bounds(layout, row)
@@ -2344,7 +2444,14 @@ editor_ui_draw_inspector :: proc(editor: ^Editor, layout: Editor_UI_Layout) {
             editor_ui_panel_button({bounds.x, bounds.y, half, 32}, "PREVIOUS", false, available_count > 1)
             editor_ui_panel_button({bounds.x + half + 6, bounds.y, half, 32}, "NEXT", false, available_count > 1)
             row += 1
-            editor_ui_slider_draw(editor_ui_slider_bounds(layout, row), "ROTATION", editor.mouse_placement_rotation, -math.PI, math.PI, 2)
+            editor_ui_slider_draw(
+                editor_ui_slider_bounds(layout, row),
+                "ROTATION",
+                editor.mouse_placement_rotation,
+                -math.PI,
+                math.PI,
+                2,
+            )
             row += 1
         }
     }
@@ -2526,10 +2633,11 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
                 row += 1
             }
             regenerate_bounds := editor_ui_slider_bounds(layout, row)
-            if pressed && canvas2d.CheckCollisionPointRec(
-                mouse,
-                {regenerate_bounds.x, regenerate_bounds.y + 8, regenerate_bounds.width, 32},
-            ) {
+            if pressed &&
+               canvas2d.CheckCollisionPointRec(
+                   mouse,
+                   {regenerate_bounds.x, regenerate_bounds.y + 8, regenerate_bounds.width, 32},
+               ) {
                 structure_history_push_undo(editor)
                 if structure.kind == .Architecture {
                     // Legacy identity is seed-derived. Materialize it before
@@ -2609,7 +2717,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         _ = editor_ui_slider_input(editor, layout, 301, row, &settings.size, 4, 500, 1); row += 1
         _ = editor_ui_slider_input(editor, layout, 302, row, &settings.feather, 0, 250, 1); row += 1
         _ = editor_ui_slider_input(editor, layout, 303, row, &settings.flow, 0, 1, .01); row += 1
-        if !terrain_action_is_spline(editor.terrain_sculpt.action) && !terrain_action_is_area(editor.terrain_sculpt.action) {
+        if !terrain_action_is_spline(editor.terrain_sculpt.action) &&
+           !terrain_action_is_area(editor.terrain_sculpt.action) {
             _ = editor_ui_slider_input(editor, layout, 335, row, &settings.brush_strength, .01, 10, .01); row += 1
         }
         switch editor.terrain_sculpt.action {
@@ -2947,7 +3056,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             building_generator_select_kind(editor, .Ordinary)
         } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 24, third, 30}) {
             building_generator_select_kind(editor, .Post_Office)
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 24, third, 30}) {
             building_generator_select_kind(editor, .Clinic)
         }
         row += 1
@@ -2965,7 +3075,8 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
             building_generator_select_kind(editor, .Windmill)
         } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + third + 6, bounds.y + 4, third, 30}) {
             building_generator_select_kind(editor, .Patio)
-        } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 4, third, 30}) {
+        } else if pressed &&
+           canvas2d.CheckCollisionPointRec(mouse, {bounds.x + (third + 6) * 2, bounds.y + 4, third, 30}) {
             building_generator_select_kind(editor, .Garden)
         }
         row += 1
@@ -3173,19 +3284,35 @@ editor_ui_process_input :: proc(editor: ^Editor, width, height: i32) {
         available_count := mouse_placement_available_count(editor)
         if available_count > 0 {
             editor.mouse_placement_selected = clamp(editor.mouse_placement_selected, 0, available_count - 1)
-            if pressed && canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row)) && available_count > 1 {
+            if pressed &&
+               canvas2d.CheckCollisionPointRec(mouse, editor_ui_slider_bounds(layout, row)) &&
+               available_count > 1 {
                 editor.mouse_placement_selected = (editor.mouse_placement_selected + 1) % available_count
             }
             row += 1
             bounds := editor_ui_slider_bounds(layout, row)
             half := (bounds.width - 6) * .5
-            if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y, half, 32}) && available_count > 1 {
-                editor.mouse_placement_selected = (editor.mouse_placement_selected + available_count - 1) % available_count
-            } else if pressed && canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y, half, 32}) && available_count > 1 {
+            if pressed &&
+               canvas2d.CheckCollisionPointRec(mouse, {bounds.x, bounds.y, half, 32}) &&
+               available_count > 1 {
+                editor.mouse_placement_selected =
+                    (editor.mouse_placement_selected + available_count - 1) % available_count
+            } else if pressed &&
+               canvas2d.CheckCollisionPointRec(mouse, {bounds.x + half + 6, bounds.y, half, 32}) &&
+               available_count > 1 {
                 editor.mouse_placement_selected = (editor.mouse_placement_selected + 1) % available_count
             }
             row += 1
-            _ = editor_ui_slider_input(editor, layout, 20, row, &editor.mouse_placement_rotation, -math.PI, math.PI, .05)
+            _ = editor_ui_slider_input(
+                editor,
+                layout,
+                20,
+                row,
+                &editor.mouse_placement_rotation,
+                -math.PI,
+                math.PI,
+                .05,
+            )
             row += 1
         }
     case .Obstacles:

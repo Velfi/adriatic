@@ -338,16 +338,14 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
 
     maturity := f32(request.maturity_step) / PLANT_MATURITY_STEPS
     for lod_index in 0 ..< PLANT_ASSET_LOD_COUNT {
-        result := plants.generate(
-            {
-                species = request.species,
-                seed = request.seed,
-                maturity = maturity,
-                habit = request.habit,
-                detail = plant_asset_detail(lod_index),
-                site = request.site,
-            },
-        )
+        result := plants.generate({
+            species  = request.species,
+            seed     = request.seed,
+            maturity = maturity,
+            habit    = request.habit,
+            detail   = plant_asset_detail(lod_index),
+            site     = request.site,
+        })
         if result.error != .None {
             plants.destroy(&result)
             plant_asset_destroy(&asset)
@@ -360,17 +358,14 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
             plants.destroy(&result)
             continue
         }
-        mesh := branch_mesh.generate(
-            result.plant.segments[:],
-            {
-                radial_segments = lod_index == 0 ? 10 : lod_index == 1 ? 8 : lod_index == 2 ? 6 : 4,
-                samples_per_segment = lod_index == 0 ? 4 : lod_index == 1 ? 3 : lod_index == 2 ? 2 : 1,
-                minimum_radius = .0005,
-                seed = request.seed,
-                axis_ids = result.plant.segment_axes[:],
-                parent_ids = result.plant.segment_parents[:],
-            },
-        )
+        mesh := branch_mesh.generate(result.plant.segments[:], {
+            radial_segments     = lod_index == 0 ? 10 : lod_index == 1 ? 8 : lod_index == 2 ? 6 : 4,
+            samples_per_segment = lod_index == 0 ? 4 : lod_index == 1 ? 3 : lod_index == 2 ? 2 : 1,
+            minimum_radius      = .0005,
+            seed                = request.seed,
+            axis_ids            = result.plant.segment_axes[:],
+            parent_ids          = result.plant.segment_parents[:],
+        })
         lod := &asset.lods[lod_index]
         for segment, segment_index in result.plant.segments {
             internode := result.plant.graph.internodes[segment_index]
@@ -385,26 +380,23 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
                     break
                 }
             }
-            append(
-                &lod.segments,
-                Plant_Asset_Segment {
-                    start = segment.start,
-                    end = segment.end,
-                    radius_start = segment.radius_start,
-                    radius_end = segment.radius_end,
-                    depth = i32(segment.depth),
-                    parent = i32(result.plant.segment_parents[segment_index]),
-                    axis = i32(result.plant.segment_axes[segment_index]),
-                    stable_id = result.plant.segment_ids[segment_index],
-                    axis_parent = i32(axis.parent_axis),
-                    axis_role = axis.role,
-                    axis_orientation = axis.orientation,
-                    axis_stable_id = axis.stable_id,
-                    growth_stable_id = growth.stable_id,
-                    bud_stable_id = bud_stable_id,
-                    bud_state = bud_state,
-                },
-            )
+            append(&lod.segments, Plant_Asset_Segment {
+                start            = segment.start,
+                end              = segment.end,
+                radius_start     = segment.radius_start,
+                radius_end       = segment.radius_end,
+                depth            = i32(segment.depth),
+                parent           = i32(result.plant.segment_parents[segment_index]),
+                axis             = i32(result.plant.segment_axes[segment_index]),
+                stable_id        = result.plant.segment_ids[segment_index],
+                axis_parent      = i32(axis.parent_axis),
+                axis_role        = axis.role,
+                axis_orientation = axis.orientation,
+                axis_stable_id   = axis.stable_id,
+                growth_stable_id = growth.stable_id,
+                bud_stable_id    = bud_stable_id,
+                bud_state        = bud_state,
+            })
         }
         resize(&lod.vertices, len(mesh.vertices))
         for source, vertex_index in mesh.vertices {
@@ -476,27 +468,24 @@ plant_asset_compile :: proc(request: Plant_Asset_Request) -> (Plant_Asset, bool)
             if attachment_index < len(result.plant.graph.organs) {
                 architecture_kind = result.plant.graph.organs[attachment_index].kind
             }
-            append(
-                &lod.organs,
-                Plant_Asset_Organ {
-                    position = attachment.position,
-                    forward = attachment.forward,
-                    up = attachment.up,
-                    stable_id = result.plant.attachment_ids[attachment_index],
-                    kind = attachment.kind,
-                    stage = attachment.stage,
-                    depth = i32(attachment.depth),
-                    variant = attachment.variant,
-                    leaf_shape = u8(attachment.leaf.shape),
-                    leaf_length = attachment.leaf.length,
-                    leaf_width = attachment.leaf.width,
-                    leaf_serration = attachment.leaf.serration,
-                    leaf_curl = attachment.leaf.curl,
-                    leaf_cup = attachment.leaf.cup,
-                    leaf_thickness = attachment.leaf.thickness,
-                    architecture_kind = architecture_kind,
-                },
-            )
+            append(&lod.organs, Plant_Asset_Organ {
+                position          = attachment.position,
+                forward           = attachment.forward,
+                up                = attachment.up,
+                stable_id         = result.plant.attachment_ids[attachment_index],
+                kind              = attachment.kind,
+                stage             = attachment.stage,
+                depth             = i32(attachment.depth),
+                variant           = attachment.variant,
+                leaf_shape        = u8(attachment.leaf.shape),
+                leaf_length       = attachment.leaf.length,
+                leaf_width        = attachment.leaf.width,
+                leaf_serration    = attachment.leaf.serration,
+                leaf_curl         = attachment.leaf.curl,
+                leaf_cup          = attachment.leaf.cup,
+                leaf_thickness    = attachment.leaf.thickness,
+                architecture_kind = architecture_kind,
+            })
         }
         if lod_index == 0 {
             asset.header.radial_irregularity = result.plant.wood.radial_irregularity
@@ -701,16 +690,13 @@ plant_asset_generated_result :: proc(data: []byte, detail: plants.Detail_Level) 
     axis_seen := make([]bool, axis_count)
     defer delete(axis_seen)
     for segment in segments {
-        append(
-            &plant.segments,
-            plant_structure.Segment {
-                start = segment.start,
-                end = segment.end,
-                radius_start = segment.radius_start,
-                radius_end = segment.radius_end,
-                depth = int(segment.depth),
-            },
-        )
+        append(&plant.segments, plant_structure.Segment {
+            start        = segment.start,
+            end          = segment.end,
+            radius_start = segment.radius_start,
+            radius_end   = segment.radius_end,
+            depth        = int(segment.depth),
+        })
         append(&plant.segment_parents, int(segment.parent))
         append(&plant.segment_axes, int(segment.axis))
         append(&plant.segment_ids, segment.stable_id)
@@ -725,27 +711,24 @@ plant_asset_generated_result :: proc(data: []byte, detail: plants.Detail_Level) 
     plant.attachments = make([dynamic]plants.Attachment, 0, len(organs))
     plant.attachment_ids = make([dynamic]u64, 0, len(organs))
     for organ in organs {
-        append(
-            &plant.attachments,
-            plants.Attachment {
-                kind = organ.kind,
-                stage = organ.stage,
-                position = organ.position,
-                forward = organ.forward,
-                up = organ.up,
-                depth = int(organ.depth),
-                variant = organ.variant,
-                leaf = {
-                    shape = leaf_mesh.Shape(organ.leaf_shape),
-                    length = organ.leaf_length,
-                    width = organ.leaf_width,
-                    serration = organ.leaf_serration,
-                    curl = organ.leaf_curl,
-                    cup = organ.leaf_cup,
-                    thickness = organ.leaf_thickness,
-                },
+        append(&plant.attachments, plants.Attachment {
+            kind = organ.kind,
+            stage = organ.stage,
+            position = organ.position,
+            forward = organ.forward,
+            up = organ.up,
+            depth = int(organ.depth),
+            variant = organ.variant,
+            leaf = {
+                shape = leaf_mesh.Shape(organ.leaf_shape),
+                length = organ.leaf_length,
+                width = organ.leaf_width,
+                serration = organ.leaf_serration,
+                curl = organ.leaf_curl,
+                cup = organ.leaf_cup,
+                thickness = organ.leaf_thickness,
             },
-        )
+        })
         append(&plant.attachment_ids, organ.stable_id)
     }
     plants.generated_graph_build(plant, header.request.seed)

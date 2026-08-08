@@ -92,26 +92,20 @@ authoring_strong_coast_brush_reaches_existing_land :: proc(t: ^testing.T) {
     index := sample_index(sx, sz)
     data.heights[index] = project.sea_level + 42
     before := data.heights[index]
-    testing.expect(
-        t,
-        apply_authoring_brush(
-            project,
-            {
-                owner = .East,
-                operation = .Coast,
-                world_x = x,
-                world_z = z,
-                size = 12,
-                inner_core = 1,
-                flow = 6.5,
-                direction = 1,
-                affect_seabed = true,
-                beach_height = 2,
-                shelf_depth = -12,
-                iterations = 8,
-            },
-        ),
-    )
+    testing.expect(t, apply_authoring_brush(project, {
+            owner         = .East,
+            operation     = .Coast,
+            world_x       = x,
+            world_z       = z,
+            size          = 12,
+            inner_core    = 1,
+            flow          = 6.5,
+            direction     = 1,
+            affect_seabed = true,
+            beach_height  = 2,
+            shelf_depth   = -12,
+            iterations    = 8,
+        }))
     testing.expect(t, data.heights[index] > before)
 }
 
@@ -122,20 +116,17 @@ authoring_grade_rejects_excessive_slope :: proc(t: ^testing.T) {
     x, z, _ := island_center(project, .East)
     points := [2]Cliff_Point{{x - 10, z}, {x + 10, z}}
     before := project.revision
-    changed := apply_authoring_spline(
-        project,
-        {
-            owner = .East,
-            operation = .Grade,
-            points = points[:],
-            width = 12,
-            feather = 4,
-            flow = 1,
-            start_height = 0,
-            end_height = 20,
-            maximum_grade = .1,
-        },
-    )
+    changed := apply_authoring_spline(project, {
+        owner         = .East,
+        operation     = .Grade,
+        points        = points[:],
+        width         = 12,
+        feather       = 4,
+        flow          = 1,
+        start_height  = 0,
+        end_height    = 20,
+        maximum_grade = .1,
+    })
     testing.expect(t, !changed)
     testing.expect_value(t, project.revision, before)
 }

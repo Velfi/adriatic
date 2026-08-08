@@ -2,9 +2,9 @@ package main
 import "core:math"
 
 import flight "../packages/flight"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_rondine_wake_fans :: proc(editor: ^Editor) {
     if editor == nil || !editor.rondine_visible do return

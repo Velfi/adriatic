@@ -8,11 +8,19 @@ lab_ui_button_pressed :: proc(bounds: canvas2d.Rectangle) -> bool {
 
 lab_ui_draw_button :: proc(bounds: canvas2d.Rectangle, label: cstring, active := false) {
     hovered := canvas2d.CheckCollisionPointRec(canvas2d.GetMousePosition(), bounds)
-    fill := active ? canvas2d.Color{61, 76, 62, 255} : hovered ? canvas2d.Color{53, 64, 57, 255} : canvas2d.Color{36, 45, 41, 248}
+    fill :=
+        active ? canvas2d.Color{61, 76, 62, 255} : hovered ? canvas2d.Color{53, 64, 57, 255} : canvas2d.Color{36, 45, 41, 248}
     canvas2d.DrawRectangleRounded(bounds, .16, 6, fill)
     canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {118, 145, 119, 255})
     size := canvas2d.MeasureTextEx(canvas2d.Font{}, label, 11, 1)
-    canvas2d.DrawTextEx(canvas2d.Font{}, label, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 7}, 11, 1, {232, 224, 189, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        label,
+        {bounds.x + (bounds.width - size.x) * .5, bounds.y + 7},
+        11,
+        1,
+        {232, 224, 189, 255},
+    )
 }
 
 lab_ui_stepper_minus_bounds :: proc(bounds: canvas2d.Rectangle) -> canvas2d.Rectangle {
@@ -37,5 +45,12 @@ lab_ui_draw_stepper :: proc(bounds: canvas2d.Rectangle, value: cstring) {
     canvas2d.DrawRectangleRec({bounds.x + 28, bounds.y, bounds.width - 56, bounds.height}, {27, 38, 34, 248})
     canvas2d.DrawRectangleRoundedLinesEx(bounds, .16, 6, 1, {118, 145, 119, 255})
     size := canvas2d.MeasureTextEx(canvas2d.Font{}, value, 11, 1)
-    canvas2d.DrawTextEx(canvas2d.Font{}, value, {bounds.x + (bounds.width - size.x) * .5, bounds.y + 7}, 11, 1, {208, 221, 202, 255})
+    canvas2d.DrawTextEx(
+        canvas2d.Font{},
+        value,
+        {bounds.x + (bounds.width - size.x) * .5, bounds.y + 7},
+        11,
+        1,
+        {208, 221, 202, 255},
+    )
 }

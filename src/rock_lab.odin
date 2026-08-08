@@ -1,11 +1,11 @@
 package main
 
 import atmosphere "../packages/atmosphere"
-import third_person "zelda_engine:third_person"
 import "core:fmt"
 import "core:math"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 ROCK_LAB_SLIDER_COUNT :: 6
 ROCK_LAB_MATERIAL_COUNT :: 3

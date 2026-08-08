@@ -1,9 +1,9 @@
 package main
 
-import markov "zelda_engine:markov"
 import terrain "../packages/terrain"
 import "core:math"
 import "core:math/linalg"
+import markov "zelda_engine:markov"
 
 Settlement_Scale :: enum {
     City,

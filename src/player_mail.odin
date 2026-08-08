@@ -1,12 +1,12 @@
 package main
 
-import game_input "zelda_engine:game_input"
 import player_mail "../packages/player_mail"
 import story "../packages/story"
 import "core:fmt"
 import "core:math"
 import sdl "vendor:sdl3"
 import canvas2d "zelda_engine:canvas2d"
+import game_input "zelda_engine:game_input"
 
 PLAYER_MAIL_ROW_HEIGHT :: f32(62)
 

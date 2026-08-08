@@ -2,9 +2,9 @@ package main
 import "core:math"
 
 import terrain "../packages/terrain"
-import third_person "zelda_engine:third_person"
 import "core:math/linalg"
 import canvas2d "zelda_engine:canvas2d"
+import third_person "zelda_engine:third_person"
 
 world_foliage_trunk :: proc(x, z, base_y, height, radius, crown_span: f32, seed: u32) {
     // Eight sides are enough to remove the conspicuous hexagonal shaft at
